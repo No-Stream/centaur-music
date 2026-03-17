@@ -1,0 +1,21 @@
+[project]
+name = "code-musics"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.3",
+    "pedalboard>=0.9.22",
+    "pretty-midi>=0.2.11",
+    "pydub>=0.25.1",
+    "pytuning>=0.7.3",
+    "scipy>=1.17.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.15.6",
+]
