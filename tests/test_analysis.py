@@ -29,6 +29,29 @@ def test_analyze_audio_reports_expected_band_bias() -> None:
     assert analysis.duration_seconds == 1.0
     assert analysis.band_energy_db["bass"] > analysis.band_energy_db["high"]
     assert analysis.low_high_balance_db > 0
+    assert np.isfinite(analysis.integrated_lufs)
+    assert analysis.gated_rms_dbfs >= analysis.rms_dbfs
+
+
+def test_analyze_audio_warns_for_clipping_and_low_active_level() -> None:
+    sample_rate = 44_100
+    clipped_signal = np.array([0.0, 1.1, -1.05, 0.2], dtype=np.float64)
+    clipped_analysis = analyze_audio(clipped_signal, sample_rate=sample_rate)
+
+    assert clipped_analysis.clipped_sample_count == 2
+    assert "sample peak clipping detected" in clipped_analysis.warnings
+
+    quiet_signal = np.concatenate(
+        [
+            np.zeros(sample_rate, dtype=np.float64),
+            np.full(sample_rate, 0.008, dtype=np.float64),
+            np.zeros(sample_rate, dtype=np.float64),
+        ]
+    )
+    quiet_analysis = analyze_audio(quiet_signal, sample_rate=sample_rate)
+
+    assert quiet_analysis.active_window_fraction > 0.0
+    assert "active passages are very quiet overall" in quiet_analysis.warnings
 
 
 def test_analyze_score_reports_density_and_ranges() -> None:
@@ -68,8 +91,27 @@ def test_save_analysis_artifacts_writes_manifest_and_plots(tmp_path: Path) -> No
     assert Path(saved_manifest["mix"]["artifacts"]["spectrum"]).exists()
     assert Path(saved_manifest["mix"]["artifacts"]["spectrogram"]).exists()
     assert Path(saved_manifest["mix"]["artifacts"]["band_energy"]).exists()
+    assert "pre_export_summary" not in saved_manifest["mix"]
     assert Path(saved_manifest["score"]["artifacts"]["density"]).exists()
     assert Path(saved_manifest["voices"]["bass"]["artifacts"]["spectrum"]).exists()
+
+
+def test_save_analysis_artifacts_records_pre_export_mix_summary(tmp_path: Path) -> None:
+    signal = np.full(44_100, 0.5, dtype=np.float64)
+    normalized_signal = signal * 0.5
+
+    manifest = save_analysis_artifacts(
+        output_prefix=tmp_path / "normalized_piece",
+        mix_signal=normalized_signal,
+        pre_export_mix_signal=signal,
+        sample_rate=44_100,
+    )
+
+    assert "pre_export_summary" in manifest["mix"]
+    assert (
+        manifest["mix"]["pre_export_summary"]["peak_dbfs"]
+        > manifest["mix"]["summary"]["peak_dbfs"]
+    )
 
 
 def test_compare_analysis_manifests_reports_mix_and_score_deltas(
@@ -85,7 +127,9 @@ def test_compare_analysis_manifests_reports_mix_and_score_deltas(
                 "mix": {
                     "summary": {
                         "peak_dbfs": -4.0,
+                        "true_peak_dbfs": -3.6,
                         "rms_dbfs": -18.0,
+                        "integrated_lufs": -15.0,
                         "spectral_centroid_hz": 300.0,
                         "dominant_frequency_hz": 110.0,
                         "low_high_balance_db": 20.0,
@@ -109,7 +153,9 @@ def test_compare_analysis_manifests_reports_mix_and_score_deltas(
                     "lead": {
                         "summary": {
                             "peak_dbfs": -6.0,
+                            "true_peak_dbfs": -5.5,
                             "rms_dbfs": -20.0,
+                            "integrated_lufs": -18.0,
                             "spectral_centroid_hz": 500.0,
                             "low_high_balance_db": 15.0,
                             "spectral_tilt_db_per_octave": -7.0,
@@ -126,7 +172,9 @@ def test_compare_analysis_manifests_reports_mix_and_score_deltas(
                 "mix": {
                     "summary": {
                         "peak_dbfs": -5.0,
+                        "true_peak_dbfs": -4.8,
                         "rms_dbfs": -17.0,
+                        "integrated_lufs": -14.0,
                         "spectral_centroid_hz": 420.0,
                         "dominant_frequency_hz": 220.0,
                         "low_high_balance_db": 14.0,
@@ -150,7 +198,9 @@ def test_compare_analysis_manifests_reports_mix_and_score_deltas(
                     "lead": {
                         "summary": {
                             "peak_dbfs": -7.0,
+                            "true_peak_dbfs": -6.8,
                             "rms_dbfs": -19.0,
+                            "integrated_lufs": -17.0,
                             "spectral_centroid_hz": 650.0,
                             "low_high_balance_db": 10.0,
                             "spectral_tilt_db_per_octave": -5.0,
@@ -170,6 +220,7 @@ def test_compare_analysis_manifests_reports_mix_and_score_deltas(
 
     assert comparison["mix_delta"]["spectral_centroid_hz"] == 120.0
     assert comparison["mix_delta"]["low_high_balance_db"] == -6.0
+    assert comparison["mix_delta"]["integrated_lufs"] == 1.0
     assert comparison["score_delta"]["peak_simultaneous_notes"] == -1.0
     assert comparison["voice_delta"]["lead"]["spectral_centroid_hz"] == 150.0
     assert comparison_path.exists()

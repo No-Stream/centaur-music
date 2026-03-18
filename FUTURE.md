@@ -63,8 +63,8 @@ but most timbral behavior is still static over the life of a note or phrase.
 Useful directions:
 
 - time-varying synth parameters at note, phrase, or voice scope
-- automation curves for brightness, filter cutoff, resonance, FM index, detune,
-  stereo spread, and effect wetness
+- extend the new automation surface beyond synth params into pan, gain, plugin
+  params, effect wetness, and other mix controls
 - phrase-level timbre gestures so sounds can evolve musically without requiring
   low-level parameter plumbing in every piece
 - automation-aware analysis so agents can see whether a sound actually opens,
@@ -188,6 +188,17 @@ Useful additions:
 - analysis manifests that are even easier for agents to consume
 - selective improvements to plots or summary diagnostics when they materially
   improve iteration speed
+
+### Ladder filter for subtractive voices
+
+Useful later once the current analog-style filter path has settled:
+
+- add a ladder-style low-pass character filter for `polyblep` or a related
+  subtractive engine
+- bias toward musical resonance and tone color rather than maximal circuit
+  realism
+- treat this as a distinct flavor on top of the current ZDF/TPT filter, not a
+  replacement
 
 ## Lower priority
 

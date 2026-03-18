@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import spectrogram
 
+from code_musics import synth
 from code_musics.score import Score
 
 _EPSILON = 1e-12
@@ -30,7 +31,16 @@ class AudioAnalysis:
 
     duration_seconds: float
     peak_dbfs: float
+    true_peak_dbfs: float
+    peak_headroom_db: float
+    clipped_sample_count: int
+    clipped_sample_fraction: float
+    clipped_true_peak: bool
     rms_dbfs: float
+    gated_rms_dbfs: float
+    integrated_lufs: float
+    active_window_fraction: float
+    crest_factor_db: float
     spectral_centroid_hz: float
     dominant_frequency_hz: float
     low_high_balance_db: float
@@ -74,12 +84,21 @@ def analyze_audio(
     reference_tilt_db_per_octave: float = -3.0,
 ) -> AudioAnalysis:
     """Summarize a mono or stereo render for diagnostics."""
-    mono_signal = _to_mono(signal)
+    mono_signal = synth.to_mono_reference(signal)
     if mono_signal.size == 0:
         return AudioAnalysis(
             duration_seconds=0.0,
             peak_dbfs=float("-inf"),
+            true_peak_dbfs=float("-inf"),
+            peak_headroom_db=float("inf"),
+            clipped_sample_count=0,
+            clipped_sample_fraction=0.0,
+            clipped_true_peak=False,
             rms_dbfs=float("-inf"),
+            gated_rms_dbfs=float("-inf"),
+            integrated_lufs=float("-inf"),
+            active_window_fraction=0.0,
+            crest_factor_db=0.0,
             spectral_centroid_hz=0.0,
             dominant_frequency_hz=0.0,
             low_high_balance_db=0.0,
@@ -91,6 +110,20 @@ def analyze_audio(
         )
 
     freqs, magnitude_db = _average_spectrum(mono_signal, sample_rate=sample_rate)
+    peak_amplitude = float(np.max(np.abs(mono_signal)))
+    true_peak_amplitude = synth.estimate_true_peak_amplitude(signal)
+    rms_amplitude = float(np.sqrt(np.mean(np.square(mono_signal))))
+    gated_rms_dbfs, active_window_fraction = synth.gated_rms_dbfs(
+        signal,
+        sample_rate=sample_rate,
+    )
+    integrated_lufs, lufs_active_window_fraction = synth.integrated_lufs(
+        signal,
+        sample_rate=sample_rate,
+    )
+    clipped_sample_count = int(np.count_nonzero(np.abs(mono_signal) >= 1.0))
+    peak_dbfs = _amplitude_to_db(peak_amplitude)
+    true_peak_dbfs = _amplitude_to_db(true_peak_amplitude)
     band_energy_db = _compute_band_energies(
         freqs=freqs,
         magnitude_db=magnitude_db,
@@ -111,6 +144,11 @@ def analyze_audio(
     dominant_frequency_hz = float(freqs[np.argmax(magnitude_db)])
     spectral_tilt = _fit_spectral_tilt(freqs=freqs, magnitude_db=magnitude_db)
     warnings = _build_audio_warnings(
+        peak_dbfs=peak_dbfs,
+        true_peak_dbfs=true_peak_dbfs,
+        clipped_sample_count=clipped_sample_count,
+        integrated_lufs=integrated_lufs,
+        active_window_fraction=lufs_active_window_fraction,
         low_high_balance_db=low_high_balance_db,
         tilt_error_db_per_octave=spectral_tilt - reference_tilt_db_per_octave,
         spectral_centroid_hz=spectral_centroid_hz,
@@ -118,8 +156,17 @@ def analyze_audio(
 
     return AudioAnalysis(
         duration_seconds=float(mono_signal.size / sample_rate),
-        peak_dbfs=_amplitude_to_db(np.max(np.abs(mono_signal))),
-        rms_dbfs=_amplitude_to_db(np.sqrt(np.mean(np.square(mono_signal)))),
+        peak_dbfs=peak_dbfs,
+        true_peak_dbfs=true_peak_dbfs,
+        peak_headroom_db=max(0.0, -peak_dbfs),
+        clipped_sample_count=clipped_sample_count,
+        clipped_sample_fraction=clipped_sample_count / float(mono_signal.size),
+        clipped_true_peak=true_peak_amplitude > 1.0,
+        rms_dbfs=_amplitude_to_db(rms_amplitude),
+        gated_rms_dbfs=gated_rms_dbfs,
+        integrated_lufs=integrated_lufs,
+        active_window_fraction=lufs_active_window_fraction,
+        crest_factor_db=max(0.0, peak_dbfs - _amplitude_to_db(rms_amplitude)),
         spectral_centroid_hz=spectral_centroid_hz,
         dominant_frequency_hz=dominant_frequency_hz,
         low_high_balance_db=low_high_balance_db,
@@ -257,6 +304,7 @@ def save_analysis_artifacts(
     output_prefix: str | Path,
     mix_signal: np.ndarray,
     sample_rate: int,
+    pre_export_mix_signal: np.ndarray | None = None,
     stems: dict[str, np.ndarray] | None = None,
     score: Score | None = None,
     reference_tilt_db_per_octave: float = -3.0,
@@ -278,6 +326,12 @@ def save_analysis_artifacts(
         },
         "voices": {},
     }
+    if pre_export_mix_signal is not None:
+        manifest["mix"]["pre_export_summary"] = analyze_audio(
+            pre_export_mix_signal,
+            sample_rate=sample_rate,
+            reference_tilt_db_per_octave=reference_tilt_db_per_octave,
+        ).to_dict()
 
     mix_spectrum_path = prefix_path.with_name(f"{prefix_path.name}.mix_spectrum.png")
     _save_spectrum_plot(
@@ -369,7 +423,9 @@ def compare_analysis_manifests(
             after_manifest["mix"]["summary"],
             keys=(
                 "peak_dbfs",
+                "true_peak_dbfs",
                 "rms_dbfs",
+                "integrated_lufs",
                 "spectral_centroid_hz",
                 "dominant_frequency_hz",
                 "low_high_balance_db",
@@ -416,7 +472,9 @@ def compare_analysis_manifests(
             after_voice,
             keys=(
                 "peak_dbfs",
+                "true_peak_dbfs",
                 "rms_dbfs",
+                "integrated_lufs",
                 "spectral_centroid_hz",
                 "low_high_balance_db",
                 "spectral_tilt_db_per_octave",
@@ -448,7 +506,7 @@ def _average_spectrum(
     if signal.size < n_fft:
         padded = np.zeros(n_fft, dtype=np.float64)
         padded[: signal.size] = signal
-        spectrum = np.fft.rfft(padded * window)
+        spectrum = np.abs(np.fft.rfft(padded * window))
     else:
         step = max(n_fft // 2, 1)
         magnitudes: list[np.ndarray] = []
@@ -508,11 +566,30 @@ def _fit_spectral_tilt(*, freqs: np.ndarray, magnitude_db: np.ndarray) -> float:
 
 def _build_audio_warnings(
     *,
+    peak_dbfs: float,
+    true_peak_dbfs: float,
+    clipped_sample_count: int,
+    integrated_lufs: float,
+    active_window_fraction: float,
     low_high_balance_db: float,
     tilt_error_db_per_octave: float,
     spectral_centroid_hz: float,
 ) -> list[str]:
     warnings: list[str] = []
+    if clipped_sample_count > 0:
+        warnings.append("sample peak clipping detected")
+    elif true_peak_dbfs > 0.0:
+        warnings.append("estimated inter-sample clipping risk")
+    elif peak_dbfs >= -0.3:
+        warnings.append("very little peak headroom")
+    elif peak_dbfs >= -1.0:
+        warnings.append("peak headroom is tight")
+
+    if integrated_lufs <= -32.0 and active_window_fraction >= 0.05:
+        warnings.append("active passages are very quiet overall")
+    elif integrated_lufs <= -27.0 and active_window_fraction >= 0.05:
+        warnings.append("active passages are somewhat quiet overall")
+
     if low_high_balance_db >= 18.0:
         warnings.append("low band dominates high band strongly")
     elif low_high_balance_db >= 10.0:
@@ -538,14 +615,6 @@ def _build_audio_warnings(
     return warnings
 
 
-def _to_mono(signal: np.ndarray) -> np.ndarray:
-    if signal.ndim == 1:
-        return np.asarray(signal, dtype=np.float64)
-    if signal.ndim == 2:
-        return np.asarray(np.mean(signal, axis=0, dtype=np.float64), dtype=np.float64)
-    raise ValueError("signal must be mono or stereo")
-
-
 def _save_spectrum_plot(
     *,
     signal: np.ndarray,
@@ -554,7 +623,10 @@ def _save_spectrum_plot(
     title: str,
     reference_tilt_db_per_octave: float,
 ) -> None:
-    freqs, magnitude_db = _average_spectrum(_to_mono(signal), sample_rate=sample_rate)
+    freqs, magnitude_db = _average_spectrum(
+        synth.to_mono_reference(signal),
+        sample_rate=sample_rate,
+    )
     figure, axis = plt.subplots(figsize=(10, 4))
     axis.semilogx(freqs, magnitude_db, linewidth=1.2, label="measured")
 
@@ -585,7 +657,7 @@ def _save_spectrogram_plot(
     path: Path,
     title: str,
 ) -> None:
-    mono_signal = _to_mono(signal)
+    mono_signal = synth.to_mono_reference(signal)
     if mono_signal.size == 0:
         mono_signal = np.zeros(256, dtype=np.float64)
     nperseg = min(2048, max(256, mono_signal.size))

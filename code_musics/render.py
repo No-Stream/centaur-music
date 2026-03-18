@@ -20,9 +20,11 @@ import numpy as np
 from code_musics.analysis import save_analysis_artifacts
 from code_musics.pieces import PIECES
 from code_musics.score import Score
-from code_musics.synth import SAMPLE_RATE, write_wav
+from code_musics.synth import SAMPLE_RATE, finalize_master, write_wav
 
 logger = logging.getLogger(__name__)
+_EXPORT_TARGET_LUFS = -18.0
+_EXPORT_TRUE_PEAK_CEILING_DBFS = -0.5
 
 
 @dataclass(frozen=True)
@@ -97,19 +99,31 @@ def render_piece(
             )
     elif definition.render_audio is not None:
         audio = definition.render_audio()
-        if save_analysis:
-            version_analysis_artifacts = save_analysis_artifacts(
-                output_prefix=version_output_path.with_suffix(""),
-                mix_signal=audio,
-                sample_rate=SAMPLE_RATE,
-            )
-            version_analysis_manifest_path = Path(
-                str(version_analysis_artifacts["manifest_path"])
-            )
     else:
         raise ValueError(f"Piece {piece_name} has no render path configured")
 
-    write_wav(version_output_path, audio)
+    mastering_result = finalize_master(
+        audio,
+        sample_rate=score.sample_rate if score is not None else SAMPLE_RATE,
+        target_lufs=_EXPORT_TARGET_LUFS,
+        true_peak_ceiling_dbfs=_EXPORT_TRUE_PEAK_CEILING_DBFS,
+    )
+    export_audio = mastering_result.signal
+
+    if save_analysis:
+        version_analysis_artifacts = save_analysis_artifacts(
+            output_prefix=version_output_path.with_suffix(""),
+            mix_signal=export_audio,
+            pre_export_mix_signal=audio,
+            sample_rate=score.sample_rate if score is not None else SAMPLE_RATE,
+            stems=score.render_stems() if score is not None else None,
+            score=score,
+        )
+        version_analysis_manifest_path = Path(
+            str(version_analysis_artifacts["manifest_path"])
+        )
+
+    write_wav(version_output_path, export_audio)
     shutil.copy2(version_output_path, output_path)
 
     if version_plot_path is not None:
@@ -327,6 +341,8 @@ def _build_render_metadata(
             "output_dir": str(output_dir),
             "save_plot": save_plot,
             "save_analysis": save_analysis,
+            "export_target_lufs": _EXPORT_TARGET_LUFS,
+            "export_true_peak_ceiling_dbfs": _EXPORT_TRUE_PEAK_CEILING_DBFS,
         },
         "artifacts": {
             "latest": latest_artifacts,

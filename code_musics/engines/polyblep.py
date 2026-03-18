@@ -10,7 +10,8 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-from scipy.signal import butter, sosfilt, sosfilt_zi
+
+_SUPPORTED_FILTER_MODES = {"lowpass", "bandpass", "highpass", "notch"}
 
 
 def render(
@@ -22,7 +23,7 @@ def render(
     params: dict[str, Any],
     freq_trajectory: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Render a bandlimited oscillator with a time-domain LP filter sweep."""
+    """Render a bandlimited oscillator with a driven ZDF/TPT filter sweep."""
     if duration <= 0:
         raise ValueError("duration must be positive")
     if sample_rate <= 0:
@@ -36,7 +37,8 @@ def render(
     resonance = float(params.get("resonance", 0.0))
     filter_env_amount = float(params.get("filter_env_amount", 0.0))
     filter_env_decay = float(params.get("filter_env_decay", 0.18))
-    n_filter_segments = int(params.get("n_filter_segments", 8))
+    filter_mode = str(params.get("filter_mode", "lowpass")).lower()
+    filter_drive = float(params.get("filter_drive", 0.0))
 
     if cutoff_hz <= 0:
         raise ValueError("cutoff_hz must be positive")
@@ -46,10 +48,15 @@ def render(
         raise ValueError("filter_env_decay must be positive")
     if not 0.0 < pulse_width < 1.0:
         raise ValueError("pulse_width must be between 0 and 1")
-    if n_filter_segments < 1:
-        raise ValueError("n_filter_segments must be at least 1")
     if waveform not in {"saw", "square"}:
         raise ValueError(f"Unsupported waveform: {waveform!r}. Use 'saw' or 'square'.")
+    if filter_mode not in _SUPPORTED_FILTER_MODES:
+        raise ValueError(
+            f"Unsupported filter_mode: {filter_mode!r}. "
+            "Use 'lowpass', 'bandpass', 'highpass', or 'notch'."
+        )
+    if filter_drive < 0:
+        raise ValueError("filter_drive must be non-negative")
 
     n_samples = int(sample_rate * duration)
     if n_samples == 0:
@@ -83,13 +90,13 @@ def render(
     keytracked_cutoff = cutoff_hz * np.power(freq_profile / reference_freq_hz, keytrack)
     cutoff_profile = np.clip(keytracked_cutoff * cutoff_envelope, 20.0, nyquist * 0.98)
 
-    filtered = _apply_segmented_filter(
+    filtered = _apply_zdf_svf(
         raw_signal,
         cutoff_profile=cutoff_profile,
         resonance=resonance,
         sample_rate=sample_rate,
-        n_segments=n_filter_segments,
-        pre_filter_signal=raw_signal,
+        filter_mode=filter_mode,
+        filter_drive=filter_drive,
     )
 
     # Peak-normalize like fm.py (filter sweep causes uneven amplitude)
@@ -132,43 +139,56 @@ def _polyblep_square(
     return square
 
 
-def _apply_segmented_filter(
+def _apply_zdf_svf(
     signal: np.ndarray,
     *,
     cutoff_profile: np.ndarray,
     resonance: float,
     sample_rate: int,
-    n_segments: int,
-    pre_filter_signal: np.ndarray,
+    filter_mode: str,
+    filter_drive: float,
 ) -> np.ndarray:
-    """Apply a piecewise Butterworth low-pass, carrying filter state across segments."""
-    nyquist = sample_rate / 2.0
-    n_samples = len(signal)
-    filtered = np.empty(n_samples, dtype=np.float64)
-    segment_bounds = np.linspace(0, n_samples, n_segments + 1, dtype=int)
+    """Apply a per-sample ZDF/TPT state-variable filter."""
+    filtered = np.empty_like(signal, dtype=np.float64)
+    low_state = 0.0
+    band_state = 0.0
 
-    zi: np.ndarray | None = None
-    for seg_idx in range(n_segments):
-        start = int(segment_bounds[seg_idx])
-        end = int(segment_bounds[seg_idx + 1])
-        if start >= end:
-            continue
-        mid = (start + end) // 2
-        cutoff_norm = (
-            float(cutoff_profile[mid]) / nyquist
-        )  # already clipped to [0, 0.98]
-        sos = butter(2, cutoff_norm, btype="low", output="sos")
-        if zi is None:
-            zi = np.asarray(sosfilt_zi(sos)) * signal[start]  # pyright: ignore[reportOperatorIssue]
-        filtered[start:end], zi = sosfilt(sos, signal[start:end], zi=zi)
+    drive_gain = 1.0 + (4.0 * filter_drive)
+    resonance_clamped = float(np.clip(resonance, 0.0, 1.2))
+    q = 0.707 + (11.293 * resonance_clamped)
+    damping = 1.0 / q
 
-    if resonance > 0.0:
-        fc = float(np.median(cutoff_profile))
-        if fc > 80.0:  # guard against unstable narrow bandpass at very low fc
-            low = np.clip(fc * 0.7 / nyquist, 1e-4, 0.49)
-            high = np.clip(fc * 1.3 / nyquist, low + 1e-4, 0.9999)
-            sos_bp = butter(2, [low, high], btype="band", output="sos")
-            bp_out = np.asarray(sosfilt(sos_bp, pre_filter_signal))  # pyright: ignore[reportArgumentType]
-            filtered = filtered + resonance * 2.0 * bp_out
+    for index, sample in enumerate(signal):
+        cutoff = float(cutoff_profile[index])
+        g = np.tan(np.pi * cutoff / sample_rate)
 
-    return filtered
+        driven_input = _soft_clip(sample * drive_gain)
+        feedback = _soft_clip(
+            (low_state + (damping * band_state)) * (1.0 + filter_drive)
+        )
+
+        high = (driven_input - feedback) / (1.0 + (damping * g) + (g * g))
+        band = (g * high) + band_state
+        low = (g * band) + low_state
+
+        band_state = (g * high) + band
+        low_state = (g * band) + low
+
+        if filter_mode == "lowpass":
+            output = low
+        elif filter_mode == "bandpass":
+            output = band
+        elif filter_mode == "highpass":
+            output = high
+        else:
+            output = low + high
+
+        filtered[index] = _soft_clip(output * (1.0 + (0.35 * filter_drive)))
+
+    compensation = 1.0 / (1.0 + (0.6 * filter_drive))
+    return filtered * compensation
+
+
+def _soft_clip(value: float) -> float:
+    """Return a stable soft-clipped sample."""
+    return float(np.tanh(value))

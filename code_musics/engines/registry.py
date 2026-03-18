@@ -142,6 +142,8 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "filter_env_amount": 0.45,
             "filter_env_decay": 0.90,
             "keytrack": 0.05,
+            "filter_mode": "lowpass",
+            "filter_drive": 0.12,
         },
     },
 }

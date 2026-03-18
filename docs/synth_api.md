@@ -8,6 +8,8 @@ The rendering path is frequency-first:
 - `NoteEvent.partial` resolves against `Score.f0`
 - `NoteEvent.freq` uses an absolute frequency directly
 - optional `NoteEvent.pitch_motion` expands that base pitch into a per-sample trajectory
+- optional automation can also generate a per-sample pitch-ratio trajectory or
+  note-start synth-param changes
 - synth engines receive a concrete `freq` in Hz, not a MIDI note number
 
 ## Where This Is Used
@@ -61,8 +63,9 @@ At render time, note loudness and timbre are resolved in roughly this order:
 2. note `velocity` is combined with any `velocity_humanize` multiplier
 3. the resolved velocity is converted to a dB offset via `velocity_db_per_unit`
 4. any `velocity_to_params` mappings write synth params from the resolved velocity
-5. the engine renders with those params
-6. ADSR is applied, including any `envelope_humanize`
+5. voice and note automation can adjust supported synth params
+6. the engine renders with those params
+7. ADSR is applied, including any `envelope_humanize`
 
 Important consequences:
 
@@ -165,6 +168,28 @@ Unsupported in v1:
 If pitch motion is attached to a note rendered through `noise_perc`, rendering
 raises `ValueError` rather than silently ignoring the motion.
 
+## Automation
+
+Automation is now a first-class score surface alongside velocity and humanization.
+
+Current v1 targets:
+
+- `pitch_ratio` for per-sample pitch motion
+- supported synth params for note-start modulation:
+  `cutoff_hz`, `resonance`, `brightness_tilt`, `filter_env_amount`,
+  `mod_index`, `attack`, `decay`, `sustain_level`, and `release`
+
+Attachment points:
+
+- `Voice.automation` for score-time lanes
+- `NoteEvent.automation` for note-local lanes
+
+Important v1 limits:
+
+- `pitch_ratio` automation is per-sample
+- synth-param automation is sampled at note start
+- `pitch_motion` and `pitch_ratio` automation cannot be combined on the same note
+
 ## Engine Selection
 
 Set the engine with:
@@ -225,7 +250,8 @@ Parameters:
 - `plugin_name: str | None`
   Registered plugin id. Current built-in ids are `chow_tape`, `tal_chorus_lx`,
   `tal_reverb2`, `dragonfly_plate`, `dragonfly_room`, `dragonfly_hall`,
-  `dragonfly_early`, `lsp_compressor_stereo`, and `lsp_compressor_stereo_vst2`.
+  `dragonfly_early`, `lsp_compressor_stereo`, `lsp_limiter_stereo`, and
+  `lsp_compressor_stereo_vst2`.
 - `plugin_path: str | None`
   Explicit plugin path. Use this for ad hoc plugins that are not in the registry.
 - `plugin_format: str`
@@ -240,6 +266,7 @@ Notes:
 - the current backend supports VST3 plugins through `pedalboard`
 - `lsp_compressor_stereo` targets the multi-plugin LSP VST3 bundle and preloads a
   small local Cairo runtime shim before loading `Compressor Stereo`
+- `lsp_limiter_stereo` targets the same LSP VST3 bundle and loads `Limiter Stereo`
 - `lsp_compressor_stereo_vst2` remains registered as the direct Linux VST2 `.so`
   target, but it still needs a future VST2-capable backend before it can run here
 - Linux `.so` / VST2 / LV2 are not hosted yet; the abstraction is in place so a
@@ -712,7 +739,8 @@ Implementation: [code_musics/engines/polyblep.py](/home/jan/workspace/code-music
 Time-domain bandlimited oscillator using polynomial BLEPs (Bandlimited Step
 functions). Generates waveforms directly rather than summing sine harmonics, so
 there is no Gibbs phenomenon at discontinuities. The resulting sound has a smooth
-analog character with a correct `1/n` harmonic spectrum.
+analog character with a correct `1/n` harmonic spectrum, then passes through an
+internal zero-delay-feedback / topology-preserving state-variable filter.
 
 Parameters:
 
@@ -722,6 +750,9 @@ Parameters:
   Pulse width used when `waveform="square"`. `0.5` is a symmetric square wave.
 - `cutoff_hz: float`
   Base low-pass cutoff in Hertz. Default `3000.0`.
+- `filter_mode: str`
+  Filter response mode. Supported values: `lowpass`, `bandpass`, `highpass`,
+  `notch`. Default `lowpass`.
 - `keytrack: float`
   Exponent controlling how strongly the cutoff follows note pitch relative to
   `reference_freq_hz`. Default `0.0` (no tracking).
@@ -729,39 +760,43 @@ Parameters:
   Reference pitch for key tracking. When the note frequency equals this value, the
   effective cutoff is `cutoff_hz` before envelope modulation. Default `220.0`.
 - `resonance: float`
-  Adds a bandpass layer centered on the median cutoff for analog resonance
-  character. Default `0.0`.
+  Resonance emphasis for the internal state-variable filter. Higher values sharpen
+  the cutoff region and make the filter feel more analog/reactive. Default `0.0`.
+- `filter_drive: float`
+  Analog-inspired drive amount inside the filter path. `0` is clean; higher values
+  thicken and soften the response. Default `0.0`.
 - `filter_env_amount: float`
   Multiplier controlling how much the cutoff starts above the base `cutoff_hz` at
   note onset. Default `0.0`.
 - `filter_env_decay: float`
   Time constant in seconds for the cutoff envelope to decay back toward the base
   cutoff. Default `0.18`.
-- `n_filter_segments: int`
-  Number of piecewise segments used to approximate the sweeping filter. Higher
-  values give smoother sweeps at the cost of slightly more CPU. Default `8`.
 
 Validation:
 
 - `cutoff_hz > 0`
 - `reference_freq_hz > 0`
 - `filter_env_decay > 0`
+- `filter_drive >= 0`
 - `0 < pulse_width < 1`
-- `n_filter_segments >= 1`
 - `waveform in {"saw", "square"}`
+- `filter_mode in {"lowpass", "bandpass", "highpass", "notch"}`
 
 Notes:
 
 - Unlike `filtered_stack`, the spectrum is generated in the time domain, so there
   is no `n_harmonics` cap and no Gibbs ringing at waveform discontinuities.
+- The filter sweep is handled sample by sample through a topology-preserving
+  state-variable filter, so modulation is smoother and more analog-like than the
+  previous segmented approximation.
 - The output is peak-normalized before the final amplitude scale, matching the
   behavior of the `fm` engine.
 - Supports `freq_trajectory` for pitch motion.
 
 Presets:
 
-- `warm_lead` — saw wave with a gentle filter envelope and light resonance, useful
-  as a drop-in analog lead.
+- `warm_lead` — saw wave with a gentle filter envelope, light resonance, and a
+  touch of filter drive, useful as a drop-in analog lead.
 
 Example:
 
@@ -772,8 +807,10 @@ score.add_voice(
         "engine": "polyblep",
         "waveform": "saw",
         "cutoff_hz": 2500.0,
+        "filter_mode": "lowpass",
         "keytrack": 0.08,
         "resonance": 0.12,
+        "filter_drive": 0.18,
         "filter_env_amount": 0.6,
         "filter_env_decay": 0.5,
         "attack": 0.01,

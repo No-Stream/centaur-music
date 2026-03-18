@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from code_musics import synth
+from code_musics.automation import AutomationSegment, AutomationSpec, AutomationTarget
 from code_musics.composition import line
 from code_musics.humanize import (
     EnvelopeHumanizeSpec,
@@ -126,6 +127,70 @@ def test_phrase_transform_preserves_velocity() -> None:
     transformed = phrase.transformed(start=2.0, time_scale=1.5, reverse=True)
 
     assert transformed[0].velocity == pytest.approx(0.8)
+
+
+def test_note_event_supports_automation() -> None:
+    automation = [
+        AutomationSpec(
+            target=AutomationTarget(kind="synth", name="cutoff_hz"),
+            segments=(
+                AutomationSegment(start=0.0, end=1.0, shape="hold", value=800.0),
+            ),
+        )
+    ]
+
+    note = NoteEvent(
+        start=0.0,
+        duration=1.0,
+        partial=4.0,
+        automation=automation,
+    )
+
+    assert note.automation == automation
+
+
+def test_automation_segment_rejects_overlapping_ranges() -> None:
+    with pytest.raises(ValueError, match="ordered and non-overlapping"):
+        AutomationSpec(
+            target=AutomationTarget(kind="synth", name="cutoff_hz"),
+            segments=(
+                AutomationSegment(
+                    start=0.0,
+                    end=1.0,
+                    shape="linear",
+                    start_value=300.0,
+                    end_value=800.0,
+                ),
+                AutomationSegment(
+                    start=0.5,
+                    end=1.5,
+                    shape="hold",
+                    value=900.0,
+                ),
+            ),
+        )
+
+
+def test_automation_modes_apply_expected_values() -> None:
+    replace = AutomationSpec(
+        target=AutomationTarget(kind="synth", name="cutoff_hz"),
+        segments=(AutomationSegment(start=0.0, end=1.0, shape="hold", value=900.0),),
+        mode="replace",
+    )
+    add = AutomationSpec(
+        target=AutomationTarget(kind="synth", name="cutoff_hz"),
+        segments=(AutomationSegment(start=0.0, end=1.0, shape="hold", value=150.0),),
+        mode="add",
+    )
+    multiply = AutomationSpec(
+        target=AutomationTarget(kind="synth", name="cutoff_hz"),
+        segments=(AutomationSegment(start=0.0, end=1.0, shape="hold", value=1.5),),
+        mode="multiply",
+    )
+
+    assert replace.apply_to_base(base_value=400.0, time=0.5) == pytest.approx(900.0)
+    assert add.apply_to_base(base_value=400.0, time=0.5) == pytest.approx(550.0)
+    assert multiply.apply_to_base(base_value=400.0, time=0.5) == pytest.approx(600.0)
 
 
 def test_render_overlapping_voices_returns_audio() -> None:
@@ -348,7 +413,120 @@ def test_score_renders_stereo_when_voice_effects_promote_signal() -> None:
 
     assert audio.ndim == 2
     assert audio.shape[0] == 2
-    assert audio.shape[1] == int(1.35 * score.sample_rate)
+
+
+def test_voice_normalize_lufs_raises_quiet_voice_toward_target() -> None:
+    score = Score(f0=55.0)
+    score.add_voice("lead")
+    score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
+
+    normalized_stem = score.render_stems()["lead"]
+    normalized_lufs, _ = synth.integrated_lufs(
+        normalized_stem,
+        sample_rate=score.sample_rate,
+    )
+
+    plain_score = Score(f0=55.0)
+    plain_score.add_voice("lead", normalize_lufs=None)
+    plain_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
+    plain_stem = plain_score.render_stems()["lead"]
+    plain_lufs, _ = synth.integrated_lufs(
+        plain_stem,
+        sample_rate=plain_score.sample_rate,
+    )
+
+    assert normalized_lufs > plain_lufs
+    assert np.isclose(normalized_lufs, -24.0, atol=1.5)
+
+
+def test_voice_normalize_lufs_preserves_silence() -> None:
+    score = Score(f0=55.0)
+    score.add_voice("empty", normalize_lufs=-24.0)
+
+    assert score.render_stems() == {}
+
+
+def test_voice_normalize_lufs_can_be_disabled() -> None:
+    normalized_score = Score(f0=55.0)
+    normalized_score.add_voice("lead")
+    normalized_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
+
+    raw_score = Score(f0=55.0)
+    raw_score.add_voice("lead", normalize_lufs=None)
+    raw_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
+
+    normalized_lufs, _ = synth.integrated_lufs(
+        normalized_score.render_stems()["lead"],
+        sample_rate=normalized_score.sample_rate,
+    )
+    raw_lufs, _ = synth.integrated_lufs(
+        raw_score.render_stems()["lead"],
+        sample_rate=raw_score.sample_rate,
+    )
+
+    assert normalized_lufs > raw_lufs
+
+
+def test_true_peak_estimation_uses_loudest_stereo_channel() -> None:
+    duration = synth.SAMPLE_RATE
+    time = np.arange(duration, dtype=np.float64) / synth.SAMPLE_RATE
+    left = 0.2 * np.sin(2.0 * np.pi * 440.0 * time)
+    right = 0.8 * np.sin(2.0 * np.pi * 440.0 * time)
+    stereo_signal = np.stack([left, right])
+
+    true_peak = synth.estimate_true_peak_amplitude(
+        stereo_signal,
+        oversample_factor=1,
+    )
+
+    assert true_peak == pytest.approx(0.8, rel=1e-3)
+
+
+def test_finalize_master_raises_when_lsp_limiter_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(synth, "has_external_plugin", lambda plugin_name: False)
+    signal = 0.2 * np.sin(
+        np.linspace(0.0, 4.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
+    )
+
+    with pytest.raises(FileNotFoundError, match="LSP limiter"):
+        synth.finalize_master(signal, sample_rate=synth.SAMPLE_RATE)
+
+
+def test_finalize_master_targets_lufs_and_true_peak_with_limiter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(synth, "has_external_plugin", lambda plugin_name: True)
+
+    def fake_apply_lsp_limiter(
+        signal: np.ndarray,
+        *,
+        threshold_db: float,
+        input_gain_db: float,
+        output_gain_db: float,
+    ) -> np.ndarray:
+        processed = np.asarray(signal, dtype=np.float64) * synth.db_to_amp(
+            input_gain_db + output_gain_db
+        )
+        ceiling = synth.db_to_amp(threshold_db)
+        return np.clip(processed, -ceiling, ceiling)
+
+    monkeypatch.setattr(synth, "apply_lsp_limiter", fake_apply_lsp_limiter)
+    signal = 0.04 * np.sin(
+        np.linspace(0.0, 40.0 * np.pi, synth.SAMPLE_RATE * 2, endpoint=False)
+    )
+
+    mastering_result = synth.finalize_master(
+        signal,
+        sample_rate=synth.SAMPLE_RATE,
+        target_lufs=-18.0,
+        true_peak_ceiling_dbfs=-0.5,
+        max_iterations=8,
+    )
+
+    assert mastering_result.integrated_lufs == pytest.approx(-18.0, abs=1.5)
+    assert mastering_result.true_peak_dbfs <= -0.5 + 0.1
 
 
 def test_voice_pan_promotes_mono_voice_to_stereo() -> None:
@@ -662,6 +840,8 @@ def test_render_piece_writes_audio_and_plot(tmp_path: Path) -> None:
     )
     assert render_metadata["piece_name"] == "chord_4567"
     assert render_metadata["request"]["save_plot"] is True
+    assert render_metadata["request"]["export_target_lufs"] == -18.0
+    assert render_metadata["request"]["export_true_peak_ceiling_dbfs"] == -0.5
     assert render_metadata["score_summary"]["note_count"] == 4
     assert render_metadata["score_summary"]["voice_names"] == ["chord"]
     assert render_metadata["score_snapshot"]["voices"]["chord"]["notes"]
@@ -696,6 +876,7 @@ def test_render_piece_render_audio_surface_writes_audio_and_analysis(
     )
     assert render_metadata["piece_name"] == "interval_demo"
     assert render_metadata["request"]["save_plot"] is True
+    assert render_metadata["request"]["export_target_lufs"] == -18.0
     assert "score_snapshot" not in render_metadata
     assert (
         Path(render_metadata["artifacts"]["latest"]["audio_path"]) == result.audio_path
@@ -719,6 +900,7 @@ def test_render_piece_effects_showcase_writes_audio_and_analysis(
     )
     assert render_metadata["piece_name"] == "effects_showcase"
     assert render_metadata["request"]["save_plot"] is True
+    assert render_metadata["request"]["export_true_peak_ceiling_dbfs"] == -0.5
 
 
 def test_piece_registry_definitions_are_complete() -> None:

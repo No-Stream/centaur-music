@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from code_musics.automation import AutomationSegment, AutomationSpec, AutomationTarget
 from code_musics.engines.registry import render_note_signal, resolve_synth_params
 from code_musics.humanize import VelocityHumanizeSpec
 from code_musics.pitch_motion import PitchMotionSpec
@@ -220,6 +221,164 @@ def test_pitch_motion_is_rejected_for_noise_perc() -> None:
         )
 
 
+def test_voice_automation_changes_note_start_synth_params() -> None:
+    static_score = Score(f0=110.0)
+    static_score.add_voice(
+        "lead",
+        synth_defaults={"engine": "filtered_stack", "preset": "round_bass"},
+        velocity_humanize=None,
+    )
+    static_score.add_note("lead", start=0.0, duration=0.5, partial=1.0, amp=0.25)
+
+    automated_score = Score(f0=110.0)
+    automated_score.add_voice(
+        "lead",
+        synth_defaults={"engine": "filtered_stack", "preset": "round_bass"},
+        velocity_humanize=None,
+        automation=[
+            AutomationSpec(
+                target=AutomationTarget(kind="synth", name="cutoff_hz"),
+                segments=(
+                    AutomationSegment(
+                        start=0.0,
+                        end=1.0,
+                        shape="hold",
+                        value=1800.0,
+                    ),
+                ),
+            )
+        ],
+    )
+    automated_score.add_note("lead", start=0.0, duration=0.5, partial=1.0, amp=0.25)
+
+    static_audio = static_score.render()
+    automated_audio = automated_score.render()
+
+    assert static_audio.shape == automated_audio.shape
+    assert np.max(np.abs(static_audio - automated_audio)) > 1e-4
+
+
+def test_note_automation_overrides_voice_automation_on_same_target() -> None:
+    score = Score(f0=110.0)
+    score.add_voice(
+        "lead",
+        synth_defaults={"engine": "filtered_stack", "preset": "round_bass"},
+        velocity_humanize=None,
+        automation=[
+            AutomationSpec(
+                target=AutomationTarget(kind="synth", name="cutoff_hz"),
+                segments=(
+                    AutomationSegment(start=0.0, end=2.0, shape="hold", value=300.0),
+                ),
+            )
+        ],
+    )
+    score.add_note(
+        "lead",
+        start=0.0,
+        duration=0.5,
+        partial=1.0,
+        amp=0.25,
+        automation=[
+            AutomationSpec(
+                target=AutomationTarget(kind="synth", name="cutoff_hz"),
+                segments=(
+                    AutomationSegment(start=0.0, end=0.5, shape="hold", value=1800.0),
+                ),
+            )
+        ],
+    )
+
+    overridden_audio = score.render()
+
+    reference = Score(f0=110.0)
+    reference.add_voice(
+        "lead",
+        synth_defaults={
+            "engine": "filtered_stack",
+            "preset": "round_bass",
+            "cutoff_hz": 1800.0,
+        },
+        velocity_humanize=None,
+    )
+    reference.add_note("lead", start=0.0, duration=0.5, partial=1.0, amp=0.25)
+    reference_audio = reference.render()
+
+    assert overridden_audio.shape == reference_audio.shape
+    assert np.allclose(overridden_audio, reference_audio)
+
+
+def test_pitch_ratio_automation_renders_per_sample_pitch_motion() -> None:
+    static_score = Score(f0=110.0)
+    static_score.add_voice(
+        "lead", synth_defaults={"engine": "additive", "preset": "bright_pluck"}
+    )
+    static_score.add_note("lead", start=0.0, duration=0.5, partial=2.0, amp=0.25)
+
+    automated_score = Score(f0=110.0)
+    automated_score.add_voice(
+        "lead", synth_defaults={"engine": "additive", "preset": "bright_pluck"}
+    )
+    automated_score.add_note(
+        "lead",
+        start=0.0,
+        duration=0.5,
+        partial=2.0,
+        amp=0.25,
+        automation=[
+            AutomationSpec(
+                target=AutomationTarget(kind="pitch_ratio", name="pitch_ratio"),
+                segments=(
+                    AutomationSegment(
+                        start=0.0,
+                        end=0.5,
+                        shape="linear",
+                        start_value=1.0,
+                        end_value=1.5,
+                    ),
+                ),
+            )
+        ],
+    )
+
+    static_audio = static_score.render()
+    automated_audio = automated_score.render()
+
+    assert static_audio.shape == automated_audio.shape
+    assert np.max(np.abs(static_audio - automated_audio)) > 1e-4
+
+
+def test_pitch_ratio_automation_conflicts_with_pitch_motion() -> None:
+    score = Score(f0=110.0)
+    score.add_voice(
+        "lead", synth_defaults={"engine": "additive", "preset": "bright_pluck"}
+    )
+    score.add_note(
+        "lead",
+        start=0.0,
+        duration=0.5,
+        partial=2.0,
+        amp=0.25,
+        pitch_motion=PitchMotionSpec.linear_bend(target_partial=3.0),
+        automation=[
+            AutomationSpec(
+                target=AutomationTarget(kind="pitch_ratio", name="pitch_ratio"),
+                segments=(
+                    AutomationSegment(
+                        start=0.0,
+                        end=0.5,
+                        shape="hold",
+                        value=1.0,
+                    ),
+                ),
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="pitch_ratio automation"):
+        score.render()
+
+
 def test_attack_and_release_scales_change_rendered_envelope() -> None:
     neutral = Score(f0=110.0)
     neutral.add_voice(
@@ -268,6 +427,7 @@ def test_velocity_changes_rendered_loudness_on_db_scale() -> None:
             "lead",
             synth_defaults={"engine": "additive", "preset": "bright_pluck"},
             velocity_humanize=None,
+            normalize_lufs=None,
         )
 
     soft.add_note(

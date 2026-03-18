@@ -27,17 +27,17 @@
 
 - `NoteEvent` is the atomic musical event. It stores timing, amplitude, and either a
   `partial` relative to `Score.f0` or an absolute `freq`.
-- `NoteEvent` also supports per-note `velocity`, `amp_db`, and optional
-  `pitch_motion`. Velocity is a first-class expressive control now, not just an
-  engine detail.
+- `NoteEvent` also supports per-note `velocity`, `amp_db`, optional
+  `pitch_motion`, and optional note-local automation.
 - `Phrase` is a reusable collection of relative-time `NoteEvent`s. Use it for motifs,
   sequences, and transformed restatement.
 - `Score.add_note(...)` is the escape hatch for one-off pedals, accents, blooms, and
   transitions.
 - `Score.add_phrase(...)` is the main composing API. It supports placement transforms
   like `time_scale`, `partial_shift`, `amp_scale`, and `reverse`.
-- `Voice` stores note events plus synth defaults, voice-level effects, pan, envelope
-  humanization, velocity humanization, and optional velocity-to-parameter mappings.
+- `Voice` stores note events plus synth defaults, voice-level effects, pan,
+  humanization settings, optional velocity-to-parameter mappings, and optional
+  voice-time automation.
 - `Score` owns the timeline, derives `total_dur`, renders audio, and can save a
   piano-roll plot.
 - `Score.timing_humanize` applies render-time ensemble timing drift across the whole
@@ -62,6 +62,8 @@
   current "env slop" surface.
 - `timing_humanize` is score-level. Use it for ensemble looseness and shared drift,
   not for rewriting rhythmic structure.
+- automation is the explicit parameter-motion surface. Use it for deliberate
+  sweeps, bends, and timbral motion; use humanization for subtle living variation.
 - When documenting or changing these APIs, keep `AGENTS.md` high-level and put the
   parameter-by-parameter details in `docs/score_api.md`,
   `docs/composition_api.md`, and
@@ -184,6 +186,7 @@ See `FUTURE.md` for way more ideas.
 - Focus on realistic, e2e tests (smoke, integration).  
 - No need for trivial tests or testing each unexpected edge case. First and foremost, tests should validate that code runs properly, end to end, without major bugs; and they should prevent regressions.
 - Backward compatibility is not always required or expected; this is a local, creative library not a business one.
+- No fallbacks. Fail fast!
 
 ---
 

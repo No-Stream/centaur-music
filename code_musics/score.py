@@ -10,6 +10,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from code_musics import synth
+from code_musics.automation import (
+    AutomationSpec,
+    apply_synth_automation,
+    build_pitch_ratio_trajectory,
+    has_pitch_ratio_automation,
+)
 from code_musics.engines import render_note_signal, resolve_synth_params
 from code_musics.humanize import (
     EnvelopeHumanizeSpec,
@@ -46,6 +52,7 @@ class NoteEvent:
     synth: dict[str, Any] | None = None
     label: str | None = None
     pitch_motion: PitchMotionSpec | None = None
+    automation: list[AutomationSpec] | None = None
 
     def __post_init__(self) -> None:
         if self.duration <= 0:
@@ -199,7 +206,9 @@ class Voice:
     velocity_group: str | None = None
     velocity_to_params: dict[str, VelocityParamMap] = field(default_factory=dict)
     velocity_db_per_unit: float = 12.0
+    normalize_lufs: float | None = -24.0
     pan: float = 0.0
+    automation: list[AutomationSpec] = field(default_factory=list)
     notes: list[NoteEvent] = field(default_factory=list)
 
 
@@ -224,13 +233,17 @@ class Score:
         velocity_group: str | None = None,
         velocity_to_params: dict[str, VelocityParamMap] | None = None,
         velocity_db_per_unit: float = 12.0,
+        normalize_lufs: float | None = -24.0,
         pan: float = 0.0,
+        automation: list[AutomationSpec] | None = None,
     ) -> Voice:
         """Add or replace a named voice definition."""
         if not -1.0 <= pan <= 1.0:
             raise ValueError("pan must be between -1 and 1")
         if velocity_db_per_unit < 0:
             raise ValueError("velocity_db_per_unit must be non-negative")
+        if normalize_lufs is not None and not np.isfinite(normalize_lufs):
+            raise ValueError("normalize_lufs must be finite when provided")
         voice = Voice(
             name=name,
             synth_defaults=dict(synth_defaults or {}),
@@ -244,7 +257,9 @@ class Score:
             velocity_group=velocity_group,
             velocity_to_params=dict(velocity_to_params or {}),
             velocity_db_per_unit=velocity_db_per_unit,
+            normalize_lufs=normalize_lufs,
             pan=pan,
+            automation=list(automation or []),
         )
         self.voices[name] = voice
         return voice
@@ -269,6 +284,7 @@ class Score:
         pitch_motion: PitchMotionSpec | None = None,
         synth: dict[str, Any] | None = None,
         label: str | None = None,
+        automation: list[AutomationSpec] | None = None,
     ) -> NoteEvent:
         """Add a single note event to a voice."""
         note = NoteEvent(
@@ -282,6 +298,7 @@ class Score:
             synth=dict(synth) if synth is not None else None,
             label=label,
             pitch_motion=pitch_motion,
+            automation=list(automation) if automation is not None else None,
         )
         self.get_voice(voice_name).notes.append(note)
         return note
@@ -415,6 +432,13 @@ class Score:
                     for param_name, velocity_map in voice.velocity_to_params.items()
                 }
             )
+            note_automation = list(note.automation or [])
+            synth_params = apply_synth_automation(
+                params=synth_params,
+                voice_automation=voice.automation,
+                note_automation=note_automation,
+                note_start=note.start,
+            )
             attack_scale = float(synth_params.pop("attack_scale", 1.0))
             release_scale = float(synth_params.pop("release_scale", 1.0))
             note_freq = self._resolve_freq(note)
@@ -435,6 +459,13 @@ class Score:
             held_samples = int(note.duration * self.sample_rate)
             total_samples = int((note.duration + release) * self.sample_rate)
             freq_trajectory = None
+            if note.pitch_motion is not None and (
+                has_pitch_ratio_automation(voice.automation)
+                or has_pitch_ratio_automation(note_automation)
+            ):
+                raise ValueError(
+                    "pitch_ratio automation cannot be combined with pitch_motion on the same note"
+                )
             if note.pitch_motion is not None:
                 held_trajectory = build_frequency_trajectory(
                     base_freq=note_freq,
@@ -449,6 +480,24 @@ class Score:
                     freq_trajectory = np.concatenate([held_trajectory, release_tail])
                 else:
                     freq_trajectory = held_trajectory
+            else:
+                held_trajectory = build_pitch_ratio_trajectory(
+                    base_freq=note_freq,
+                    duration=note.duration,
+                    sample_rate=self.sample_rate,
+                    voice_automation=voice.automation,
+                    note_automation=note_automation,
+                    note_start=note.start,
+                )
+                if held_trajectory is not None:
+                    release_samples = max(0, total_samples - held_samples)
+                    if release_samples > 0:
+                        release_tail = np.full(release_samples, held_trajectory[-1])
+                        freq_trajectory = np.concatenate(
+                            [held_trajectory, release_tail]
+                        )
+                    else:
+                        freq_trajectory = held_trajectory
 
             note_signal = render_note_signal(
                 freq=note_freq,
@@ -479,6 +528,12 @@ class Score:
             return np.zeros(0)
 
         voice_mix = self._stack_signals(voice_signals)
+        if voice.normalize_lufs is not None:
+            voice_mix = synth.normalize_to_lufs(
+                voice_mix,
+                sample_rate=self.sample_rate,
+                target_lufs=voice.normalize_lufs,
+            )
         if voice.pan != 0.0:
             voice_mix = synth.apply_pan(voice_mix, pan=voice.pan)
         if voice.effects:

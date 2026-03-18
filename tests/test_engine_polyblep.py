@@ -71,6 +71,71 @@ class TestPolyBLEPSpectral:
         high_upper_energy = np.sum(spectrum_high[mid:] ** 2)
         assert high_upper_energy > low_upper_energy
 
+    def test_filter_modes_materially_change_the_sound(self) -> None:
+        base_params = {
+            "waveform": "saw",
+            "cutoff_hz": 1_200.0,
+            "resonance": 0.18,
+            "filter_env_amount": 0.3,
+        }
+        lowpass = render(
+            freq=220.0,
+            duration=0.4,
+            amp=0.8,
+            sample_rate=44100,
+            params={**base_params, "filter_mode": "lowpass"},
+        )
+        bandpass = render(
+            freq=220.0,
+            duration=0.4,
+            amp=0.8,
+            sample_rate=44100,
+            params={**base_params, "filter_mode": "bandpass"},
+        )
+        notch = render(
+            freq=220.0,
+            duration=0.4,
+            amp=0.8,
+            sample_rate=44100,
+            params={**base_params, "filter_mode": "notch"},
+        )
+
+        assert not np.allclose(lowpass, bandpass)
+        assert not np.allclose(lowpass, notch)
+        assert np.linalg.norm(lowpass - bandpass) > 1.0
+        assert np.linalg.norm(lowpass - notch) > 1.0
+
+    def test_filter_drive_changes_the_sound_without_instability(self) -> None:
+        clean = render(
+            freq=110.0,
+            duration=0.4,
+            amp=0.8,
+            sample_rate=44100,
+            params={
+                "waveform": "saw",
+                "cutoff_hz": 900.0,
+                "resonance": 0.25,
+                "filter_drive": 0.0,
+            },
+        )
+        driven = render(
+            freq=110.0,
+            duration=0.4,
+            amp=0.8,
+            sample_rate=44100,
+            params={
+                "waveform": "saw",
+                "cutoff_hz": 900.0,
+                "resonance": 0.25,
+                "filter_drive": 0.8,
+            },
+        )
+
+        assert np.isfinite(driven).all()
+        assert np.max(np.abs(driven)) > 0.0
+        assert not np.allclose(clean, driven)
+        assert np.linalg.norm(clean - driven) > 1.0
+
     def test_pulse_width_affects_square(self) -> None:
         dur = 0.4
         sr = 44100
@@ -123,6 +188,28 @@ class TestPolyBLEPFreqTrajectory:
         assert np.max(np.abs(swept)) > 0
 
 
+class TestPolyBLEPStability:
+    def test_high_resonance_low_cutoff_remains_finite(self) -> None:
+        signal = render(
+            freq=55.0,
+            duration=0.75,
+            amp=0.8,
+            sample_rate=44100,
+            params={
+                "waveform": "square",
+                "cutoff_hz": 140.0,
+                "resonance": 1.0,
+                "filter_drive": 0.6,
+                "filter_mode": "lowpass",
+                "filter_env_amount": 0.2,
+                "filter_env_decay": 0.3,
+            },
+        )
+        assert np.isfinite(signal).all()
+        assert np.max(np.abs(signal)) > 0.0
+        assert np.max(np.abs(signal)) < 2.0
+
+
 class TestPolyBLEPDeterminism:
     def test_deterministic(self) -> None:
         kwargs = dict(
@@ -130,7 +217,13 @@ class TestPolyBLEPDeterminism:
             duration=0.2,
             amp=0.6,
             sample_rate=44100,
-            params={"waveform": "saw", "cutoff_hz": 2000.0, "resonance": 0.1},
+            params={
+                "waveform": "saw",
+                "cutoff_hz": 2000.0,
+                "resonance": 0.1,
+                "filter_drive": 0.2,
+                "filter_mode": "lowpass",
+            },
         )
         a = render(**kwargs)  # type: ignore[arg-type]
         b = render(**kwargs)  # type: ignore[arg-type]

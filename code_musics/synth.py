@@ -1,5 +1,7 @@
 """Core synthesis utilities."""
 
+from __future__ import annotations
+
 import ctypes
 import logging
 import os
@@ -11,7 +13,7 @@ from typing import Any
 import numpy as np
 import pedalboard
 from scipy.io import wavfile
-from scipy.signal import butter, resample_poly, sosfilt
+from scipy.signal import butter, resample_poly, sosfilt, tf2sos
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -38,6 +40,15 @@ class ExternalPluginSpec:
 PluginConfigurer = Callable[[Any, dict[str, Any]], None]
 
 
+@dataclass(frozen=True)
+class MasteringResult:
+    """Finalized export audio plus its summary measurements."""
+
+    signal: np.ndarray
+    integrated_lufs: float
+    true_peak_dbfs: float
+
+
 def db_to_amp(db: float) -> float:
     """Convert decibels to a linear amplitude multiplier."""
     return float(10.0 ** (db / 20.0))
@@ -50,6 +61,309 @@ def amp_to_db(amp: float) -> float:
     return float(20.0 * np.log10(amp))
 
 
+def to_mono_reference(signal: np.ndarray) -> np.ndarray:
+    """Return a mono analysis reference for mono or stereo audio."""
+    normalized = np.asarray(signal, dtype=np.float64)
+    if normalized.ndim == 1:
+        return normalized
+    if normalized.ndim == 2:
+        return np.asarray(
+            np.mean(normalized, axis=0, dtype=np.float64), dtype=np.float64
+        )
+    raise ValueError("signal must be mono or stereo")
+
+
+def to_analysis_channels(signal: np.ndarray) -> np.ndarray:
+    """Return analysis channels with shape (channels, samples)."""
+    normalized = np.asarray(signal, dtype=np.float64)
+    if normalized.ndim == 1:
+        return normalized[np.newaxis, :]
+    if normalized.ndim == 2 and normalized.shape[0] == 2:
+        return normalized
+    if normalized.ndim == 2 and normalized.shape[1] == 2:
+        return normalized.T
+    raise ValueError("signal must be mono or stereo")
+
+
+def estimate_true_peak_amplitude(
+    signal: np.ndarray,
+    *,
+    oversample_factor: int = 4,
+) -> float:
+    """Estimate inter-sample peak amplitude via simple oversampling."""
+    channels = to_analysis_channels(signal)
+    if channels.shape[-1] == 0:
+        return 0.0
+    if oversample_factor <= 1:
+        return float(np.max(np.abs(channels)))
+
+    channel_peaks = [
+        float(
+            np.max(
+                np.abs(
+                    np.asarray(
+                        resample_poly(channel, oversample_factor, 1),
+                        dtype=np.float64,
+                    )
+                )
+            )
+        )
+        for channel in channels
+    ]
+    return float(max(channel_peaks, default=0.0))
+
+
+def gated_rms_dbfs(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    window_seconds: float = 0.4,
+    hop_seconds: float = 0.1,
+    gate_dbfs: float = -50.0,
+) -> tuple[float, float]:
+    """Return a silence-aware RMS proxy and the active-window fraction."""
+    mono_reference = to_mono_reference(signal)
+    if mono_reference.size == 0:
+        return float("-inf"), 0.0
+
+    window_samples = max(1, int(round(window_seconds * sample_rate)))
+    hop_samples = max(1, int(round(hop_seconds * sample_rate)))
+    frame_rms_values: list[float] = []
+    for start in range(0, mono_reference.size, hop_samples):
+        frame = mono_reference[start : start + window_samples]
+        if frame.size == 0:
+            continue
+        frame_rms_values.append(float(np.sqrt(np.mean(np.square(frame)))))
+
+    if not frame_rms_values:
+        return float("-inf"), 0.0
+
+    frame_rms = np.asarray(frame_rms_values, dtype=np.float64)
+    active_mask = _amplitude_to_db_array(frame_rms) > gate_dbfs
+    if not np.any(active_mask):
+        active_mask = frame_rms > 1e-12
+    if not np.any(active_mask):
+        return float("-inf"), 0.0
+
+    gated_rms = float(np.sqrt(np.mean(np.square(frame_rms[active_mask]))))
+    return amp_to_db(max(gated_rms, 1e-12)), float(
+        np.mean(active_mask.astype(np.float64))
+    )
+
+
+def integrated_lufs(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    block_seconds: float = 0.4,
+    hop_seconds: float = 0.1,
+    absolute_gate_lufs: float = -70.0,
+) -> tuple[float, float]:
+    """Return BS.1770-style integrated loudness and gated-block fraction."""
+    channels = to_analysis_channels(signal)
+    if channels.shape[-1] == 0:
+        return float("-inf"), 0.0
+
+    weighted_channels = _apply_k_weighting(channels, sample_rate=sample_rate)
+    block_samples = max(1, int(round(block_seconds * sample_rate)))
+    hop_samples = max(1, int(round(hop_seconds * sample_rate)))
+    block_energies = _block_channel_energies(
+        weighted_channels,
+        block_samples=block_samples,
+        hop_samples=hop_samples,
+    )
+    if block_energies.size == 0:
+        return float("-inf"), 0.0
+
+    channel_weights = np.ones(block_energies.shape[1], dtype=np.float64)
+    weighted_block_energy = np.sum(block_energies * channel_weights, axis=1)
+    block_loudness = -0.691 + 10.0 * np.log10(np.maximum(weighted_block_energy, 1e-12))
+
+    absolute_mask = block_loudness >= absolute_gate_lufs
+    if not np.any(absolute_mask):
+        return float("-inf"), 0.0
+
+    preliminary_energy = float(np.mean(weighted_block_energy[absolute_mask]))
+    preliminary_lufs = -0.691 + 10.0 * np.log10(max(preliminary_energy, 1e-12))
+    relative_gate_lufs = preliminary_lufs - 10.0
+    final_mask = absolute_mask & (block_loudness >= relative_gate_lufs)
+    if not np.any(final_mask):
+        final_mask = absolute_mask
+
+    integrated_energy = float(np.mean(weighted_block_energy[final_mask]))
+    return (
+        -0.691 + 10.0 * np.log10(max(integrated_energy, 1e-12)),
+        float(np.mean(final_mask.astype(np.float64))),
+    )
+
+
+def normalize_to_gated_rms(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    target_dbfs: float,
+    gate_dbfs: float = -50.0,
+    max_gain_db: float = 18.0,
+) -> np.ndarray:
+    """Apply a uniform gain so the signal reaches the target gated RMS level."""
+    current_dbfs, active_window_fraction = gated_rms_dbfs(
+        signal,
+        sample_rate=sample_rate,
+        gate_dbfs=gate_dbfs,
+    )
+    if not np.isfinite(current_dbfs) or active_window_fraction <= 0.0:
+        return np.asarray(signal, dtype=np.float64)
+
+    required_gain_db = float(
+        np.clip(target_dbfs - current_dbfs, -max_gain_db, max_gain_db)
+    )
+    return np.asarray(signal, dtype=np.float64) * db_to_amp(required_gain_db)
+
+
+def normalize_to_lufs(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    target_lufs: float,
+    max_gain_db: float = 18.0,
+) -> np.ndarray:
+    """Apply a uniform gain so the signal reaches the target integrated LUFS."""
+    current_lufs, active_window_fraction = integrated_lufs(
+        signal,
+        sample_rate=sample_rate,
+    )
+    if not np.isfinite(current_lufs) or active_window_fraction <= 0.0:
+        return np.asarray(signal, dtype=np.float64)
+
+    required_gain_db = float(
+        np.clip(target_lufs - current_lufs, -max_gain_db, max_gain_db)
+    )
+    return np.asarray(signal, dtype=np.float64) * db_to_amp(required_gain_db)
+
+
+def _amplitude_to_db_array(amplitudes: np.ndarray) -> np.ndarray:
+    return 20.0 * np.log10(np.maximum(np.asarray(amplitudes, dtype=np.float64), 1e-12))
+
+
+def _apply_k_weighting(channels: np.ndarray, *, sample_rate: int) -> np.ndarray:
+    high_shelf_sos = tf2sos(
+        *_design_high_shelf_biquad(
+            sample_rate=sample_rate,
+            center_hz=1_681.974450955533,
+            q=0.7071752369554196,
+            gain_db=4.0,
+        )
+    )
+    high_pass_sos = tf2sos(
+        *_design_highpass_biquad(
+            sample_rate=sample_rate,
+            cutoff_hz=38.13547087602444,
+            q=0.5003270373238773,
+        )
+    )
+    weighted = np.asarray(channels, dtype=np.float64)
+    weighted = sosfilt(high_shelf_sos, weighted, axis=-1)
+    weighted = sosfilt(high_pass_sos, weighted, axis=-1)
+    return np.asarray(weighted, dtype=np.float64)
+
+
+def _block_channel_energies(
+    channels: np.ndarray,
+    *,
+    block_samples: int,
+    hop_samples: int,
+) -> np.ndarray:
+    if channels.shape[-1] == 0:
+        return np.zeros((0, channels.shape[0]), dtype=np.float64)
+
+    block_energy_values: list[np.ndarray] = []
+    if channels.shape[-1] <= block_samples:
+        block_energy_values.append(np.mean(np.square(channels), axis=1))
+    else:
+        for start in range(0, channels.shape[-1] - block_samples + 1, hop_samples):
+            block = channels[:, start : start + block_samples]
+            block_energy_values.append(np.mean(np.square(block), axis=1))
+
+    if not block_energy_values:
+        return np.zeros((0, channels.shape[0]), dtype=np.float64)
+    return np.asarray(block_energy_values, dtype=np.float64)
+
+
+def _design_highpass_biquad(
+    *,
+    sample_rate: int,
+    cutoff_hz: float,
+    q: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    omega = 2.0 * np.pi * cutoff_hz / sample_rate
+    alpha = np.sin(omega) / (2.0 * q)
+    cosine = np.cos(omega)
+
+    b = np.array(
+        [
+            (1.0 + cosine) / 2.0,
+            -(1.0 + cosine),
+            (1.0 + cosine) / 2.0,
+        ],
+        dtype=np.float64,
+    )
+    a = np.array(
+        [
+            1.0 + alpha,
+            -2.0 * cosine,
+            1.0 - alpha,
+        ],
+        dtype=np.float64,
+    )
+    return b / a[0], a / a[0]
+
+
+def _design_high_shelf_biquad(
+    *,
+    sample_rate: int,
+    center_hz: float,
+    q: float,
+    gain_db: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    amplitude = 10.0 ** (gain_db / 40.0)
+    omega = 2.0 * np.pi * center_hz / sample_rate
+    alpha = np.sin(omega) / (2.0 * q)
+    cosine = np.cos(omega)
+    sqrt_amplitude = np.sqrt(amplitude)
+
+    b = np.array(
+        [
+            amplitude
+            * (
+                (amplitude + 1.0)
+                + (amplitude - 1.0) * cosine
+                + 2.0 * sqrt_amplitude * alpha
+            ),
+            -2.0 * amplitude * ((amplitude - 1.0) + (amplitude + 1.0) * cosine),
+            amplitude
+            * (
+                (amplitude + 1.0)
+                + (amplitude - 1.0) * cosine
+                - 2.0 * sqrt_amplitude * alpha
+            ),
+        ],
+        dtype=np.float64,
+    )
+    a = np.array(
+        [
+            (amplitude + 1.0)
+            - (amplitude - 1.0) * cosine
+            + 2.0 * sqrt_amplitude * alpha,
+            2.0 * ((amplitude - 1.0) - (amplitude + 1.0) * cosine),
+            (amplitude + 1.0)
+            - (amplitude - 1.0) * cosine
+            - 2.0 * sqrt_amplitude * alpha,
+        ],
+        dtype=np.float64,
+    )
+    return b / a[0], a / a[0]
+
+
 # ---------------------------------------------------------------------------
 # Chow Tape Model VST3 (lazy-loaded singleton)
 # ---------------------------------------------------------------------------
@@ -60,6 +374,17 @@ _PLUGIN_SPECS: dict[str, ExternalPluginSpec] = {
         path=Path.home() / ".vst3" / "lsp-plugins.vst3",
         format="vst3",
         bundle_plugin_name="Compressor Stereo",
+        preload_libraries=(
+            Path.home() / ".local" / "lib" / "lsp-runtime" / "libpixman-1.so.0.38.4",
+            Path.home() / ".local" / "lib" / "lsp-runtime" / "libxcb-render.so.0.0.0",
+            Path.home() / ".local" / "lib" / "lsp-runtime" / "libcairo.so.2.11600.0",
+        ),
+    ),
+    "lsp_limiter_stereo": ExternalPluginSpec(
+        name="lsp_limiter_stereo",
+        path=Path.home() / ".vst3" / "lsp-plugins.vst3",
+        format="vst3",
+        bundle_plugin_name="Limiter Stereo",
         preload_libraries=(
             Path.home() / ".local" / "lib" / "lsp-runtime" / "libpixman-1.so.0.38.4",
             Path.home() / ".local" / "lib" / "lsp-runtime" / "libxcb-render.so.0.0.0",
@@ -465,6 +790,25 @@ def normalize(signal: np.ndarray, peak: float = 0.85) -> np.ndarray:
     return signal * peak / max_val if max_val > 0 else signal
 
 
+def normalize_true_peak(
+    signal: np.ndarray,
+    *,
+    target_peak_dbfs: float,
+    oversample_factor: int = 4,
+) -> np.ndarray:
+    """Apply uniform gain so the estimated true peak reaches the target ceiling."""
+    true_peak_amplitude = estimate_true_peak_amplitude(
+        signal,
+        oversample_factor=oversample_factor,
+    )
+    if true_peak_amplitude <= 0:
+        return np.asarray(signal, dtype=np.float64)
+
+    target_amplitude = db_to_amp(target_peak_dbfs)
+    required_gain = target_amplitude / true_peak_amplitude
+    return np.asarray(signal, dtype=np.float64) * required_gain
+
+
 def apply_delay(
     signal: np.ndarray,
     delay_seconds: float = 0.35,
@@ -701,6 +1045,130 @@ def apply_plugin(
         plugin_format=plugin_format,
         host=host,
         params=params,
+    )
+
+
+def apply_lsp_limiter(
+    signal: np.ndarray,
+    *,
+    threshold_db: float = -0.5,
+    input_gain_db: float = 0.0,
+    output_gain_db: float = 0.0,
+) -> np.ndarray:
+    """Apply the LSP stereo limiter with the exposed VST3 parameters."""
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="lsp_limiter_stereo",
+        params={
+            "threshold_db": float(threshold_db),
+            "input_gain_db": float(input_gain_db),
+            "output_gain_db": float(output_gain_db),
+        },
+    )
+
+
+def finalize_master(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    target_lufs: float = -18.0,
+    true_peak_ceiling_dbfs: float = -0.5,
+    oversample_factor: int = 4,
+    max_iterations: int = 6,
+    loudness_tolerance_lufs: float = 0.2,
+) -> MasteringResult:
+    """Finalize a mix to a LUFS target with an LSP true-peak limiter ceiling."""
+    if max_iterations < 1:
+        raise ValueError("max_iterations must be at least 1")
+
+    mastered = np.asarray(signal, dtype=np.float64)
+    if mastered.size == 0:
+        return MasteringResult(
+            signal=mastered,
+            integrated_lufs=float("-inf"),
+            true_peak_dbfs=float("-inf"),
+        )
+
+    if not has_external_plugin("lsp_limiter_stereo"):
+        raise FileNotFoundError(
+            "LSP limiter is required for export mastering but is not available."
+        )
+
+    current_lufs, active_window_fraction = integrated_lufs(
+        mastered,
+        sample_rate=sample_rate,
+    )
+    if not np.isfinite(current_lufs) or active_window_fraction <= 0.0:
+        return MasteringResult(
+            signal=mastered,
+            integrated_lufs=current_lufs,
+            true_peak_dbfs=amp_to_db(
+                max(
+                    estimate_true_peak_amplitude(
+                        mastered,
+                        oversample_factor=oversample_factor,
+                    ),
+                    1e-12,
+                )
+            ),
+        )
+
+    limiter_input_gain_db = target_lufs - current_lufs
+    limiter_output_gain_db = 0.0
+    mastered = apply_lsp_limiter(
+        mastered,
+        threshold_db=true_peak_ceiling_dbfs,
+        input_gain_db=limiter_input_gain_db,
+        output_gain_db=limiter_output_gain_db,
+    )
+
+    for _ in range(max_iterations):
+        mastered = normalize_true_peak(
+            mastered,
+            target_peak_dbfs=true_peak_ceiling_dbfs,
+            oversample_factor=oversample_factor,
+        )
+        current_lufs, active_window_fraction = integrated_lufs(
+            mastered,
+            sample_rate=sample_rate,
+        )
+        if not np.isfinite(current_lufs) or active_window_fraction <= 0.0:
+            break
+
+        loudness_error = target_lufs - current_lufs
+        if abs(loudness_error) <= loudness_tolerance_lufs:
+            break
+
+        limiter_input_gain_db += loudness_error
+        mastered = apply_lsp_limiter(
+            signal,
+            threshold_db=true_peak_ceiling_dbfs,
+            input_gain_db=limiter_input_gain_db,
+            output_gain_db=limiter_output_gain_db,
+        )
+
+    mastered = normalize_true_peak(
+        mastered,
+        target_peak_dbfs=true_peak_ceiling_dbfs,
+        oversample_factor=oversample_factor,
+    )
+    final_lufs, _ = integrated_lufs(
+        mastered,
+        sample_rate=sample_rate,
+    )
+    final_true_peak_dbfs = amp_to_db(
+        max(
+            estimate_true_peak_amplitude(
+                mastered,
+                oversample_factor=oversample_factor,
+            ),
+            1e-12,
+        )
+    )
+    return MasteringResult(
+        signal=mastered,
+        integrated_lufs=final_lufs,
+        true_peak_dbfs=final_true_peak_dbfs,
     )
 
 
@@ -972,7 +1440,6 @@ def write_wav(path: str | Path, signal: np.ndarray) -> None:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    signal = normalize(signal)
     if signal.ndim == 2:
         int16 = (signal.T * 32767).astype(np.int16)
     else:

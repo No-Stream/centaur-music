@@ -77,6 +77,7 @@ Fields:
 - `synth: dict[str, Any] | None = None`
 - `label: str | None = None`
 - `pitch_motion: PitchMotionSpec | None = None`
+- `automation: list[AutomationSpec] | None = None`
 
 Validation and behavior:
 
@@ -95,11 +96,13 @@ Authoring guidance:
 - use `partial` when the note should track `Score.f0`
 - use `freq` when the note should stay absolute
 - use `synth` for note-local engine overrides or articulation tweaks
+- use `automation` for note-local pitch gestures and explicit param motion
 
 Example:
 
 ```python
 from code_musics.score import NoteEvent
+from code_musics.automation import AutomationSegment, AutomationSpec, AutomationTarget
 
 note = NoteEvent(
     start=0.0,
@@ -108,6 +111,20 @@ note = NoteEvent(
     amp_db=-16.0,
     velocity=1.1,
     synth={"attack_scale": 0.8},
+    automation=[
+        AutomationSpec(
+            target=AutomationTarget(kind="pitch_ratio", name="pitch_ratio"),
+            segments=(
+                AutomationSegment(
+                    start=0.0,
+                    end=0.8,
+                    shape="linear",
+                    start_value=1.0,
+                    end_value=6 / 5,
+                ),
+            ),
+        )
+    ],
 )
 ```
 
@@ -214,7 +231,9 @@ Fields:
 - `velocity_group`
 - `velocity_to_params`
 - `velocity_db_per_unit`
+- `normalize_lufs`
 - `pan`
+- `automation`
 - `notes`
 
 Important behavior:
@@ -222,6 +241,7 @@ Important behavior:
 - `velocity_humanize` defaults to `VelocityHumanizeSpec()` in `Score.add_voice(...)`
 - `pan` must be between `-1.0` and `1.0`
 - `velocity_db_per_unit` must be non-negative
+- `normalize_lufs` defaults to `-24.0` and can be set to `None` to disable stem auto-normalization
 
 Practical interpretation:
 
@@ -231,7 +251,9 @@ Practical interpretation:
 - `velocity_humanize` is the render-time dynamic variation layer
 - `velocity_group` links multiple voices into a shared velocity-drift family
 - `velocity_to_params` makes louder/softer notes timbrally different
+- `normalize_lufs` applies an integrated-LUFS stem gain trim before pan, voice effects, and the final mix
 - `pan` places the rendered voice in stereo
+- `automation` adds explicit score-time parameter lanes beyond humanization
 
 ## `Score`
 
@@ -259,6 +281,7 @@ Parameters:
 - `velocity_group`
 - `velocity_to_params`
 - `velocity_db_per_unit`
+- `normalize_lufs`
 - `pan`
 
 Important behavior:
@@ -266,6 +289,7 @@ Important behavior:
 - calling `add_voice(...)` with an existing name replaces that voice definition
 - `velocity_humanize=None` in the method call currently means "use the default subtle humanizer", not "disable velocity humanization"
 - if you want to disable velocity humanization after a voice exists, set `voice.velocity_humanize = None`
+- `normalize_lufs=None` disables the default per-voice auto-normalization if you want raw stem gain instead
 
 That second point is easy to miss and worth being explicit about.
 
@@ -356,6 +380,8 @@ Behavior:
 - returns an empty mono array if the score has no rendered voices
 - may return mono or stereo depending on pan and effects
 - applies `master_effects` after the voices are mixed
+- does not perform export mastering itself; the named-piece render workflow applies
+  final LUFS/true-peak mastering when writing the final WAV
 
 ### `Score.render_stems()`
 
@@ -400,8 +426,10 @@ The practical render path for one note is:
 8. convert velocity into a dB offset using `velocity_db_per_unit`
 9. resolve ADSR with `envelope_humanize`
 10. place the note in time using `timing_humanize`
-11. mix notes into the voice, then apply pan and voice effects
-12. mix voices together, then apply master effects
+11. mix notes into the dry voice stem
+12. if `normalize_lufs` is set, apply a uniform gain trim toward that target integrated loudness
+13. apply pan and voice effects
+14. mix voices together, then apply master effects
 
 That ordering matters because it explains why:
 

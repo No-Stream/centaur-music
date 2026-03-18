@@ -1,5 +1,6 @@
 """Composition and rendering tools for code-musics."""
 
+from code_musics.automation import AutomationSegment, AutomationSpec, AutomationTarget
 from code_musics.composition import (
     ArticulationSpec,
     RhythmCell,
@@ -23,6 +24,9 @@ from code_musics.pitch_motion import PitchMotionSpec
 from code_musics.score import VelocityParamMap
 
 __all__ = [
+    "AutomationSegment",
+    "AutomationSpec",
+    "AutomationTarget",
     "ArticulationSpec",
     "DriftSpec",
     "EnvelopeHumanizeSpec",
