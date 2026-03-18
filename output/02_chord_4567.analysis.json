@@ -1,0 +1,97 @@
+{
+  "manifest_path": "output/02_chord_4567.analysis.json",
+  "mix": {
+    "artifacts": {
+      "band_energy": "output/02_chord_4567.mix_band_energy.png",
+      "spectrogram": "output/02_chord_4567.mix_spectrogram.png",
+      "spectrum": "output/02_chord_4567.mix_spectrum.png"
+    },
+    "summary": {
+      "band_energy_db": {
+        "air": -141.38494619525088,
+        "bass": 28.32423044514328,
+        "high": -117.43796204249874,
+        "low_mid": 17.539623025974407,
+        "mid": -52.814703427012475,
+        "sub": -19.985529989731248
+      },
+      "dominant_frequency_hz": 107.666015625,
+      "duration_seconds": 18.0,
+      "low_high_balance_db": 145.762192487642,
+      "peak_dbfs": 5.146442256081918,
+      "reference_tilt_db_per_octave": -3.0,
+      "rms_dbfs": -6.960765077645579,
+      "spectral_centroid_hz": 272.18314182078325,
+      "spectral_tilt_db_per_octave": -22.773635351106357,
+      "tilt_error_db_per_octave": -19.773635351106357,
+      "warnings": [
+        "low band dominates high band strongly",
+        "spectrum falls off faster than the reference tilt"
+      ]
+    }
+  },
+  "reference_tilt_db_per_octave": -3.0,
+  "score": {
+    "artifacts": {
+      "density": "output/02_chord_4567.score_density.png"
+    },
+    "summary": {
+      "frequency_range_hz": [
+        110.0,
+        192.5
+      ],
+      "max_attack_density_hz": 1.0,
+      "mean_attack_density_hz": 0.2222222222222222,
+      "mean_simultaneous_notes": 3.0,
+      "note_count": 4,
+      "notes_per_second": 0.2222222222222222,
+      "partial_range": null,
+      "peak_simultaneous_notes": 4,
+      "total_duration_seconds": 18.0,
+      "voice_count": 1,
+      "voice_summaries": {
+        "chord": {
+          "attack_rate_hz": 0.2222222222222222,
+          "max_frequency_hz": 192.5,
+          "mean_frequency_hz": 151.25,
+          "mean_note_duration_seconds": 13.5,
+          "min_frequency_hz": 110.0,
+          "note_count": 4
+        }
+      },
+      "warnings": [
+        "long-note bias may read as drony"
+      ]
+    }
+  },
+  "voices": {
+    "chord": {
+      "artifacts": {
+        "spectrum": "output/02_chord_4567.voice_chord_spectrum.png"
+      },
+      "summary": {
+        "band_energy_db": {
+          "air": -141.38494619525088,
+          "bass": 28.32423044514328,
+          "high": -117.43796204249874,
+          "low_mid": 17.539623025974407,
+          "mid": -52.814703427012475,
+          "sub": -19.985529989731248
+        },
+        "dominant_frequency_hz": 107.666015625,
+        "duration_seconds": 18.0,
+        "low_high_balance_db": 145.762192487642,
+        "peak_dbfs": 5.146442256081918,
+        "reference_tilt_db_per_octave": -3.0,
+        "rms_dbfs": -6.960765077645579,
+        "spectral_centroid_hz": 272.18314182078325,
+        "spectral_tilt_db_per_octave": -22.773635351106357,
+        "tilt_error_db_per_octave": -19.773635351106357,
+        "warnings": [
+          "low band dominates high band strongly",
+          "spectrum falls off faster than the reference tilt"
+        ]
+      }
+    }
+  }
+}
