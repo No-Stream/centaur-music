@@ -159,6 +159,15 @@ See `FUTURE.md` for way more ideas.
   normal composition surface, not as obscure implementation details.
 - Keep low-level synthesis simple unless a task explicitly calls for DSP changes.
 - Treat effect chains declaratively with `EffectSpec` on voices or the master bus.
+- The local Linux environment now has a small plugin palette installed for
+  experimentation: `LSP` utilities in `~/.vst` and `~/.lv2`, `Dragonfly Reverb`
+  in `~/.vst3` and `~/.lv2`, `TAL-Chorus-LX` and `TAL-Reverb-2` in `~/.vst3`,
+  and legacy Linux `Airwindows` VSTs in `~/.vst`.
+- `Chow Tape Model`, `TAL-Chorus-LX`, `TAL-Reverb-2`, and Dragonfly VST3s have
+  already been verified to load through `pedalboard`; prefer those before
+  introducing more bridge-heavy or activation-heavy plugin paths.
+- Keep plugin notes here high-level. Detailed parameter semantics and any new
+  `EffectSpec` integration still belong in `docs/synth_api.md`.
 - If you change score/expression parameters or presets, update the docs in the same
   pass. `AGENTS.md` should mention the feature exists; the detailed semantics belong
   in the docs, especially `docs/score_api.md` for score-surface changes.
@@ -191,4 +200,3 @@ See `FUTURE.md` for way more ideas.
 - bittersweet, haunting. (think burial - untrue or MBV loveless)
 - spacious, reverb, lofi (BoC, m83's dead cities)
 - spicy but euphonic chords, creative voicing, voice leading, sevenths and septimal harmony
-

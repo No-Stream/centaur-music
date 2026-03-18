@@ -10,16 +10,25 @@ from code_musics.composition import (
     HarmonicContext,
     RhythmCell,
     build_context_sections,
+    canon,
     legato,
     line,
     place_ratio_chord,
     place_ratio_line,
+    progression,
     ratio_line,
+    recontextualize_phrase,
     resolve_ratios,
+    sequence,
     staccato,
+    voiced_ratio_chord,
     with_accent_pattern,
     with_synth_ramp,
     with_tail_breath,
+)
+from code_musics.pieces.sketches import (
+    build_composition_tools_consonant_score,
+    build_composition_tools_showcase_score,
 )
 from code_musics.pitch_motion import PitchMotionSpec
 from code_musics.score import Score
@@ -261,6 +270,353 @@ def test_with_synth_ramp_interpolates_per_event_params() -> None:
     assert ramped.events[1].synth["mod_index"] == pytest.approx(0.9)
     assert ramped.events[2].synth["mod_index"] == pytest.approx(1.2)
     assert ramped.events[2].synth["release"] == pytest.approx(0.7)
+
+
+def test_recontextualize_phrase_retargets_local_tonic() -> None:
+    source_phrase = line(
+        tones=[1.0, 5 / 4, 3 / 2],
+        rhythm=(0.5, 0.5, 0.5),
+        amp=0.2,
+    )
+
+    recontextualized = recontextualize_phrase(
+        source_phrase,
+        target_context=HarmonicContext(tonic=220.0),
+    )
+
+    assert [event.freq for event in recontextualized.events] == pytest.approx(
+        [220.0, 275.0, 330.0]
+    )
+    assert [event.partial for event in recontextualized.events] == [None, None, None]
+
+
+def test_recontextualize_phrase_supports_frequency_authored_source_and_validation() -> (
+    None
+):
+    source_phrase = line(
+        tones=[220.0, 275.0],
+        rhythm=(0.5, 0.5),
+        pitch_kind="freq",
+        amp=0.2,
+    )
+
+    recontextualized = recontextualize_phrase(
+        source_phrase,
+        target_context=HarmonicContext(tonic=110.0),
+        source_tonic=220.0,
+    )
+
+    assert [event.freq for event in recontextualized.events] == pytest.approx(
+        [110.0, 137.5]
+    )
+    with pytest.raises(ValueError, match="source_tonic must be positive"):
+        recontextualize_phrase(
+            source_phrase,
+            target_context=HarmonicContext(tonic=110.0),
+            source_tonic=0.0,
+        )
+
+
+def test_sequence_places_repeated_entries_with_context_shift() -> None:
+    score = Score(f0=55.0)
+    phrase = line(tones=[1.0, 5 / 4], rhythm=(0.5, 0.5), amp=0.2)
+    sections = build_context_sections(
+        base_tonic=220.0,
+        specs=(
+            ContextSectionSpec(name="A", duration=1.0),
+            ContextSectionSpec(name="B", duration=1.0, tonic_ratio=80 / 81),
+        ),
+    )
+
+    placed = sequence(
+        score,
+        "lead",
+        phrase,
+        starts=(0.0, 0.25),
+        amp_scales=(1.0, 0.5),
+        sections=sections,
+    )
+
+    assert [note.start for note in placed[0]] == pytest.approx([0.0, 0.5])
+    assert [note.start for note in placed[1]] == pytest.approx([1.25, 1.75])
+    assert [note.freq for note in placed[1]] == pytest.approx(
+        [220.0 * (80 / 81), 275.0 * (80 / 81)]
+    )
+    assert placed[1][0].amp == pytest.approx(0.1)
+
+
+def test_sequence_applies_partial_shift_before_recontextualizing() -> None:
+    score = Score(f0=55.0)
+    phrase = line(tones=[1.0, 5 / 4], rhythm=(0.5, 0.5), amp=0.2)
+    section = build_context_sections(
+        base_tonic=220.0,
+        specs=(ContextSectionSpec(name="A", duration=1.0),),
+    )[0]
+
+    placed = sequence(
+        score,
+        "lead",
+        phrase,
+        starts=(0.0,),
+        partial_shifts=(1.0,),
+        sections=(section,),
+    )[0]
+
+    assert [note.freq for note in placed] == pytest.approx([440.0, 495.0])
+
+
+def test_sequence_supports_reverse_and_time_scale_without_sections() -> None:
+    score = Score(f0=55.0)
+    phrase = line(tones=[4.0, 5.0], rhythm=(0.5, 1.0), amp=0.2)
+
+    placed = sequence(
+        score,
+        "lead",
+        phrase,
+        starts=(1.0,),
+        time_scales=(2.0,),
+        reverses=(True,),
+        amp_scales=(0.5,),
+    )[0]
+
+    assert [note.start for note in placed] == pytest.approx([3.0, 1.0])
+    assert [note.duration for note in placed] == pytest.approx([1.0, 2.0])
+    assert [note.amp for note in placed] == pytest.approx([0.1, 0.1])
+
+
+def test_sequence_rejects_invalid_lengths_and_negative_start() -> None:
+    score = Score(f0=55.0)
+    phrase = line(tones=[4.0], rhythm=(0.5,), amp=0.2)
+
+    with pytest.raises(ValueError, match="starts must not be empty"):
+        sequence(score, "lead", phrase, starts=())
+    with pytest.raises(ValueError, match="starts must be non-negative"):
+        sequence(score, "lead", phrase, starts=(-0.1,))
+    with pytest.raises(ValueError, match="sections length must match starts"):
+        sequence(
+            score,
+            "lead",
+            phrase,
+            starts=(0.0,),
+            sections=build_context_sections(
+                base_tonic=220.0,
+                specs=(
+                    ContextSectionSpec(name="A", duration=1.0),
+                    ContextSectionSpec(name="B", duration=1.0),
+                ),
+            ),
+        )
+
+
+def test_canon_places_delayed_entries_across_voices() -> None:
+    score = Score(f0=55.0)
+    phrase = line(tones=[4.0, 5.0], rhythm=(0.5, 0.5), amp=0.2)
+
+    placed = canon(
+        score,
+        voice_names=("lead", "answer"),
+        phrase=phrase,
+        start=0.0,
+        delays=(0.75,),
+        amp_scales=(1.0, 0.6),
+        partial_shifts=(0.0, 1.0),
+    )
+
+    assert [note.start for note in placed["lead"]] == pytest.approx([0.0, 0.5])
+    assert [note.start for note in placed["answer"]] == pytest.approx([0.75, 1.25])
+    assert [note.partial for note in placed["answer"]] == pytest.approx([5.0, 6.0])
+    assert placed["answer"][0].amp == pytest.approx(0.12)
+
+
+def test_canon_supports_scalar_delay_and_rejects_invalid_inputs() -> None:
+    score = Score(f0=55.0)
+    phrase = line(tones=[4.0], rhythm=(0.5,), amp=0.2)
+
+    placed = canon(
+        score,
+        voice_names=("a", "b", "c"),
+        phrase=phrase,
+        start=0.5,
+        delays=1.0,
+    )
+
+    assert [placed["a"][0].start, placed["b"][0].start, placed["c"][0].start] == (
+        pytest.approx([0.5, 1.5, 2.5])
+    )
+    with pytest.raises(ValueError, match="voice_names must not be empty"):
+        canon(score, voice_names=(), phrase=phrase, start=0.0, delays=1.0)
+    with pytest.raises(ValueError, match="start must be non-negative"):
+        canon(score, voice_names=("a",), phrase=phrase, start=-0.1, delays=1.0)
+    with pytest.raises(ValueError, match="delays must have length"):
+        canon(
+            score,
+            voice_names=("a", "b"),
+            phrase=phrase,
+            start=0.0,
+            delays=(1.0, 2.0),
+        )
+    with pytest.raises(ValueError, match="sections length must match voice_names"):
+        canon(
+            score,
+            voice_names=("a", "b"),
+            phrase=phrase,
+            start=0.0,
+            delays=(1.0,),
+            sections=(),
+        )
+
+
+def test_voiced_ratio_chord_supports_voicing_inversion_and_register() -> None:
+    freqs = voiced_ratio_chord(
+        [1.0, 5 / 4, 3 / 2],
+        context=HarmonicContext(tonic=110.0),
+        voicing="open",
+        inversion=1,
+        low_hz=150.0,
+        high_hz=500.0,
+    )
+
+    assert freqs == pytest.approx(sorted(freqs))
+    assert min(freqs) >= 150.0
+    assert max(freqs) < 500.0
+    assert len(freqs) == 3
+
+
+def test_voiced_ratio_chord_supports_spread_and_validation() -> None:
+    freqs = voiced_ratio_chord(
+        [1.0, 5 / 4, 3 / 2],
+        context=HarmonicContext(tonic=110.0),
+        voicing="spread",
+    )
+
+    assert freqs == pytest.approx([110.0, 275.0, 660.0])
+    with pytest.raises(ValueError, match="ratios must not be empty"):
+        voiced_ratio_chord([], context=HarmonicContext(tonic=110.0))
+    with pytest.raises(ValueError, match="voicing must be"):
+        voiced_ratio_chord(
+            [1.0],
+            context=HarmonicContext(tonic=110.0),
+            voicing="cluster",
+        )
+    with pytest.raises(ValueError, match="inversion must be non-negative"):
+        voiced_ratio_chord(
+            [1.0],
+            context=HarmonicContext(tonic=110.0),
+            inversion=-1,
+        )
+    with pytest.raises(ValueError, match="low_hz must be less than high_hz"):
+        voiced_ratio_chord(
+            [1.0],
+            context=HarmonicContext(tonic=110.0),
+            low_hz=200.0,
+            high_hz=100.0,
+        )
+
+
+def test_progression_places_block_and_arpeggio_patterns() -> None:
+    score = Score(f0=55.0)
+    sections = build_context_sections(
+        base_tonic=110.0,
+        specs=(
+            ContextSectionSpec(name="I", duration=1.0),
+            ContextSectionSpec(name="V", duration=1.2, tonic_ratio=3 / 2),
+        ),
+    )
+
+    block_notes = progression(
+        score,
+        "pad",
+        sections=sections,
+        chords=([1.0, 5 / 4, 3 / 2], [1.0, 5 / 4, 3 / 2]),
+        pattern="block",
+        amp=(0.3, 0.3),
+    )
+    arp_notes = progression(
+        score,
+        "arp",
+        sections=sections[:1],
+        chords=([1.0, 5 / 4, 3 / 2],),
+        pattern="arpeggio",
+        amp=0.15,
+    )
+
+    assert len(block_notes) == 6
+    assert [note.start for note in block_notes[:3]] == pytest.approx([0.0, 0.0, 0.0])
+    assert [note.start for note in arp_notes] == pytest.approx([0.0, 1 / 3, 2 / 3])
+    assert [round(note.duration, 4) for note in arp_notes] == pytest.approx(
+        [round(1 / 3, 4), round(1 / 3, 4), round(1 / 3, 4)]
+    )
+
+
+def test_progression_supports_pedal_upper_pattern_and_validation() -> None:
+    score = Score(f0=55.0)
+    sections = build_context_sections(
+        base_tonic=110.0,
+        specs=(ContextSectionSpec(name="I", duration=2.0),),
+    )
+
+    notes = progression(
+        score,
+        "pad",
+        sections=sections,
+        chords=([1.0, 5 / 4, 3 / 2],),
+        pattern="pedal_upper",
+        amp=0.3,
+        duration_scale=0.5,
+    )
+
+    assert len(notes) == 3
+    assert notes[0].duration == pytest.approx(1.0)
+    assert [note.freq for note in notes[1:]] == pytest.approx([137.5, 165.0])
+    assert [note.duration for note in notes[1:]] == pytest.approx([0.82, 0.82])
+    with pytest.raises(ValueError, match="sections must not be empty"):
+        progression(score, "pad", sections=(), chords=(), pattern="block")
+    with pytest.raises(ValueError, match="same length"):
+        progression(
+            score,
+            "pad",
+            sections=sections,
+            chords=([1.0], [1.0]),
+            pattern="block",
+        )
+    with pytest.raises(ValueError, match="duration_scale must be positive"):
+        progression(
+            score,
+            "pad",
+            sections=sections,
+            chords=([1.0],),
+            pattern="block",
+            duration_scale=0.0,
+        )
+    with pytest.raises(ValueError, match="pattern must be"):
+        progression(
+            score,
+            "pad",
+            sections=sections,
+            chords=([1.0],),
+            pattern="strum",
+        )
+
+
+def test_composition_tools_showcase_piece_builds_and_renders() -> None:
+    score = build_composition_tools_showcase_score()
+    rendered = score.render()
+
+    assert score.total_dur >= 16.0
+    assert "lead" in score.voices
+    assert "pad" in score.voices
+    assert rendered.size > 0
+
+
+def test_composition_tools_consonant_piece_builds_and_renders() -> None:
+    score = build_composition_tools_consonant_score()
+    rendered = score.render()
+
+    assert score.total_dur >= 16.0
+    assert "lead" in score.voices
+    assert "answer" in score.voices
+    assert "bells" in score.voices
+    assert rendered.size > 0
 
 
 def test_line_rejects_length_mismatch_and_non_positive_values() -> None:

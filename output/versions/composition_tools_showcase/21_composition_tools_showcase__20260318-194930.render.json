@@ -1,0 +1,1022 @@
+{
+  "artifacts": {
+    "latest": {
+      "analysis_manifest_path": "output/versions/composition_tools_showcase/21_composition_tools_showcase.analysis.json",
+      "audio_path": "output/21_composition_tools_showcase.wav",
+      "plot_path": "output/21_composition_tools_showcase.png"
+    },
+    "versioned": {
+      "analysis_manifest_path": "output/versions/composition_tools_showcase/21_composition_tools_showcase__20260318-194930.analysis.json",
+      "audio_path": "output/versions/composition_tools_showcase/21_composition_tools_showcase__20260318-194930.wav",
+      "plot_path": "output/versions/composition_tools_showcase/21_composition_tools_showcase__20260318-194930.png"
+    }
+  },
+  "metadata_path": "output/versions/composition_tools_showcase/21_composition_tools_showcase__20260318-194930.render.json",
+  "output_name": "21_composition_tools_showcase.wav",
+  "piece_name": "composition_tools_showcase",
+  "provenance": {
+    "callable_kind": "build_score",
+    "callable_name": "build_composition_tools_showcase_score",
+    "git_commit": "69a2f8c19c172b18fad0ac6e457f26b0e7c8b06a",
+    "git_is_dirty": true,
+    "module": "code_musics.pieces.sketches",
+    "source_file": "/home/jan/workspace/code-musics/code_musics/pieces/sketches.py",
+    "source_sha256": "6f2825722c3eb78f6d0563fa2361936f5036a169804eb67f3b1fc1d49a6e95b5"
+  },
+  "rendered_at_utc": "20260318-194930",
+  "request": {
+    "output_dir": "output",
+    "save_analysis": true,
+    "save_plot": true
+  },
+  "schema_version": 1,
+  "score_snapshot": {
+    "f0": 55.0,
+    "master_effects": [
+      {
+        "kind": "saturation",
+        "params": {
+          "drive": 1.14,
+          "mix": 0.24,
+          "preset": "tube_warm"
+        }
+      },
+      {
+        "kind": "bricasti",
+        "params": {
+          "ir_name": "1 Halls 07 Large & Dark",
+          "wet": 0.25
+        }
+      }
+    ],
+    "sample_rate": 44100,
+    "timing_humanize": null,
+    "voices": {
+      "answer_a": {
+        "effects": [],
+        "envelope_humanize": null,
+        "name": "answer_a",
+        "notes": [
+          {
+            "amp": 0.07290508685321122,
+            "amp_db": null,
+            "duration": 0.6900000000000001,
+            "freq": 110.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 1.1,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.06707267990495433,
+            "amp_db": null,
+            "duration": 0.66,
+            "freq": 137.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 1.85,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.07873749380146812,
+            "amp_db": null,
+            "duration": 0.94,
+            "freq": 165.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 2.6,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.06561457816789011,
+            "amp_db": null,
+            "duration": 1.0899999999999999,
+            "freq": 137.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 3.6,
+            "synth": null,
+            "velocity": 1.0
+          }
+        ],
+        "pan": 0.08,
+        "synth_defaults": {
+          "attack": 0.05,
+          "engine": "additive",
+          "preset": "soft_pad",
+          "release": 0.8
+        },
+        "velocity_db_per_unit": 12.0,
+        "velocity_group": null,
+        "velocity_humanize": {
+          "chord_spread": 0.01,
+          "drift": {
+            "rate_hz": 0.08,
+            "seed": null,
+            "smoothness": 0.82,
+            "style": "smooth_noise"
+          },
+          "follow_strength": 0.9,
+          "group_amount": 0.045,
+          "max_multiplier": 1.1,
+          "min_multiplier": 0.9,
+          "note_jitter": 0.012,
+          "preset": "subtle_living",
+          "seed": null,
+          "voice_spread": 0.015
+        },
+        "velocity_to_params": {}
+      },
+      "answer_b": {
+        "effects": [],
+        "envelope_humanize": null,
+        "name": "answer_b",
+        "notes": [
+          {
+            "amp": 0.06656551408336676,
+            "amp_db": null,
+            "duration": 0.6900000000000001,
+            "freq": 137.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 9.1,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.06124027295669742,
+            "amp_db": null,
+            "duration": 0.66,
+            "freq": 171.875,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 9.85,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.0718907552100361,
+            "amp_db": null,
+            "duration": 0.94,
+            "freq": 206.25,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 10.6,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.05990896267503009,
+            "amp_db": null,
+            "duration": 1.0899999999999999,
+            "freq": 171.875,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 11.6,
+            "synth": null,
+            "velocity": 1.0
+          }
+        ],
+        "pan": 0.18,
+        "synth_defaults": {
+          "attack": 0.05,
+          "engine": "additive",
+          "preset": "soft_pad",
+          "release": 0.8
+        },
+        "velocity_db_per_unit": 12.0,
+        "velocity_group": null,
+        "velocity_humanize": {
+          "chord_spread": 0.01,
+          "drift": {
+            "rate_hz": 0.08,
+            "seed": null,
+            "smoothness": 0.82,
+            "style": "smooth_noise"
+          },
+          "follow_strength": 0.9,
+          "group_amount": 0.045,
+          "max_multiplier": 1.1,
+          "min_multiplier": 0.9,
+          "note_jitter": 0.012,
+          "preset": "subtle_living",
+          "seed": null,
+          "voice_spread": 0.015
+        },
+        "velocity_to_params": {}
+      },
+      "answer_c": {
+        "effects": [],
+        "envelope_humanize": null,
+        "name": "answer_c",
+        "notes": [
+          {
+            "amp": 0.07924465962305567,
+            "amp_db": null,
+            "duration": 0.6900000000000001,
+            "freq": 110.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 21.1,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.07290508685321122,
+            "amp_db": null,
+            "duration": 0.66,
+            "freq": 137.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 21.85,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.08558423239290013,
+            "amp_db": null,
+            "duration": 0.94,
+            "freq": 165.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 22.6,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.07132019366075011,
+            "amp_db": null,
+            "duration": 1.0899999999999999,
+            "freq": 137.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 23.6,
+            "synth": null,
+            "velocity": 1.0
+          }
+        ],
+        "pan": 0.28,
+        "synth_defaults": {
+          "attack": 0.05,
+          "engine": "additive",
+          "preset": "soft_pad",
+          "release": 0.8
+        },
+        "velocity_db_per_unit": 12.0,
+        "velocity_group": null,
+        "velocity_humanize": {
+          "chord_spread": 0.01,
+          "drift": {
+            "rate_hz": 0.08,
+            "seed": null,
+            "smoothness": 0.82,
+            "style": "smooth_noise"
+          },
+          "follow_strength": 0.9,
+          "group_amount": 0.045,
+          "max_multiplier": 1.1,
+          "min_multiplier": 0.9,
+          "note_jitter": 0.012,
+          "preset": "subtle_living",
+          "seed": null,
+          "voice_spread": 0.015
+        },
+        "velocity_to_params": {}
+      },
+      "bass": {
+        "effects": [],
+        "envelope_humanize": null,
+        "name": "bass",
+        "notes": [
+          {
+            "amp": 0.156,
+            "amp_db": null,
+            "duration": 4.0,
+            "freq": 110.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 0.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.09,
+            "amp_db": null,
+            "duration": 3.28,
+            "freq": 137.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 0.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.09,
+            "amp_db": null,
+            "duration": 3.28,
+            "freq": 165.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 0.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.156,
+            "amp_db": null,
+            "duration": 4.0,
+            "freq": 137.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 4.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.09,
+            "amp_db": null,
+            "duration": 3.28,
+            "freq": 165.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 4.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.09,
+            "amp_db": null,
+            "duration": 3.28,
+            "freq": 206.25,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 4.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.14300000000000002,
+            "amp_db": null,
+            "duration": 4.0,
+            "freq": 123.75,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 8.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.0825,
+            "amp_db": null,
+            "duration": 3.28,
+            "freq": 154.6875,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 8.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.0825,
+            "amp_db": null,
+            "duration": 3.28,
+            "freq": 198.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 8.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.169,
+            "amp_db": null,
+            "duration": 4.0,
+            "freq": 110.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 12.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.0975,
+            "amp_db": null,
+            "duration": 3.28,
+            "freq": 137.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 12.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.0975,
+            "amp_db": null,
+            "duration": 3.28,
+            "freq": 165.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 12.0,
+            "synth": null,
+            "velocity": 1.0
+          }
+        ],
+        "pan": -0.08,
+        "synth_defaults": {
+          "attack": 0.05,
+          "engine": "filtered_stack",
+          "preset": "round_bass",
+          "release": 0.55
+        },
+        "velocity_db_per_unit": 12.0,
+        "velocity_group": null,
+        "velocity_humanize": {
+          "chord_spread": 0.01,
+          "drift": {
+            "rate_hz": 0.08,
+            "seed": null,
+            "smoothness": 0.82,
+            "style": "smooth_noise"
+          },
+          "follow_strength": 0.9,
+          "group_amount": 0.045,
+          "max_multiplier": 1.1,
+          "min_multiplier": 0.9,
+          "note_jitter": 0.012,
+          "preset": "subtle_living",
+          "seed": null,
+          "voice_spread": 0.015
+        },
+        "velocity_to_params": {}
+      },
+      "lead": {
+        "effects": [],
+        "envelope_humanize": null,
+        "name": "lead",
+        "notes": [
+          {
+            "amp": 0.15848931924611134,
+            "amp_db": null,
+            "duration": 0.6900000000000001,
+            "freq": 110.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 0.35,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.14581017370642244,
+            "amp_db": null,
+            "duration": 0.66,
+            "freq": 137.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 1.1,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.17116846478580025,
+            "amp_db": null,
+            "duration": 0.94,
+            "freq": 165.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 1.85,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.14264038732150022,
+            "amp_db": null,
+            "duration": 1.0899999999999999,
+            "freq": 137.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 2.85,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.14581017370642244,
+            "amp_db": null,
+            "duration": 0.6900000000000001,
+            "freq": 137.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 4.35,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.13414535980990866,
+            "amp_db": null,
+            "duration": 0.66,
+            "freq": 171.875,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 5.1,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.15747498760293624,
+            "amp_db": null,
+            "duration": 0.94,
+            "freq": 206.25,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 5.85,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.13122915633578022,
+            "amp_db": null,
+            "duration": 1.0899999999999999,
+            "freq": 171.875,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 6.85,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.13630081455165574,
+            "amp_db": null,
+            "duration": 0.6900000000000001,
+            "freq": 123.75,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 8.35,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.1253967493875233,
+            "amp_db": null,
+            "duration": 0.66,
+            "freq": 154.6875,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 9.1,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.14720487971578822,
+            "amp_db": null,
+            "duration": 0.94,
+            "freq": 185.625,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 9.85,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.1226707330964902,
+            "amp_db": null,
+            "duration": 1.0899999999999999,
+            "freq": 154.6875,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 10.85,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.1648288920159558,
+            "amp_db": null,
+            "duration": 0.6900000000000001,
+            "freq": 110.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 12.35,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.15164258065467934,
+            "amp_db": null,
+            "duration": 0.66,
+            "freq": 137.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 13.1,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.17801520337723226,
+            "amp_db": null,
+            "duration": 0.94,
+            "freq": 165.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 13.85,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.14834600281436025,
+            "amp_db": null,
+            "duration": 1.0899999999999999,
+            "freq": 137.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 14.85,
+            "synth": null,
+            "velocity": 1.0
+          }
+        ],
+        "pan": 0.1,
+        "synth_defaults": {
+          "attack": 0.03,
+          "engine": "fm",
+          "preset": "glass_lead",
+          "release": 0.38
+        },
+        "velocity_db_per_unit": 12.0,
+        "velocity_group": null,
+        "velocity_humanize": {
+          "chord_spread": 0.01,
+          "drift": {
+            "rate_hz": 0.08,
+            "seed": null,
+            "smoothness": 0.82,
+            "style": "smooth_noise"
+          },
+          "follow_strength": 0.9,
+          "group_amount": 0.045,
+          "max_multiplier": 1.1,
+          "min_multiplier": 0.9,
+          "note_jitter": 0.012,
+          "preset": "subtle_living",
+          "seed": null,
+          "voice_spread": 0.015
+        },
+        "velocity_to_params": {}
+      },
+      "pad": {
+        "effects": [],
+        "envelope_humanize": null,
+        "name": "pad",
+        "notes": [
+          {
+            "amp": 0.04,
+            "amp_db": null,
+            "duration": 3.68,
+            "freq": 220.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 0.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.04,
+            "amp_db": null,
+            "duration": 3.68,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 0.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.04,
+            "amp_db": null,
+            "duration": 3.68,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 0.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.04,
+            "amp_db": null,
+            "duration": 3.68,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 4.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.04,
+            "amp_db": null,
+            "duration": 3.68,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 4.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.04,
+            "amp_db": null,
+            "duration": 3.68,
+            "freq": 412.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 4.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.03666666666666667,
+            "amp_db": null,
+            "duration": 3.68,
+            "freq": 247.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 8.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.03666666666666667,
+            "amp_db": null,
+            "duration": 3.68,
+            "freq": 309.375,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 8.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.03666666666666667,
+            "amp_db": null,
+            "duration": 3.68,
+            "freq": 396.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 8.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.043333333333333335,
+            "amp_db": null,
+            "duration": 3.68,
+            "freq": 220.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 12.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.043333333333333335,
+            "amp_db": null,
+            "duration": 3.68,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 12.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.043333333333333335,
+            "amp_db": null,
+            "duration": 3.68,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 12.0,
+            "synth": null,
+            "velocity": 1.0
+          }
+        ],
+        "pan": -0.18,
+        "synth_defaults": {
+          "attack": 0.28,
+          "engine": "filtered_stack",
+          "preset": "warm_pad",
+          "release": 1.6
+        },
+        "velocity_db_per_unit": 12.0,
+        "velocity_group": null,
+        "velocity_humanize": {
+          "chord_spread": 0.01,
+          "drift": {
+            "rate_hz": 0.08,
+            "seed": null,
+            "smoothness": 0.82,
+            "style": "smooth_noise"
+          },
+          "follow_strength": 0.9,
+          "group_amount": 0.045,
+          "max_multiplier": 1.1,
+          "min_multiplier": 0.9,
+          "note_jitter": 0.012,
+          "preset": "subtle_living",
+          "seed": null,
+          "voice_spread": 0.015
+        },
+        "velocity_to_params": {}
+      }
+    }
+  },
+  "score_summary": {
+    "f0_hz": 55.0,
+    "master_effects": [
+      {
+        "kind": "saturation",
+        "params": {
+          "drive": 1.14,
+          "mix": 0.24,
+          "preset": "tube_warm"
+        }
+      },
+      {
+        "kind": "bricasti",
+        "params": {
+          "ir_name": "1 Halls 07 Large & Dark",
+          "wet": 0.25
+        }
+      }
+    ],
+    "note_count": 52,
+    "sample_rate": 44100,
+    "total_duration_seconds": 24.69,
+    "voice_count": 6,
+    "voice_names": [
+      "bass",
+      "pad",
+      "lead",
+      "answer_a",
+      "answer_b",
+      "answer_c"
+    ],
+    "voices": {
+      "answer_a": {
+        "effects": [],
+        "frequency_range_hz": [
+          110.0,
+          165.0
+        ],
+        "labels": [],
+        "note_count": 4,
+        "pan": 0.08,
+        "partial_range": null,
+        "synth_defaults": {
+          "attack": 0.05,
+          "engine": "additive",
+          "preset": "soft_pad",
+          "release": 0.8
+        }
+      },
+      "answer_b": {
+        "effects": [],
+        "frequency_range_hz": [
+          137.5,
+          206.25
+        ],
+        "labels": [],
+        "note_count": 4,
+        "pan": 0.18,
+        "partial_range": null,
+        "synth_defaults": {
+          "attack": 0.05,
+          "engine": "additive",
+          "preset": "soft_pad",
+          "release": 0.8
+        }
+      },
+      "answer_c": {
+        "effects": [],
+        "frequency_range_hz": [
+          110.0,
+          165.0
+        ],
+        "labels": [],
+        "note_count": 4,
+        "pan": 0.28,
+        "partial_range": null,
+        "synth_defaults": {
+          "attack": 0.05,
+          "engine": "additive",
+          "preset": "soft_pad",
+          "release": 0.8
+        }
+      },
+      "bass": {
+        "effects": [],
+        "frequency_range_hz": [
+          110.0,
+          206.25
+        ],
+        "labels": [],
+        "note_count": 12,
+        "pan": -0.08,
+        "partial_range": null,
+        "synth_defaults": {
+          "attack": 0.05,
+          "engine": "filtered_stack",
+          "preset": "round_bass",
+          "release": 0.55
+        }
+      },
+      "lead": {
+        "effects": [],
+        "frequency_range_hz": [
+          110.0,
+          206.25
+        ],
+        "labels": [],
+        "note_count": 16,
+        "pan": 0.1,
+        "partial_range": null,
+        "synth_defaults": {
+          "attack": 0.03,
+          "engine": "fm",
+          "preset": "glass_lead",
+          "release": 0.38
+        }
+      },
+      "pad": {
+        "effects": [],
+        "frequency_range_hz": [
+          220.0,
+          412.5
+        ],
+        "labels": [],
+        "note_count": 12,
+        "pan": -0.18,
+        "partial_range": null,
+        "synth_defaults": {
+          "attack": 0.28,
+          "engine": "filtered_stack",
+          "preset": "warm_pad",
+          "release": 1.6
+        }
+      }
+    }
+  },
+  "version_metadata_path": "output/versions/composition_tools_showcase/21_composition_tools_showcase__20260318-194930.render.json"
+}

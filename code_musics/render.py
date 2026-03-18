@@ -206,8 +206,8 @@ def _copy_analysis_artifacts_to_latest(
     """Mirror versioned analysis files into the stable latest filenames."""
     latest_analysis_artifacts = _rewrite_prefixed_paths(
         payload=version_analysis_artifacts,
-        source_prefix_name=version_prefix.name,
-        target_prefix_name=latest_prefix.name,
+        source_prefix=version_prefix,
+        target_prefix=latest_prefix,
     )
     for source_path, target_path in _collect_rewritten_paths(
         source_payload=version_analysis_artifacts,
@@ -215,22 +215,27 @@ def _copy_analysis_artifacts_to_latest(
     ):
         target_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, target_path)
+    manifest_path = Path(str(latest_analysis_artifacts["manifest_path"]))
+    manifest_path.write_text(
+        json.dumps(latest_analysis_artifacts, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
     return latest_analysis_artifacts
 
 
 def _rewrite_prefixed_paths(
     *,
     payload: Any,
-    source_prefix_name: str,
-    target_prefix_name: str,
+    source_prefix: Path,
+    target_prefix: Path,
 ) -> Any:
     """Replace a versioned artifact prefix with the stable output prefix."""
     if isinstance(payload, dict):
         return {
             key: _rewrite_prefixed_paths(
                 payload=value,
-                source_prefix_name=source_prefix_name,
-                target_prefix_name=target_prefix_name,
+                source_prefix=source_prefix,
+                target_prefix=target_prefix,
             )
             for key, value in payload.items()
         }
@@ -238,19 +243,16 @@ def _rewrite_prefixed_paths(
         return [
             _rewrite_prefixed_paths(
                 payload=value,
-                source_prefix_name=source_prefix_name,
-                target_prefix_name=target_prefix_name,
+                source_prefix=source_prefix,
+                target_prefix=target_prefix,
             )
             for value in payload
         ]
     if isinstance(payload, str):
-        path = Path(payload)
-        if path.name.startswith(source_prefix_name):
-            return str(
-                path.with_name(
-                    path.name.replace(source_prefix_name, target_prefix_name, 1)
-                )
-            )
+        normalized_payload = payload.replace("\\", "/")
+        normalized_source = str(source_prefix).replace("\\", "/")
+        if normalized_payload.startswith(normalized_source):
+            return str(target_prefix) + payload[len(str(source_prefix)) :]
     return payload
 
 

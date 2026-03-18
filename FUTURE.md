@@ -20,24 +20,6 @@ Most valuable directions:
 - better balance between "pleasant" and "strange"
 - more deliberate orchestration so pieces feel arranged, not merely layered
 
-### Analysis and feedback tooling
-
-We now have a usable render pipeline, but we still need better feedback loops.
-Audio plus a piano roll is not enough when iterating on orchestration, density,
-and spectral balance, especially for agent-driven workflows.
-
-Useful additions:
-
-- rendered-audio FFT / averaged spectrum views
-- spectrograms over time
-- coarse band-energy summaries and spectral-tilt diagnostics
-- score-derived density, overlap, and registral-spread summaries
-- render-to-render comparison views when revising a piece
-- analysis manifests that make artifact paths and summary stats easy for agents
-  to consume without relying purely on ears
-
-_^^mostly done?_
-
 ### Better piece-generation tools
 
 The score abstraction is in good shape, but composition could still become much
@@ -55,6 +37,19 @@ Most valuable next helpers:
   tonics without introducing fixed pitch-class identities
 - overlap and beating summaries so we can spot where a piece has become too
   static, too drony, or too crowded before full render
+
+### Sound design and synthesis direction
+
+The current engine palette is a solid base, but there is room to broaden it
+without losing the tuning-first workflow.
+
+Likely useful directions:
+
+- richer additive voices with more role-specific presets
+- more FM presets and parameter idioms that interact well with JI materials
+- plucked or struck voices for clearer articulation
+- noise-plus-tone and hybrid percussion voices
+- more explicit role presets for bed, lead, counterpoint, bass, and accent layers
 
 ## Medium priority
 
@@ -76,29 +71,6 @@ Useful directions:
 The main goal is not maximal flexibility for its own sake. It is to make pieces
 feel more alive and shaped over time.
 
-### Swing, Humanization
-- voices drift together a la Group Humanizer
-- simple imperfection in timing
-- swing
-
-### Slop and Osc/Env/Etc Drift
-
-- pitch drift at the osc, synth, voice level - not always a great idea in xenharmonic systems, but still useful. (not to be confused with comma drift)  
-- cutoff freq etc should offer drift
-
-### Sound design and synthesis direction
-
-The current engine palette is a solid base, but there is room to broaden it
-without losing the tuning-first workflow.
-
-Likely useful directions:
-
-- richer additive voices with more role-specific presets
-- more FM presets and parameter idioms that interact well with JI materials
-- plucked or struck voices for clearer articulation
-- noise-plus-tone and hybrid percussion voices
-- more explicit role presets for bed, lead, counterpoint, bass, and accent layers
-
 ### Utonal and subharmonic writing
 
 The helper functions exist, but there is still a lot of compositional territory
@@ -110,39 +82,81 @@ to explore:
   without forcing conventional pitch-class identity
 - pitch-motion idioms that make harmonic gravity and arrival bends more audible
 
+### JI drift harmony and recontextualization
+
+The current context helpers cover the basics, but there is still room for more
+musically direct tooling around ratio-space reinterpretation.
+
+Useful directions:
+
+- stronger phrase-level recontextualization helpers
+- comma-drift movement that is easier to author as normal compositional material
+- voice-leading helpers that stay elegant while local tonics shift
+- sectional harmonic reinterpretation without falling back to fixed pitch-class
+  identity
+
 ### Better effect integration
 
-The declarative effect model is in place, but the palette and routing are still
-fairly simple.
+The declarative effect model is in place and already supports a useful core:
+delay, algorithmic reverb, Bricasti IR convolution, native saturation, Chow
+Tape, chorus, stereo-aware effect chains, and per-voice pan. The next step is
+less "invent effects from scratch" and more "round out the palette so mixes can
+be shaped deliberately inside the existing render path."
 
 Most promising directions:
 
-- chorus, tremolo, autopan, filtering, saturation, and transient shaping - chorus and saturation in particular would do a lot to make sounds lusher and more analog
+- EQ and compression as first-class mix tools; these are now the most obvious
+  gaps
+- richer modulation and shaping such as tremolo, autopan, filtering, and
+  transient shaping
 - role-based effect presets such as `glass_pad`, `sub_drone`, `reed_lead`, or
   `dark_hall`
 - better dry/wet and send-style routing so ambience can be shaped more
   deliberately
-- **stereo rendering and per-voice panning**: voices currently render mono and
-  are summed before any stereo effect (e.g. Bricasti) is applied; per-voice pan
-  position would make counterpoint and layered textures much more legible
-- **warmth and saturation** (high interest): several strong candidates already
-  owned — SPL TwinTube, Black Box HG-2, Arturia True Iron / Pre 1973 / Tape
-  MELLO-FI, and free options like Softube Saturation Knob and iZotope Vinyl;
-  macOS builds are also available for many of these but are equally unusable
-  under Linux; the VST loading problem in WSL2 has several realistic paths:
-  - **yabridge**: bridges Windows VST2/VST3 → Linux via Wine; well-maintained,
-    widely used in Linux DAW setups; would unlock the full existing Windows
-    plugin library from within the normal render pipeline — highest payoff if
-    setup succeeds
-  - **Chow Tape Model**: free, Linux-native VST3 (and LV2), excellent tape
-    saturation character; best "no new infrastructure" option for warmth
-  - **WSL2 Windows interop**: WSL2 can call Windows executables directly; a
-    thin `render_vst.py` running under Windows Python + pedalboard could apply
-    a plugin and write audio back; fragile but zero new dependencies
-  - **Python-native waveshaping**: implement tanh soft-clipping and a harmonic
-    exciter (2nd/3rd partial boost) directly in `synth.py` as a new `EffectSpec`
-    kind; no plugin dependency, deterministic, fits the existing model cleanly;
-    less character than hardware emulations but immediately usable
+- plugin-backed EQ / glue / color inside the current `pedalboard`-based
+  pipeline, with a bias toward Linux-native VST3 or LV2 before chasing
+  Windows-only favorites through bridges
+
+#### Plugin shortlist
+
+These are the most attractive near-term plugin candidates to widen the sound
+without opening a large tuning or host-integration project:
+
+- **LSP Plugins**: highest-value utility bundle; broad Linux-native coverage for
+  parametric EQ, compression, multiband control, and convolution
+- **x42 EQ / x42 Compressor**: lean, Linux-native workhorse pair if a smaller
+  set of mix staples is preferable to a huge suite
+- **Airwindows Consolidated**: very attractive for subtle console-ish color,
+  tape-ish sweetening, and low-friction analog glue
+- **Bandbreite**: another saturation color to complement Chow Tape rather than
+  replace it
+- **TAL-Chorus-LX**: classic analog-style widening/polish that could be useful
+  even with the current native chorus available
+- **Dragonfly Reverb** and/or a TAL reverb: broader ambience palette beyond the
+  existing built-in reverb and Bricasti IR path
+
+Suggested install / evaluation order:
+
+- EQ + compressor first: LSP or x42
+- color / glue next: Airwindows, then Bandbreite
+- extra modulation / space after that: TAL-Chorus-LX, Dragonfly, TAL reverb
+
+WSL2 / Linux plugin-hosting notes:
+
+- Prefer Linux-native VST3 or LV2 first; that is the least annoying path
+- **yabridge** is still the best "unlock the Windows plugin folder later"
+  option if native Linux choices prove insufficient
+- a Windows-side render helper remains possible, but should be treated as a
+  fallback rather than the default architecture
+
+#### Synth plugins
+
+Backlog rather than near-term priority.
+
+Interesting Linux-friendly synths may exist, but the xenharmonic workflow makes
+them a separate project because proper tuning support would likely require
+pitch-bend batching, MPE, MTS-ESP, or some other tuning-aware host strategy.
+Effects give much higher payoff right now with much less integration risk.
 
 ### Rhythm and mixed voice roles
 
@@ -157,11 +171,38 @@ Useful directions:
 - more traditional song-like structures that still retain meaningful
   xenharmonic character
 
+### Analysis and feedback tooling
+
+We now have a usable render pipeline and the core analysis/artifact path is in
+good shape, so this is no longer urgent. It is still worth improving when the
+composition loop starts to feel bottlenecked again.
+
+Useful additions:
+
+- richer render-to-render comparison views
+- clearer summaries for orchestration, density, and spectral balance
+- analysis manifests that are even easier for agents to consume
+- selective improvements to plots or summary diagnostics when they materially
+  improve iteration speed
+
 ## Lower priority
+
+### Swing, Humanization
+- voices drift together a la Group Humanizer
+- simple imperfection in timing
+- swing
+
+### Slop and Osc/Env/Etc Drift
+
+- pitch drift at the osc, synth, voice level - not always a great idea in xenharmonic systems, but still useful. (not to be confused with comma drift)
+- cutoff freq etc should offer drift
 
 ### Sound Quality improvements
 - aliasing, rendering at higher res and downsampling, etc. - esp for subtractive  
 - improved warmth via plugins or otherwise
+- paid Linux-capable effects already owned, such as `u-he Satin` and
+  `u-he Presswerk`, are still attractive but should stay low-priority until a
+  low-friction activation path under WSL2/Linux is in place
 
 ### Parametric piece generation
 

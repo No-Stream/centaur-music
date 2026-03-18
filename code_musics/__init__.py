@@ -3,10 +3,15 @@
 from code_musics.composition import (
     ArticulationSpec,
     RhythmCell,
+    canon,
     echo,
     legato,
     line,
+    progression,
+    recontextualize_phrase,
+    sequence,
     staccato,
+    voiced_ratio_chord,
 )
 from code_musics.humanize import (
     DriftSpec,
@@ -26,8 +31,13 @@ __all__ = [
     "TimingHumanizeSpec",
     "VelocityHumanizeSpec",
     "VelocityParamMap",
+    "canon",
     "echo",
     "legato",
     "line",
+    "progression",
+    "recontextualize_phrase",
+    "sequence",
     "staccato",
+    "voiced_ratio_chord",
 ]

@@ -325,6 +325,18 @@ pitch identities.
 They are designed for cases where the local tuning frame changes by section,
 but the rendered output should still be ordinary absolute frequencies.
 
+New section-building helpers sit on top of this same model rather than creating
+a separate sequencing system:
+
+- `recontextualize_phrase(..., target_context=..., source_tonic=...)`
+- `sequence(..., starts=..., sections=...)`
+- `canon(..., voice_names=..., delays=...)`
+- `voiced_ratio_chord(..., voicing=..., inversion=...)`
+- `progression(..., sections=..., chords=..., pattern=...)`
+
+Use them when you already have a good phrase or harmonic idea and want to
+develop it into a section without manually re-placing every note.
+
 ## `line(...)`
 
 `line(...)` is the main phrase builder.
@@ -474,6 +486,25 @@ These all return new phrases and do not mutate the source:
 
 Use them when a phrase is already built and you want a fast re-articulation pass
 without rewriting the note list.
+
+## Section Helpers
+
+These helpers are for moving from a single phrase or chord idea to a short
+section.
+
+- `recontextualize_phrase(...)` resolves an existing phrase into a new local
+  tonic as concrete frequencies.
+- `sequence(...)` places one phrase multiple times with per-entry transforms.
+- `canon(...)` places delayed imitative entries across voices.
+- `voiced_ratio_chord(...)` resolves ratios into a register-aware voicing.
+- `progression(...)` places simple harmonic accompaniment patterns from a list
+  of sections and ratio chords.
+
+Current `progression(...)` pattern modes:
+
+- `block`
+- `arpeggio`
+- `pedal_upper`
 
 ## Recipes
 

@@ -531,7 +531,11 @@ def test_render_piece_writes_audio_and_plot(tmp_path: Path) -> None:
     assert result.version_metadata_path is not None
     assert result.version_metadata_path.exists()
     manifest = json.loads(result.analysis_manifest_path.read_text(encoding="utf-8"))
+    assert Path(manifest["manifest_path"]) == result.analysis_manifest_path
     assert Path(manifest["mix"]["artifacts"]["spectrum"]).exists()
+    assert "versions/" not in str(result.analysis_manifest_path)
+    assert "versions/" not in manifest["manifest_path"]
+    assert "versions/" not in manifest["mix"]["artifacts"]["spectrum"]
     render_metadata = json.loads(
         result.render_metadata_path.read_text(encoding="utf-8")
     )
@@ -543,6 +547,10 @@ def test_render_piece_writes_audio_and_plot(tmp_path: Path) -> None:
     assert (
         Path(render_metadata["artifacts"]["versioned"]["audio_path"])
         == result.version_audio_path
+    )
+    assert (
+        Path(render_metadata["artifacts"]["latest"]["analysis_manifest_path"])
+        == result.analysis_manifest_path
     )
 
 
