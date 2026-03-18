@@ -78,10 +78,15 @@ def test_score_can_mix_multiple_engine_types() -> None:
         "perc", synth_defaults={"engine": "noise_perc", "preset": "snareish"}
     )
 
+    score.add_voice(
+        "lead", synth_defaults={"engine": "polyblep", "preset": "warm_lead"}
+    )
+
     score.add_note("pad", start=0.0, duration=0.8, partial=2.0, amp=0.2)
     score.add_note("bell", start=0.15, duration=0.5, partial=3.0, amp=0.2)
     score.add_note("bass", start=0.0, duration=0.6, partial=1.0, amp=0.2)
     score.add_note("perc", start=0.35, duration=0.2, freq=180.0, amp=0.2)
+    score.add_note("lead", start=0.1, duration=0.5, partial=2.0, amp=0.2)
 
     audio = score.render()
 
@@ -163,6 +168,34 @@ def test_pitch_motion_renders_through_filtered_stack_engine() -> None:
         start=0.0,
         duration=0.45,
         partial=1.0,
+        amp=0.25,
+        pitch_motion=PitchMotionSpec.vibrato(depth_ratio=0.02, rate_hz=5.0),
+    )
+
+    static_audio = static_score.render()
+    motion_audio = motion_score.render()
+
+    assert static_audio.shape == motion_audio.shape
+    assert np.all(np.isfinite(motion_audio))
+    assert np.max(np.abs(motion_audio - static_audio)) > 1e-4
+
+
+def test_pitch_motion_renders_through_polyblep_engine() -> None:
+    static_score = Score(f0=110.0)
+    static_score.add_voice(
+        "lead", synth_defaults={"engine": "polyblep", "preset": "warm_lead"}
+    )
+    static_score.add_note("lead", start=0.0, duration=0.45, partial=2.0, amp=0.25)
+
+    motion_score = Score(f0=110.0)
+    motion_score.add_voice(
+        "lead", synth_defaults={"engine": "polyblep", "preset": "warm_lead"}
+    )
+    motion_score.add_note(
+        "lead",
+        start=0.0,
+        duration=0.45,
+        partial=2.0,
         amp=0.25,
         pitch_motion=PitchMotionSpec.vibrato(depth_ratio=0.02, rate_hz=5.0),
     )

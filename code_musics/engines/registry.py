@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from code_musics.engines import additive, filtered_stack, fm, noise_perc
+from code_musics.engines import additive, filtered_stack, fm, noise_perc, polyblep
 
 EngineRenderer = Callable[..., np.ndarray]
 
@@ -16,6 +16,7 @@ _ENGINES: dict[str, EngineRenderer] = {
     "fm": fm.render,
     "filtered_stack": filtered_stack.render,
     "noise_perc": noise_perc.render,
+    "polyblep": polyblep.render,
 }
 
 _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
@@ -131,6 +132,16 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "tone_decay": 0.05,
             "bandpass_ratio": 2.4,
             "click_amount": 0.28,
+        },
+    },
+    "polyblep": {
+        "warm_lead": {
+            "waveform": "saw",
+            "cutoff_hz": 3000.0,
+            "resonance": 0.08,
+            "filter_env_amount": 0.45,
+            "filter_env_decay": 0.90,
+            "keytrack": 0.05,
         },
     },
 }

@@ -38,6 +38,8 @@ Most valuable next helpers:
 - overlap and beating summaries so we can spot where a piece has become too
   static, too drony, or too crowded before full render
 
+_todo: update, think we added some of this_
+
 ### Sound design and synthesis direction
 
 The current engine palette is a solid base, but there is room to broaden it
@@ -106,7 +108,7 @@ be shaped deliberately inside the existing render path."
 Most promising directions:
 
 - EQ and compression as first-class mix tools; these are now the most obvious
-  gaps
+  gaps. (think we have these now but not used via LSP linux studio plugs?)
 - richer modulation and shaping such as tremolo, autopan, filtering, and
   transient shaping
 - role-based effect presets such as `glass_pad`, `sub_drone`, `reed_lead`, or
@@ -145,9 +147,11 @@ WSL2 / Linux plugin-hosting notes:
 
 - Prefer Linux-native VST3 or LV2 first; that is the least annoying path
 - **yabridge** is still the best "unlock the Windows plugin folder later"
-  option if native Linux choices prove insufficient
+  option if native Linux choices prove insufficient but sadly no WSL2 support
 - a Windows-side render helper remains possible, but should be treated as a
   fallback rather than the default architecture
+
+_todo: some of these are added, need to update this section_
 
 #### Synth plugins
 
@@ -156,7 +160,7 @@ Backlog rather than near-term priority.
 Interesting Linux-friendly synths may exist, but the xenharmonic workflow makes
 them a separate project because proper tuning support would likely require
 pitch-bend batching, MPE, MTS-ESP, or some other tuning-aware host strategy.
-Effects give much higher payoff right now with much less integration risk.
+Effects give much higher payoff right now with less integration risk.
 
 ### Rhythm and mixed voice roles
 

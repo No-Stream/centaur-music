@@ -1,7 +1,10 @@
 """Core synthesis utilities."""
 
+import ctypes
 import logging
 import os
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +23,21 @@ _CONVOLUTION_CLS: Any = getattr(pedalboard, "Convolution")  # noqa: B009
 SAMPLE_RATE = 44100
 
 
+@dataclass(frozen=True)
+class ExternalPluginSpec:
+    """Declarative external plugin definition."""
+
+    name: str
+    path: Path
+    format: str = "vst3"
+    host: str = "pedalboard"
+    bundle_plugin_name: str | None = None
+    preload_libraries: tuple[Path, ...] = ()
+
+
+PluginConfigurer = Callable[[Any, dict[str, Any]], None]
+
+
 def db_to_amp(db: float) -> float:
     """Convert decibels to a linear amplitude multiplier."""
     return float(10.0 ** (db / 20.0))
@@ -36,104 +54,173 @@ def amp_to_db(amp: float) -> float:
 # Chow Tape Model VST3 (lazy-loaded singleton)
 # ---------------------------------------------------------------------------
 
-_CHOW_TAPE_PATH = Path.home() / ".vst3" / "CHOWTapeModel.vst3"
-_chow_tape_plugin: Any = None
-
-
-def _get_chow_tape() -> Any:
-    global _chow_tape_plugin
-    if _chow_tape_plugin is None:
-        os.environ.setdefault("DISPLAY", "")  # avoid X11 crash in headless env
-        from pedalboard import (  # noqa: PLC0415
-            load_plugin,  # type: ignore[attr-defined]
-        )
-
-        if not _CHOW_TAPE_PATH.exists():
-            raise FileNotFoundError(
-                f"Chow Tape Model VST3 not found at {_CHOW_TAPE_PATH}. "
-                "Install from https://github.com/jatinchowdhury18/AnalogTapeModel/releases"
-            )
-        _chow_tape_plugin = load_plugin(str(_CHOW_TAPE_PATH))
-    return _chow_tape_plugin
-
-
-# ---------------------------------------------------------------------------
-# TAL-Chorus-LX VST3 (lazy-loaded singleton)
-# ---------------------------------------------------------------------------
-
-_TAL_CHORUS_LX_PATH = Path.home() / ".vst3" / "TAL-Chorus-LX.vst3"
-_tal_chorus_lx_plugin: Any = None
-
-
-def _get_tal_chorus_lx() -> Any:
-    global _tal_chorus_lx_plugin
-    if _tal_chorus_lx_plugin is None:
-        os.environ.setdefault("DISPLAY", "")
-        from pedalboard import (
-            load_plugin,  # noqa: PLC0415  # type: ignore[attr-defined]
-        )
-
-        if not _TAL_CHORUS_LX_PATH.exists():
-            raise FileNotFoundError(
-                f"TAL-Chorus-LX VST3 not found at {_TAL_CHORUS_LX_PATH}"
-            )
-        _tal_chorus_lx_plugin = load_plugin(str(_TAL_CHORUS_LX_PATH))
-    return _tal_chorus_lx_plugin
-
-
-# ---------------------------------------------------------------------------
-# TAL-Reverb-2 VST3 (lazy-loaded singleton)
-# ---------------------------------------------------------------------------
-
-_TAL_REVERB2_PATH = Path.home() / ".vst3" / "TAL-Reverb-2.vst3"
-_tal_reverb2_plugin: Any = None
-
-
-def _get_tal_reverb2() -> Any:
-    global _tal_reverb2_plugin
-    if _tal_reverb2_plugin is None:
-        os.environ.setdefault("DISPLAY", "")
-        from pedalboard import (
-            load_plugin,  # noqa: PLC0415  # type: ignore[attr-defined]
-        )
-
-        if not _TAL_REVERB2_PATH.exists():
-            raise FileNotFoundError(
-                f"TAL-Reverb-2 VST3 not found at {_TAL_REVERB2_PATH}"
-            )
-        _tal_reverb2_plugin = load_plugin(str(_TAL_REVERB2_PATH))
-    return _tal_reverb2_plugin
-
-
-# ---------------------------------------------------------------------------
-# Dragonfly Reverb VST3 plugins (lazy-loaded per variant)
-# ---------------------------------------------------------------------------
-
-_DRAGONFLY_PATHS: dict[str, Path] = {
-    "plate": Path.home() / ".vst3" / "DragonflyPlateReverb.vst3",
-    "room": Path.home() / ".vst3" / "DragonflyRoomReverb.vst3",
-    "hall": Path.home() / ".vst3" / "DragonflyHallReverb.vst3",
-    "early": Path.home() / ".vst3" / "DragonflyEarlyReflections.vst3",
+_PLUGIN_SPECS: dict[str, ExternalPluginSpec] = {
+    "lsp_compressor_stereo": ExternalPluginSpec(
+        name="lsp_compressor_stereo",
+        path=Path.home() / ".vst3" / "lsp-plugins.vst3",
+        format="vst3",
+        bundle_plugin_name="Compressor Stereo",
+        preload_libraries=(
+            Path.home() / ".local" / "lib" / "lsp-runtime" / "libpixman-1.so.0.38.4",
+            Path.home() / ".local" / "lib" / "lsp-runtime" / "libxcb-render.so.0.0.0",
+            Path.home() / ".local" / "lib" / "lsp-runtime" / "libcairo.so.2.11600.0",
+        ),
+    ),
+    "lsp_compressor_stereo_vst2": ExternalPluginSpec(
+        name="lsp_compressor_stereo_vst2",
+        path=Path.home() / ".vst" / "lsp-plugins-vst-compressor-stereo.so",
+        format="vst2",
+    ),
+    "chow_tape": ExternalPluginSpec(
+        name="chow_tape",
+        path=Path.home() / ".vst3" / "CHOWTapeModel.vst3",
+    ),
+    "tal_chorus_lx": ExternalPluginSpec(
+        name="tal_chorus_lx",
+        path=Path.home() / ".vst3" / "TAL-Chorus-LX.vst3",
+    ),
+    "tal_reverb2": ExternalPluginSpec(
+        name="tal_reverb2",
+        path=Path.home() / ".vst3" / "TAL-Reverb-2.vst3",
+    ),
+    "dragonfly_plate": ExternalPluginSpec(
+        name="dragonfly_plate",
+        path=Path.home() / ".vst3" / "DragonflyPlateReverb.vst3",
+    ),
+    "dragonfly_room": ExternalPluginSpec(
+        name="dragonfly_room",
+        path=Path.home() / ".vst3" / "DragonflyRoomReverb.vst3",
+    ),
+    "dragonfly_hall": ExternalPluginSpec(
+        name="dragonfly_hall",
+        path=Path.home() / ".vst3" / "DragonflyHallReverb.vst3",
+    ),
+    "dragonfly_early": ExternalPluginSpec(
+        name="dragonfly_early",
+        path=Path.home() / ".vst3" / "DragonflyEarlyReflections.vst3",
+    ),
 }
-_dragonfly_plugins: dict[str, Any] = {}
+_loaded_external_plugins: dict[tuple[str, str, Path], Any] = {}
 
 
-def _get_dragonfly(variant: str) -> Any:
-    if variant not in _DRAGONFLY_PATHS:
+def _normalize_plugin_path(path: str | Path) -> Path:
+    return Path(path).expanduser().resolve()
+
+
+def _get_external_plugin_spec(
+    plugin_name: str | None = None,
+    plugin_path: str | Path | None = None,
+    plugin_format: str = "vst3",
+    host: str = "pedalboard",
+) -> ExternalPluginSpec:
+    if plugin_name is not None:
+        if plugin_name not in _PLUGIN_SPECS:
+            raise ValueError(
+                f"Unknown plugin {plugin_name!r}. Choose from: {sorted(_PLUGIN_SPECS)}"
+            )
+        return _PLUGIN_SPECS[plugin_name]
+
+    if plugin_path is None:
+        raise ValueError("Provide either plugin_name or plugin_path")
+
+    return ExternalPluginSpec(
+        name=str(plugin_path),
+        path=_normalize_plugin_path(plugin_path),
+        format=plugin_format,
+        host=host,
+    )
+
+
+def has_external_plugin(plugin_name: str) -> bool:
+    """Return whether a registered external plugin and its runtime deps exist."""
+    spec = _get_external_plugin_spec(plugin_name=plugin_name)
+    if not spec.path.exists():
+        return False
+    return all(path.exists() for path in spec.preload_libraries)
+
+
+def _preload_shared_libraries(library_paths: tuple[Path, ...]) -> None:
+    for library_path in library_paths:
+        if not library_path.exists():
+            raise FileNotFoundError(
+                f"Required shared library not found at {library_path}"
+            )
+        ctypes.CDLL(str(library_path), mode=ctypes.RTLD_GLOBAL)
+
+
+def _load_external_plugin(
+    plugin_name: str | None = None,
+    plugin_path: str | Path | None = None,
+    plugin_format: str = "vst3",
+    host: str = "pedalboard",
+) -> Any:
+    spec = _get_external_plugin_spec(
+        plugin_name=plugin_name,
+        plugin_path=plugin_path,
+        plugin_format=plugin_format,
+        host=host,
+    )
+    cache_key = (spec.host, spec.format, spec.path)
+    if cache_key in _loaded_external_plugins:
+        return _loaded_external_plugins[cache_key]
+
+    if spec.host != "pedalboard":
         raise ValueError(
-            f"Unknown Dragonfly variant {variant!r}. Choose from: {list(_DRAGONFLY_PATHS)}"
+            f"Unsupported plugin host: {spec.host!r}. Only 'pedalboard' is currently supported."
         )
-    if variant not in _dragonfly_plugins:
-        os.environ.setdefault("DISPLAY", "")
-        from pedalboard import (
-            load_plugin,  # noqa: PLC0415  # type: ignore[attr-defined]
+    if spec.format != "vst3":
+        raise ValueError(
+            "Unsupported plugin format for the current backend: "
+            f"{spec.format!r}. The 'pedalboard' backend here supports VST3 only, "
+            "so Linux `.so` VST2 plugins such as LSP cannot be loaded until we add "
+            "a separate VST2-capable host."
         )
+    if not spec.path.exists():
+        raise FileNotFoundError(f"Plugin not found at {spec.path}")
 
-        path = _DRAGONFLY_PATHS[variant]
-        if not path.exists():
-            raise FileNotFoundError(f"Dragonfly {variant} VST3 not found at {path}")
-        _dragonfly_plugins[variant] = load_plugin(str(path))
-    return _dragonfly_plugins[variant]
+    os.environ.setdefault("DISPLAY", "")
+    from pedalboard import load_plugin  # noqa: PLC0415  # type: ignore[attr-defined]
+
+    if spec.preload_libraries:
+        _preload_shared_libraries(spec.preload_libraries)
+
+    plugin = load_plugin(str(spec.path), plugin_name=spec.bundle_plugin_name)
+    _loaded_external_plugins[cache_key] = plugin
+    return plugin
+
+
+def _configure_plugin_attributes(plugin: Any, params: dict[str, Any]) -> None:
+    for key, value in params.items():
+        if not hasattr(plugin, key):
+            raise ValueError(f"Plugin {type(plugin).__name__} has no parameter {key!r}")
+        setattr(plugin, key, value)
+
+
+def _apply_plugin_processor(
+    signal: np.ndarray,
+    *,
+    plugin_name: str | None = None,
+    plugin_path: str | Path | None = None,
+    plugin_format: str = "vst3",
+    host: str = "pedalboard",
+    params: dict[str, Any] | None = None,
+    configurer: PluginConfigurer | None = None,
+) -> np.ndarray:
+    plugin = _load_external_plugin(
+        plugin_name=plugin_name,
+        plugin_path=plugin_path,
+        plugin_format=plugin_format,
+        host=host,
+    )
+    resolved_params = dict(params or {})
+    if configurer is not None:
+        configurer(plugin, resolved_params)
+    else:
+        _configure_plugin_attributes(plugin, resolved_params)
+
+    stereo_in = _ensure_stereo(signal).astype(np.float32)
+    stereo_out = plugin(stereo_in, SAMPLE_RATE)
+    return _match_input_layout(_coerce_signal_layout(stereo_out), signal)
 
 
 def tone(
@@ -431,17 +518,19 @@ def apply_chow_tape(
     bias:       Tape bias (0–1). Controls harmonic balance / even vs. odd character.
     mix:        Dry/wet blend in percent (0–100).
     """
-    plugin = _get_chow_tape()
-    plugin.tape_drive = drive
-    plugin.tape_saturation = saturation
-    plugin.tape_bias = bias
-    plugin.dry_wet = mix
-    plugin.wow_flutter_on_off = False  # pure saturation, no wow/flutter
-    plugin.loss_on_off = False  # pure saturation, no tape loss colouring
-
-    stereo_in = _ensure_stereo(signal).astype(np.float32)
-    stereo_out = plugin(stereo_in, SAMPLE_RATE)
-    return _match_input_layout(_coerce_signal_layout(stereo_out), signal)
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="chow_tape",
+        params={
+            "tape_drive": drive,
+            "tape_saturation": saturation,
+            "tape_bias": bias,
+            "dry_wet": mix,
+            # Keep this wrapper focused on glue/saturation, not motion/degradation.
+            "wow_flutter_on_off": False,
+            "loss_on_off": False,
+        },
+    )
 
 
 def apply_bricasti(
@@ -482,16 +571,17 @@ def apply_tal_chorus_lx(
     chorus_2: Enable chorus mode II (wider, faster LFO). Both can be on together.
     stereo:   Stereo width 0–1. Mapped to plugin's 0–10 stereo control.
     """
-    plugin = _get_tal_chorus_lx()
-    plugin.chorus_1 = 1.0 if chorus_1 else 0.0
-    plugin.chorus_2 = 1.0 if chorus_2 else 0.0
-    plugin.dry_wet = float(mix) * 10.0
-    plugin.stereo = float(stereo) * 10.0
-    plugin.volume = 5.0  # unity gain
-
-    stereo_in = _ensure_stereo(signal).astype(np.float32)
-    stereo_out = plugin(stereo_in, SAMPLE_RATE)
-    return _match_input_layout(_coerce_signal_layout(stereo_out), signal)
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="tal_chorus_lx",
+        params={
+            "chorus_1": 1.0 if chorus_1 else 0.0,
+            "chorus_2": 1.0 if chorus_2 else 0.0,
+            "dry_wet": float(mix) * 10.0,
+            "stereo": float(stereo) * 10.0,
+            "volume": 5.0,
+        },
+    )
 
 
 def apply_tal_reverb2(
@@ -510,16 +600,17 @@ def apply_tal_reverb2(
     pre_delay:  Pre-delay 0–1 (plugin's normalized range).
     stereo:     Stereo width 0–1.
     """
-    plugin = _get_tal_reverb2()
-    plugin.dry = 1.0
-    plugin.wet = float(wet)
-    plugin.room_size = float(room_size)
-    plugin.pre_delay = float(pre_delay)
-    plugin.stereo = float(stereo)
-
-    stereo_in = _ensure_stereo(signal).astype(np.float32)
-    stereo_out = plugin(stereo_in, SAMPLE_RATE)
-    return _match_input_layout(_coerce_signal_layout(stereo_out), signal)
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="tal_reverb2",
+        params={
+            "dry": 1.0,
+            "wet": float(wet),
+            "room_size": float(room_size),
+            "pre_delay": float(pre_delay),
+            "stereo": float(stereo),
+        },
+    )
 
 
 def apply_dragonfly(
@@ -550,27 +641,67 @@ def apply_dragonfly(
     size_m:       Room/hall size in metres — room and hall only.
     diffuse:      Diffusion 0–100 — room and hall only.
     """
-    plugin = _get_dragonfly(variant)
-    plugin.dry_level = 100.0
-    plugin.wet_level = float(wet_level)
-    plugin.decay_s = float(decay_s)
-    plugin.width = float(width)
-    if hasattr(plugin, "predelay_ms"):
-        plugin.predelay_ms = float(predelay_ms)
-    if hasattr(plugin, "low_cut_hz"):
-        plugin.low_cut_hz = float(low_cut_hz)
-    if hasattr(plugin, "high_cut_hz"):
-        plugin.high_cut_hz = float(high_cut_hz)
-    if variant == "plate" and hasattr(plugin, "dampen_hz"):
-        plugin.dampen_hz = float(dampen_hz)
-    if variant in {"room", "hall"} and hasattr(plugin, "size_m"):
-        plugin.size_m = float(size_m)
-    if variant in {"room", "hall"} and hasattr(plugin, "diffuse"):
-        plugin.diffuse = float(diffuse)
+    plugin_name = f"dragonfly_{variant}"
+    if plugin_name not in _PLUGIN_SPECS:
+        raise ValueError(
+            f"Unknown Dragonfly variant {variant!r}. Choose from: ['early', 'hall', 'plate', 'room']"
+        )
+    return _apply_plugin_processor(
+        signal,
+        plugin_name=plugin_name,
+        params={
+            "dry_level": 100.0,
+            "wet_level": float(wet_level),
+            "decay_s": float(decay_s),
+            "width": float(width),
+            "predelay_ms": float(predelay_ms),
+            "low_cut_hz": float(low_cut_hz),
+            "high_cut_hz": float(high_cut_hz),
+            "dampen_hz": float(dampen_hz),
+            "size_m": float(size_m),
+            "diffuse": float(diffuse),
+        },
+        configurer=_configure_dragonfly_plugin,
+    )
 
-    stereo_in = _ensure_stereo(signal).astype(np.float32)
-    stereo_out = plugin(stereo_in, SAMPLE_RATE)
-    return _match_input_layout(_coerce_signal_layout(stereo_out), signal)
+
+def _configure_dragonfly_plugin(plugin: Any, params: dict[str, Any]) -> None:
+    plugin.dry_level = params["dry_level"]
+    plugin.wet_level = params["wet_level"]
+    plugin.decay_s = params["decay_s"]
+    plugin.width = params["width"]
+    if hasattr(plugin, "predelay_ms"):
+        plugin.predelay_ms = params["predelay_ms"]
+    if hasattr(plugin, "low_cut_hz"):
+        plugin.low_cut_hz = params["low_cut_hz"]
+    if hasattr(plugin, "high_cut_hz"):
+        plugin.high_cut_hz = params["high_cut_hz"]
+    if hasattr(plugin, "dampen_hz"):
+        plugin.dampen_hz = params["dampen_hz"]
+    if hasattr(plugin, "size_m"):
+        plugin.size_m = params["size_m"]
+    if hasattr(plugin, "diffuse"):
+        plugin.diffuse = params["diffuse"]
+
+
+def apply_plugin(
+    signal: np.ndarray,
+    *,
+    plugin_name: str | None = None,
+    plugin_path: str | Path | None = None,
+    plugin_format: str = "vst3",
+    host: str = "pedalboard",
+    params: dict[str, Any] | None = None,
+) -> np.ndarray:
+    """Apply an external audio plugin via the configured plugin host backend."""
+    return _apply_plugin_processor(
+        signal,
+        plugin_name=plugin_name,
+        plugin_path=plugin_path,
+        plugin_format=plugin_format,
+        host=host,
+        params=params,
+    )
 
 
 _CHORUS_PRESETS: dict[str, dict[str, float]] = {
@@ -829,6 +960,8 @@ def apply_effect_chain(
             processed = apply_tal_reverb2(processed, **params)
         elif effect.kind == "dragonfly":
             processed = apply_dragonfly(processed, **params)
+        elif effect.kind == "plugin":
+            processed = apply_plugin(processed, **params)
         else:
             raise ValueError(f"Unsupported effect kind: {effect.kind}")
     return processed

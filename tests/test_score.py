@@ -214,6 +214,127 @@ def test_effect_presets_allow_explicit_overrides() -> None:
     assert overridden_delta < default_delta
 
 
+def test_plugin_effect_sets_named_plugin_parameters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePlugin:
+        def __init__(self) -> None:
+            self.drive = 0.0
+            self.mix = 0.0
+
+        def __call__(self, signal: np.ndarray, sample_rate: int) -> np.ndarray:
+            assert sample_rate == synth.SAMPLE_RATE
+            return signal
+
+    fake_plugin = FakePlugin()
+    monkeypatch.setattr(synth, "_load_external_plugin", lambda **_: fake_plugin)
+    signal = np.sin(np.linspace(0.0, 2.0 * np.pi, synth.SAMPLE_RATE, endpoint=False))
+
+    processed = synth.apply_effect_chain(
+        signal,
+        [
+            EffectSpec(
+                "plugin",
+                {
+                    "plugin_name": "my_bus_plugin",
+                    "params": {"drive": 0.42, "mix": 0.18},
+                },
+            )
+        ],
+    )
+
+    assert processed.shape == signal.shape
+    assert fake_plugin.drive == pytest.approx(0.42)
+    assert fake_plugin.mix == pytest.approx(0.18)
+
+
+def test_plugin_effect_rejects_unknown_parameter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePlugin:
+        def __call__(self, signal: np.ndarray, sample_rate: int) -> np.ndarray:
+            return signal
+
+    monkeypatch.setattr(synth, "_load_external_plugin", lambda **_: FakePlugin())
+    signal = np.sin(np.linspace(0.0, 2.0 * np.pi, 1024, endpoint=False))
+
+    with pytest.raises(ValueError, match="no parameter"):
+        synth.apply_effect_chain(
+            signal,
+            [
+                EffectSpec(
+                    "plugin",
+                    {"plugin_name": "my_bus_plugin", "params": {"threshold": -18.0}},
+                )
+            ],
+        )
+
+
+def test_registered_vst2_plugin_explains_backend_limitation() -> None:
+    signal = np.sin(np.linspace(0.0, 2.0 * np.pi, 1024, endpoint=False))
+
+    with pytest.raises(ValueError, match="supports VST3 only"):
+        synth.apply_effect_chain(
+            signal,
+            [EffectSpec("plugin", {"plugin_name": "lsp_compressor_stereo_vst2"})],
+        )
+
+
+def test_has_external_plugin_requires_plugin_and_runtime_libs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plugin_path = tmp_path / "plugin.vst3"
+    runtime_a = tmp_path / "runtime-a.so"
+    runtime_b = tmp_path / "runtime-b.so"
+    plugin_path.touch()
+    runtime_a.touch()
+    plugin_spec = synth.ExternalPluginSpec(
+        name="test_plugin",
+        path=plugin_path,
+        preload_libraries=(runtime_a, runtime_b),
+    )
+    monkeypatch.setitem(synth._PLUGIN_SPECS, "test_plugin", plugin_spec)
+
+    assert synth.has_external_plugin("test_plugin") is False
+    runtime_b.touch()
+    assert synth.has_external_plugin("test_plugin") is True
+
+
+def test_tal_reverb_uses_shared_plugin_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePlugin:
+        def __init__(self) -> None:
+            self.dry = 0.0
+            self.wet = 0.0
+            self.room_size = 0.0
+            self.pre_delay = 0.0
+            self.stereo = 0.0
+
+        def __call__(self, signal: np.ndarray, sample_rate: int) -> np.ndarray:
+            return signal
+
+    fake_plugin = FakePlugin()
+    monkeypatch.setattr(synth, "_load_external_plugin", lambda **_: fake_plugin)
+    signal = np.sin(np.linspace(0.0, 2.0 * np.pi, 1024, endpoint=False))
+
+    processed = synth.apply_tal_reverb2(
+        signal,
+        wet=0.24,
+        room_size=0.61,
+        pre_delay=0.17,
+        stereo=0.8,
+    )
+
+    assert processed.shape == signal.shape
+    assert fake_plugin.dry == pytest.approx(1.0)
+    assert fake_plugin.wet == pytest.approx(0.24)
+    assert fake_plugin.room_size == pytest.approx(0.61)
+    assert fake_plugin.pre_delay == pytest.approx(0.17)
+    assert fake_plugin.stereo == pytest.approx(0.8)
+
+
 def test_score_renders_stereo_when_voice_effects_promote_signal() -> None:
     score = Score(f0=55.0)
     score.add_voice(

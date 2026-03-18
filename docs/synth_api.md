@@ -156,6 +156,7 @@ Current engine support:
 - `additive`
 - `fm`
 - `filtered_stack`
+- `polyblep`
 
 Unsupported in v1:
 
@@ -178,6 +179,7 @@ Available engines:
 - `fm`
 - `filtered_stack`
 - `noise_perc`
+- `polyblep`
 
 ## Presets
 
@@ -193,6 +195,7 @@ Available presets:
 - `fm`: `bell`, `glass_lead`, `metal_bass`
 - `filtered_stack`: `warm_pad`, `reed_lead`, `round_bass`
 - `noise_perc`: `kickish`, `snareish`, `tick`
+- `polyblep`: `warm_lead`
 
 ## Effects
 
@@ -209,6 +212,57 @@ Effects that support presets resolve parameters in this order:
 
 1. effect preset values, if `preset` is set
 2. explicit `EffectSpec.params` overrides
+
+### `plugin`
+
+Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+
+Generic external-plugin effect. Use this when you want to host a plugin directly
+instead of adding a dedicated wrapper kind.
+
+Parameters:
+
+- `plugin_name: str | None`
+  Registered plugin id. Current built-in ids are `chow_tape`, `tal_chorus_lx`,
+  `tal_reverb2`, `dragonfly_plate`, `dragonfly_room`, `dragonfly_hall`,
+  `dragonfly_early`, `lsp_compressor_stereo`, and `lsp_compressor_stereo_vst2`.
+- `plugin_path: str | None`
+  Explicit plugin path. Use this for ad hoc plugins that are not in the registry.
+- `plugin_format: str`
+  Plugin format identifier. Default `vst3`.
+- `host: str`
+  Plugin host backend. Default `pedalboard`.
+- `params: dict[str, Any]`
+  Raw plugin parameter map. Keys are applied as plugin attributes.
+
+Notes:
+
+- the current backend supports VST3 plugins through `pedalboard`
+- `lsp_compressor_stereo` targets the multi-plugin LSP VST3 bundle and preloads a
+  small local Cairo runtime shim before loading `Compressor Stereo`
+- `lsp_compressor_stereo_vst2` remains registered as the direct Linux VST2 `.so`
+  target, but it still needs a future VST2-capable backend before it can run here
+- Linux `.so` / VST2 / LV2 are not hosted yet; the abstraction is in place so a
+  future backend can be added without redesigning `EffectSpec`
+- mono input is promoted to stereo before plugin processing, then matched back to
+  the original layout when possible
+
+Example:
+
+```python
+score = Score(
+    f0=110.0,
+    master_effects=[
+        EffectSpec(
+            "plugin",
+            {
+                "plugin_path": "~/.vst3/MyBusComp.vst3",
+                "params": {"threshold_db": -18.0, "ratio": 2.0},
+            },
+        )
+    ],
+)
+```
 
 ### `chorus`
 
@@ -324,6 +378,7 @@ Parameters:
 Notes:
 
 - expects `~/.vst3/CHOWTapeModel.vst3` to be installed
+- implemented through the shared external-plugin backend
 - the wrapper currently disables wow/flutter and tape-loss switches so this is a
   clean tape-saturation comparison rather than a lo-fi motion effect
 
@@ -362,6 +417,7 @@ Parameters:
 Notes:
 
 - expects `~/.vst3/TAL-Chorus-LX.vst3` to be installed
+- implemented through the shared external-plugin backend
 - promotes mono to stereo
 - mode I alone is the closest match to a classic Juno-60 Chorus I sound; enabling
   both gives the Juno Chorus I+II character (wider, slightly faster)
@@ -396,6 +452,7 @@ Parameters:
 Notes:
 
 - expects `~/.vst3/TAL-Reverb-2.vst3` to be installed
+- implemented through the shared external-plugin backend
 - always sets dry to `1.0`; wet is an additive level, not a crossfade
 - promotes mono to stereo
 
@@ -441,6 +498,7 @@ Parameters:
 Notes:
 
 - expects the appropriate `~/.vst3/DragonflY*.vst3` to be installed
+- implemented through the shared external-plugin backend
 - `dry_level` is always set to `100`; `wet_level` is an additive level
 - promotes mono to stereo
 - plate is the cleanest choice for voice-level pre-reverb; room and hall suit
@@ -643,6 +701,83 @@ score.add_voice(
         "tone_decay": 0.12,
         "bandpass_ratio": 1.5,
         "click_amount": 0.1,
+    },
+)
+```
+
+## `polyblep`
+
+Implementation: [code_musics/engines/polyblep.py](/home/jan/workspace/code-musics/code_musics/engines/polyblep.py)
+
+Time-domain bandlimited oscillator using polynomial BLEPs (Bandlimited Step
+functions). Generates waveforms directly rather than summing sine harmonics, so
+there is no Gibbs phenomenon at discontinuities. The resulting sound has a smooth
+analog character with a correct `1/n` harmonic spectrum.
+
+Parameters:
+
+- `waveform: str`
+  Oscillator waveform. Supported values: `saw`, `square`.
+- `pulse_width: float`
+  Pulse width used when `waveform="square"`. `0.5` is a symmetric square wave.
+- `cutoff_hz: float`
+  Base low-pass cutoff in Hertz. Default `3000.0`.
+- `keytrack: float`
+  Exponent controlling how strongly the cutoff follows note pitch relative to
+  `reference_freq_hz`. Default `0.0` (no tracking).
+- `reference_freq_hz: float`
+  Reference pitch for key tracking. When the note frequency equals this value, the
+  effective cutoff is `cutoff_hz` before envelope modulation. Default `220.0`.
+- `resonance: float`
+  Adds a bandpass layer centered on the median cutoff for analog resonance
+  character. Default `0.0`.
+- `filter_env_amount: float`
+  Multiplier controlling how much the cutoff starts above the base `cutoff_hz` at
+  note onset. Default `0.0`.
+- `filter_env_decay: float`
+  Time constant in seconds for the cutoff envelope to decay back toward the base
+  cutoff. Default `0.18`.
+- `n_filter_segments: int`
+  Number of piecewise segments used to approximate the sweeping filter. Higher
+  values give smoother sweeps at the cost of slightly more CPU. Default `8`.
+
+Validation:
+
+- `cutoff_hz > 0`
+- `reference_freq_hz > 0`
+- `filter_env_decay > 0`
+- `0 < pulse_width < 1`
+- `n_filter_segments >= 1`
+- `waveform in {"saw", "square"}`
+
+Notes:
+
+- Unlike `filtered_stack`, the spectrum is generated in the time domain, so there
+  is no `n_harmonics` cap and no Gibbs ringing at waveform discontinuities.
+- The output is peak-normalized before the final amplitude scale, matching the
+  behavior of the `fm` engine.
+- Supports `freq_trajectory` for pitch motion.
+
+Presets:
+
+- `warm_lead` — saw wave with a gentle filter envelope and light resonance, useful
+  as a drop-in analog lead.
+
+Example:
+
+```python
+score.add_voice(
+    "lead",
+    synth_defaults={
+        "engine": "polyblep",
+        "waveform": "saw",
+        "cutoff_hz": 2500.0,
+        "keytrack": 0.08,
+        "resonance": 0.12,
+        "filter_env_amount": 0.6,
+        "filter_env_decay": 0.5,
+        "attack": 0.01,
+        "release": 0.3,
     },
 )
 ```

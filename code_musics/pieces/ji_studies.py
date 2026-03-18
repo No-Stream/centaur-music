@@ -18,6 +18,7 @@ import logging
 import math
 from dataclasses import replace
 
+from code_musics import synth
 from code_musics.composition import (
     ContextSection,
     ContextSectionSpec,
@@ -81,18 +82,38 @@ def build_ji_chorale_score() -> Score:
     D5 = D4 * 2  # 586.67
     A5 = A4 * 2  # 880.00  — tonic, next octave
 
-    score = Score(
-        f0=f0,
-        # Chamber ensemble looseness: ~18 ms shared drift, 16 ms chord spread so
-        # block chords don't fire as a single MIDI click.
-        timing_humanize=TimingHumanizeSpec(preset="chamber", chord_spread_ms=16.0),
-        master_effects=[
-            # Neve-style mix glue before the spatial effects; drive bumped slightly
-            # so it's actually doing something measurable at this level.
+    master_effects: list[EffectSpec] = [
+        # Neve-style tone stage ahead of compression and space.
+        EffectSpec("saturation", {"preset": "neve_gentle", "mix": 0.22, "drive": 1.16}),
+    ]
+    if synth.has_external_plugin("lsp_compressor_stereo"):
+        # Broad, moderate glue rather than obvious pumping; keep the wet path fully
+        # dominant and let the ratio do a little real work on chord arrivals.
+        master_effects.append(
             EffectSpec(
-                "saturation", {"preset": "neve_gentle", "mix": 0.22, "drive": 1.16}
-            ),
-            # Subtle tape warmth — glues the mix with light nonlinearity.
+                "plugin",
+                {
+                    "plugin_name": "lsp_compressor_stereo",
+                    "params": {
+                        "ratio": 2.2,
+                        "attack_threshold_db": -18.0,
+                        "attack_time_ms": 28.0,
+                        "release_time_ms": 220.0,
+                        "knee_db": -5.0,
+                        "makeup_gain_db": 1.2,
+                        "sidechain_mode": "RMS",
+                        "dry_wet_balance": 100.0,
+                    },
+                },
+            )
+        )
+    else:
+        logger.warning(
+            "Skipping optional ji_chorale glue compressor: LSP VST3 bundle/runtime not available."
+        )
+    master_effects.extend(
+        [
+            # Subtle tape warmth after bus compression to keep the result cohesive.
             EffectSpec(
                 "chow_tape",
                 {"drive": 0.15, "saturation": 0.18, "bias": 0.5, "mix": 50.0},
@@ -100,7 +121,15 @@ def build_ji_chorale_score() -> Score:
             EffectSpec("delay", {"delay_seconds": 0.28, "feedback": 0.16, "mix": 0.10}),
             # Bricasti "Large & Dark" hall — warm, long, dark character; outputs stereo
             EffectSpec("bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.30}),
-        ],
+        ]
+    )
+
+    score = Score(
+        f0=f0,
+        # Chamber ensemble looseness: ~18 ms shared drift, 16 ms chord spread so
+        # block chords don't fire as a single MIDI click.
+        timing_humanize=TimingHumanizeSpec(preset="chamber", chord_spread_ms=16.0),
+        master_effects=master_effects,
     )
 
     # Bass: filtered_stack square — warm dark foundation; velocity_group "harmony"
@@ -194,13 +223,13 @@ def build_ji_chorale_score() -> Score:
             "filter_env_amount": VelocityParamMap(min_value=0.72, max_value=1.18),
         },
     )
-    # Lead: filtered saw — the expressive soprano line; same "melody" group as counter.
+    # Lead: polyblep saw — the expressive soprano line; same "melody" group as counter.
+    # PolyBLEP gives smooth analog character without Gibbs ringing; no n_harmonics cap.
     score.add_voice(
         "lead",
         synth_defaults={
-            "engine": "filtered_stack",
+            "engine": "polyblep",
             "waveform": "saw",
-            "n_harmonics": 18,
             "cutoff_hz": 3_000.0,
             "keytrack": 0.05,
             "resonance": 0.10,
