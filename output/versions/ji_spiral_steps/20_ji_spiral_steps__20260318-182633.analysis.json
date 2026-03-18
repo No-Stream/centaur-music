@@ -1,0 +1,170 @@
+{
+  "manifest_path": "output/versions/ji_spiral_steps/20_ji_spiral_steps__20260318-182633.analysis.json",
+  "mix": {
+    "artifacts": {
+      "band_energy": "output/versions/ji_spiral_steps/20_ji_spiral_steps__20260318-182633.mix_band_energy.png",
+      "spectrogram": "output/versions/ji_spiral_steps/20_ji_spiral_steps__20260318-182633.mix_spectrogram.png",
+      "spectrum": "output/versions/ji_spiral_steps/20_ji_spiral_steps__20260318-182633.mix_spectrum.png"
+    },
+    "summary": {
+      "band_energy_db": {
+        "air": -114.27892391547138,
+        "bass": 13.656398019880791,
+        "high": -92.2539175773573,
+        "low_mid": 16.12071216180157,
+        "mid": -10.338480680834941,
+        "sub": -37.66982119723856
+      },
+      "dominant_frequency_hz": 123.81591796875,
+      "duration_seconds": 41.0,
+      "low_high_balance_db": 105.9103155972381,
+      "peak_dbfs": -0.5563718837223625,
+      "reference_tilt_db_per_octave": -3.0,
+      "rms_dbfs": -11.566102594902006,
+      "spectral_centroid_hz": 388.1235496624001,
+      "spectral_tilt_db_per_octave": -21.401175115162413,
+      "tilt_error_db_per_octave": -18.401175115162413,
+      "warnings": [
+        "low band dominates high band strongly",
+        "spectrum falls off faster than the reference tilt"
+      ]
+    }
+  },
+  "reference_tilt_db_per_octave": -3.0,
+  "score": {
+    "artifacts": {
+      "density": "output/versions/ji_spiral_steps/20_ji_spiral_steps__20260318-182633.score_density.png"
+    },
+    "summary": {
+      "frequency_range_hz": [
+        120.849609375,
+        708.1031799316406
+      ],
+      "max_attack_density_hz": 5.0,
+      "mean_attack_density_hz": 0.9024390243902439,
+      "mean_simultaneous_notes": 5.390243902439025,
+      "note_count": 37,
+      "notes_per_second": 0.9024390243902439,
+      "partial_range": null,
+      "peak_simultaneous_notes": 9,
+      "total_duration_seconds": 41.0,
+      "voice_count": 3,
+      "voice_summaries": {
+        "bass": {
+          "attack_rate_hz": 0.21951219512195122,
+          "max_frequency_hz": 236.03439331054688,
+          "mean_frequency_hz": 166.72152996063232,
+          "mean_note_duration_seconds": 4.3,
+          "min_frequency_hz": 120.849609375,
+          "note_count": 9
+        },
+        "chord": {
+          "attack_rate_hz": 0.6585365853658537,
+          "max_frequency_hz": 708.1031799316406,
+          "mean_frequency_hz": 416.8038249015808,
+          "mean_note_duration_seconds": 4.22,
+          "min_frequency_hz": 241.69921875,
+          "note_count": 27
+        },
+        "drone": {
+          "attack_rate_hz": 0.024390243902439025,
+          "max_frequency_hz": 123.75,
+          "mean_frequency_hz": 123.75,
+          "mean_note_duration_seconds": 41.0,
+          "min_frequency_hz": 123.75,
+          "note_count": 1
+        }
+      },
+      "warnings": [
+        "dense texture across much of the score",
+        "high attack density may feel busy or percussive"
+      ]
+    }
+  },
+  "voices": {
+    "bass": {
+      "artifacts": {
+        "spectrum": "output/versions/ji_spiral_steps/20_ji_spiral_steps__20260318-182633.voice_bass_spectrum.png"
+      },
+      "summary": {
+        "band_energy_db": {
+          "air": -130.14927247422804,
+          "bass": 9.086343426046003,
+          "high": -111.20949805729781,
+          "low_mid": 5.772384440908483,
+          "mid": -32.96555061568482,
+          "sub": -40.78686207953095
+        },
+        "dominant_frequency_hz": 150.732421875,
+        "duration_seconds": 36.3,
+        "low_high_balance_db": 120.2958414833438,
+        "peak_dbfs": -10.17649664668291,
+        "reference_tilt_db_per_octave": -3.0,
+        "rms_dbfs": -18.602026006111476,
+        "spectral_centroid_hz": 329.05004257418386,
+        "spectral_tilt_db_per_octave": -20.691066119655527,
+        "tilt_error_db_per_octave": -17.691066119655527,
+        "warnings": [
+          "low band dominates high band strongly",
+          "spectrum falls off faster than the reference tilt"
+        ]
+      }
+    },
+    "chord": {
+      "artifacts": {
+        "spectrum": "output/versions/ji_spiral_steps/20_ji_spiral_steps__20260318-182633.voice_chord_spectrum.png"
+      },
+      "summary": {
+        "band_energy_db": {
+          "air": -133.4365995702094,
+          "bass": -43.431444907385405,
+          "high": -100.82899977498013,
+          "low_mid": 9.252409629054087,
+          "mid": -16.00751008463858,
+          "sub": -65.75708291160302
+        },
+        "dominant_frequency_hz": 371.44775390625,
+        "duration_seconds": 36.3,
+        "low_high_balance_db": 57.39755486759473,
+        "peak_dbfs": -11.155380753921085,
+        "reference_tilt_db_per_octave": -3.0,
+        "rms_dbfs": -22.142662285039705,
+        "spectral_centroid_hz": 604.8469055153281,
+        "spectral_tilt_db_per_octave": -23.981586932956603,
+        "tilt_error_db_per_octave": -20.981586932956603,
+        "warnings": [
+          "low band dominates high band strongly",
+          "spectrum falls off faster than the reference tilt"
+        ]
+      }
+    },
+    "drone": {
+      "artifacts": {
+        "spectrum": "output/versions/ji_spiral_steps/20_ji_spiral_steps__20260318-182633.voice_drone_spectrum.png"
+      },
+      "summary": {
+        "band_energy_db": {
+          "air": -168.0507078895278,
+          "bass": -25.86623626490964,
+          "high": -147.11101113419704,
+          "low_mid": -28.95764903112851,
+          "mid": -94.91606452263065,
+          "sub": -61.93169403427505
+        },
+        "dominant_frequency_hz": 123.81591796875,
+        "duration_seconds": 41.0,
+        "low_high_balance_db": 121.2447748692874,
+        "peak_dbfs": -15.226013859216291,
+        "reference_tilt_db_per_octave": -3.0,
+        "rms_dbfs": -22.106195271907822,
+        "spectral_centroid_hz": 275.8382522951112,
+        "spectral_tilt_db_per_octave": -20.063448063584126,
+        "tilt_error_db_per_octave": -17.063448063584126,
+        "warnings": [
+          "low band dominates high band strongly",
+          "spectrum falls off faster than the reference tilt"
+        ]
+      }
+    }
+  }
+}

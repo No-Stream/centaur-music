@@ -422,28 +422,6 @@ class Score:
                 0.0,
                 note.start + timing_offsets.get((voice_name, note_index), 0.0),
             )
-            freq_trajectory = None
-            if note.pitch_motion is not None:
-                freq_trajectory = build_frequency_trajectory(
-                    base_freq=note_freq,
-                    duration=note.duration,
-                    sample_rate=self.sample_rate,
-                    motion=note.pitch_motion,
-                    score_f0=self.f0,
-                )
-
-            note_signal = render_note_signal(
-                freq=note_freq,
-                duration=note.duration,
-                amp=self._resolve_note_amp(
-                    note=note,
-                    resolved_velocity=resolved_velocity,
-                    velocity_db_per_unit=voice.velocity_db_per_unit,
-                ),
-                sample_rate=self.sample_rate,
-                params=synth_params,
-                freq_trajectory=freq_trajectory,
-            )
             attack, decay, sustain_level, release = resolve_envelope_params(
                 base_attack=float(synth_params.get("attack", 0.04)) * attack_scale,
                 base_decay=float(synth_params.get("decay", 0.1)),
@@ -454,6 +432,36 @@ class Score:
                 total_dur=self.total_dur,
                 voice_name=voice_name,
             )
+            held_samples = int(note.duration * self.sample_rate)
+            total_samples = int((note.duration + release) * self.sample_rate)
+            freq_trajectory = None
+            if note.pitch_motion is not None:
+                held_trajectory = build_frequency_trajectory(
+                    base_freq=note_freq,
+                    duration=note.duration,
+                    sample_rate=self.sample_rate,
+                    motion=note.pitch_motion,
+                    score_f0=self.f0,
+                )
+                release_samples = max(0, total_samples - held_samples)
+                if release_samples > 0:
+                    release_tail = np.full(release_samples, held_trajectory[-1])
+                    freq_trajectory = np.concatenate([held_trajectory, release_tail])
+                else:
+                    freq_trajectory = held_trajectory
+
+            note_signal = render_note_signal(
+                freq=note_freq,
+                duration=note.duration + release,
+                amp=self._resolve_note_amp(
+                    note=note,
+                    resolved_velocity=resolved_velocity,
+                    velocity_db_per_unit=voice.velocity_db_per_unit,
+                ),
+                sample_rate=self.sample_rate,
+                params=synth_params,
+                freq_trajectory=freq_trajectory,
+            )
             note_signal = synth.adsr(
                 note_signal,
                 attack=attack,
@@ -461,6 +469,7 @@ class Score:
                 sustain_level=sustain_level,
                 release=release,
                 sample_rate=self.sample_rate,
+                hold_duration=note.duration,
             )
             voice_signals.append(
                 synth.at_sample_rate(note_signal, humanized_start, self.sample_rate)

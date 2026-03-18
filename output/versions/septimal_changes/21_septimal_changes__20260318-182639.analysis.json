@@ -1,0 +1,170 @@
+{
+  "manifest_path": "output/versions/septimal_changes/21_septimal_changes__20260318-182639.analysis.json",
+  "mix": {
+    "artifacts": {
+      "band_energy": "output/versions/septimal_changes/21_septimal_changes__20260318-182639.mix_band_energy.png",
+      "spectrogram": "output/versions/septimal_changes/21_septimal_changes__20260318-182639.mix_spectrogram.png",
+      "spectrum": "output/versions/septimal_changes/21_septimal_changes__20260318-182639.mix_spectrum.png"
+    },
+    "summary": {
+      "band_energy_db": {
+        "air": -114.50505420378995,
+        "bass": 16.71705678096383,
+        "high": -94.68980288426624,
+        "low_mid": 20.900500039739505,
+        "mid": -6.60719616526961,
+        "sub": -24.722475760817886
+      },
+      "dominant_frequency_hz": 107.666015625,
+      "duration_seconds": 33.0,
+      "low_high_balance_db": 111.40685966523007,
+      "peak_dbfs": -0.9991080877278625,
+      "reference_tilt_db_per_octave": -3.0,
+      "rms_dbfs": -12.465594356851874,
+      "spectral_centroid_hz": 354.41073168807714,
+      "spectral_tilt_db_per_octave": -21.9158162178197,
+      "tilt_error_db_per_octave": -18.9158162178197,
+      "warnings": [
+        "low band dominates high band strongly",
+        "spectrum falls off faster than the reference tilt"
+      ]
+    }
+  },
+  "reference_tilt_db_per_octave": -3.0,
+  "score": {
+    "artifacts": {
+      "density": "output/versions/septimal_changes/21_septimal_changes__20260318-182639.score_density.png"
+    },
+    "summary": {
+      "frequency_range_hz": [
+        103.53111999999997,
+        539.0
+      ],
+      "max_attack_density_hz": 6.0,
+      "mean_attack_density_hz": 1.2424242424242424,
+      "mean_simultaneous_notes": 6.454545454545454,
+      "note_count": 41,
+      "notes_per_second": 1.2424242424242424,
+      "partial_range": null,
+      "peak_simultaneous_notes": 11,
+      "total_duration_seconds": 33.0,
+      "voice_count": 3,
+      "voice_summaries": {
+        "bass": {
+          "attack_rate_hz": 0.24242424242424243,
+          "max_frequency_hz": 154.0,
+          "mean_frequency_hz": 128.092536,
+          "mean_note_duration_seconds": 3.8,
+          "min_frequency_hz": 103.53111999999997,
+          "note_count": 8
+        },
+        "chord": {
+          "attack_rate_hz": 0.9696969696969697,
+          "max_frequency_hz": 539.0,
+          "mean_frequency_hz": 352.25447399999996,
+          "mean_note_duration_seconds": 3.695,
+          "min_frequency_hz": 207.06223999999995,
+          "note_count": 32
+        },
+        "drone": {
+          "attack_rate_hz": 0.030303030303030304,
+          "max_frequency_hz": 110.0,
+          "mean_frequency_hz": 110.0,
+          "mean_note_duration_seconds": 33.0,
+          "min_frequency_hz": 110.0,
+          "note_count": 1
+        }
+      },
+      "warnings": [
+        "dense texture across much of the score",
+        "high attack density may feel busy or percussive"
+      ]
+    }
+  },
+  "voices": {
+    "bass": {
+      "artifacts": {
+        "spectrum": "output/versions/septimal_changes/21_septimal_changes__20260318-182639.voice_bass_spectrum.png"
+      },
+      "summary": {
+        "band_energy_db": {
+          "air": -130.56972532340112,
+          "bass": 9.291064292703268,
+          "high": -112.04223125827191,
+          "low_mid": -1.8286745495119818,
+          "mid": -53.43796314533468,
+          "sub": -31.717779779159724
+        },
+        "dominant_frequency_hz": 107.666015625,
+        "duration_seconds": 28.3,
+        "low_high_balance_db": 121.33329555097518,
+        "peak_dbfs": -10.219764927834373,
+        "reference_tilt_db_per_octave": -3.0,
+        "rms_dbfs": -18.818287019835918,
+        "spectral_centroid_hz": 252.4385148115931,
+        "spectral_tilt_db_per_octave": -18.848401658914938,
+        "tilt_error_db_per_octave": -15.848401658914938,
+        "warnings": [
+          "low band dominates high band strongly",
+          "spectrum falls off faster than the reference tilt"
+        ]
+      }
+    },
+    "chord": {
+      "artifacts": {
+        "spectrum": "output/versions/septimal_changes/21_septimal_changes__20260318-182639.voice_chord_spectrum.png"
+      },
+      "summary": {
+        "band_energy_db": {
+          "air": -132.26764678267745,
+          "bass": -26.1107737457973,
+          "high": -103.09802085905675,
+          "low_mid": 17.017439077291396,
+          "mid": -9.656885346110343,
+          "sub": -59.355380656121724
+        },
+        "dominant_frequency_hz": 215.33203125,
+        "duration_seconds": 28.3,
+        "low_high_balance_db": 76.98724711325944,
+        "peak_dbfs": -11.180316202459666,
+        "reference_tilt_db_per_octave": -3.0,
+        "rms_dbfs": -21.722582162884045,
+        "spectral_centroid_hz": 509.96437742677017,
+        "spectral_tilt_db_per_octave": -24.675994861046934,
+        "tilt_error_db_per_octave": -21.675994861046934,
+        "warnings": [
+          "low band dominates high band strongly",
+          "spectrum falls off faster than the reference tilt"
+        ]
+      }
+    },
+    "drone": {
+      "artifacts": {
+        "spectrum": "output/versions/septimal_changes/21_septimal_changes__20260318-182639.voice_drone_spectrum.png"
+      },
+      "summary": {
+        "band_energy_db": {
+          "air": -169.12996040859412,
+          "bass": -1.4977610948310593,
+          "high": -137.64058265147753,
+          "low_mid": -16.254583221145662,
+          "mid": -87.3138619181429,
+          "sub": -30.916494780048932
+        },
+        "dominant_frequency_hz": 107.666015625,
+        "duration_seconds": 33.0,
+        "low_high_balance_db": 136.14282155664648,
+        "peak_dbfs": -15.220397039316854,
+        "reference_tilt_db_per_octave": -3.0,
+        "rms_dbfs": -22.004372858789832,
+        "spectral_centroid_hz": 235.56985282410804,
+        "spectral_tilt_db_per_octave": -23.997459568033335,
+        "tilt_error_db_per_octave": -20.997459568033335,
+        "warnings": [
+          "low band dominates high band strongly",
+          "spectrum falls off faster than the reference tilt"
+        ]
+      }
+    }
+  }
+}

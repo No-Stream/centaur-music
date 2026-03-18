@@ -1,0 +1,3505 @@
+{
+  "artifacts": {
+    "latest": {
+      "analysis_manifest_path": "output/versions/ji_chorale/17_ji_chorale.analysis.json",
+      "audio_path": "output/17_ji_chorale.wav",
+      "plot_path": "output/17_ji_chorale.png"
+    },
+    "versioned": {
+      "analysis_manifest_path": "output/versions/ji_chorale/17_ji_chorale__20260318-192811.analysis.json",
+      "audio_path": "output/versions/ji_chorale/17_ji_chorale__20260318-192811.wav",
+      "plot_path": "output/versions/ji_chorale/17_ji_chorale__20260318-192811.png"
+    }
+  },
+  "metadata_path": "output/versions/ji_chorale/17_ji_chorale__20260318-192811.render.json",
+  "output_name": "17_ji_chorale.wav",
+  "piece_name": "ji_chorale",
+  "provenance": {
+    "callable_kind": "build_score",
+    "callable_name": "build_ji_chorale_score",
+    "git_commit": "6385cb17a138c86209a25d0c7b9384035aea02cb",
+    "git_is_dirty": true,
+    "module": "code_musics.pieces.ji_studies",
+    "source_file": "/home/jan/workspace/code-musics/code_musics/pieces/ji_studies.py",
+    "source_sha256": "974cd679c4cefe03421e32a4556ce35b685456a30b268fbdced40579cf433421"
+  },
+  "rendered_at_utc": "20260318-192811",
+  "request": {
+    "output_dir": "output",
+    "save_analysis": true,
+    "save_plot": true
+  },
+  "schema_version": 1,
+  "score_snapshot": {
+    "f0": 110.0,
+    "master_effects": [
+      {
+        "kind": "saturation",
+        "params": {
+          "drive": 1.16,
+          "mix": 0.22,
+          "preset": "neve_gentle"
+        }
+      },
+      {
+        "kind": "delay",
+        "params": {
+          "delay_seconds": 0.28,
+          "feedback": 0.16,
+          "mix": 0.1
+        }
+      },
+      {
+        "kind": "bricasti",
+        "params": {
+          "ir_name": "1 Halls 07 Large & Dark",
+          "wet": 0.3
+        }
+      }
+    ],
+    "sample_rate": 44100,
+    "timing_humanize": {
+      "chord_spread_ms": 16.0,
+      "ensemble_amount_ms": 18.0,
+      "ensemble_drift": {
+        "rate_hz": 0.035,
+        "seed": null,
+        "smoothness": 0.84,
+        "style": "random_walk"
+      },
+      "follow_strength": 0.92,
+      "micro_jitter_ms": 0.7,
+      "preset": "chamber",
+      "seed": null,
+      "voice_spread_ms": 3.0
+    },
+    "voices": {
+      "alto": {
+        "effects": [],
+        "envelope_humanize": {
+          "attack_amount_pct": 0.16,
+          "decay_amount_pct": 0.12,
+          "drift": {
+            "rate_hz": 0.06,
+            "seed": null,
+            "smoothness": 0.85,
+            "style": "smooth_noise"
+          },
+          "preset": "breathing_pad",
+          "release_amount_pct": 0.18,
+          "seed": null,
+          "sustain_amount_pct": 0.06
+        },
+        "name": "alto",
+        "notes": [
+          {
+            "amp": 0.18,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 12.0,
+            "synth": null,
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.18,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 220.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 18.0,
+            "synth": null,
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.18,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 24.0,
+            "synth": null,
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.18,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 220.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 30.0,
+            "synth": null,
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.18,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 36.0,
+            "synth": null,
+            "velocity": 1.12
+          },
+          {
+            "amp": 0.18,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 220.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 42.0,
+            "synth": null,
+            "velocity": 0.98
+          },
+          {
+            "amp": 0.18,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 48.0,
+            "synth": null,
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.17,
+            "amp_db": null,
+            "duration": 7.2,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 54.0,
+            "synth": null,
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.17,
+            "amp_db": null,
+            "duration": 7.2,
+            "freq": 247.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 61.0,
+            "synth": null,
+            "velocity": 1.1
+          },
+          {
+            "amp": 0.17,
+            "amp_db": null,
+            "duration": 7.2,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 68.0,
+            "synth": null,
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.18,
+            "amp_db": null,
+            "duration": 8.1,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 75.0,
+            "synth": null,
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.18,
+            "amp_db": null,
+            "duration": 8.1,
+            "freq": 183.33333333333334,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 83.0,
+            "synth": null,
+            "velocity": 1.08
+          },
+          {
+            "amp": 0.18,
+            "amp_db": null,
+            "duration": 8.1,
+            "freq": 247.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 91.0,
+            "synth": null,
+            "velocity": 1.14
+          },
+          {
+            "amp": 0.18,
+            "amp_db": null,
+            "duration": 6.8,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 99.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.18,
+            "amp_db": null,
+            "duration": 6.8,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 105.0,
+            "synth": null,
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.18,
+            "amp_db": null,
+            "duration": 6.8,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 111.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.18,
+            "amp_db": null,
+            "duration": 6.8,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 117.0,
+            "synth": null,
+            "velocity": 0.88
+          },
+          {
+            "amp": 0.21,
+            "amp_db": null,
+            "duration": 8.4,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 123.0,
+            "synth": null,
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.18,
+            "amp_db": null,
+            "duration": 8.4,
+            "freq": 220.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 131.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.16,
+            "amp_db": null,
+            "duration": 8.4,
+            "freq": 264.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 131.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.17,
+            "amp_db": null,
+            "duration": 10.0,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 139.0,
+            "synth": null,
+            "velocity": 0.88
+          },
+          {
+            "amp": 0.17,
+            "amp_db": null,
+            "duration": 10.0,
+            "freq": 412.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 139.0,
+            "synth": null,
+            "velocity": 0.88
+          }
+        ],
+        "pan": 0.14,
+        "synth_defaults": {
+          "attack": 0.22,
+          "brightness_tilt": 0.02,
+          "decay": 0.18,
+          "detune_cents": 2.0,
+          "harmonic_rolloff": 0.48,
+          "n_harmonics": 6,
+          "release": 0.7,
+          "sustain_level": 0.56,
+          "unison_voices": 2
+        },
+        "velocity_db_per_unit": 8.0,
+        "velocity_group": "harmony",
+        "velocity_humanize": {
+          "chord_spread": 0.014,
+          "drift": {
+            "rate_hz": 0.04,
+            "seed": null,
+            "smoothness": 0.86,
+            "style": "random_walk"
+          },
+          "follow_strength": 0.93,
+          "group_amount": 0.075,
+          "max_multiplier": 1.16,
+          "min_multiplier": 0.84,
+          "note_jitter": 0.015,
+          "preset": "breathing_ensemble",
+          "seed": null,
+          "voice_spread": 0.022
+        },
+        "velocity_to_params": {}
+      },
+      "bass": {
+        "effects": [],
+        "envelope_humanize": {
+          "attack_amount_pct": 0.16,
+          "decay_amount_pct": 0.12,
+          "drift": {
+            "rate_hz": 0.06,
+            "seed": null,
+            "smoothness": 0.85,
+            "style": "smooth_noise"
+          },
+          "preset": "breathing_pad",
+          "release_amount_pct": 0.18,
+          "seed": null,
+          "sustain_amount_pct": 0.06
+        },
+        "name": "bass",
+        "notes": [
+          {
+            "amp": 0.2,
+            "amp_db": null,
+            "duration": 12.0,
+            "freq": 91.66666666666667,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 0.0,
+            "synth": null,
+            "velocity": 0.8
+          },
+          {
+            "amp": 0.25,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 183.33333333333334,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 12.0,
+            "synth": null,
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.25,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 146.66666666666666,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 18.0,
+            "synth": null,
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.25,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 183.33333333333334,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 24.0,
+            "synth": null,
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.25,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 146.66666666666666,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 30.0,
+            "synth": null,
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.25,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 183.33333333333334,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 36.0,
+            "synth": null,
+            "velocity": 1.12
+          },
+          {
+            "amp": 0.25,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 146.66666666666666,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 42.0,
+            "synth": null,
+            "velocity": 0.98
+          },
+          {
+            "amp": 0.25,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 183.33333333333334,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 48.0,
+            "synth": null,
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.23,
+            "amp_db": null,
+            "duration": 7.2,
+            "freq": 110.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 54.0,
+            "synth": null,
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.23,
+            "amp_db": null,
+            "duration": 7.2,
+            "freq": 165.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 61.0,
+            "synth": null,
+            "velocity": 1.1
+          },
+          {
+            "amp": 0.23,
+            "amp_db": null,
+            "duration": 7.2,
+            "freq": 110.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 68.0,
+            "synth": null,
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.24,
+            "amp_db": null,
+            "duration": 8.1,
+            "freq": 91.66666666666667,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 75.0,
+            "synth": null,
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.24,
+            "amp_db": null,
+            "duration": 8.1,
+            "freq": 123.75,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 83.0,
+            "synth": null,
+            "velocity": 1.08
+          },
+          {
+            "amp": 0.24,
+            "amp_db": null,
+            "duration": 8.1,
+            "freq": 165.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 91.0,
+            "synth": null,
+            "velocity": 1.14
+          },
+          {
+            "amp": 0.24,
+            "amp_db": null,
+            "duration": 6.8,
+            "freq": 183.33333333333334,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 99.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.24,
+            "amp_db": null,
+            "duration": 6.8,
+            "freq": 110.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 105.0,
+            "synth": null,
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.24,
+            "amp_db": null,
+            "duration": 6.8,
+            "freq": 183.33333333333334,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 111.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.24,
+            "amp_db": null,
+            "duration": 6.8,
+            "freq": 110.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 117.0,
+            "synth": null,
+            "velocity": 0.88
+          },
+          {
+            "amp": 0.27,
+            "amp_db": null,
+            "duration": 8.4,
+            "freq": 91.66666666666667,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 123.0,
+            "synth": null,
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.26,
+            "amp_db": null,
+            "duration": 8.4,
+            "freq": 146.66666666666666,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 131.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.23,
+            "amp_db": null,
+            "duration": 10.0,
+            "freq": 110.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 139.0,
+            "synth": null,
+            "velocity": 0.88
+          },
+          {
+            "amp": 0.001,
+            "amp_db": null,
+            "duration": 0.5,
+            "freq": 110.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 154.0,
+            "synth": null,
+            "velocity": 1.0
+          }
+        ],
+        "pan": -0.08,
+        "synth_defaults": {
+          "attack": 0.22,
+          "cutoff_hz": 460.0,
+          "decay": 0.18,
+          "engine": "filtered_stack",
+          "filter_env_amount": 0.55,
+          "filter_env_decay": 0.7,
+          "keytrack": 0.1,
+          "n_harmonics": 8,
+          "release": 0.9,
+          "resonance": 0.1,
+          "sustain_level": 0.6,
+          "waveform": "square"
+        },
+        "velocity_db_per_unit": 8.0,
+        "velocity_group": "harmony",
+        "velocity_humanize": {
+          "chord_spread": 0.014,
+          "drift": {
+            "rate_hz": 0.04,
+            "seed": null,
+            "smoothness": 0.86,
+            "style": "random_walk"
+          },
+          "follow_strength": 0.93,
+          "group_amount": 0.075,
+          "max_multiplier": 1.16,
+          "min_multiplier": 0.84,
+          "note_jitter": 0.015,
+          "preset": "breathing_ensemble",
+          "seed": null,
+          "voice_spread": 0.022
+        },
+        "velocity_to_params": {}
+      },
+      "counter": {
+        "effects": [],
+        "envelope_humanize": {
+          "attack_amount_pct": 0.08,
+          "decay_amount_pct": 0.06,
+          "drift": {
+            "rate_hz": 0.09,
+            "seed": null,
+            "smoothness": 0.75,
+            "style": "smooth_noise"
+          },
+          "preset": "subtle_analog",
+          "release_amount_pct": 0.08,
+          "seed": null,
+          "sustain_amount_pct": 0.04
+        },
+        "name": "counter",
+        "notes": [
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.55,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 24.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.04,
+            "freq": 293.3333333333333,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 26.5,
+            "synth": null,
+            "velocity": 0.93
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 1.53,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 28.5,
+            "synth": null,
+            "velocity": 0.85
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.04,
+            "freq": 352.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 30.0,
+            "synth": null,
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.04,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 32.0,
+            "synth": null,
+            "velocity": 0.97
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.04,
+            "freq": 293.3333333333333,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 34.0,
+            "synth": null,
+            "velocity": 0.88
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 1.53,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 36.0,
+            "synth": null,
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.04,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 37.5,
+            "synth": null,
+            "velocity": 0.92
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.55,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 39.5,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.04,
+            "freq": 293.3333333333333,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 42.0,
+            "synth": null,
+            "velocity": 0.92
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.55,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 44.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 1.53,
+            "freq": 352.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 46.5,
+            "synth": null,
+            "velocity": 1.08
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.04,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 48.0,
+            "synth": null,
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.55,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 50.0,
+            "synth": null,
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 1.53,
+            "freq": 293.3333333333333,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 52.5,
+            "synth": null,
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 3.06,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 75.0,
+            "synth": null,
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.55,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 78.0,
+            "synth": null,
+            "velocity": 0.92
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.55,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 80.5,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 3.06,
+            "freq": 366.6666666666667,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 83.0,
+            "synth": null,
+            "velocity": 1.1
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.55,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 86.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.55,
+            "freq": 293.3333333333333,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 88.5,
+            "synth": null,
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 3.06,
+            "freq": 412.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 91.0,
+            "synth": null,
+            "velocity": 1.18
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.04,
+            "freq": 366.6666666666667,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 94.0,
+            "synth": null,
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 3.06,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 96.0,
+            "synth": null,
+            "velocity": 0.88
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 3.06,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 99.0,
+            "synth": null,
+            "velocity": 1.08
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 3.06,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 102.0,
+            "synth": null,
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 2.55,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 111.0,
+            "synth": null,
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 3.5700000000000003,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 113.5,
+            "synth": null,
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 4.08,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 123.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 4.08,
+            "freq": 275.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 127.0,
+            "synth": null,
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 4.08,
+            "freq": 352.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 131.0,
+            "synth": null,
+            "velocity": 1.08
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 4.08,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 135.0,
+            "synth": null,
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 4.08,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 139.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 4.08,
+            "freq": 412.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 143.0,
+            "synth": null,
+            "velocity": 1.1
+          },
+          {
+            "amp": 0.22,
+            "amp_db": null,
+            "duration": 3.06,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 147.0,
+            "synth": null,
+            "velocity": 0.85
+          }
+        ],
+        "pan": 0.08,
+        "synth_defaults": {
+          "attack": 0.03,
+          "cutoff_hz": 2400.0,
+          "decay": 0.12,
+          "engine": "filtered_stack",
+          "filter_env_amount": 0.95,
+          "keytrack": 0.1,
+          "preset": "reed_lead",
+          "release": 0.3,
+          "resonance": 0.1,
+          "sustain_level": 0.52
+        },
+        "velocity_db_per_unit": 10.0,
+        "velocity_group": "melody",
+        "velocity_humanize": {
+          "chord_spread": 0.01,
+          "drift": {
+            "rate_hz": 0.08,
+            "seed": null,
+            "smoothness": 0.82,
+            "style": "smooth_noise"
+          },
+          "follow_strength": 0.9,
+          "group_amount": 0.045,
+          "max_multiplier": 1.1,
+          "min_multiplier": 0.9,
+          "note_jitter": 0.012,
+          "preset": "subtle_living",
+          "seed": null,
+          "voice_spread": 0.015
+        },
+        "velocity_to_params": {}
+      },
+      "lead": {
+        "effects": [
+          {
+            "kind": "chorus",
+            "params": {
+              "depth_ms": 1.9,
+              "mix": 0.22,
+              "preset": "juno_subtle"
+            }
+          }
+        ],
+        "envelope_humanize": {
+          "attack_amount_pct": 0.08,
+          "decay_amount_pct": 0.06,
+          "drift": {
+            "rate_hz": 0.09,
+            "seed": null,
+            "smoothness": 0.75,
+            "style": "smooth_noise"
+          },
+          "preset": "subtle_analog",
+          "release_amount_pct": 0.08,
+          "seed": null,
+          "sustain_amount_pct": 0.04
+        },
+        "name": "lead",
+        "notes": [
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 8.0,
+            "synth": {
+              "cutoff_hz": 2800.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4,
+              "release": 0.3,
+              "waveform": "saw"
+            },
+            "velocity": 0.85
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 9.0,
+            "synth": {
+              "cutoff_hz": 2807.1428571428573,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.40142857142857147,
+              "release": 0.2995238095238095,
+              "waveform": "saw"
+            },
+            "velocity": 1.12
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 10.0,
+            "synth": {
+              "cutoff_hz": 2814.285714285714,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.40285714285714286,
+              "release": 0.29904761904761906,
+              "waveform": "saw"
+            },
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 11.0,
+            "synth": {
+              "cutoff_hz": 2821.4285714285716,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4042857142857143,
+              "release": 0.29857142857142854,
+              "waveform": "saw"
+            },
+            "velocity": 0.88
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 12.0,
+            "synth": {
+              "cutoff_hz": 2828.5714285714284,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.40571428571428575,
+              "release": 0.2980952380952381,
+              "waveform": "saw"
+            },
+            "velocity": 1.22
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 14.0,
+            "synth": {
+              "cutoff_hz": 2835.714285714286,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.40714285714285714,
+              "release": 0.2976190476190476,
+              "waveform": "saw"
+            },
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 15.0,
+            "synth": {
+              "cutoff_hz": 2842.8571428571427,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4085714285714286,
+              "release": 0.29714285714285715,
+              "waveform": "saw"
+            },
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 412.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 17.0,
+            "synth": {
+              "cutoff_hz": 2850.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.41000000000000003,
+              "release": 0.29666666666666663,
+              "waveform": "saw"
+            },
+            "velocity": 0.82
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 18.0,
+            "synth": {
+              "cutoff_hz": 2857.1428571428573,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4114285714285715,
+              "release": 0.29619047619047617,
+              "waveform": "saw"
+            },
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 352.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 19.5,
+            "synth": {
+              "cutoff_hz": 2864.285714285714,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.41285714285714287,
+              "release": 0.2957142857142857,
+              "waveform": "saw"
+            },
+            "velocity": 1.15
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 21.5,
+            "synth": {
+              "cutoff_hz": 2871.4285714285716,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4142857142857143,
+              "release": 0.29523809523809524,
+              "waveform": "saw"
+            },
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.5,
+            "freq": 412.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 23.0,
+            "synth": {
+              "cutoff_hz": 2878.5714285714284,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.41571428571428576,
+              "release": 0.2947619047619048,
+              "waveform": "saw"
+            },
+            "velocity": 0.88
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.5,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 23.5,
+            "synth": {
+              "cutoff_hz": 2885.714285714286,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.41714285714285715,
+              "release": 0.29428571428571426,
+              "waveform": "saw"
+            },
+            "velocity": 0.85
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 24.0,
+            "synth": {
+              "cutoff_hz": 2892.8571428571427,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4185714285714286,
+              "release": 0.2938095238095238,
+              "waveform": "saw"
+            },
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 25.0,
+            "synth": {
+              "cutoff_hz": 2900.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.42000000000000004,
+              "release": 0.29333333333333333,
+              "waveform": "saw"
+            },
+            "velocity": 1.25
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 27.0,
+            "synth": {
+              "cutoff_hz": 2907.1428571428573,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.42142857142857143,
+              "release": 0.29285714285714287,
+              "waveform": "saw"
+            },
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 28.0,
+            "synth": {
+              "cutoff_hz": 2914.285714285714,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4228571428571429,
+              "release": 0.2923809523809524,
+              "waveform": "saw"
+            },
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.5,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 29.5,
+            "synth": {
+              "cutoff_hz": 2921.4285714285716,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4242857142857143,
+              "release": 0.2919047619047619,
+              "waveform": "saw"
+            },
+            "velocity": 0.85
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 30.0,
+            "synth": {
+              "cutoff_hz": 2928.5714285714284,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4257142857142857,
+              "release": 0.2914285714285714,
+              "waveform": "saw"
+            },
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 352.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 31.0,
+            "synth": {
+              "cutoff_hz": 2935.714285714286,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.42714285714285716,
+              "release": 0.29095238095238096,
+              "waveform": "saw"
+            },
+            "velocity": 1.12
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 32.5,
+            "synth": {
+              "cutoff_hz": 2942.8571428571427,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4285714285714286,
+              "release": 0.2904761904761905,
+              "waveform": "saw"
+            },
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 293.3333333333333,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 33.5,
+            "synth": {
+              "cutoff_hz": 2950.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.43000000000000005,
+              "release": 0.29000000000000004,
+              "waveform": "saw"
+            },
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 35.0,
+            "synth": {
+              "cutoff_hz": 2957.1428571428573,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.43142857142857144,
+              "release": 0.2895238095238095,
+              "waveform": "saw"
+            },
+            "velocity": 0.85
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.5,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 36.0,
+            "synth": {
+              "cutoff_hz": 2964.285714285714,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4328571428571429,
+              "release": 0.28904761904761905,
+              "waveform": "saw"
+            },
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.75,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 36.5,
+            "synth": {
+              "cutoff_hz": 2971.4285714285716,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4342857142857143,
+              "release": 0.2885714285714286,
+              "waveform": "saw"
+            },
+            "velocity": 1.1
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.5,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 37.25,
+            "synth": {
+              "cutoff_hz": 2978.5714285714284,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4357142857142857,
+              "release": 0.2880952380952381,
+              "waveform": "saw"
+            },
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.75,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 37.75,
+            "synth": {
+              "cutoff_hz": 2985.714285714286,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.43714285714285717,
+              "release": 0.2876190476190476,
+              "waveform": "saw"
+            },
+            "velocity": 1.15
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.5,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 38.5,
+            "synth": {
+              "cutoff_hz": 2992.8571428571427,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4385714285714286,
+              "release": 0.28714285714285714,
+              "waveform": "saw"
+            },
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.5,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 39.0,
+            "synth": {
+              "cutoff_hz": 3000.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.44,
+              "release": 0.2866666666666667,
+              "waveform": "saw"
+            },
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.5,
+            "freq": 412.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 39.5,
+            "synth": {
+              "cutoff_hz": 3007.1428571428573,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.44142857142857145,
+              "release": 0.2861904761904762,
+              "waveform": "saw"
+            },
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.5,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 40.0,
+            "synth": {
+              "cutoff_hz": 3014.285714285714,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4428571428571429,
+              "release": 0.28571428571428575,
+              "waveform": "saw"
+            },
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.75,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 40.5,
+            "synth": {
+              "cutoff_hz": 3021.4285714285716,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4442857142857143,
+              "release": 0.28523809523809524,
+              "waveform": "saw"
+            },
+            "velocity": 1.2
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.375,
+            "freq": 586.6666666666666,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 41.25,
+            "synth": {
+              "cutoff_hz": 3028.5714285714284,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.44571428571428573,
+              "release": 0.28476190476190477,
+              "waveform": "saw"
+            },
+            "velocity": 1.32
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.375,
+            "freq": 880.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 41.625,
+            "synth": {
+              "cutoff_hz": 3035.714285714286,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4471428571428572,
+              "release": 0.2842857142857143,
+              "waveform": "saw"
+            },
+            "velocity": 1.42
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 42.0,
+            "synth": {
+              "cutoff_hz": 3042.8571428571427,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4485714285714286,
+              "release": 0.28380952380952384,
+              "waveform": "saw"
+            },
+            "velocity": 1.08
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 352.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 43.5,
+            "synth": {
+              "cutoff_hz": 3050.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.45,
+              "release": 0.2833333333333333,
+              "waveform": "saw"
+            },
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 44.5,
+            "synth": {
+              "cutoff_hz": 3057.142857142857,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.45142857142857146,
+              "release": 0.28285714285714286,
+              "waveform": "saw"
+            },
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 293.3333333333333,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 46.0,
+            "synth": {
+              "cutoff_hz": 3064.285714285714,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.45285714285714285,
+              "release": 0.2823809523809524,
+              "waveform": "saw"
+            },
+            "velocity": 0.85
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.5,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 47.5,
+            "synth": {
+              "cutoff_hz": 3071.4285714285716,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4542857142857143,
+              "release": 0.28190476190476194,
+              "waveform": "saw"
+            },
+            "velocity": 0.8
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.5,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 48.0,
+            "synth": {
+              "cutoff_hz": 3078.5714285714284,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.45571428571428574,
+              "release": 0.2814285714285715,
+              "waveform": "saw"
+            },
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 50.5,
+            "synth": {
+              "cutoff_hz": 3085.714285714286,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4571428571428572,
+              "release": 0.28095238095238095,
+              "waveform": "saw"
+            },
+            "velocity": 0.92
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 52.0,
+            "synth": {
+              "cutoff_hz": 3092.8571428571427,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4585714285714286,
+              "release": 0.2804761904761905,
+              "waveform": "saw"
+            },
+            "velocity": 0.85
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.5,
+            "freq": 412.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 53.5,
+            "synth": {
+              "cutoff_hz": 3100.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.46,
+              "release": 0.28,
+              "waveform": "saw"
+            },
+            "velocity": 0.75
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 54.0,
+            "synth": {
+              "cutoff_hz": 3150.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5,
+              "release": 0.26,
+              "waveform": "saw"
+            },
+            "velocity": 0.98
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 55.5,
+            "synth": {
+              "cutoff_hz": 3156.25,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5020833333333333,
+              "release": 0.25916666666666666,
+              "waveform": "saw"
+            },
+            "velocity": 1.25
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 57.0,
+            "synth": {
+              "cutoff_hz": 3162.5,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5041666666666667,
+              "release": 0.25833333333333336,
+              "waveform": "saw"
+            },
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 59.0,
+            "synth": {
+              "cutoff_hz": 3168.75,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.50625,
+              "release": 0.2575,
+              "waveform": "saw"
+            },
+            "velocity": 0.88
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 61.0,
+            "synth": {
+              "cutoff_hz": 3175.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5083333333333333,
+              "release": 0.25666666666666665,
+              "waveform": "saw"
+            },
+            "velocity": 1.15
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 412.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 63.0,
+            "synth": {
+              "cutoff_hz": 3181.25,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5104166666666666,
+              "release": 0.25583333333333336,
+              "waveform": "saw"
+            },
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 366.6666666666667,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 64.5,
+            "synth": {
+              "cutoff_hz": 3187.5,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5125,
+              "release": 0.255,
+              "waveform": "saw"
+            },
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 66.0,
+            "synth": {
+              "cutoff_hz": 3193.75,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5145833333333334,
+              "release": 0.25416666666666665,
+              "waveform": "saw"
+            },
+            "velocity": 0.85
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 2.5,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 68.0,
+            "synth": {
+              "cutoff_hz": 3200.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5166666666666667,
+              "release": 0.25333333333333335,
+              "waveform": "saw"
+            },
+            "velocity": 1.12
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 70.5,
+            "synth": {
+              "cutoff_hz": 3206.25,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.51875,
+              "release": 0.2525,
+              "waveform": "saw"
+            },
+            "velocity": 0.97
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 2.5,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 72.5,
+            "synth": {
+              "cutoff_hz": 3212.5,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5208333333333334,
+              "release": 0.25166666666666665,
+              "waveform": "saw"
+            },
+            "velocity": 0.82
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 75.0,
+            "synth": {
+              "cutoff_hz": 3218.75,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5229166666666667,
+              "release": 0.25083333333333335,
+              "waveform": "saw"
+            },
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 76.5,
+            "synth": {
+              "cutoff_hz": 3225.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.525,
+              "release": 0.25,
+              "waveform": "saw"
+            },
+            "velocity": 0.92
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 78.0,
+            "synth": {
+              "cutoff_hz": 3231.25,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5270833333333333,
+              "release": 0.24916666666666668,
+              "waveform": "saw"
+            },
+            "velocity": 1.12
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 366.6666666666667,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 79.5,
+            "synth": {
+              "cutoff_hz": 3237.5,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5291666666666667,
+              "release": 0.24833333333333332,
+              "waveform": "saw"
+            },
+            "velocity": 0.92
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 81.0,
+            "synth": {
+              "cutoff_hz": 3243.75,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.53125,
+              "release": 0.2475,
+              "waveform": "saw"
+            },
+            "velocity": 0.98
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 293.3333333333333,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 83.0,
+            "synth": {
+              "cutoff_hz": 3250.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5333333333333333,
+              "release": 0.24666666666666667,
+              "waveform": "saw"
+            },
+            "velocity": 0.88
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 366.6666666666667,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 84.0,
+            "synth": {
+              "cutoff_hz": 3256.25,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5354166666666667,
+              "release": 0.24583333333333332,
+              "waveform": "saw"
+            },
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 85.5,
+            "synth": {
+              "cutoff_hz": 3262.5,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5375000000000001,
+              "release": 0.245,
+              "waveform": "saw"
+            },
+            "velocity": 1.1
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 87.5,
+            "synth": {
+              "cutoff_hz": 3268.75,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5395833333333334,
+              "release": 0.24416666666666667,
+              "waveform": "saw"
+            },
+            "velocity": 1.22
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 89.0,
+            "synth": {
+              "cutoff_hz": 3275.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5416666666666667,
+              "release": 0.24333333333333332,
+              "waveform": "saw"
+            },
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 412.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 91.0,
+            "synth": {
+              "cutoff_hz": 3281.25,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5437500000000001,
+              "release": 0.2425,
+              "waveform": "saw"
+            },
+            "velocity": 1.12
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 93.0,
+            "synth": {
+              "cutoff_hz": 3287.5,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5458333333333334,
+              "release": 0.24166666666666667,
+              "waveform": "saw"
+            },
+            "velocity": 1.2
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 412.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 95.0,
+            "synth": {
+              "cutoff_hz": 3293.75,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5479166666666667,
+              "release": 0.24083333333333332,
+              "waveform": "saw"
+            },
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.18836490894898006,
+            "amp_db": null,
+            "duration": 2.5,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 96.5,
+            "synth": {
+              "cutoff_hz": 3300.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.55,
+              "release": 0.24,
+              "waveform": "saw"
+            },
+            "velocity": 0.85
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 99.0,
+            "synth": {
+              "cutoff_hz": 3000.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.5,
+              "release": 0.26,
+              "waveform": "saw"
+            },
+            "velocity": 1.15
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 101.0,
+            "synth": {
+              "cutoff_hz": 2988.3333333333335,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.49466666666666664,
+              "release": 0.26266666666666666,
+              "waveform": "saw"
+            },
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 102.5,
+            "synth": {
+              "cutoff_hz": 2976.6666666666665,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.48933333333333334,
+              "release": 0.26533333333333337,
+              "waveform": "saw"
+            },
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.5,
+            "freq": 412.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 104.5,
+            "synth": {
+              "cutoff_hz": 2965.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.484,
+              "release": 0.268,
+              "waveform": "saw"
+            },
+            "velocity": 0.75
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 105.0,
+            "synth": {
+              "cutoff_hz": 2953.3333333333335,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4786666666666667,
+              "release": 0.27066666666666667,
+              "waveform": "saw"
+            },
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 106.5,
+            "synth": {
+              "cutoff_hz": 2941.6666666666665,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.47333333333333333,
+              "release": 0.2733333333333333,
+              "waveform": "saw"
+            },
+            "velocity": 1.1
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.5,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 108.5,
+            "synth": {
+              "cutoff_hz": 2930.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.468,
+              "release": 0.276,
+              "waveform": "saw"
+            },
+            "velocity": 0.85
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 111.0,
+            "synth": {
+              "cutoff_hz": 2918.3333333333335,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.46266666666666667,
+              "release": 0.2786666666666667,
+              "waveform": "saw"
+            },
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 112.5,
+            "synth": {
+              "cutoff_hz": 2906.6666666666665,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.45733333333333337,
+              "release": 0.2813333333333333,
+              "waveform": "saw"
+            },
+            "velocity": 1.18
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 114.0,
+            "synth": {
+              "cutoff_hz": 2895.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.452,
+              "release": 0.28400000000000003,
+              "waveform": "saw"
+            },
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 115.5,
+            "synth": {
+              "cutoff_hz": 2883.3333333333335,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.44666666666666666,
+              "release": 0.2866666666666667,
+              "waveform": "saw"
+            },
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.5,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 117.0,
+            "synth": {
+              "cutoff_hz": 2871.6666666666665,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.44133333333333336,
+              "release": 0.28933333333333333,
+              "waveform": "saw"
+            },
+            "velocity": 1.12
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 119.5,
+            "synth": {
+              "cutoff_hz": 2860.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.436,
+              "release": 0.29200000000000004,
+              "waveform": "saw"
+            },
+            "velocity": 0.98
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 330.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 121.5,
+            "synth": {
+              "cutoff_hz": 2848.3333333333335,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.43066666666666664,
+              "release": 0.2946666666666667,
+              "waveform": "saw"
+            },
+            "velocity": 0.85
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.5,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 123.0,
+            "synth": {
+              "cutoff_hz": 2836.6666666666665,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.42533333333333334,
+              "release": 0.29733333333333334,
+              "waveform": "saw"
+            },
+            "velocity": 1.22
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 125.5,
+            "synth": {
+              "cutoff_hz": 2825.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.42000000000000004,
+              "release": 0.30000000000000004,
+              "waveform": "saw"
+            },
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 126.5,
+            "synth": {
+              "cutoff_hz": 2813.3333333333335,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4146666666666667,
+              "release": 0.3026666666666667,
+              "waveform": "saw"
+            },
+            "velocity": 0.92
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 0.5,
+            "freq": 412.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 127.5,
+            "synth": {
+              "cutoff_hz": 2801.6666666666665,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.4093333333333333,
+              "release": 0.30533333333333335,
+              "waveform": "saw"
+            },
+            "velocity": 0.8
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 128.0,
+            "synth": {
+              "cutoff_hz": 2790.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.404,
+              "release": 0.308,
+              "waveform": "saw"
+            },
+            "velocity": 0.85
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 129.0,
+            "synth": {
+              "cutoff_hz": 2778.3333333333335,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.39866666666666667,
+              "release": 0.3106666666666667,
+              "waveform": "saw"
+            },
+            "velocity": 0.98
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 131.0,
+            "synth": {
+              "cutoff_hz": 2766.6666666666665,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.39333333333333337,
+              "release": 0.31333333333333335,
+              "waveform": "saw"
+            },
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 352.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 132.5,
+            "synth": {
+              "cutoff_hz": 2755.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.388,
+              "release": 0.316,
+              "waveform": "saw"
+            },
+            "velocity": 1.12
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 264.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 133.5,
+            "synth": {
+              "cutoff_hz": 2743.3333333333335,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.3826666666666667,
+              "release": 0.31866666666666665,
+              "waveform": "saw"
+            },
+            "velocity": 1.22
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 293.3333333333333,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 135.5,
+            "synth": {
+              "cutoff_hz": 2731.6666666666665,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.37733333333333335,
+              "release": 0.32133333333333336,
+              "waveform": "saw"
+            },
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 352.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 136.5,
+            "synth": {
+              "cutoff_hz": 2720.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.372,
+              "release": 0.324,
+              "waveform": "saw"
+            },
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.0,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 138.0,
+            "synth": {
+              "cutoff_hz": 2708.3333333333335,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.3666666666666667,
+              "release": 0.32666666666666666,
+              "waveform": "saw"
+            },
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.0,
+            "freq": 412.5,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 139.0,
+            "synth": {
+              "cutoff_hz": 2696.6666666666665,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.36133333333333334,
+              "release": 0.32933333333333337,
+              "waveform": "saw"
+            },
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 141.0,
+            "synth": {
+              "cutoff_hz": 2685.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.356,
+              "release": 0.332,
+              "waveform": "saw"
+            },
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 2.5,
+            "freq": 550.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 142.5,
+            "synth": {
+              "cutoff_hz": 2673.3333333333335,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.3506666666666667,
+              "release": 0.33466666666666667,
+              "waveform": "saw"
+            },
+            "velocity": 1.08
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 1.5,
+            "freq": 495.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 145.0,
+            "synth": {
+              "cutoff_hz": 2661.6666666666665,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.3453333333333334,
+              "release": 0.3373333333333334,
+              "waveform": "saw"
+            },
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.1778279410038923,
+            "amp_db": null,
+            "duration": 3.5,
+            "freq": 440.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 146.5,
+            "synth": {
+              "cutoff_hz": 2650.0,
+              "engine": "filtered_stack",
+              "filter_env_amount": 0.34,
+              "release": 0.34,
+              "waveform": "saw"
+            },
+            "velocity": 0.78
+          }
+        ],
+        "pan": 0.2,
+        "synth_defaults": {
+          "attack": 0.085,
+          "cutoff_hz": 3000.0,
+          "decay": 1.25,
+          "engine": "filtered_stack",
+          "filter_env_amount": 0.55,
+          "filter_env_decay": 0.9,
+          "keytrack": 0.05,
+          "n_harmonics": 11,
+          "release": 0.32,
+          "resonance": 0.1,
+          "sustain_level": 0.48,
+          "waveform": "saw"
+        },
+        "velocity_db_per_unit": 12.0,
+        "velocity_group": "melody",
+        "velocity_humanize": {
+          "chord_spread": 0.01,
+          "drift": {
+            "rate_hz": 0.08,
+            "seed": null,
+            "smoothness": 0.82,
+            "style": "smooth_noise"
+          },
+          "follow_strength": 0.9,
+          "group_amount": 0.045,
+          "max_multiplier": 1.1,
+          "min_multiplier": 0.9,
+          "note_jitter": 0.012,
+          "preset": "subtle_living",
+          "seed": null,
+          "voice_spread": 0.015
+        },
+        "velocity_to_params": {}
+      },
+      "tenor": {
+        "effects": [],
+        "envelope_humanize": {
+          "attack_amount_pct": 0.16,
+          "decay_amount_pct": 0.12,
+          "drift": {
+            "rate_hz": 0.06,
+            "seed": null,
+            "smoothness": 0.85,
+            "style": "smooth_noise"
+          },
+          "preset": "breathing_pad",
+          "release_amount_pct": 0.18,
+          "seed": null,
+          "sustain_amount_pct": 0.06
+        },
+        "name": "tenor",
+        "notes": [
+          {
+            "amp": 0.15,
+            "amp_db": null,
+            "duration": 10.0,
+            "freq": 220.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 2.0,
+            "synth": null,
+            "velocity": 0.8
+          },
+          {
+            "amp": 0.21,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 220.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 12.0,
+            "synth": null,
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.21,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 176.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 18.0,
+            "synth": null,
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.21,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 220.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 24.0,
+            "synth": null,
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.21,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 176.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 30.0,
+            "synth": null,
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.21,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 220.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 36.0,
+            "synth": null,
+            "velocity": 1.12
+          },
+          {
+            "amp": 0.21,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 176.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 42.0,
+            "synth": null,
+            "velocity": 0.98
+          },
+          {
+            "amp": 0.21,
+            "amp_db": null,
+            "duration": 6.9,
+            "freq": 220.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 48.0,
+            "synth": null,
+            "velocity": 0.9
+          },
+          {
+            "amp": 0.2,
+            "amp_db": null,
+            "duration": 7.2,
+            "freq": 165.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 54.0,
+            "synth": null,
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.2,
+            "amp_db": null,
+            "duration": 7.2,
+            "freq": 206.25,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 61.0,
+            "synth": null,
+            "velocity": 1.1
+          },
+          {
+            "amp": 0.2,
+            "amp_db": null,
+            "duration": 7.2,
+            "freq": 165.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 68.0,
+            "synth": null,
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.2,
+            "amp_db": null,
+            "duration": 8.1,
+            "freq": 220.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 75.0,
+            "synth": null,
+            "velocity": 1.02
+          },
+          {
+            "amp": 0.2,
+            "amp_db": null,
+            "duration": 8.1,
+            "freq": 146.66666666666666,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 83.0,
+            "synth": null,
+            "velocity": 1.08
+          },
+          {
+            "amp": 0.2,
+            "amp_db": null,
+            "duration": 8.1,
+            "freq": 206.25,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 91.0,
+            "synth": null,
+            "velocity": 1.14
+          },
+          {
+            "amp": 0.2,
+            "amp_db": null,
+            "duration": 6.8,
+            "freq": 220.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 99.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.2,
+            "amp_db": null,
+            "duration": 6.8,
+            "freq": 165.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 105.0,
+            "synth": null,
+            "velocity": 0.95
+          },
+          {
+            "amp": 0.2,
+            "amp_db": null,
+            "duration": 6.8,
+            "freq": 220.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 111.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.2,
+            "amp_db": null,
+            "duration": 6.8,
+            "freq": 165.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 117.0,
+            "synth": null,
+            "velocity": 0.88
+          },
+          {
+            "amp": 0.2,
+            "amp_db": null,
+            "duration": 8.4,
+            "freq": 220.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 123.0,
+            "synth": null,
+            "velocity": 1.05
+          },
+          {
+            "amp": 0.21,
+            "amp_db": null,
+            "duration": 8.4,
+            "freq": 176.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 131.0,
+            "synth": null,
+            "velocity": 1.0
+          },
+          {
+            "amp": 0.19,
+            "amp_db": null,
+            "duration": 10.0,
+            "freq": 165.0,
+            "label": null,
+            "partial": null,
+            "pitch_motion": null,
+            "start": 139.0,
+            "synth": null,
+            "velocity": 0.88
+          }
+        ],
+        "pan": -0.16,
+        "synth_defaults": {
+          "attack": 0.22,
+          "brightness_tilt": 0.02,
+          "decay": 0.18,
+          "detune_cents": 2.0,
+          "harmonic_rolloff": 0.48,
+          "n_harmonics": 6,
+          "release": 0.7,
+          "sustain_level": 0.56,
+          "unison_voices": 2
+        },
+        "velocity_db_per_unit": 8.0,
+        "velocity_group": "harmony",
+        "velocity_humanize": {
+          "chord_spread": 0.014,
+          "drift": {
+            "rate_hz": 0.04,
+            "seed": null,
+            "smoothness": 0.86,
+            "style": "random_walk"
+          },
+          "follow_strength": 0.93,
+          "group_amount": 0.075,
+          "max_multiplier": 1.16,
+          "min_multiplier": 0.84,
+          "note_jitter": 0.015,
+          "preset": "breathing_ensemble",
+          "seed": null,
+          "voice_spread": 0.022
+        },
+        "velocity_to_params": {}
+      }
+    }
+  },
+  "score_summary": {
+    "f0_hz": 110.0,
+    "master_effects": [
+      {
+        "kind": "saturation",
+        "params": {
+          "drive": 1.16,
+          "mix": 0.22,
+          "preset": "neve_gentle"
+        }
+      },
+      {
+        "kind": "delay",
+        "params": {
+          "delay_seconds": 0.28,
+          "feedback": 0.16,
+          "mix": 0.1
+        }
+      },
+      {
+        "kind": "bricasti",
+        "params": {
+          "ir_name": "1 Halls 07 Large & Dark",
+          "wet": 0.3
+        }
+      }
+    ],
+    "note_count": 199,
+    "sample_rate": 44100,
+    "total_duration_seconds": 154.5,
+    "voice_count": 5,
+    "voice_names": [
+      "bass",
+      "tenor",
+      "alto",
+      "counter",
+      "lead"
+    ],
+    "voices": {
+      "alto": {
+        "effects": [],
+        "frequency_range_hz": [
+          183.33333333333334,
+          550.0
+        ],
+        "labels": [],
+        "note_count": 22,
+        "pan": 0.14,
+        "partial_range": null,
+        "synth_defaults": {
+          "attack": 0.22,
+          "brightness_tilt": 0.02,
+          "decay": 0.18,
+          "detune_cents": 2.0,
+          "harmonic_rolloff": 0.48,
+          "n_harmonics": 6,
+          "release": 0.7,
+          "sustain_level": 0.56,
+          "unison_voices": 2
+        }
+      },
+      "bass": {
+        "effects": [],
+        "frequency_range_hz": [
+          91.66666666666667,
+          183.33333333333334
+        ],
+        "labels": [],
+        "note_count": 22,
+        "pan": -0.08,
+        "partial_range": null,
+        "synth_defaults": {
+          "attack": 0.22,
+          "cutoff_hz": 460.0,
+          "decay": 0.18,
+          "engine": "filtered_stack",
+          "filter_env_amount": 0.55,
+          "filter_env_decay": 0.7,
+          "keytrack": 0.1,
+          "n_harmonics": 8,
+          "release": 0.9,
+          "resonance": 0.1,
+          "sustain_level": 0.6,
+          "waveform": "square"
+        }
+      },
+      "counter": {
+        "effects": [],
+        "frequency_range_hz": [
+          275.0,
+          412.5
+        ],
+        "labels": [],
+        "note_count": 35,
+        "pan": 0.08,
+        "partial_range": null,
+        "synth_defaults": {
+          "attack": 0.03,
+          "cutoff_hz": 2400.0,
+          "decay": 0.12,
+          "engine": "filtered_stack",
+          "filter_env_amount": 0.95,
+          "keytrack": 0.1,
+          "preset": "reed_lead",
+          "release": 0.3,
+          "resonance": 0.1,
+          "sustain_level": 0.52
+        }
+      },
+      "lead": {
+        "effects": [
+          {
+            "kind": "chorus",
+            "params": {
+              "depth_ms": 1.9,
+              "mix": 0.22,
+              "preset": "juno_subtle"
+            }
+          }
+        ],
+        "frequency_range_hz": [
+          264.0,
+          880.0
+        ],
+        "labels": [],
+        "note_count": 99,
+        "pan": 0.2,
+        "partial_range": null,
+        "synth_defaults": {
+          "attack": 0.085,
+          "cutoff_hz": 3000.0,
+          "decay": 1.25,
+          "engine": "filtered_stack",
+          "filter_env_amount": 0.55,
+          "filter_env_decay": 0.9,
+          "keytrack": 0.05,
+          "n_harmonics": 11,
+          "release": 0.32,
+          "resonance": 0.1,
+          "sustain_level": 0.48,
+          "waveform": "saw"
+        }
+      },
+      "tenor": {
+        "effects": [],
+        "frequency_range_hz": [
+          146.66666666666666,
+          220.0
+        ],
+        "labels": [],
+        "note_count": 21,
+        "pan": -0.16,
+        "partial_range": null,
+        "synth_defaults": {
+          "attack": 0.22,
+          "brightness_tilt": 0.02,
+          "decay": 0.18,
+          "detune_cents": 2.0,
+          "harmonic_rolloff": 0.48,
+          "n_harmonics": 6,
+          "release": 0.7,
+          "sustain_level": 0.56,
+          "unison_voices": 2
+        }
+      }
+    }
+  },
+  "version_metadata_path": "output/versions/ji_chorale/17_ji_chorale__20260318-192811.render.json"
+}

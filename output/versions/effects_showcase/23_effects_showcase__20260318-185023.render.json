@@ -1,0 +1,32 @@
+{
+  "artifacts": {
+    "latest": {
+      "analysis_manifest_path": "output/versions/effects_showcase/23_effects_showcase.analysis.json",
+      "audio_path": "output/23_effects_showcase.wav"
+    },
+    "versioned": {
+      "analysis_manifest_path": "output/versions/effects_showcase/23_effects_showcase__20260318-185023.analysis.json",
+      "audio_path": "output/versions/effects_showcase/23_effects_showcase__20260318-185023.wav"
+    }
+  },
+  "metadata_path": "output/versions/effects_showcase/23_effects_showcase__20260318-185023.render.json",
+  "output_name": "23_effects_showcase.wav",
+  "piece_name": "effects_showcase",
+  "provenance": {
+    "callable_kind": "render_audio",
+    "callable_name": "render_effects_showcase_demo",
+    "git_commit": "6385cb17a138c86209a25d0c7b9384035aea02cb",
+    "git_is_dirty": true,
+    "module": "code_musics.pieces.effects_showcase",
+    "source_file": "/home/jan/workspace/code-musics/code_musics/pieces/effects_showcase.py",
+    "source_sha256": "fc21f726b557b8bfe8e3cf2f501e2de25b558deaf4dfef088dd68f0b29ae2d91"
+  },
+  "rendered_at_utc": "20260318-185023",
+  "request": {
+    "output_dir": "output",
+    "save_analysis": true,
+    "save_plot": false
+  },
+  "schema_version": 1,
+  "version_metadata_path": "output/versions/effects_showcase/23_effects_showcase__20260318-185023.render.json"
+}

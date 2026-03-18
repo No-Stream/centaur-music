@@ -284,9 +284,7 @@ class VelocityHumanizeSpec:
 
         drift_value = self.drift or DriftSpec(**preset["drift"])
         group_amount = float(
-            preset["group_amount"]
-            if self.group_amount is None
-            else self.group_amount
+            preset["group_amount"] if self.group_amount is None else self.group_amount
         )
         follow_strength = float(
             preset["follow_strength"]
@@ -294,19 +292,13 @@ class VelocityHumanizeSpec:
             else self.follow_strength
         )
         voice_spread = float(
-            preset["voice_spread"]
-            if self.voice_spread is None
-            else self.voice_spread
+            preset["voice_spread"] if self.voice_spread is None else self.voice_spread
         )
         note_jitter = float(
-            preset["note_jitter"]
-            if self.note_jitter is None
-            else self.note_jitter
+            preset["note_jitter"] if self.note_jitter is None else self.note_jitter
         )
         chord_spread = float(
-            preset["chord_spread"]
-            if self.chord_spread is None
-            else self.chord_spread
+            preset["chord_spread"] if self.chord_spread is None else self.chord_spread
         )
         min_multiplier = float(
             preset["min_multiplier"]

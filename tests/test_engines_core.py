@@ -63,7 +63,7 @@ def test_voice_level_engine_and_note_override_both_render() -> None:
     assert isinstance(audio, np.ndarray)
     assert audio.ndim == 1
     assert np.all(np.isfinite(audio))
-    assert len(audio) == int(0.8 * score.sample_rate)
+    assert len(audio) == int(1.6 * score.sample_rate)
     assert np.max(np.abs(audio)) > 0
 
 
@@ -87,7 +87,7 @@ def test_score_can_mix_multiple_engine_types() -> None:
 
     assert audio.ndim == 1
     assert np.all(np.isfinite(audio))
-    assert len(audio) == int(0.8 * score.sample_rate)
+    assert len(audio) == int(2.0 * score.sample_rate)
     assert np.max(np.abs(audio)) > 0.0
 
 
@@ -222,9 +222,9 @@ def test_attack_and_release_scales_change_rendered_envelope() -> None:
     neutral_audio = neutral.render()
     shaped_audio = shaped.render()
 
-    assert neutral_audio.shape == shaped_audio.shape
     assert np.all(np.isfinite(shaped_audio))
-    assert not np.allclose(neutral_audio, shaped_audio)
+    min_len = min(len(neutral_audio), len(shaped_audio))
+    assert not np.allclose(neutral_audio[:min_len], shaped_audio[:min_len])
 
 
 def test_velocity_changes_rendered_loudness_on_db_scale() -> None:

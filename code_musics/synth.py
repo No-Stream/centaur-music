@@ -87,23 +87,58 @@ def adsr(
     sustain_level: float = 0.75,
     release: float = 0.3,
     sample_rate: int = SAMPLE_RATE,
+    hold_duration: float | None = None,
 ) -> np.ndarray:
     """Apply ADSR amplitude envelope."""
     n = len(signal)
     n_attack = int(attack * sample_rate)
     n_decay = int(decay * sample_rate)
     n_release = int(release * sample_rate)
-    n_sustain = max(0, n - n_attack - n_decay - n_release)
-
-    envelope = np.concatenate(
-        [
-            np.linspace(0.0, 1.0, n_attack),
-            np.linspace(1.0, sustain_level, n_decay),
-            np.full(n_sustain, sustain_level),
-            np.linspace(sustain_level, 0.0, n_release),
-        ]
+    hold_samples = (
+        max(0, n - n_release)
+        if hold_duration is None
+        else max(0, int(hold_duration * sample_rate))
     )
-    return signal * envelope[:n]
+    hold_samples = min(hold_samples, n)
+    release_samples = max(0, min(n_release, n - hold_samples))
+
+    envelope = np.zeros(n, dtype=np.float64)
+    cursor = 0
+
+    attack_samples = min(n_attack, hold_samples)
+    if attack_samples > 0:
+        envelope[cursor : cursor + attack_samples] = np.linspace(
+            0.0, 1.0, attack_samples, endpoint=False
+        )
+        cursor += attack_samples
+
+    decay_samples = min(n_decay, hold_samples - cursor)
+    if decay_samples > 0:
+        envelope[cursor : cursor + decay_samples] = np.linspace(
+            1.0,
+            sustain_level,
+            decay_samples,
+            endpoint=False,
+        )
+        cursor += decay_samples
+
+    sustain_samples = hold_samples - cursor
+    if sustain_samples > 0:
+        envelope[cursor : cursor + sustain_samples] = sustain_level
+        cursor += sustain_samples
+
+    release_start_level = float(envelope[cursor - 1]) if cursor > 0 else 0.0
+
+    if release_samples > 0:
+        envelope[cursor : cursor + release_samples] = np.linspace(
+            release_start_level,
+            0.0,
+            release_samples,
+            endpoint=True,
+        )
+        cursor += release_samples
+
+    return signal * envelope
 
 
 def stack(*signals: np.ndarray) -> np.ndarray:

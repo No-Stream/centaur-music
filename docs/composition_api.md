@@ -3,6 +3,10 @@
 This document describes the higher-level composition helpers that sit above the
 core `Score` / `Phrase` / `NoteEvent` model.
 
+For the concrete score-domain reference covering `Score`, `Voice`, `NoteEvent`,
+`Phrase`, and render-time expression semantics, see
+[docs/score_api.md](/home/jan/workspace/code-musics/docs/score_api.md).
+
 The composition layer is phrase-first and xen-friendly:
 
 - it builds ordinary `Phrase` objects
@@ -16,6 +20,18 @@ The composition layer is phrase-first and xen-friendly:
 - [code_musics/score.py](/home/jan/workspace/code-musics/code_musics/score.py)
 
 ## Core Types
+
+This doc touches a few nearby score-expression controls for context, but the
+detailed score-domain reference now lives in
+[docs/score_api.md](/home/jan/workspace/code-musics/docs/score_api.md).
+
+Nearby topics that matter when using the composition helpers:
+
+- note-level `amp_db` and `velocity`
+- score-level timing humanization
+- voice-level envelope humanization
+- voice-level velocity humanization and `velocity_group`
+- velocity-driven synth parameter mapping
 
 ### `RhythmCell`
 
@@ -56,6 +72,244 @@ Available constructors:
 
 Prefer `ratio_glide(...)` when you want motion that stays clearly grounded in
 ratio space.
+
+### `NoteEvent`
+
+`NoteEvent` is still the atomic score event, but its expressive surface is
+broader than the earlier "start/duration/partial/amp" model.
+
+Key fields worth remembering:
+
+- `amp_db: float | None`
+- `velocity: float = 1.0`
+- `partial: float | None`
+- `freq: float | None`
+- `synth: dict[str, Any] | None`
+- `pitch_motion: PitchMotionSpec | None`
+
+Important behavior:
+
+- exactly one of `partial` or `freq` must be provided
+- `amp` and `amp_db` are mutually exclusive
+- `velocity` must stay in `(0, 2]`
+- `amp_db` is resolved to linear amplitude at construction time
+
+`velocity` is now part of normal authoring, not just a downstream render tweak.
+Use it for accents, emphasis, and phrase shape.
+
+### `Voice`
+
+`Voice` is where most render-time expression defaults now live.
+
+Important voice-level fields:
+
+- `synth_defaults`
+- `effects`
+- `pan`
+- `envelope_humanize`
+- `velocity_humanize`
+- `velocity_group`
+- `velocity_to_params`
+- `velocity_db_per_unit`
+
+Practical mental model:
+
+- `timing_humanize` belongs to the whole `Score`
+- `envelope_humanize` belongs to a `Voice`
+- `velocity_humanize` belongs to a `Voice`
+- explicit note `velocity` belongs to each `NoteEvent`
+
+### `VelocityParamMap`
+
+`VelocityParamMap` linearly maps resolved velocity to a synth parameter range.
+
+Fields:
+
+- `min_value`
+- `max_value`
+- `min_velocity = 0.75`
+- `max_velocity = 1.25`
+
+Use it when louder notes should also be brighter, noisier, sharper, or
+otherwise more animated, rather than merely louder.
+
+Example:
+
+```python
+from code_musics.score import VelocityParamMap
+
+score.add_voice(
+    "lead",
+    synth_defaults={"engine": "filtered_stack", "preset": "round_bass"},
+    velocity_to_params={
+        "cutoff_hz": VelocityParamMap(
+            min_value=250.0,
+            max_value=1600.0,
+            min_velocity=0.8,
+            max_velocity=1.2,
+        )
+    },
+)
+```
+
+## Humanization Model
+
+The newer humanization APIs are render-time expression layers. They should make
+the result feel less rigid without forcing you to abandon explicit score timing
+or composition structure.
+
+The main rule of thumb:
+
+- timing humanization changes note start times
+- envelope humanization changes ADSR parameters
+- velocity humanization changes resolved per-note velocity multipliers
+
+All of them are deterministic for a given seed.
+
+### `TimingHumanizeSpec`
+
+High-level ensemble timing drift attached to `Score(timing_humanize=...)`.
+
+Fields:
+
+- `preset`
+- `ensemble_drift`
+- `ensemble_amount_ms`
+- `follow_strength`
+- `voice_spread_ms`
+- `micro_jitter_ms`
+- `chord_spread_ms`
+- `seed`
+
+Current presets:
+
+- `tight_ensemble`
+- `chamber`
+- `relaxed_band`
+- `loose_late_night`
+
+How to think about the parameters:
+
+- `ensemble_amount_ms` is the size of the shared temporal breathing
+- `follow_strength` controls how tightly voices move together
+- `voice_spread_ms` adds per-voice separation
+- `micro_jitter_ms` adds small note-level randomness
+- `chord_spread_ms` offsets notes that start together so simultaneities are not perfectly vertical
+
+Use this when the whole score should feel performed rather than grid-perfect.
+Do not use it as a substitute for writing actual rubato or changing the written rhythm.
+
+Example:
+
+```python
+from code_musics.humanize import TimingHumanizeSpec
+from code_musics.score import Score
+
+score = Score(
+    f0=110.0,
+    timing_humanize=TimingHumanizeSpec(
+        preset="chamber",
+        seed=17,
+    ),
+)
+```
+
+### `EnvelopeHumanizeSpec`
+
+Voice-level ADSR drift attached with `Score.add_voice(..., envelope_humanize=...)`.
+
+Fields:
+
+- `preset`
+- `drift`
+- `attack_amount_pct`
+- `decay_amount_pct`
+- `sustain_amount_pct`
+- `release_amount_pct`
+- `seed`
+
+Current presets:
+
+- `subtle_analog`
+- `breathing_pad`
+- `loose_pluck`
+
+This is the current API surface for "env slop": smooth, seeded variation in
+ADSR timing and sustain amount over score time.
+
+Use it for:
+
+- pads that should breathe
+- plucks that should not feel machine-cloned
+- analog-ish instability that stays musically bounded
+
+### `VelocityHumanizeSpec`
+
+Voice-level render-time velocity drift attached with
+`Score.add_voice(..., velocity_humanize=...)`.
+
+Fields:
+
+- `preset`
+- `drift`
+- `group_amount`
+- `follow_strength`
+- `voice_spread`
+- `note_jitter`
+- `chord_spread`
+- `min_multiplier`
+- `max_multiplier`
+- `seed`
+
+Current presets:
+
+- `subtle_living`
+- `breathing_ensemble`
+
+How to think about the parameters:
+
+- `group_amount` controls the shared curve strength
+- `follow_strength` controls cross-voice correlation
+- `voice_spread` adds per-voice deviation around the shared curve
+- `note_jitter` adds independent note-level randomness
+- `chord_spread` varies simultaneous notes inside a chord or onset cluster
+- `min_multiplier` / `max_multiplier` clamp the final result
+
+`velocity_humanize` defaults to a subtle preset when you call `add_voice(...)`.
+If you want fully fixed note dynamics, set `velocity_humanize=None`.
+
+### `velocity_group`
+
+`velocity_group` is a simple but important piece of the model.
+
+Voices with the same `velocity_group` share the same higher-level velocity drift
+curve, so they breathe together instead of each voice wobbling independently.
+
+Use it for:
+
+- multiple parts of one ensemble gesture
+- doubled lines
+- pad stacks that should swell together
+
+Leave it unset when each voice should have its own dynamic life.
+
+Example:
+
+```python
+from code_musics.humanize import VelocityHumanizeSpec
+
+shared_velocity = VelocityHumanizeSpec(
+    preset="breathing_ensemble",
+    seed=5,
+)
+
+for voice_name in ("lead", "alto"):
+    score.add_voice(
+        voice_name,
+        velocity_humanize=shared_velocity,
+        velocity_group="ensemble",
+    )
+```
 
 ### `HarmonicContext` and context drift helpers
 
@@ -184,6 +438,28 @@ These are only starting points. Apparent loudness depends strongly on spectrum,
 envelope, register, and density. In practice, low sustained parts often need more
 energy than upper voices, while bright leads may need less level than expected to
 sit correctly.
+
+## Velocity Authoring
+
+Use note-level `velocity` for local expression and accents, and use
+`velocity_humanize` for gentle render-time variation on top.
+
+Recommended default mental model:
+
+- leave most notes around `velocity=1.0`
+- use roughly `0.85` to `0.95` for softer notes
+- use roughly `1.05` to `1.2` for accents
+- avoid treating velocity like a substitute for all gain staging; use `amp_db` for the larger balance decisions
+
+By default, resolved velocity affects loudness through `velocity_db_per_unit`
+on the voice. It can also affect timbre when `velocity_to_params` is configured.
+
+That means two equally loud notated lines can still differ musically:
+
+- by note-level `amp_db`
+- by note-level `velocity`
+- by velocity-driven timbral mapping
+- by velocity humanization
 
 ## Helper Transforms
 

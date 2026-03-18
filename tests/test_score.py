@@ -137,8 +137,48 @@ def test_render_overlapping_voices_returns_audio() -> None:
 
     assert isinstance(audio, np.ndarray)
     assert audio.ndim == 1
-    assert len(audio) == int(1.5 * score.sample_rate)
+    assert len(audio) == int(1.8 * score.sample_rate)
     assert np.max(np.abs(audio)) > 0
+
+
+def test_render_extends_note_past_note_end_for_release_tail() -> None:
+    score = Score(f0=55.0)
+    score.add_voice(
+        "lead",
+        synth_defaults={
+            "attack": 0.0,
+            "decay": 0.0,
+            "sustain_level": 1.0,
+            "release": 0.25,
+        },
+        velocity_humanize=None,
+    )
+    score.add_note("lead", start=0.0, duration=0.5, partial=4.0, amp=0.2)
+
+    audio = score.render()
+
+    assert len(audio) == int(0.75 * score.sample_rate)
+    assert np.max(np.abs(audio[int(0.55 * score.sample_rate) :])) > 0.0
+
+
+def test_render_short_note_release_reaches_zero_in_tail() -> None:
+    score = Score(f0=55.0)
+    score.add_voice(
+        "lead",
+        synth_defaults={
+            "attack": 0.04,
+            "decay": 0.14,
+            "sustain_level": 0.64,
+            "release": 0.30,
+        },
+        velocity_humanize=None,
+    )
+    score.add_note("lead", start=0.0, duration=0.08, partial=4.0, amp=0.2)
+
+    audio = score.render()
+
+    assert len(audio) == int(0.38 * score.sample_rate)
+    assert np.abs(audio[-1]) < 1e-9
 
 
 def test_chorus_promotes_mono_to_stereo() -> None:
@@ -187,7 +227,7 @@ def test_score_renders_stereo_when_voice_effects_promote_signal() -> None:
 
     assert audio.ndim == 2
     assert audio.shape[0] == 2
-    assert audio.shape[1] == int(1.05 * score.sample_rate)
+    assert audio.shape[1] == int(1.35 * score.sample_rate)
 
 
 def test_voice_pan_promotes_mono_voice_to_stereo() -> None:
@@ -531,6 +571,25 @@ def test_render_piece_render_audio_surface_writes_audio_and_analysis(
     assert (
         Path(render_metadata["artifacts"]["latest"]["audio_path"]) == result.audio_path
     )
+
+
+def test_render_piece_effects_showcase_writes_audio_and_analysis(
+    tmp_path: Path,
+) -> None:
+    result = render_piece("effects_showcase", output_dir=tmp_path, save_plot=True)
+    audio_path, plot_path = result
+
+    assert audio_path.exists()
+    assert result.version_audio_path is not None
+    assert result.version_audio_path.exists()
+    assert plot_path is None
+    assert result.analysis_manifest_path is not None
+    assert result.analysis_manifest_path.exists()
+    render_metadata = json.loads(
+        result.render_metadata_path.read_text(encoding="utf-8")
+    )
+    assert render_metadata["piece_name"] == "effects_showcase"
+    assert render_metadata["request"]["save_plot"] is True
 
 
 def test_piece_registry_definitions_are_complete() -> None:

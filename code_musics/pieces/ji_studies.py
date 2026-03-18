@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import math
+from dataclasses import replace
 
 from code_musics.composition import (
     ContextSection,
@@ -27,8 +28,13 @@ from code_musics.composition import (
     place_ratio_line,
     with_synth_ramp,
 )
+from code_musics.humanize import (
+    EnvelopeHumanizeSpec,
+    TimingHumanizeSpec,
+    VelocityHumanizeSpec,
+)
 from code_musics.pieces.septimal import PieceDefinition
-from code_musics.score import EffectSpec, Score
+from code_musics.score import EffectSpec, Score, VelocityParamMap
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +83,14 @@ def build_ji_chorale_score() -> Score:
 
     score = Score(
         f0=f0,
+        # Chamber ensemble looseness: ~18 ms shared drift, 16 ms chord spread so
+        # block chords don't fire as a single MIDI click.
+        timing_humanize=TimingHumanizeSpec(preset="chamber", chord_spread_ms=16.0),
         master_effects=[
+            # Neve-style mix glue before the spatial effects; drive bumped slightly
+            # so it's actually doing something measurable at this level.
             EffectSpec(
-                "saturation", {"preset": "neve_gentle", "mix": 0.20, "drive": 1.12}
+                "saturation", {"preset": "neve_gentle", "mix": 0.22, "drive": 1.16}
             ),
             EffectSpec("delay", {"delay_seconds": 0.28, "feedback": 0.16, "mix": 0.10}),
             # Bricasti "Large & Dark" hall — warm, long, dark character; outputs stereo
@@ -87,8 +98,8 @@ def build_ji_chorale_score() -> Score:
         ],
     )
 
-    # Bass: filtered_stack square — still warm, but a little more filtered-envelope
-    # motion and less long tail so the harmony can breathe.
+    # Bass: filtered_stack square — warm dark foundation; velocity_group "harmony"
+    # so bass/tenor/alto breathe together as one ensemble unit.
     score.add_voice(
         "bass",
         synth_defaults={
@@ -106,8 +117,16 @@ def build_ji_chorale_score() -> Score:
             "release": 0.90,
         },
         pan=-0.08,
+        velocity_group="harmony",
+        envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
+        velocity_humanize=VelocityHumanizeSpec(preset="breathing_ensemble"),
+        velocity_db_per_unit=8.0,
+        # Louder chord arrivals open the filter slightly — more energy, more body.
+        velocity_to_params={
+            "cutoff_hz": VelocityParamMap(min_value=340.0, max_value=580.0)
+        },
     )
-    # Tenor/alto: slightly less legato mass so the bed supports rather than blankets.
+    # Tenor/alto: additive pad — the harmonic bed; same group as bass.
     chord_defaults: dict = {
         "harmonic_rolloff": 0.48,
         "n_harmonics": 6,
@@ -119,9 +138,32 @@ def build_ji_chorale_score() -> Score:
         "sustain_level": 0.56,
         "release": 0.70,
     }
-    score.add_voice("tenor", synth_defaults=dict(chord_defaults), pan=-0.16)
-    score.add_voice("alto", synth_defaults=dict(chord_defaults), pan=0.14)
-    # Counter: filtered_stack reed — oboe-like
+    score.add_voice(
+        "tenor",
+        synth_defaults=dict(chord_defaults),
+        pan=-0.16,
+        velocity_group="harmony",
+        envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
+        velocity_humanize=VelocityHumanizeSpec(preset="breathing_ensemble"),
+        velocity_db_per_unit=8.0,
+        # Additive engine: louder arrivals get slightly brighter harmonic tilt.
+        velocity_to_params={
+            "brightness_tilt": VelocityParamMap(min_value=-0.02, max_value=0.06)
+        },
+    )
+    score.add_voice(
+        "alto",
+        synth_defaults=dict(chord_defaults),
+        pan=0.14,
+        velocity_group="harmony",
+        envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
+        velocity_humanize=VelocityHumanizeSpec(preset="breathing_ensemble"),
+        velocity_db_per_unit=8.0,
+        velocity_to_params={
+            "brightness_tilt": VelocityParamMap(min_value=-0.02, max_value=0.06)
+        },
+    )
+    # Counter: filtered_stack reed — oboe-like inner voice; "melody" group with lead.
     score.add_voice(
         "counter",
         synth_defaults={
@@ -137,9 +179,17 @@ def build_ji_chorale_score() -> Score:
             "release": 0.30,
         },
         pan=0.08,
+        velocity_group="melody",
+        envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog"),
+        velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
+        velocity_db_per_unit=10.0,
+        # Louder notes open the filter and increase envelope sweep — oboe-like expressivity.
+        velocity_to_params={
+            "cutoff_hz": VelocityParamMap(min_value=1_800.0, max_value=3_000.0),
+            "filter_env_amount": VelocityParamMap(min_value=0.72, max_value=1.18),
+        },
     )
-    # Lead: filtered saw-like voice with gentle filter motion; clearer and less
-    # overtly synthetic than the brighter FM pass.
+    # Lead: filtered saw — the expressive soprano line; same "melody" group as counter.
     score.add_voice(
         "lead",
         synth_defaults={
@@ -162,27 +212,44 @@ def build_ji_chorale_score() -> Score:
             )
         ],
         pan=0.20,
+        velocity_group="melody",
+        envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog"),
+        velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
+        # Accented notes open the filter and add resonance — louder = brighter = more edge.
+        # filter_env_amount replaces the ramp's value at note level; ramp only handles cutoff_hz.
+        velocity_to_params={
+            "filter_env_amount": VelocityParamMap(min_value=0.30, max_value=0.75),
+            "resonance": VelocityParamMap(min_value=0.04, max_value=0.22),
+        },
     )
 
     # ── Prologue (0–12 s): sparse Fs2+A3 drone ──────────────────────────────
-    score.add_note("bass", start=0.0, duration=12.0, freq=Fs2, amp=0.20)
-    score.add_note("tenor", start=2.0, duration=10.0, freq=A3, amp=0.15)
+    score.add_note("bass", start=0.0, duration=12.0, freq=Fs2, amp=0.20, velocity=0.80)
+    score.add_note("tenor", start=2.0, duration=10.0, freq=A3, amp=0.15, velocity=0.80)
 
     # ── A section (12–54 s): 7-bar vi–iv alternation ────────────────────────
+    # Velocity builds through bar 5 (the A5 climax) then eases back.
     a_note_dur = 6.9
     a_chords: list[tuple[float, float, float, float]] = [
         (12.0, Fs3, A3, Cs4),  # vi  F# minor  bar 1
         (18.0, D3, F3, A3),  # iv  D minor   bar 2
         (24.0, Fs3, A3, Cs4),  # vi             bar 3  (counter enters)
         (30.0, D3, F3, A3),  # iv             bar 4
-        (36.0, Fs3, A3, Cs4),  # vi             bar 5
+        (36.0, Fs3, A3, Cs4),  # vi             bar 5  — lead climax here
         (42.0, D3, F3, A3),  # iv             bar 6
         (48.0, Fs3, A3, Cs4),  # vi             bar 7
     ]
-    for start, b, t, a in a_chords:
-        score.add_note("bass", start=start, duration=a_note_dur, freq=b, amp=0.25)
-        score.add_note("tenor", start=start, duration=a_note_dur, freq=t, amp=0.21)
-        score.add_note("alto", start=start, duration=a_note_dur, freq=a, amp=0.18)
+    a_velocities = [0.90, 0.95, 1.02, 1.05, 1.12, 0.98, 0.90]
+    for (start, b, t, a), vel in zip(a_chords, a_velocities, strict=True):
+        score.add_note(
+            "bass", start=start, duration=a_note_dur, freq=b, amp=0.25, velocity=vel
+        )
+        score.add_note(
+            "tenor", start=start, duration=a_note_dur, freq=t, amp=0.21, velocity=vel
+        )
+        score.add_note(
+            "alto", start=start, duration=a_note_dur, freq=a, amp=0.18, velocity=vel
+        )
 
     # ── B section (54–75 s): I–V–I in A major ───────────────────────────────
     b_note_dur = 7.2
@@ -191,22 +258,37 @@ def build_ji_chorale_score() -> Score:
         (61.0, E3, Gs3, B3),  # V   E major (pure 5-limit)
         (68.0, A2, E3, Cs4),  # I   A major
     ]
-    for start, b, t, a in b_chords:
-        score.add_note("bass", start=start, duration=b_note_dur, freq=b, amp=0.23)
-        score.add_note("tenor", start=start, duration=b_note_dur, freq=t, amp=0.20)
-        score.add_note("alto", start=start, duration=b_note_dur, freq=a, amp=0.17)
+    b_velocities = [1.05, 1.10, 0.95]
+    for (start, b, t, a), vel in zip(b_chords, b_velocities, strict=True):
+        score.add_note(
+            "bass", start=start, duration=b_note_dur, freq=b, amp=0.23, velocity=vel
+        )
+        score.add_note(
+            "tenor", start=start, duration=b_note_dur, freq=t, amp=0.20, velocity=vel
+        )
+        score.add_note(
+            "alto", start=start, duration=b_note_dur, freq=a, amp=0.17, velocity=vel
+        )
 
     # ── Development (75–99 s): F#m7 → Bm → V ───────────────────────────────
+    # Velocity builds through the section — the most harmonically tense passage.
     dev_note_dur = 8.1
     dev_chords: list[tuple[float, float, float, float]] = [
         (75.0, Fs2, A3, Cs4),  # F#m7 (counter plays E4 = 7th)
         (83.0, B2, D3, Fs3),  # Bm
         (91.0, E3, Gs3, B3),  # V — leads back to A
     ]
-    for start, b, t, a in dev_chords:
-        score.add_note("bass", start=start, duration=dev_note_dur, freq=b, amp=0.24)
-        score.add_note("tenor", start=start, duration=dev_note_dur, freq=t, amp=0.20)
-        score.add_note("alto", start=start, duration=dev_note_dur, freq=a, amp=0.18)
+    dev_velocities = [1.02, 1.08, 1.14]
+    for (start, b, t, a), vel in zip(dev_chords, dev_velocities, strict=True):
+        score.add_note(
+            "bass", start=start, duration=dev_note_dur, freq=b, amp=0.24, velocity=vel
+        )
+        score.add_note(
+            "tenor", start=start, duration=dev_note_dur, freq=t, amp=0.20, velocity=vel
+        )
+        score.add_note(
+            "alto", start=start, duration=dev_note_dur, freq=a, amp=0.18, velocity=vel
+        )
 
     # ── Reprise (99–123 s): vi–I–vi–I ───────────────────────────────────────
     rep_note_dur = 6.8
@@ -216,63 +298,92 @@ def build_ji_chorale_score() -> Score:
         (111.0, Fs3, A3, Cs4),  # vi
         (117.0, A2, E3, Cs4),  # I
     ]
-    for start, b, t, a in rep_chords:
-        score.add_note("bass", start=start, duration=rep_note_dur, freq=b, amp=0.24)
-        score.add_note("tenor", start=start, duration=rep_note_dur, freq=t, amp=0.20)
-        score.add_note("alto", start=start, duration=rep_note_dur, freq=a, amp=0.18)
+    rep_velocities = [1.00, 0.95, 1.00, 0.88]  # gentle descent into ending
+    for (start, b, t, a), vel in zip(rep_chords, rep_velocities, strict=True):
+        score.add_note(
+            "bass", start=start, duration=rep_note_dur, freq=b, amp=0.24, velocity=vel
+        )
+        score.add_note(
+            "tenor", start=start, duration=rep_note_dur, freq=t, amp=0.20, velocity=vel
+        )
+        score.add_note(
+            "alto", start=start, duration=rep_note_dur, freq=a, amp=0.18, velocity=vel
+        )
 
     # ── Ending (123–150 s): wide vi → Dm7 → Amaj7 ───────────────────────────
     # Wide vi — F#2 sub-bass, A3, C#5 across 3 octaves
-    score.add_note("bass", start=123.0, duration=8.4, freq=Fs2, amp=0.27)
-    score.add_note("tenor", start=123.0, duration=8.4, freq=A3, amp=0.20)
-    score.add_note("alto", start=123.0, duration=8.4, freq=Cs5, amp=0.21)
+    score.add_note("bass", start=123.0, duration=8.4, freq=Fs2, amp=0.27, velocity=1.05)
+    score.add_note("tenor", start=123.0, duration=8.4, freq=A3, amp=0.20, velocity=1.05)
+    score.add_note("alto", start=123.0, duration=8.4, freq=Cs5, amp=0.21, velocity=1.05)
 
     # Dm7 — D / F / A / C4 (264 Hz — pure minor 7th, the spice)
-    score.add_note("bass", start=131.0, duration=8.4, freq=D3, amp=0.26)
-    score.add_note("tenor", start=131.0, duration=8.4, freq=F3, amp=0.21)
-    score.add_note("alto", start=131.0, duration=8.4, freq=A3, amp=0.18)
-    score.add_note("alto", start=131.0, duration=8.4, freq=C4, amp=0.16)
+    score.add_note("bass", start=131.0, duration=8.4, freq=D3, amp=0.26, velocity=1.00)
+    score.add_note("tenor", start=131.0, duration=8.4, freq=F3, amp=0.21, velocity=1.00)
+    score.add_note("alto", start=131.0, duration=8.4, freq=A3, amp=0.18, velocity=1.00)
+    score.add_note("alto", start=131.0, duration=8.4, freq=C4, amp=0.16, velocity=1.00)
 
-    # Amaj7 — A2 / E3 / C#4 / G#4 (pure 15/8 above A) — unresolved
-    score.add_note("bass", start=139.0, duration=10.0, freq=A2, amp=0.23)
-    score.add_note("tenor", start=139.0, duration=10.0, freq=E3, amp=0.19)
-    score.add_note("alto", start=139.0, duration=10.0, freq=Cs4, amp=0.17)
-    score.add_note("alto", start=139.0, duration=10.0, freq=Gs4, amp=0.17)
+    # Amaj7 — A2 / E3 / C#4 / G#4 (pure 15/8 above A) — unresolved, fading
+    score.add_note("bass", start=139.0, duration=10.0, freq=A2, amp=0.23, velocity=0.88)
+    score.add_note(
+        "tenor", start=139.0, duration=10.0, freq=E3, amp=0.19, velocity=0.88
+    )
+    score.add_note(
+        "alto", start=139.0, duration=10.0, freq=Cs4, amp=0.17, velocity=0.88
+    )
+    score.add_note(
+        "alto", start=139.0, duration=10.0, freq=Gs4, amp=0.17, velocity=0.88
+    )
 
     # ── Counter voice (enters A section bar 3 = t=24) ────────────────────────
     # Moves in contrary motion to the lead; fills the inner voice above alto.
-    def _add_counter(t_start: float, notes: list[tuple[float, float]]) -> None:
+    # notes: (freq, dur, velocity)
+    def _add_counter(t_start: float, notes: list[tuple[float, float, float]]) -> None:
         t = t_start
-        for freq, dur in notes:
-            score.add_note("counter", start=t, duration=dur * 1.02, freq=freq, amp=0.22)
+        for freq, dur, vel in notes:
+            score.add_note(
+                "counter",
+                start=t,
+                duration=dur * 1.02,
+                freq=freq,
+                amp=0.22,
+                velocity=vel,
+            )
             t += dur
 
     # A-section bars 3–7 (t=24–54)
+    _add_counter(24.0, [(E4, 2.5, 1.00), (D4, 2.0, 0.93), (Cs4, 1.5, 0.85)])  # bar 3
     _add_counter(
-        24.0, [(E4, 2.5), (D4, 2.0), (Cs4, 1.5)]
-    )  # bar 3 vi — descends as lead rises
-    _add_counter(30.0, [(F4, 2.0), (E4, 2.0), (D4, 2.0)])  # bar 4 iv — D-minor colour
-    _add_counter(36.0, [(E4, 1.5), (Cs4, 2.0), (E4, 2.5)])  # bar 5 vi — arching
+        30.0, [(F4, 2.0, 1.05), (E4, 2.0, 0.97), (D4, 2.0, 0.88)]
+    )  # bar 4 D-minor
     _add_counter(
-        42.0, [(D4, 2.0), (E4, 2.5), (F4, 1.5)]
-    )  # bar 6 iv — rising as lead falls
-    _add_counter(48.0, [(Cs4, 2.0), (E4, 2.5), (D4, 1.5)])  # bar 7 vi
+        36.0, [(E4, 1.5, 1.02), (Cs4, 2.0, 0.92), (E4, 2.5, 1.00)]
+    )  # bar 5 arching
+    _add_counter(
+        42.0, [(D4, 2.0, 0.92), (E4, 2.5, 1.00), (F4, 1.5, 1.08)]
+    )  # bar 6 rising
+    _add_counter(48.0, [(Cs4, 2.0, 1.02), (E4, 2.5, 1.05), (D4, 1.5, 0.90)])  # bar 7
 
     # Development (t=75–99)
-    _add_counter(75.0, [(E4, 3.0), (Cs4, 2.5), (E4, 2.5)])  # F#m7 — E4 = the 7th
-    _add_counter(83.0, [(Fs4, 3.0), (E4, 2.5), (D4, 2.5)])  # Bm
-    _add_counter(91.0, [(Gs4, 3.0), (Fs4, 2.0), (E4, 3.0)])  # V
+    _add_counter(
+        75.0, [(E4, 3.0, 1.05), (Cs4, 2.5, 0.92), (E4, 2.5, 1.00)]
+    )  # F#m7 — E4 = 7th
+    _add_counter(83.0, [(Fs4, 3.0, 1.10), (E4, 2.5, 1.00), (D4, 2.5, 0.90)])  # Bm
+    _add_counter(
+        91.0, [(Gs4, 3.0, 1.18), (Fs4, 2.0, 1.02), (E4, 3.0, 0.88)]
+    )  # V — Gs4 is peak
 
     # Reprise vi chords only (I chords rest — open space)
-    _add_counter(99.0, [(E4, 3.0), (Cs4, 3.0)])  # vi
-    _add_counter(111.0, [(Cs4, 2.5), (E4, 3.5)])  # vi
+    _add_counter(99.0, [(E4, 3.0, 1.08), (Cs4, 3.0, 0.90)])
+    _add_counter(111.0, [(Cs4, 2.5, 0.95), (E4, 3.5, 1.05)])
 
     # Ending
-    _add_counter(123.0, [(E4, 4.0), (Cs4, 4.0)])  # wide vi
-    _add_counter(131.0, [(F4, 4.0), (E4, 4.0)])  # Dm7
-    _add_counter(139.0, [(E4, 4.0), (Gs4, 4.0), (E4, 3.0)])  # Amaj7
+    _add_counter(123.0, [(E4, 4.0, 1.00), (Cs4, 4.0, 0.90)])  # wide vi
+    _add_counter(131.0, [(F4, 4.0, 1.08), (E4, 4.0, 0.95)])  # Dm7 — F4 color
+    _add_counter(139.0, [(E4, 4.0, 1.00), (Gs4, 4.0, 1.10), (E4, 3.0, 0.85)])  # Amaj7
 
     # ── Soprano lead — continuous from prologue pickup (t=8) ─────────────────
+    # Per-note velocity shapes the melodic arc: phrase peaks accented, tails tapered,
+    # the A5 climax (bar 5) is the loudest single moment in the piece.
     def _add_lead_phrase(
         *,
         start: float,
@@ -280,6 +391,7 @@ def build_ji_chorale_score() -> Score:
         synth_start: dict[str, float],
         synth_end: dict[str, float],
         amp_db: float,
+        velocities: list[float],
     ) -> None:
         phrase = line(
             tones=[freq for freq, _ in notes],
@@ -289,38 +401,46 @@ def build_ji_chorale_score() -> Score:
             synth_defaults={"engine": "filtered_stack", "waveform": "saw"},
         )
         phrase = with_synth_ramp(phrase, start=synth_start, end=synth_end)
+        # Stamp per-note velocities onto the frozen NoteEvent instances.
+        phrase = replace(
+            phrase,
+            events=tuple(
+                replace(evt, velocity=vel)
+                for evt, vel in zip(phrase.events, velocities, strict=True)
+            ),
+        )
         score.add_phrase("lead", phrase, start=start)
 
     lead_prologue_and_a: list[tuple[float, float]] = [
-        # Prologue pickup (8–12 s)
+        # Prologue pickup (8–12 s): tentative entry, builds to Cs5
         (A4, 1.0),
         (Cs5, 1.0),
         (B4, 1.0),
         (A4, 1.0),
-        # A-section bar 1 vi (12–18 s)
+        # A bar 1 vi (12–18 s): Cs5 is the phrase peak
         (Cs5, 2.0),
         (B4, 1.0),
         (A4, 2.0),
         (Gs4, 1.0),
-        # A-section bar 2 iv (18–24 s)
+        # A bar 2 iv (18–24 s): F4 is the dark D-minor color note
         (A4, 1.5),
         (F4, 2.0),
         (A4, 1.5),
         (Gs4, 0.5),
         (A4, 0.5),
-        # A-section bar 3 vi (24–30 s) — counter enters
+        # A bar 3 vi (24–30 s): counter enters; Cs5 again peaks
         (B4, 1.0),
         (Cs5, 2.0),
         (B4, 1.0),
         (A4, 1.5),
         (B4, 0.5),
-        # A-section bar 4 iv (30–36 s)
+        # A bar 4 iv (30–36 s): F4 recurs, D4 is the iv root
         (A4, 1.0),
         (F4, 1.5),
         (E4, 1.0),
         (D4, 1.5),
         (E4, 1.0),
-        # A-section bar 5 vi (36–42 s) — most ornate; reaches up to A5 (tonic, next octave)
+        # A bar 5 vi (36–42 s): most ornate; A5 is the climactic peak of the whole section
         (A4, 0.5),
         (Cs5, 0.75),
         (B4, 0.5),
@@ -332,114 +452,243 @@ def build_ji_chorale_score() -> Score:
         (Cs5, 0.75),
         (D5, 0.375),
         (A5, 0.375),
-        # A-section bar 6 iv (42–48 s)
+        # A bar 6 iv (42–48 s): descent from the A5 peak
         (A4, 1.5),
         (F4, 1.0),
         (E4, 1.5),
         (D4, 1.5),
         (E4, 0.5),
-        # A-section bar 7 vi (48–54 s)
+        # A bar 7 vi (48–54 s): winding down to cadence
         (Cs5, 2.5),
         (B4, 1.5),
         (A4, 1.5),
         (Gs4, 0.5),
     ]
+    prologue_a_velocities: list[float] = [
+        # Prologue pickup — soft, tentative
+        0.85,
+        1.12,
+        1.00,
+        0.88,
+        # A bar 1 — Cs5 peaks
+        1.22,
+        1.02,
+        0.95,
+        0.82,
+        # A bar 2 — F4 is the dark color note
+        1.05,
+        1.15,
+        1.02,
+        0.88,
+        0.85,
+        # A bar 3 — Cs5 peaks again, counter entering
+        1.02,
+        1.25,
+        1.05,
+        0.95,
+        0.85,
+        # A bar 4 — F4 color recurs, D4 is the iv root
+        1.05,
+        1.12,
+        1.00,
+        0.90,
+        0.85,
+        # A bar 5 — climactic run to A5; each step builds
+        1.00,
+        1.10,
+        1.02,
+        1.15,
+        1.05,
+        1.00,
+        0.95,
+        1.05,
+        1.20,
+        1.32,
+        1.42,
+        # A bar 6 — coming down from the A5 peak
+        1.08,
+        0.95,
+        0.90,
+        0.85,
+        0.80,
+        # A bar 7 — winding down, phrase tail
+        1.02,
+        0.92,
+        0.85,
+        0.75,
+    ]
 
     lead_b_and_development: list[tuple[float, float]] = [
-        # B-section I (54–61 s)
+        # B section I (54–61 s): bright new section; E4 low entry, Cs5 peaks
         (E4, 1.5),
         (Cs5, 1.5),
         (A4, 2.0),
         (E4, 2.0),
-        # B-section V (61–68 s)
+        # B section V (61–68 s): harmonic tension; B4 is the leading-tone peak
         (B4, 2.0),
         (Gs4, 1.5),
         (Fs4, 1.5),
         (E4, 2.0),
-        # B-section I (68–75 s)
+        # B section I (68–75 s): resolution; settle quietly
         (Cs5, 2.5),
         (A4, 2.0),
         (E4, 2.5),
-        # Development F#m7 (75–83 s) — A4→E4 echoes the B-section 2–1 cadence
+        # Development F#m7 (75–83 s): exploratory; Cs5 glows amid the ambiguity
         (A4, 1.5),
         (E4, 1.5),
         (Cs5, 1.5),
         (Fs4, 1.5),
         (A4, 2.0),
-        # Development Bm (83–91 s)
+        # Development Bm (83–91 s): climbing; B4 is the section peak
         (D4, 1.0),
         (Fs4, 1.5),
         (A4, 2.0),
         (B4, 1.5),
         (A4, 2.0),
-        # Development V (91–99 s)
+        # Development V (91–99 s): leading-tone push; B4 peaks, falls to E4
         (Gs4, 2.0),
         (B4, 2.0),
         (Gs4, 1.5),
         (E4, 2.5),
     ]
+    b_dev_velocities: list[float] = [
+        # B I — E4 modest entry, Cs5 peaks
+        0.98,
+        1.25,
+        1.02,
+        0.88,
+        # B V — B4 leading-tone tension
+        1.15,
+        1.05,
+        0.95,
+        0.85,
+        # B I return — settled, soft close
+        1.12,
+        0.97,
+        0.82,
+        # Dev F#m7 — Cs5 glows through the ambiguity
+        1.00,
+        0.92,
+        1.12,
+        0.92,
+        0.98,
+        # Dev Bm — climbing to B4
+        0.88,
+        1.00,
+        1.10,
+        1.22,
+        1.02,
+        # Dev V — B4 peaks, resolve falls to E4
+        1.12,
+        1.20,
+        1.02,
+        0.85,
+    ]
 
     lead_reprise_and_ending: list[tuple[float, float]] = [
-        # Reprise vi (99–105 s)
+        # Reprise vi (99–105 s): echo of A section
         (Cs5, 2.0),
         (B4, 1.5),
         (A4, 2.0),
         (Gs4, 0.5),
-        # Reprise I (105–111 s) — tastefully major
+        # Reprise I (105–111 s): tastefully major, clear
         (A4, 1.5),
         (Cs5, 2.0),
         (E4, 2.5),
-        # Reprise vi (111–117 s)
+        # Reprise vi (111–117 s): Cs5 variant
         (B4, 1.5),
         (Cs5, 1.5),
         (B4, 1.5),
         (A4, 1.5),
-        # Reprise I (117–123 s)
+        # Reprise I (117–123 s): bridge to ending
         (Cs5, 2.5),
         (A4, 2.0),
         (E4, 1.5),
-        # Ending wide vi (123–131 s)
+        # Ending wide vi (123–131 s): spacious, high Cs5 opens the final space
         (Cs5, 2.5),
         (B4, 1.0),
         (A4, 1.0),
         (Gs4, 0.5),
         (A4, 1.0),
         (B4, 2.0),
-        # Ending Dm7 (131–139 s) — descend to C4 = spicy minor 7th
+        # Ending Dm7 (131–139 s): C4 = spicy pure minor 7th — the emotional peak here
         (A4, 1.5),
         (F4, 1.0),
         (C4, 2.0),
         (D4, 1.0),
         (F4, 1.5),
         (A4, 1.0),
-        # Ending Amaj7 (139–150 s) — G#4 echoes maj7; arc to C#5 and settle
+        # Ending Amaj7 (139–150 s): arc to Cs5, settle on a very quiet final A4
         (Gs4, 2.0),
         (A4, 1.5),
         (Cs5, 2.5),
         (B4, 1.5),
         (A4, 3.5),
     ]
+    reprise_ending_velocities: list[float] = [
+        # Reprise vi — echo of A section, slightly softer
+        1.15,
+        1.00,
+        0.90,
+        0.75,
+        # Reprise I — clear, bright, modest
+        0.95,
+        1.10,
+        0.85,
+        # Reprise vi variant
+        1.05,
+        1.18,
+        1.05,
+        0.90,
+        # Reprise I — bridge, heading down
+        1.12,
+        0.98,
+        0.85,
+        # Ending wide vi — spacious, Cs5 prominent
+        1.22,
+        1.02,
+        0.92,
+        0.80,
+        0.85,
+        0.98,
+        # Ending Dm7 — C4 is the spicy moment, F4 colors it
+        1.05,
+        1.12,
+        1.22,
+        1.05,
+        1.00,
+        0.90,
+        # Ending Amaj7 — arc to Cs5, very quiet final note
+        1.00,
+        0.95,
+        1.08,
+        0.90,
+        0.78,
+    ]
 
     _add_lead_phrase(
         start=8.0,
         notes=lead_prologue_and_a,
-        synth_start={"cutoff_hz": 2_800.0, "filter_env_amount": 0.40, "release": 0.30},
-        synth_end={"cutoff_hz": 3_100.0, "filter_env_amount": 0.46, "release": 0.28},
+        synth_start={"cutoff_hz": 2_800.0, "release": 0.30},
+        synth_end={"cutoff_hz": 3_100.0, "release": 0.28},
         amp_db=-15.0,
+        velocities=prologue_a_velocities,
     )
     _add_lead_phrase(
         start=54.0,
         notes=lead_b_and_development,
-        synth_start={"cutoff_hz": 3_150.0, "filter_env_amount": 0.50, "release": 0.26},
-        synth_end={"cutoff_hz": 3_300.0, "filter_env_amount": 0.55, "release": 0.24},
+        synth_start={"cutoff_hz": 3_150.0, "release": 0.26},
+        synth_end={"cutoff_hz": 3_300.0, "release": 0.24},
         amp_db=-14.5,
+        velocities=b_dev_velocities,
     )
     _add_lead_phrase(
         start=99.0,
         notes=lead_reprise_and_ending,
-        synth_start={"cutoff_hz": 3_000.0, "filter_env_amount": 0.50, "release": 0.26},
-        synth_end={"cutoff_hz": 2_650.0, "filter_env_amount": 0.34, "release": 0.34},
+        synth_start={"cutoff_hz": 3_000.0, "release": 0.26},
+        synth_end={"cutoff_hz": 2_650.0, "release": 0.34},
         amp_db=-15.0,
+        velocities=reprise_ending_velocities,
     )
 
     # Silence buffer — gives reverb and delay tails room to fully decay

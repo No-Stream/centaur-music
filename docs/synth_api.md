@@ -51,6 +51,92 @@ The composition helper layer may also attach note-level `attack_scale` and
 `release_scale` values inside `NoteEvent.synth`; the score renderer applies them
 after merging voice defaults and note overrides.
 
+## Velocity and Expression Resolution
+
+Velocity is now a core part of the render path.
+
+At render time, note loudness and timbre are resolved in roughly this order:
+
+1. note `amp` / `amp_db` becomes the base amplitude
+2. note `velocity` is combined with any `velocity_humanize` multiplier
+3. the resolved velocity is converted to a dB offset via `velocity_db_per_unit`
+4. any `velocity_to_params` mappings write synth params from the resolved velocity
+5. the engine renders with those params
+6. ADSR is applied, including any `envelope_humanize`
+
+Important consequences:
+
+- `amp_db` is still the main mix-level control
+- `velocity` is the main note-expression control
+- `velocity_to_params` is how velocity becomes timbral, not just louder/quieter
+- `envelope_humanize` happens after synth params are merged, so it can gently vary
+  the final attack/release behavior even when base ADSR values come from presets
+
+### `velocity_db_per_unit`
+
+Each voice has a `velocity_db_per_unit` setting that controls how much a
+resolved velocity above or below `1.0` changes loudness.
+
+Default:
+
+- `12.0 dB` per velocity unit
+
+So, very roughly:
+
+- `velocity=1.0` means no extra dB offset
+- `velocity=1.1` adds a modest positive dB bump
+- `velocity=0.9` subtracts a modest dB bump
+
+Set it lower if you want velocity to behave more like timbral emphasis than a
+large loudness swing. Set it to `0.0` if you want velocity to affect only mapped
+parameters and not level.
+
+### `velocity_to_params`
+
+`velocity_to_params` maps the resolved velocity into synth parameters before the
+engine renders.
+
+This is the preferred mechanism for things like:
+
+- brighter accents
+- stronger filter opening on louder notes
+- more aggressive FM index on accented hits
+- noisier or sharper transients on higher-velocity percussion
+
+Example:
+
+```python
+from code_musics.score import VelocityParamMap
+
+score.add_voice(
+    "bass",
+    synth_defaults={"engine": "filtered_stack", "preset": "round_bass"},
+    velocity_humanize=None,
+    velocity_to_params={
+        "cutoff_hz": VelocityParamMap(
+            min_value=250.0,
+            max_value=1600.0,
+            min_velocity=0.8,
+            max_velocity=1.2,
+        )
+    },
+)
+```
+
+## Envelope Variation
+
+`EnvelopeHumanizeSpec` is not an engine-specific preset system; it is a
+renderer-level variation layer applied after the base synth params are resolved.
+
+That means:
+
+- presets still define the baseline ADSR shape
+- note-level synth overrides can still set explicit ADSR values
+- envelope humanization then adds smooth, bounded variation around those values
+
+This is the right place for subtle analog inconsistency or "env slop" rather
+than inventing separate per-engine randomness knobs.
+
 ## Pitch Motion
 
 Pitch motion is score-level note metadata, not an engine preset parameter.
@@ -214,6 +300,43 @@ score = Score(
     master_effects=[
         EffectSpec("saturation", {"preset": "tube_warm", "mix": 0.24}),
         EffectSpec("reverb", {"room_size": 0.65, "damping": 0.45, "wet_level": 0.22}),
+    ],
+)
+```
+
+### `chow_tape`
+
+Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+
+Wrapper around the Chow Tape Model VST3 for tape-style saturation/color.
+
+Parameters:
+
+- `drive: float`
+  Tape drive amount from `0` to `1`.
+- `saturation: float`
+  Tape saturation density from `0` to `1`.
+- `bias: float`
+  Tape bias from `0` to `1`, affecting harmonic balance.
+- `mix: float`
+  Dry/wet blend in percent from `0` to `100`.
+
+Notes:
+
+- expects `~/.vst3/CHOWTapeModel.vst3` to be installed
+- the wrapper currently disables wow/flutter and tape-loss switches so this is a
+  clean tape-saturation comparison rather than a lo-fi motion effect
+
+Example:
+
+```python
+score = Score(
+    f0=110.0,
+    master_effects=[
+        EffectSpec(
+            "chow_tape",
+            {"drive": 0.62, "saturation": 0.58, "bias": 0.52, "mix": 72.0},
+        )
     ],
 )
 ```

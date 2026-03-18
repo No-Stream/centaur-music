@@ -1,0 +1,35 @@
+{
+  "manifest_path": "output/versions/effects_showcase/23_effects_showcase__20260318-185353.analysis.json",
+  "mix": {
+    "artifacts": {
+      "band_energy": "output/versions/effects_showcase/23_effects_showcase__20260318-185353.mix_band_energy.png",
+      "spectrogram": "output/versions/effects_showcase/23_effects_showcase__20260318-185353.mix_spectrogram.png",
+      "spectrum": "output/versions/effects_showcase/23_effects_showcase__20260318-185353.mix_spectrum.png"
+    },
+    "summary": {
+      "band_energy_db": {
+        "air": -75.80344483224954,
+        "bass": 11.554649683423817,
+        "high": -44.255360515279,
+        "low_mid": 7.490348297596511,
+        "mid": -15.209990467285376,
+        "sub": -13.541920138578572
+      },
+      "dominant_frequency_hz": 107.666015625,
+      "duration_seconds": 33.44,
+      "low_high_balance_db": 55.81001019870282,
+      "peak_dbfs": -1.1779059206209537,
+      "reference_tilt_db_per_octave": -3.0,
+      "rms_dbfs": -16.21859829187928,
+      "spectral_centroid_hz": 607.6085929157547,
+      "spectral_tilt_db_per_octave": -16.06112492715005,
+      "tilt_error_db_per_octave": -13.06112492715005,
+      "warnings": [
+        "low band dominates high band strongly",
+        "spectrum falls off faster than the reference tilt"
+      ]
+    }
+  },
+  "reference_tilt_db_per_octave": -3.0,
+  "voices": {}
+}
