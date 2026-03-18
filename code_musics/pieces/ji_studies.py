@@ -139,8 +139,8 @@ def build_ji_chorale_score() -> Score:
         synth_defaults={
             "engine": "filtered_stack",
             "waveform": "square",
-            "n_harmonics": 8,
-            "cutoff_hz": 460.0,
+            "n_harmonics": 12,
+            "cutoff_hz": 900.0,
             "keytrack": 0.1,
             "resonance": 0.10,
             "filter_env_amount": 0.55,
@@ -157,16 +157,16 @@ def build_ji_chorale_score() -> Score:
         velocity_db_per_unit=8.0,
         # Louder chord arrivals open the filter slightly — more energy, more body.
         velocity_to_params={
-            "cutoff_hz": VelocityParamMap(min_value=340.0, max_value=580.0)
+            "cutoff_hz": VelocityParamMap(min_value=680.0, max_value=1100.0)
         },
     )
     # Tenor/alto: additive pad — the harmonic bed; same group as bass.
     chord_defaults: dict = {
-        "harmonic_rolloff": 0.48,
-        "n_harmonics": 6,
-        "brightness_tilt": 0.02,
-        "unison_voices": 2,
-        "detune_cents": 2.0,
+        "harmonic_rolloff": 0.38,
+        "n_harmonics": 8,
+        "brightness_tilt": 0.06,
+        "unison_voices": 1,  # no unison detune — keep pure JI tuning locked in
+        "detune_cents": 0.0,
         "attack": 0.22,
         "decay": 0.18,
         "sustain_level": 0.56,
@@ -728,7 +728,7 @@ def build_ji_chorale_score() -> Score:
         notes=lead_prologue_and_a,
         synth_start={"cutoff_hz": 2_800.0, "release": 0.30},
         synth_end={"cutoff_hz": 3_100.0, "release": 0.28},
-        amp_db=-15.0,
+        amp_db=-18.0,
         velocities=prologue_a_velocities,
     )
     _add_lead_phrase(
@@ -736,7 +736,7 @@ def build_ji_chorale_score() -> Score:
         notes=lead_b_and_development,
         synth_start={"cutoff_hz": 3_150.0, "release": 0.26},
         synth_end={"cutoff_hz": 3_300.0, "release": 0.24},
-        amp_db=-14.5,
+        amp_db=-17.5,
         velocities=b_dev_velocities,
     )
     _add_lead_phrase(
@@ -744,7 +744,7 @@ def build_ji_chorale_score() -> Score:
         notes=lead_reprise_and_ending,
         synth_start={"cutoff_hz": 3_000.0, "release": 0.26},
         synth_end={"cutoff_hz": 2_650.0, "release": 0.34},
-        amp_db=-15.0,
+        amp_db=-18.0,
         velocities=reprise_ending_velocities,
     )
 

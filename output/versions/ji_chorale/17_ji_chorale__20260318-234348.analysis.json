@@ -1,70 +1,38 @@
 {
-  "manifest_path": "output/17_ji_chorale.analysis.json",
+  "manifest_path": "output/versions/ji_chorale/17_ji_chorale__20260318-234348.analysis.json",
   "mix": {
     "artifacts": {
-      "band_energy": "output/17_ji_chorale.mix_band_energy.png",
-      "spectrogram": "output/17_ji_chorale.mix_spectrogram.png",
-      "spectrum": "output/17_ji_chorale.mix_spectrum.png"
-    },
-    "pre_export_summary": {
-      "active_window_fraction": 0.9413281753707285,
-      "band_energy_db": {
-        "air": -89.2128403249165,
-        "bass": 9.536994322882148,
-        "high": -46.979534752983426,
-        "low_mid": 5.02676669280159,
-        "mid": -16.436267245844647,
-        "sub": -23.359602206639558
-      },
-      "clipped_sample_count": 0,
-      "clipped_sample_fraction": 0.0,
-      "clipped_true_peak": false,
-      "crest_factor_db": 14.12436555364505,
-      "dominant_frequency_hz": 274.54833984375,
-      "duration_seconds": 155.4285260770975,
-      "gated_rms_dbfs": -27.48263979551269,
-      "integrated_lufs": -24.96847969687237,
-      "low_high_balance_db": 56.51652907586558,
-      "peak_dbfs": -13.503623618377043,
-      "peak_headroom_db": 13.503623618377043,
-      "reference_tilt_db_per_octave": -3.0,
-      "rms_dbfs": -27.627989172022094,
-      "spectral_centroid_hz": 750.2711127806273,
-      "spectral_tilt_db_per_octave": -19.80743748294566,
-      "tilt_error_db_per_octave": -16.80743748294566,
-      "true_peak_dbfs": -12.931937748625478,
-      "warnings": [
-        "low band dominates high band strongly",
-        "spectrum falls off faster than the reference tilt"
-      ]
+      "band_energy": "output/versions/ji_chorale/17_ji_chorale__20260318-234348.mix_band_energy.png",
+      "spectrogram": "output/versions/ji_chorale/17_ji_chorale__20260318-234348.mix_spectrogram.png",
+      "spectrum": "output/versions/ji_chorale/17_ji_chorale__20260318-234348.mix_spectrum.png"
     },
     "summary": {
       "active_window_fraction": 0.9413281753707285,
       "band_energy_db": {
-        "air": -76.78081268485835,
-        "bass": 21.96893257113181,
-        "high": -34.54759618581629,
-        "low_mid": 17.458704947602232,
-        "mid": -4.004329043399553,
-        "sub": -10.927663944497759
+        "air": -89.21288333466244,
+        "bass": 9.536961873145865,
+        "high": -46.97954184893703,
+        "low_mid": 5.026751114260674,
+        "mid": -16.436272717113642,
+        "sub": -23.359671051192016
       },
       "clipped_sample_count": 0,
       "clipped_sample_fraction": 0.0,
       "clipped_true_peak": false,
-      "crest_factor_db": 14.124365411378033,
+      "crest_factor_db": 14.124368910599854,
       "dominant_frequency_hz": 274.54833984375,
       "duration_seconds": 155.4285260770975,
-      "gated_rms_dbfs": -15.198228672948048,
-      "integrated_lufs": -12.536541444321031,
-      "low_high_balance_db": 56.5165287569481,
-      "peak_dbfs": -1.0716855080926586,
-      "peak_headroom_db": 1.0716855080926586,
+      "gated_rms_dbfs": -27.48264180290279,
+      "integrated_lufs": -24.968479702455102,
+      "low_high_balance_db": 56.516503722082895,
+      "peak_dbfs": -13.503623618377043,
+      "peak_headroom_db": 13.503623618377043,
       "reference_tilt_db_per_octave": -3.0,
-      "rms_dbfs": -15.196050919470691,
-      "spectral_centroid_hz": 750.2711234437459,
-      "spectral_tilt_db_per_octave": -19.807383122697054,
-      "tilt_error_db_per_octave": -16.807383122697054,
-      "true_peak_dbfs": -0.5000000000000009,
+      "rms_dbfs": -27.627992528976897,
+      "spectral_centroid_hz": 750.2714875280986,
+      "spectral_tilt_db_per_octave": -19.807448453767467,
+      "tilt_error_db_per_octave": -16.807448453767467,
+      "true_peak_dbfs": -12.931937748625478,
       "warnings": [
         "low band dominates high band strongly",
         "spectrum falls off faster than the reference tilt"
@@ -74,7 +42,7 @@
   "reference_tilt_db_per_octave": -3.0,
   "score": {
     "artifacts": {
-      "density": "output/17_ji_chorale.score_density.png"
+      "density": "output/versions/ji_chorale/17_ji_chorale__20260318-234348.score_density.png"
     },
     "summary": {
       "frequency_range_hz": [
@@ -141,7 +109,7 @@
   "voices": {
     "alto": {
       "artifacts": {
-        "spectrum": "output/17_ji_chorale.voice_alto_spectrum.png"
+        "spectrum": "output/versions/ji_chorale/17_ji_chorale__20260318-234348.voice_alto_spectrum.png"
       },
       "summary": {
         "active_window_fraction": 0.9210702341137124,
@@ -178,7 +146,7 @@
     },
     "bass": {
       "artifacts": {
-        "spectrum": "output/17_ji_chorale.voice_bass_spectrum.png"
+        "spectrum": "output/versions/ji_chorale/17_ji_chorale__20260318-234348.voice_bass_spectrum.png"
       },
       "summary": {
         "active_window_fraction": 0.961960025789813,
@@ -215,7 +183,7 @@
     },
     "counter": {
       "artifacts": {
-        "spectrum": "output/17_ji_chorale.voice_counter_spectrum.png"
+        "spectrum": "output/versions/ji_chorale/17_ji_chorale__20260318-234348.voice_counter_spectrum.png"
       },
       "summary": {
         "active_window_fraction": 0.6313333333333333,
@@ -252,7 +220,7 @@
     },
     "lead": {
       "artifacts": {
-        "spectrum": "output/17_ji_chorale.voice_lead_spectrum.png"
+        "spectrum": "output/versions/ji_chorale/17_ji_chorale__20260318-234348.voice_lead_spectrum.png"
       },
       "summary": {
         "active_window_fraction": 0.9486666666666667,
@@ -288,7 +256,7 @@
     },
     "tenor": {
       "artifacts": {
-        "spectrum": "output/17_ji_chorale.voice_tenor_spectrum.png"
+        "spectrum": "output/versions/ji_chorale/17_ji_chorale__20260318-234348.voice_tenor_spectrum.png"
       },
       "summary": {
         "active_window_fraction": 0.9785953177257525,

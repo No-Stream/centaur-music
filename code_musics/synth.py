@@ -425,7 +425,7 @@ _PLUGIN_SPECS: dict[str, ExternalPluginSpec] = {
         path=Path.home() / ".vst3" / "DragonflyEarlyReflections.vst3",
     ),
 }
-_loaded_external_plugins: dict[tuple[str, str, Path], Any] = {}
+_loaded_external_plugins: dict[tuple[str, str, Path, str | None], Any] = {}
 
 
 def _normalize_plugin_path(path: str | Path) -> Path:
@@ -485,7 +485,7 @@ def _load_external_plugin(
         plugin_format=plugin_format,
         host=host,
     )
-    cache_key = (spec.host, spec.format, spec.path)
+    cache_key = (spec.host, spec.format, spec.path, spec.bundle_plugin_name)
     if cache_key in _loaded_external_plugins:
         return _loaded_external_plugins[cache_key]
 
