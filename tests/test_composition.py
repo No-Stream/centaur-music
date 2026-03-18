@@ -6,15 +6,23 @@ import pytest
 
 from code_musics.composition import (
     ArticulationSpec,
+    ContextSectionSpec,
+    HarmonicContext,
     RhythmCell,
+    build_context_sections,
     legato,
     line,
+    place_ratio_chord,
+    place_ratio_line,
+    ratio_line,
+    resolve_ratios,
     staccato,
     with_accent_pattern,
-    with_tail_breath,
     with_synth_ramp,
+    with_tail_breath,
 )
 from code_musics.pitch_motion import PitchMotionSpec
+from code_musics.score import Score
 
 
 def test_line_builds_expected_starts_durations_and_accents() -> None:
@@ -64,6 +72,126 @@ def test_line_supports_absolute_frequency_mode() -> None:
     assert [event.start for event in phrase.events] == [0.0, 0.25, 0.75]
 
 
+def test_harmonic_context_resolves_ratios_and_supports_drift() -> None:
+    context = HarmonicContext(tonic=220.0, name="root")
+    drifted = context.drifted(by_ratio=80 / 81, name="drifted")
+
+    assert resolve_ratios(context, [1.0, 5 / 4, 3 / 2]) == pytest.approx(
+        [220.0, 275.0, 330.0]
+    )
+    assert drifted.tonic == pytest.approx(220.0 * (80 / 81))
+    assert drifted.name == "drifted"
+
+
+def test_build_context_sections_places_windows_from_base_tonic() -> None:
+    sections = build_context_sections(
+        base_tonic=220.0,
+        start=4.0,
+        specs=(
+            ContextSectionSpec(name="A", duration=2.5),
+            ContextSectionSpec(name="B", duration=2.5, tonic_ratio=80 / 81),
+        ),
+    )
+
+    assert [section.start for section in sections] == pytest.approx([4.0, 6.5])
+    assert [section.duration for section in sections] == pytest.approx([2.5, 2.5])
+    assert [section.context.tonic for section in sections] == pytest.approx(
+        [220.0, 220.0 * (80 / 81)]
+    )
+
+
+def test_ratio_line_resolves_local_context_into_frequency_phrase() -> None:
+    phrase = ratio_line(
+        tones=[1.0, 5 / 4, 3 / 2],
+        rhythm=(0.5, 0.5, 0.5),
+        context=HarmonicContext(tonic=220.0),
+        amp=0.2,
+    )
+
+    assert [event.freq for event in phrase.events] == pytest.approx(
+        [220.0, 275.0, 330.0]
+    )
+    assert [event.partial for event in phrase.events] == [None, None, None]
+
+
+def test_place_ratio_helpers_emit_shifted_concrete_notes() -> None:
+    score = Score(f0=220.0)
+    section_a, section_b = build_context_sections(
+        base_tonic=220.0,
+        specs=(
+            ContextSectionSpec(name="A", duration=1.5),
+            ContextSectionSpec(name="B", duration=1.5, tonic_ratio=80 / 81),
+        ),
+    )
+
+    placed_a = place_ratio_line(
+        score,
+        "melody",
+        section=section_a,
+        tones=[1.0, 5 / 4],
+        rhythm=(0.5, 0.5),
+        amp=0.2,
+    )
+    placed_b = place_ratio_line(
+        score,
+        "melody",
+        section=section_b,
+        tones=[1.0, 5 / 4],
+        rhythm=(0.5, 0.5),
+        amp=0.2,
+    )
+    placed_chord = place_ratio_chord(
+        score,
+        "chord",
+        section=section_b,
+        ratios=[1.0, 3 / 2],
+        duration=1.0,
+        amp=[0.3, 0.15],
+        gap=0.1,
+    )
+
+    assert [note.freq for note in placed_a] == pytest.approx([220.0, 275.0])
+    assert [note.freq for note in placed_b] == pytest.approx(
+        [220.0 * (80 / 81), 275.0 * (80 / 81)]
+    )
+    assert [note.start for note in placed_b] == pytest.approx([1.5, 2.0])
+    assert [note.freq for note in placed_chord] == pytest.approx(
+        [220.0 * (80 / 81), 330.0 * (80 / 81)]
+    )
+    assert [note.start for note in placed_chord] == pytest.approx([1.5, 1.6])
+
+
+def test_context_drift_helpers_match_manual_ji_comma_drift_frequencies() -> None:
+    drifted_section = build_context_sections(
+        base_tonic=220.0,
+        specs=(ContextSectionSpec(name="drift", duration=10.0, tonic_ratio=80 / 81),),
+    )[0]
+
+    phrase = place_ratio_line(
+        Score(f0=220.0),
+        "melody",
+        section=drifted_section,
+        tones=[2.0, 9 / 4, 5 / 2],
+        rhythm=(0.375, 0.375, 0.375),
+        amp=0.38,
+    )
+
+    manual_freqs = [220.0 * (1 / (81 / 80)) * ratio for ratio in [2.0, 9 / 4, 5 / 2]]
+    assert [note.freq for note in phrase] == pytest.approx(manual_freqs)
+
+
+def test_line_supports_amp_db() -> None:
+    phrase = line(
+        tones=[4.0, 5.0],
+        rhythm=(0.5, 0.5),
+        amp_db=-18.0,
+        articulation=ArticulationSpec(accent_pattern=(1.0, 2.0)),
+    )
+
+    assert phrase.events[0].amp == pytest.approx(10 ** (-18.0 / 20.0))
+    assert phrase.events[1].amp == pytest.approx((10 ** (-18.0 / 20.0)) * 2.0)
+
+
 def test_articulation_scales_attack_and_release_when_defaults_exist() -> None:
     phrase = line(
         tones=[4.0, 5.0],
@@ -109,7 +237,9 @@ def test_phrase_transforms_do_not_mutate_composition_helpers() -> None:
 
     assert [event.amp for event in phrase.events] == [0.3, 0.3, 0.3]
     assert [round(event.amp, 3) for event in accented.events] == [0.3, 0.21, 0.36]
-    assert breathed.events[-1].duration == pytest.approx(accented.events[-1].duration - 0.2)
+    assert breathed.events[-1].duration == pytest.approx(
+        accented.events[-1].duration - 0.2
+    )
 
 
 def test_with_synth_ramp_interpolates_per_event_params() -> None:
@@ -146,3 +276,6 @@ def test_line_rejects_length_mismatch_and_non_positive_values() -> None:
             rhythm=(0.2,),
             articulation=ArticulationSpec(gate=0.5, tail_breath=0.2),
         )
+
+    with pytest.raises(ValueError, match="amp or amp_db"):
+        line(tones=[4.0], rhythm=(1.0,), amp=0.5, amp_db=-6.0)

@@ -4,18 +4,30 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from code_musics import synth
 from code_musics.pitch_motion import PitchMotionSpec
 from code_musics.score import NoteEvent, Phrase
 
+if TYPE_CHECKING:
+    from code_musics.score import Score
+
 __all__ = [
     "ArticulationSpec",
+    "ContextSection",
+    "ContextSectionSpec",
+    "HarmonicContext",
     "PitchMotionSpec",
     "RhythmCell",
+    "build_context_sections",
     "echo",
     "legato",
     "line",
+    "place_ratio_chord",
+    "place_ratio_line",
+    "ratio_line",
+    "resolve_ratios",
     "staccato",
     "with_accent_pattern",
     "with_gate",
@@ -60,12 +72,77 @@ class ArticulationSpec:
             raise ValueError("tail_breath must be non-negative")
 
 
+@dataclass(frozen=True)
+class HarmonicContext:
+    """A local tuning frame for resolving ratio material into concrete frequencies."""
+
+    tonic: float
+    name: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.tonic <= 0:
+            raise ValueError("tonic must be positive")
+
+    def resolve_ratio(self, ratio: float) -> float:
+        """Resolve a ratio against the local tonic."""
+        ratio_value = float(ratio)
+        if ratio_value <= 0:
+            raise ValueError("ratio must be positive")
+        return self.tonic * ratio_value
+
+    def drifted(self, *, by_ratio: float, name: str | None = None) -> HarmonicContext:
+        """Return a new context whose tonic is multiplied by the given ratio."""
+        ratio_value = float(by_ratio)
+        if ratio_value <= 0:
+            raise ValueError("by_ratio must be positive")
+        return HarmonicContext(
+            tonic=self.tonic * ratio_value,
+            name=self.name if name is None else name,
+        )
+
+
+@dataclass(frozen=True)
+class ContextSectionSpec:
+    """Specification for a time window resolved from a base tonic."""
+
+    duration: float
+    tonic_ratio: float = 1.0
+    name: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.duration <= 0:
+            raise ValueError("duration must be positive")
+        if self.tonic_ratio <= 0:
+            raise ValueError("tonic_ratio must be positive")
+
+
+@dataclass(frozen=True)
+class ContextSection:
+    """A placed harmonic context over an absolute time span."""
+
+    start: float
+    duration: float
+    context: HarmonicContext
+
+    def __post_init__(self) -> None:
+        if self.start < 0:
+            raise ValueError("start must be non-negative")
+        if self.duration <= 0:
+            raise ValueError("duration must be positive")
+
+    @property
+    def end(self) -> float:
+        """Return the section endpoint."""
+        return self.start + self.duration
+
+
 def line(
     tones: Sequence[float],
     rhythm: RhythmCell | Sequence[float],
     *,
     pitch_kind: str = "partial",
-    amp: float = 1.0,
+    amp: float | None = None,
+    amp_db: float | None = None,
     synth_defaults: dict[str, Any] | None = None,
     articulation: ArticulationSpec | None = None,
     motions: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
@@ -76,12 +153,23 @@ def line(
     tones = tuple(float(tone) for tone in tones)
     if not tones:
         raise ValueError("tones must not be empty")
-    if amp <= 0:
-        raise ValueError("amp must be positive")
     if pitch_kind not in {"partial", "freq"}:
         raise ValueError("pitch_kind must be 'partial' or 'freq'")
+    if amp is not None and amp_db is not None:
+        raise ValueError("provide amp or amp_db, not both")
 
-    rhythm_cell = rhythm if isinstance(rhythm, RhythmCell) else RhythmCell(spans=tuple(rhythm))
+    if amp_db is not None:
+        base_amp = synth.db_to_amp(amp_db)
+    elif amp is None:
+        base_amp = 1.0
+    else:
+        if amp <= 0:
+            raise ValueError("amp must be positive")
+        base_amp = amp
+
+    rhythm_cell = (
+        rhythm if isinstance(rhythm, RhythmCell) else RhythmCell(spans=tuple(rhythm))
+    )
     if len(rhythm_cell.spans) != len(tones):
         raise ValueError("tones and spans must have the same length")
     note_labels = tuple(labels) if labels is not None else (None,) * len(tones)
@@ -94,11 +182,21 @@ def line(
     articulation = articulation or ArticulationSpec()
     rhythm_gates = _expand_positive_values(rhythm_cell.gates, len(tones), "gates")
     articulation_gates = _expand_positive_values(articulation.gate, len(tones), "gate")
-    accents = _expand_non_negative_values(articulation.accent_pattern, len(tones), "accent_pattern")
+    accents = _expand_non_negative_values(
+        articulation.accent_pattern, len(tones), "accent_pattern"
+    )
 
     events: list[NoteEvent] = []
     cursor = 0.0
-    for index, (tone, span, rhythm_gate, articulation_gate, accent, motion, label) in enumerate(
+    for index, (
+        tone,
+        span,
+        rhythm_gate,
+        articulation_gate,
+        accent,
+        motion,
+        label,
+    ) in enumerate(
         zip(
             tones,
             rhythm_cell.spans,
@@ -124,7 +222,7 @@ def line(
         note_kwargs: dict[str, Any] = {
             "start": cursor,
             "duration": duration,
-            "amp": amp * accent,
+            "amp": base_amp * accent,
             "synth": dict(note_synth) if note_synth is not None else None,
             "pitch_motion": motion,
             "label": label,
@@ -138,6 +236,156 @@ def line(
         cursor += span
 
     return Phrase(events=tuple(events))
+
+
+def build_context_sections(
+    *,
+    base_tonic: float,
+    specs: Sequence[ContextSectionSpec],
+    start: float = 0.0,
+) -> tuple[ContextSection, ...]:
+    """Build absolute-time context windows from a base tonic and section specs."""
+    if base_tonic <= 0:
+        raise ValueError("base_tonic must be positive")
+    if start < 0:
+        raise ValueError("start must be non-negative")
+    if not specs:
+        raise ValueError("specs must not be empty")
+
+    sections: list[ContextSection] = []
+    cursor = start
+    for spec in specs:
+        section_context = HarmonicContext(
+            tonic=base_tonic * spec.tonic_ratio,
+            name=spec.name,
+        )
+        sections.append(
+            ContextSection(
+                start=cursor,
+                duration=spec.duration,
+                context=section_context,
+            )
+        )
+        cursor += spec.duration
+    return tuple(sections)
+
+
+def resolve_ratios(
+    context: HarmonicContext,
+    ratios: Sequence[float],
+) -> list[float]:
+    """Resolve a sequence of ratios against a harmonic context."""
+    resolved = [context.resolve_ratio(ratio) for ratio in ratios]
+    if not resolved:
+        raise ValueError("ratios must not be empty")
+    return resolved
+
+
+def ratio_line(
+    tones: Sequence[float],
+    rhythm: RhythmCell | Sequence[float],
+    *,
+    context: HarmonicContext,
+    amp: float | None = None,
+    amp_db: float | None = None,
+    synth_defaults: dict[str, Any] | None = None,
+    articulation: ArticulationSpec | None = None,
+    motions: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
+    pitch_motion: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
+    labels: Sequence[str] | None = None,
+) -> Phrase:
+    """Build a frequency-resolved phrase from ratio material in a local context."""
+    return line(
+        tones=resolve_ratios(context, tones),
+        rhythm=rhythm,
+        pitch_kind="freq",
+        amp=amp,
+        amp_db=amp_db,
+        synth_defaults=synth_defaults,
+        articulation=articulation,
+        motions=motions,
+        pitch_motion=pitch_motion,
+        labels=labels,
+    )
+
+
+def place_ratio_line(
+    score: Score,
+    voice_name: str,
+    *,
+    section: ContextSection,
+    tones: Sequence[float],
+    rhythm: RhythmCell | Sequence[float],
+    offset: float = 0.0,
+    amp: float | None = None,
+    amp_db: float | None = None,
+    synth_defaults: dict[str, Any] | None = None,
+    articulation: ArticulationSpec | None = None,
+    motions: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
+    pitch_motion: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
+    labels: Sequence[str] | None = None,
+) -> list[NoteEvent]:
+    """Resolve ratio material in a section and place it on a score."""
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
+    phrase = ratio_line(
+        tones=tones,
+        rhythm=rhythm,
+        context=section.context,
+        amp=amp,
+        amp_db=amp_db,
+        synth_defaults=synth_defaults,
+        articulation=articulation,
+        motions=motions,
+        pitch_motion=pitch_motion,
+        labels=labels,
+    )
+    return score.add_phrase(voice_name, phrase, start=section.start + offset)
+
+
+def place_ratio_chord(
+    score: Score,
+    voice_name: str,
+    *,
+    section: ContextSection,
+    ratios: Sequence[float],
+    duration: float,
+    start: float = 0.0,
+    gap: float = 0.0,
+    amp: float | Sequence[float] = 1.0,
+    synth: dict[str, Any] | None = None,
+    labels: Sequence[str] | None = None,
+) -> list[NoteEvent]:
+    """Place simultaneous or slightly staggered ratio-based notes into a section."""
+    if duration <= 0:
+        raise ValueError("duration must be positive")
+    if start < 0:
+        raise ValueError("start must be non-negative")
+    if gap < 0:
+        raise ValueError("gap must be non-negative")
+
+    resolved_freqs = resolve_ratios(section.context, ratios)
+    amps = _expand_positive_values(amp, len(resolved_freqs), "amp")
+    note_labels = tuple(labels) if labels is not None else (None,) * len(resolved_freqs)
+    if len(note_labels) != len(resolved_freqs):
+        raise ValueError("labels must have the same length as ratios")
+
+    notes: list[NoteEvent] = []
+    for index, (freq, amp_value, label) in enumerate(
+        zip(resolved_freqs, amps, note_labels, strict=True)
+    ):
+        notes.append(
+            score.add_note(
+                voice_name,
+                start=section.start + start + (index * gap),
+                duration=duration,
+                freq=freq,
+                amp=amp_value,
+                synth=dict(synth) if synth is not None else None,
+                label=label,
+            )
+        )
+    return notes
 
 
 def with_gate(phrase: Phrase, gate: float | Sequence[float]) -> Phrase:
@@ -158,17 +406,23 @@ def with_gate(phrase: Phrase, gate: float | Sequence[float]) -> Phrase:
     return Phrase(events=tuple(events))
 
 
-def with_accent_pattern(phrase: Phrase, accent_pattern: float | Sequence[float]) -> Phrase:
+def with_accent_pattern(
+    phrase: Phrase, accent_pattern: float | Sequence[float]
+) -> Phrase:
     """Return a phrase with amplitude accents applied per event."""
-    accents = _expand_non_negative_values(accent_pattern, len(phrase.events), "accent_pattern")
-    events = [
-        replace(
-            event,
-            amp=event.amp * accent,
-            synth=dict(event.synth) if event.synth is not None else None,
+    accents = _expand_non_negative_values(
+        accent_pattern, len(phrase.events), "accent_pattern"
+    )
+    events: list[NoteEvent] = []
+    for event, accent in zip(phrase.events, accents, strict=True):
+        resolved_amp = _require_resolved_amp(event)
+        events.append(
+            replace(
+                event,
+                amp=resolved_amp * accent,
+                synth=dict(event.synth) if event.synth is not None else None,
+            )
         )
-        for event, accent in zip(phrase.events, accents, strict=True)
-    ]
     return Phrase(events=tuple(events))
 
 
@@ -212,8 +466,7 @@ def with_synth_ramp(
         fractions = (0.0,)
     else:
         fractions = tuple(
-            index / (len(phrase.events) - 1)
-            for index in range(len(phrase.events))
+            index / (len(phrase.events) - 1) for index in range(len(phrase.events))
         )
 
     events: list[NoteEvent] = []
@@ -255,16 +508,24 @@ def echo(
         new_partial = event.partial
         if new_partial is not None:
             new_partial += partial_shift
+        resolved_amp = _require_resolved_amp(event)
         echoed_events.append(
             replace(
                 event,
                 start=event.start + delay,
-                amp=event.amp * amp_scale,
+                amp=resolved_amp * amp_scale,
                 partial=new_partial,
                 synth=dict(event.synth) if event.synth is not None else None,
             )
         )
     return Phrase(events=tuple(echoed_events))
+
+
+def _require_resolved_amp(event: NoteEvent) -> float:
+    """Return a concrete amplitude for an event that should already be resolved."""
+    if event.amp is None:
+        raise ValueError("event amp unexpectedly missing")
+    return float(event.amp)
 
 
 def _resolve_motion_input(
@@ -323,7 +584,9 @@ def _expand_non_negative_values(
     return expanded
 
 
-def _validate_positive_scalar_or_sequence(value: float | Sequence[float], field_name: str) -> None:
+def _validate_positive_scalar_or_sequence(
+    value: float | Sequence[float], field_name: str
+) -> None:
     if isinstance(value, (int, float)):
         if float(value) <= 0:
             raise ValueError(f"{field_name} must be positive")

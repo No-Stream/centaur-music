@@ -6,13 +6,24 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from pedalboard import Convolution, Delay, Pedalboard, Reverb
-from scipy.signal import butter, sosfilt
+import pedalboard
 from scipy.io import wavfile
+from scipy.signal import butter, resample_poly, sosfilt
 
 logger: logging.Logger = logging.getLogger(__name__)
 
+_PEDALBOARD_CLS: Any = getattr(pedalboard, "Pedalboard")  # noqa: B009
+_DELAY_CLS: Any = getattr(pedalboard, "Delay")  # noqa: B009
+_REVERB_CLS: Any = getattr(pedalboard, "Reverb")  # noqa: B009
+_CONVOLUTION_CLS: Any = getattr(pedalboard, "Convolution")  # noqa: B009
+
 SAMPLE_RATE = 44100
+
+
+def db_to_amp(db: float) -> float:
+    """Convert decibels to a linear amplitude multiplier."""
+    return float(10.0 ** (db / 20.0))
+
 
 # ---------------------------------------------------------------------------
 # Chow Tape Model VST3 (lazy-loaded singleton)
@@ -26,7 +37,10 @@ def _get_chow_tape() -> Any:
     global _chow_tape_plugin
     if _chow_tape_plugin is None:
         os.environ.setdefault("DISPLAY", "")  # avoid X11 crash in headless env
-        from pedalboard import load_plugin  # noqa: PLC0415
+        from pedalboard import (  # noqa: PLC0415
+            load_plugin,  # type: ignore[attr-defined]
+        )
+
         if not _CHOW_TAPE_PATH.exists():
             raise FileNotFoundError(
                 f"Chow Tape Model VST3 not found at {_CHOW_TAPE_PATH}. "
@@ -100,7 +114,9 @@ def at(signal: np.ndarray, offset_seconds: float) -> np.ndarray:
     return np.concatenate([pad, signal])
 
 
-def at_sample_rate(signal: np.ndarray, offset_seconds: float, sample_rate: int) -> np.ndarray:
+def at_sample_rate(
+    signal: np.ndarray, offset_seconds: float, sample_rate: int
+) -> np.ndarray:
     """Pad signal with silence at the front using an explicit sample rate."""
     pad = np.zeros(int(offset_seconds * sample_rate))
     return np.concatenate([pad, signal])
@@ -117,7 +133,9 @@ def sequence(*segments: np.ndarray, gap: float = 0.05) -> np.ndarray:
     return np.concatenate(parts)
 
 
-def lowpass(signal: np.ndarray, cutoff_hz: float, sample_rate: int, order: int = 2) -> np.ndarray:
+def lowpass(
+    signal: np.ndarray, cutoff_hz: float, sample_rate: int, order: int = 2
+) -> np.ndarray:
     """Apply a stable low-pass filter to a mono signal."""
     nyquist = sample_rate / 2.0
     if cutoff_hz <= 0:
@@ -125,10 +143,12 @@ def lowpass(signal: np.ndarray, cutoff_hz: float, sample_rate: int, order: int =
     if cutoff_hz >= nyquist * 0.995:
         return signal
     sos = butter(order, cutoff_hz / nyquist, btype="lowpass", output="sos")
-    return sosfilt(sos, signal)
+    return np.asarray(sosfilt(sos, signal))
 
 
-def highpass(signal: np.ndarray, cutoff_hz: float, sample_rate: int, order: int = 2) -> np.ndarray:
+def highpass(
+    signal: np.ndarray, cutoff_hz: float, sample_rate: int, order: int = 2
+) -> np.ndarray:
     """Apply a stable high-pass filter to a mono signal."""
     nyquist = sample_rate / 2.0
     if cutoff_hz <= 0:
@@ -136,7 +156,92 @@ def highpass(signal: np.ndarray, cutoff_hz: float, sample_rate: int, order: int 
     if cutoff_hz >= nyquist * 0.995:
         return np.zeros_like(signal)
     sos = butter(order, cutoff_hz / nyquist, btype="highpass", output="sos")
-    return sosfilt(sos, signal)
+    return np.asarray(sosfilt(sos, signal))
+
+
+def _is_stereo(signal: np.ndarray) -> bool:
+    """Return True when the signal uses the repo's stereo layout."""
+    return signal.ndim == 2 and signal.shape[0] == 2
+
+
+def _ensure_stereo(signal: np.ndarray) -> np.ndarray:
+    """Promote mono signal to stereo, preserving stereo input."""
+    if _is_stereo(signal):
+        return np.asarray(signal, dtype=np.float64)
+    if signal.ndim != 1:
+        raise ValueError(f"Unsupported signal shape: {signal.shape}")
+    mono_signal = np.asarray(signal, dtype=np.float64)
+    return np.stack([mono_signal, mono_signal])
+
+
+def _match_input_layout(processed: np.ndarray, reference: np.ndarray) -> np.ndarray:
+    """Return processed signal in the same channel layout as reference."""
+    if _is_stereo(reference):
+        return _ensure_stereo(processed)
+    if processed.ndim == 1:
+        return np.asarray(processed, dtype=np.float64)
+    if _is_stereo(processed):
+        return np.asarray(processed.mean(axis=0), dtype=np.float64)
+    raise ValueError(f"Unsupported processed signal shape: {processed.shape}")
+
+
+def _coerce_signal_layout(signal: np.ndarray) -> np.ndarray:
+    """Normalize effect outputs into supported mono/stereo ndarray layouts."""
+    normalized = np.asarray(signal, dtype=np.float64)
+    if normalized.ndim == 1:
+        return normalized
+    if normalized.ndim != 2:
+        raise ValueError(f"Unsupported signal shape: {normalized.shape}")
+    if normalized.shape[0] == 2:
+        return normalized
+    if normalized.shape[1] == 2:
+        return normalized.T
+    raise ValueError(f"Unsupported signal shape: {normalized.shape}")
+
+
+def _apply_per_channel(
+    signal: np.ndarray,
+    processor: Any,
+) -> np.ndarray:
+    """Apply a mono processor independently to each channel when needed."""
+    if signal.ndim == 1:
+        return _coerce_signal_layout(processor(np.asarray(signal, dtype=np.float64)))
+    if not _is_stereo(signal):
+        raise ValueError(f"Unsupported signal shape: {signal.shape}")
+    processed_channels = [
+        np.asarray(
+            processor(np.asarray(signal[channel], dtype=np.float64)), dtype=np.float64
+        )
+        for channel in range(signal.shape[0])
+    ]
+    return np.stack(processed_channels)
+
+
+def _fractional_delay(signal: np.ndarray, delay_samples: np.ndarray) -> np.ndarray:
+    """Apply a time-varying fractional delay using linear interpolation."""
+    sample_positions = np.arange(signal.shape[-1], dtype=np.float64)
+    delayed_positions = np.clip(
+        sample_positions - delay_samples, 0.0, signal.shape[-1] - 1.0
+    )
+    return np.interp(delayed_positions, sample_positions, signal)
+
+
+def apply_pan(
+    signal: np.ndarray,
+    pan: float = 0.0,
+) -> np.ndarray:
+    """Apply equal-power panning, returning stereo output."""
+    if not -1.0 <= pan <= 1.0:
+        raise ValueError("pan must be between -1 and 1")
+
+    stereo_signal = _ensure_stereo(signal)
+    mono_reference = stereo_signal.mean(axis=0)
+    pan_angle = (pan + 1.0) * (np.pi / 4.0)
+    left_gain = np.cos(pan_angle)
+    right_gain = np.sin(pan_angle)
+    return np.stack([mono_reference * left_gain, mono_reference * right_gain]).astype(
+        np.float64
+    )
 
 
 BRICASTI_IR_DIR = Path(
@@ -158,11 +263,13 @@ def apply_delay(
     feedback: float = 0.35,
     mix: float = 0.30,
 ) -> np.ndarray:
-    """Apply pedalboard Delay to a mono signal, returning mono."""
-    board = Pedalboard(
-        [Delay(delay_seconds=delay_seconds, feedback=feedback, mix=mix)]
+    """Apply pedalboard Delay to a mono or stereo signal."""
+    board = _PEDALBOARD_CLS(
+        [_DELAY_CLS(delay_seconds=delay_seconds, feedback=feedback, mix=mix)]
     )
-    return board(signal.astype(np.float32), SAMPLE_RATE)
+    return _coerce_signal_layout(
+        board(np.asarray(signal, dtype=np.float32), SAMPLE_RATE)
+    )
 
 
 def apply_reverb(
@@ -171,10 +278,10 @@ def apply_reverb(
     damping: float = 0.4,
     wet_level: float = 0.25,
 ) -> np.ndarray:
-    """Apply pedalboard's built-in algorithmic reverb to a mono signal."""
-    board = Pedalboard(
+    """Apply pedalboard's built-in algorithmic reverb to mono or stereo."""
+    board = _PEDALBOARD_CLS(
         [
-            Reverb(
+            _REVERB_CLS(
                 room_size=room_size,
                 damping=damping,
                 wet_level=wet_level,
@@ -182,7 +289,9 @@ def apply_reverb(
             )
         ]
     )
-    return board(signal.astype(np.float32), SAMPLE_RATE)
+    return _coerce_signal_layout(
+        board(np.asarray(signal, dtype=np.float32), SAMPLE_RATE)
+    )
 
 
 def apply_chow_tape(
@@ -192,7 +301,7 @@ def apply_chow_tape(
     bias: float = 0.5,
     mix: float = 70.0,
 ) -> np.ndarray:
-    """Apply Chow Tape Model tape saturation to a mono signal, returning mono.
+    """Apply Chow Tape Model tape saturation to a mono or stereo signal.
 
     Parameters
     ----------
@@ -207,13 +316,11 @@ def apply_chow_tape(
     plugin.tape_bias = bias
     plugin.dry_wet = mix
     plugin.wow_flutter_on_off = False  # pure saturation, no wow/flutter
-    plugin.loss_on_off = False         # pure saturation, no tape loss colouring
+    plugin.loss_on_off = False  # pure saturation, no tape loss colouring
 
-    # Plugin expects stereo input; duplicate mono channel, then average back down
-    stereo_in = np.stack([signal.astype(np.float32), signal.astype(np.float32)])
+    stereo_in = _ensure_stereo(signal).astype(np.float32)
     stereo_out = plugin(stereo_in, SAMPLE_RATE)
-    mono_out = stereo_out.mean(axis=0) if stereo_out.ndim == 2 else stereo_out
-    return mono_out.astype(np.float64)
+    return _match_input_layout(_coerce_signal_layout(stereo_out), signal)
 
 
 def apply_bricasti(
@@ -221,64 +328,261 @@ def apply_bricasti(
     ir_name: str,
     wet: float = 0.35,
 ) -> np.ndarray:
-    """Convolve a mono signal with a Bricasti stereo impulse response."""
+    """Convolve a mono or stereo signal with a Bricasti stereo impulse response."""
     ir_l = BRICASTI_IR_DIR / f"{ir_name}, 44K L.wav"
     ir_r = BRICASTI_IR_DIR / f"{ir_name}, 44K R.wav"
     if not ir_l.exists() or not ir_r.exists():
         raise FileNotFoundError(f"IR not found: {ir_name!r} - check BRICASTI_IR_DIR")
 
-    mono_signal = signal.astype(np.float32)
-    left = Pedalboard([Convolution(str(ir_l), mix=wet)])(mono_signal, SAMPLE_RATE)
-    right = Pedalboard([Convolution(str(ir_r), mix=wet)])(mono_signal, SAMPLE_RATE)
-    n_samples = len(signal)
-    return np.stack([left[:n_samples], right[:n_samples]])
+    stereo_signal = _ensure_stereo(signal).astype(np.float32)
+    left = _PEDALBOARD_CLS([_CONVOLUTION_CLS(str(ir_l), mix=wet)])(
+        stereo_signal[0], SAMPLE_RATE
+    )
+    right = _PEDALBOARD_CLS([_CONVOLUTION_CLS(str(ir_r), mix=wet)])(
+        stereo_signal[1], SAMPLE_RATE
+    )
+    n_samples = stereo_signal.shape[-1]
+    return np.stack([left[:n_samples], right[:n_samples]]).astype(np.float64)
+
+
+_CHORUS_PRESETS: dict[str, dict[str, float]] = {
+    "juno_subtle": {
+        "mix": 0.28,
+        "rate_hz": 0.32,
+        "depth_ms": 2.4,
+        "center_delay_ms": 13.5,
+        "stereo_phase_deg": 115.0,
+        "feedback": 0.04,
+        "wet_lowpass_hz": 6_000.0,
+        "wet_highpass_hz": 160.0,
+        "drift_amount": 0.12,
+        "wet_saturation": 0.06,
+    },
+    "juno_wide": {
+        "mix": 0.33,
+        "rate_hz": 0.42,
+        "depth_ms": 3.3,
+        "center_delay_ms": 14.5,
+        "stereo_phase_deg": 130.0,
+        "feedback": 0.07,
+        "wet_lowpass_hz": 5_600.0,
+        "wet_highpass_hz": 170.0,
+        "drift_amount": 0.16,
+        "wet_saturation": 0.08,
+    },
+    "ensemble_soft": {
+        "mix": 0.30,
+        "rate_hz": 0.24,
+        "depth_ms": 4.1,
+        "center_delay_ms": 16.0,
+        "stereo_phase_deg": 95.0,
+        "feedback": 0.06,
+        "wet_lowpass_hz": 5_200.0,
+        "wet_highpass_hz": 150.0,
+        "drift_amount": 0.18,
+        "wet_saturation": 0.10,
+    },
+}
+
+_SATURATION_PRESETS: dict[str, dict[str, float | int | bool]] = {
+    "tube_warm": {
+        "drive": 1.18,
+        "mix": 0.34,
+        "bias": 0.11,
+        "even_harmonics": 0.18,
+        "oversample_factor": 4,
+        "highpass_hz": 30.0,
+        "tone_tilt": 0.10,
+        "output_lowpass_hz": 13_500.0,
+        "compensation": True,
+    },
+    "iron_soft": {
+        "drive": 1.22,
+        "mix": 0.38,
+        "bias": 0.07,
+        "even_harmonics": 0.13,
+        "oversample_factor": 4,
+        "highpass_hz": 26.0,
+        "tone_tilt": -0.08,
+        "output_lowpass_hz": 12_000.0,
+        "compensation": True,
+    },
+    "neve_gentle": {
+        "drive": 1.28,
+        "mix": 0.36,
+        "bias": 0.09,
+        "even_harmonics": 0.16,
+        "oversample_factor": 4,
+        "highpass_hz": 28.0,
+        "tone_tilt": 0.16,
+        "output_lowpass_hz": 12_500.0,
+        "compensation": True,
+    },
+}
+
+
+def _resolve_effect_params(
+    effect_kind: str,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve effect presets with explicit parameters taking precedence."""
+    resolved_params = dict(params)
+    preset = resolved_params.pop("preset", None)
+    if preset is None:
+        return resolved_params
+
+    preset_map: dict[str, dict[str, Any]]
+    if effect_kind == "chorus":
+        preset_map = _CHORUS_PRESETS
+    elif effect_kind == "saturation":
+        preset_map = _SATURATION_PRESETS
+    else:
+        raise ValueError(f"Unsupported preset-bearing effect kind: {effect_kind}")
+
+    if preset not in preset_map:
+        raise ValueError(f"Unsupported {effect_kind} preset: {preset!r}")
+
+    preset_params = dict(preset_map[preset])
+    preset_params.update(resolved_params)
+    return preset_params
+
+
+def apply_chorus(
+    signal: np.ndarray,
+    mix: float = 0.28,
+    rate_hz: float = 0.32,
+    depth_ms: float = 2.4,
+    center_delay_ms: float = 13.5,
+    stereo_phase_deg: float = 115.0,
+    feedback: float = 0.04,
+    wet_lowpass_hz: float = 6_000.0,
+    wet_highpass_hz: float = 160.0,
+    drift_amount: float = 0.12,
+    wet_saturation: float = 0.06,
+) -> np.ndarray:
+    """Apply a warm, Juno-inspired stereo chorus."""
+    if not 0.0 <= mix <= 1.0:
+        raise ValueError("mix must be between 0 and 1")
+    if rate_hz <= 0:
+        raise ValueError("rate_hz must be positive")
+    if depth_ms < 0 or center_delay_ms <= 0:
+        raise ValueError("depth_ms must be non-negative and center_delay_ms positive")
+
+    dry_signal = _ensure_stereo(signal)
+    sample_positions = np.arange(dry_signal.shape[-1], dtype=np.float64)
+    base_phase = 2.0 * np.pi * rate_hz * sample_positions / SAMPLE_RATE
+    drift_phase = 2.0 * np.pi * rate_hz * 0.37 * sample_positions / SAMPLE_RATE
+    stereo_phase = np.deg2rad(stereo_phase_deg)
+
+    delayed_channels: list[np.ndarray] = []
+    for channel_index, channel_signal in enumerate(dry_signal):
+        channel_phase = base_phase + stereo_phase * channel_index
+        modulation = np.sin(channel_phase)
+        if drift_amount > 0:
+            modulation += drift_amount * np.sin(drift_phase + (0.7 * channel_index))
+        delay_ms = center_delay_ms + depth_ms * modulation
+        delay_samples = np.maximum(delay_ms, 0.0) * SAMPLE_RATE / 1_000.0
+        delayed = _fractional_delay(channel_signal, delay_samples)
+        if feedback > 0:
+            delayed = delayed + feedback * _fractional_delay(
+                delayed, delay_samples * 0.5
+            )
+        delayed_channels.append(delayed)
+
+    wet_signal = np.stack(delayed_channels)
+    wet_signal = _apply_per_channel(
+        wet_signal,
+        lambda channel: highpass(
+            channel, cutoff_hz=wet_highpass_hz, sample_rate=SAMPLE_RATE, order=2
+        ),
+    )
+    wet_signal = _apply_per_channel(
+        wet_signal,
+        lambda channel: lowpass(
+            channel, cutoff_hz=wet_lowpass_hz, sample_rate=SAMPLE_RATE, order=2
+        ),
+    )
+    if wet_saturation > 0:
+        wet_signal = wet_signal + wet_saturation * np.tanh(1.6 * wet_signal)
+
+    blended = ((1.0 - mix) * dry_signal) + (mix * wet_signal)
+    return blended.astype(np.float64)
 
 
 def apply_saturation(
     signal: np.ndarray,
-    drive: float = 2.0,
-    mix: float = 0.3,
-    harmonics: float = 0.15,
+    drive: float = 1.18,
+    mix: float = 0.34,
+    bias: float = 0.11,
+    even_harmonics: float = 0.18,
+    oversample_factor: int = 4,
+    highpass_hz: float = 30.0,
+    tone_tilt: float = 0.10,
+    output_lowpass_hz: float = 13_500.0,
+    compensation: bool = True,
 ) -> np.ndarray:
-    """Apply tanh soft-clip saturation with subtle harmonic enrichment.
+    """Apply subtle analog-style saturation to mono or stereo signal."""
+    if not 0.0 <= mix <= 1.0:
+        raise ValueError("mix must be between 0 and 1")
+    if drive <= 0:
+        raise ValueError("drive must be positive")
+    if oversample_factor < 1:
+        raise ValueError("oversample_factor must be at least 1")
 
-    Args:
-        signal: Mono input signal.
-        drive: Saturation amount — higher values clip more aggressively (default 2.0).
-        mix: Wet/dry blend, 0.0 = fully dry, 1.0 = fully wet (default 0.3).
-        harmonics: Additive 2nd/3rd harmonic boost on the wet path, 0.0–1.0 (default 0.15).
+    input_signal = np.asarray(signal, dtype=np.float64)
+    input_peak = np.max(np.abs(input_signal))
 
-    Returns:
-        Mono ndarray with the same peak level as the input.
-    """
-    input_peak = np.max(np.abs(signal))
+    def _process_channel(channel: np.ndarray) -> np.ndarray:
+        conditioned = highpass(
+            channel, cutoff_hz=highpass_hz, sample_rate=SAMPLE_RATE, order=2
+        )
+        if tone_tilt != 0:
+            emphasized = lowpass(
+                conditioned, cutoff_hz=2_800.0, sample_rate=SAMPLE_RATE, order=1
+            )
+            conditioned = conditioned + (tone_tilt * emphasized)
 
-    clipped = np.tanh(drive * signal)
+        if oversample_factor > 1:
+            conditioned = resample_poly(conditioned, oversample_factor, 1)
 
-    # Additive harmonic enrichment: 2nd harmonic (even) adds warmth/body,
-    # 3rd harmonic (odd) adds brightness. Both are derived from the clipped signal.
-    second_harmonic = np.tanh(drive * signal * 2.0) * 0.5  # octave, half amplitude
-    third_harmonic = np.tanh(drive * signal * 3.0) / 3.0   # fifth+octave, third amplitude
-    wet = clipped + harmonics * (second_harmonic + third_harmonic)
+        shaped = np.tanh(drive * (conditioned + bias))
+        anti_symmetric = np.tanh(drive * conditioned)
+        wet_channel = ((1.0 - even_harmonics) * anti_symmetric) + (
+            even_harmonics * shaped
+        )
 
-    blended = mix * wet + (1.0 - mix) * signal
+        if oversample_factor > 1:
+            wet_channel = resample_poly(wet_channel, 1, oversample_factor)
+        wet_channel = wet_channel[: channel.shape[-1]]
+        wet_channel = lowpass(
+            wet_channel,
+            cutoff_hz=output_lowpass_hz,
+            sample_rate=SAMPLE_RATE,
+            order=2,
+        )
+        return wet_channel
 
-    # Preserve input loudness so saturation doesn't change perceived level.
-    output_peak = np.max(np.abs(blended))
-    if output_peak > 0 and input_peak > 0:
-        blended = blended * (input_peak / output_peak)
+    wet_signal = _apply_per_channel(input_signal, _process_channel)
+    blended = ((1.0 - mix) * input_signal) + (mix * wet_signal)
 
-    return blended
+    if compensation:
+        output_peak = np.max(np.abs(blended))
+        if output_peak > 0 and input_peak > 0:
+            blended = blended * (input_peak / output_peak)
+
+    return blended.astype(np.float64)
 
 
 def apply_effect_chain(
     signal: np.ndarray,
     effects: list[Any],
 ) -> np.ndarray:
-    """Apply a declarative effect chain to a mono signal."""
-    processed = signal
+    """Apply a declarative effect chain to mono or stereo audio."""
+    processed = _coerce_signal_layout(signal)
     for effect in effects:
         params = dict(effect.params)
+        if effect.kind in {"chorus", "saturation"}:
+            params = _resolve_effect_params(effect.kind, params)
         if effect.kind == "delay":
             processed = apply_delay(processed, **params)
         elif effect.kind == "reverb":
@@ -287,6 +591,8 @@ def apply_effect_chain(
             processed = apply_chow_tape(processed, **params)
         elif effect.kind == "bricasti":
             processed = apply_bricasti(processed, **params)
+        elif effect.kind == "chorus":
+            processed = apply_chorus(processed, **params)
         elif effect.kind == "saturation":
             processed = apply_saturation(processed, **params)
         else:

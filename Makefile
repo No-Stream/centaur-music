@@ -1,14 +1,22 @@
+.DEFAULT_GOAL := all
+
 PYTHONPATH_PREFIX = PYTHONPATH=.
 UV_RUN = $(PYTHONPATH_PREFIX) uv run
 PIECE ?=
 PLOT ?= 1
-TESTS ?= tests/test_score.py tests/test_tuning.py
+TESTS ?= tests
 
 ifeq ($(PLOT),1)
 RENDER_PLOT_FLAG = --plot
 else
 RENDER_PLOT_FLAG =
 endif
+
+.PHONY: all
+all: format-check lint compile typecheck test
+
+.PHONY: check
+check: all
 
 .PHONY: list
 list:
@@ -18,9 +26,21 @@ list:
 lint:
 	$(UV_RUN) ruff check .
 
+.PHONY: format-check
+format-check:
+	$(UV_RUN) ruff format --check .
+
 .PHONY: format
 format:
 	$(UV_RUN) ruff format .
+
+.PHONY: compile
+compile:
+	$(UV_RUN) python -m compileall code_musics tests main.py
+
+.PHONY: typecheck
+typecheck:
+	$(UV_RUN) basedpyright
 
 .PHONY: test
 test:

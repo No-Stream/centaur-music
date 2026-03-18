@@ -16,7 +16,8 @@ def test_filtered_stack_renders_expected_length_and_finite_audio() -> None:
         params={
             "waveform": "saw",
             "n_harmonics": 12,
-            "cutoff_ratio": 8.0,
+            "cutoff_hz": 900.0,
+            "keytrack": 0.2,
             "resonance": 0.1,
             "filter_env_amount": 1.5,
             "filter_env_decay": 0.25,
@@ -39,7 +40,8 @@ def test_filtered_stack_cutoff_changes_the_sound() -> None:
         params={
             "waveform": "saw",
             "n_harmonics": 16,
-            "cutoff_ratio": 2.0,
+            "cutoff_hz": 350.0,
+            "keytrack": 0.0,
             "resonance": 0.0,
         },
     )
@@ -51,7 +53,8 @@ def test_filtered_stack_cutoff_changes_the_sound() -> None:
         params={
             "waveform": "saw",
             "n_harmonics": 16,
-            "cutoff_ratio": 14.0,
+            "cutoff_hz": 2_400.0,
+            "keytrack": 0.0,
             "resonance": 0.0,
         },
     )
@@ -70,7 +73,8 @@ def test_filtered_stack_waveform_specific_params_work() -> None:
             "waveform": "pulse",
             "pulse_width": 0.3,
             "n_harmonics": 10,
-            "cutoff_ratio": 6.0,
+            "cutoff_hz": 1_400.0,
+            "keytrack": 0.25,
             "filter_env_amount": 0.5,
             "filter_env_decay": 0.12,
         },

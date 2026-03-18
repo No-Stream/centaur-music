@@ -13,8 +13,13 @@ from code_musics.tuning import utonal
 logger = logging.getLogger(__name__)
 
 _REVERB = EffectSpec("bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.32})
-_SOFT_REVERB = EffectSpec("bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.25})
+_SOFT_REVERB = EffectSpec(
+    "bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.25}
+)
 _DELAY = EffectSpec("delay", {"delay_seconds": 0.32, "feedback": 0.22, "mix": 0.16})
+_WARM_SATURATION = EffectSpec(
+    "saturation", {"preset": "tube_warm", "mix": 0.24, "drive": 1.14}
+)
 
 
 def build_passacaglia_sketch() -> Score:
@@ -103,7 +108,13 @@ def build_passacaglia_sketch() -> Score:
 
     # Var 3: mid sustained tones swell in
     for partial, offset in [(5, 0.0), (6, 1.0), (7, 2.2)]:
-        score.add_note("mid", start=ground_dur * 2 + offset, duration=8.5, partial=partial, amp=0.20)
+        score.add_note(
+            "mid",
+            start=ground_dur * 2 + offset,
+            duration=8.5,
+            partial=partial,
+            amp=0.20,
+        )
 
     # Var 4: alto countermelody
     alto_phrase = Phrase.from_partials(
@@ -120,13 +131,27 @@ def build_passacaglia_sketch() -> Score:
         },
     )
     score.add_phrase("alto", alto_phrase, start=ground_dur * 3)
-    score.add_phrase("alto", alto_phrase, start=ground_dur * 3 + 5.0, partial_shift=-1.0, amp_scale=0.80)
+    score.add_phrase(
+        "alto",
+        alto_phrase,
+        start=ground_dur * 3 + 5.0,
+        partial_shift=-1.0,
+        amp_scale=0.80,
+    )
 
     # Var 5: climax — all voices converge, bloom of sustained tones
-    score.add_phrase("upper", upper_phrase, start=ground_dur * 4, partial_shift=4.0, amp_scale=0.68)
+    score.add_phrase(
+        "upper", upper_phrase, start=ground_dur * 4, partial_shift=4.0, amp_scale=0.68
+    )
     score.add_phrase("alto", alto_phrase, start=ground_dur * 4, amp_scale=1.05)
     for partial, offset in [(8, 0.0), (10, 0.7), (12, 1.4), (7, 0.4)]:
-        score.add_note("mid", start=ground_dur * 4 + offset, duration=10.5, partial=partial, amp=0.14)
+        score.add_note(
+            "mid",
+            start=ground_dur * 4 + offset,
+            duration=10.5,
+            partial=partial,
+            amp=0.14,
+        )
 
     return score
 
@@ -222,8 +247,12 @@ def build_invention_sketch() -> Score:
     dev_start = answer_start + subject_dur + 1.0
     score.add_phrase("voice_a", head, start=dev_start)
     score.add_phrase("voice_b", tail, start=dev_start + 0.6, partial_shift=3)
-    score.add_phrase("voice_b", head, start=dev_start + head.duration + 0.8, partial_shift=4)
-    score.add_phrase("voice_a", tail, start=dev_start + head.duration + 1.4, partial_shift=-1)
+    score.add_phrase(
+        "voice_b", head, start=dev_start + head.duration + 0.8, partial_shift=4
+    )
+    score.add_phrase(
+        "voice_a", tail, start=dev_start + head.duration + 1.4, partial_shift=-1
+    )
 
     # Stretto: subject in both voices, now only 2s apart instead of 4s
     stretto_start = dev_start + head.duration + tail.duration + 2.0
@@ -231,8 +260,20 @@ def build_invention_sketch() -> Score:
     score.add_phrase("voice_b", subject, start=stretto_start + 2.0, partial_shift=4)
 
     # Pedal tones ground the stretto
-    score.add_note("pedal", start=stretto_start - 1.0, duration=subject_dur + 3.5, partial=4, amp=0.24)
-    score.add_note("pedal", start=stretto_start - 1.0, duration=subject_dur + 3.5, partial=6, amp=0.16)
+    score.add_note(
+        "pedal",
+        start=stretto_start - 1.0,
+        duration=subject_dur + 3.5,
+        partial=4,
+        amp=0.24,
+    )
+    score.add_note(
+        "pedal",
+        start=stretto_start - 1.0,
+        duration=subject_dur + 3.5,
+        partial=6,
+        amp=0.16,
+    )
 
     return score
 
@@ -268,28 +309,32 @@ def build_arpeggios_sketch() -> Score:
     )
 
     # Very soft root drone beneath everything
-    score.add_note("drone", start=0.0, duration=72.0, partial=1.0, amp=0.15, label="root")
-    score.add_note("drone", start=8.0, duration=57.0, partial=2.0, amp=0.08, label="octave")
+    score.add_note(
+        "drone", start=0.0, duration=72.0, partial=1.0, amp=0.15, label="root"
+    )
+    score.add_note(
+        "drone", start=8.0, duration=57.0, partial=2.0, amp=0.08, label="octave"
+    )
 
     # Sparse melody: descending arc with oscillation over ~70s
     # f0=55 → partial 14=770Hz, 12=660Hz, 10=550Hz, 8=440Hz, 6=330Hz
     melody_events: list[tuple[float, float, float]] = [
-        (0.0,  14, 0.28),
-        (5.5,  12, 0.30),
+        (0.0, 14, 0.28),
+        (5.5, 12, 0.30),
         (10.5, 14, 0.22),
         (15.5, 12, 0.28),
         (20.0, 10, 0.32),
-        (24.5,  9, 0.30),
+        (24.5, 9, 0.30),
         (29.5, 12, 0.20),
         (34.0, 10, 0.26),
-        (38.5,  9, 0.28),
-        (43.0,  8, 0.32),
+        (38.5, 9, 0.28),
+        (43.0, 8, 0.32),
         (47.5, 10, 0.24),
-        (52.0,  9, 0.28),
-        (56.5,  8, 0.30),
-        (61.0,  7, 0.34),
-        (65.5,  8, 0.26),
-        (69.5,  6, 0.36),
+        (52.0, 9, 0.28),
+        (56.5, 8, 0.30),
+        (61.0, 7, 0.34),
+        (65.5, 8, 0.26),
+        (69.5, 6, 0.36),
     ]
     for start, partial, amp in melody_events:
         score.add_note("solo", start=start, duration=5.0, partial=partial, amp=amp)
@@ -363,12 +408,16 @@ def build_variations_sketch() -> Score:
     # Var 4: original theme with utonal harmony sounding below
     score.add_phrase("melody", theme, start=cursor)
     for freq in utonal(f0 * 8.0, [4, 5, 6, 7]):
-        score.add_note("harmony", start=cursor, duration=theme_dur + 1.5, freq=freq, amp=0.16)
+        score.add_note(
+            "harmony", start=cursor, duration=theme_dur + 1.5, freq=freq, amp=0.16
+        )
     cursor += theme_dur + gap
 
     # Var 5: diminution (twice as fast) in two registers at once
     score.add_phrase("melody", theme, start=cursor, time_scale=0.5)
-    score.add_phrase("melody", theme, start=cursor, time_scale=0.5, partial_shift=4.0, amp_scale=0.65)
+    score.add_phrase(
+        "melody", theme, start=cursor, time_scale=0.5, partial_shift=4.0, amp_scale=0.65
+    )
 
     return score
 
@@ -487,12 +536,16 @@ def build_interference_sketch() -> Score:
     for k in range(2, 9):
         amp_a = max(0.04, 0.16 - k * 0.01)
         amp_b = max(0.03, 0.14 - k * 0.01)
-        score.add_note("series_a", start=0.0, duration=held_dur, freq=f0_a * k, amp=amp_a)
-        score.add_note("series_b", start=0.6, duration=held_dur - 1.0, freq=f0_b * k, amp=amp_b)
+        score.add_note(
+            "series_a", start=0.0, duration=held_dur, freq=f0_a * k, amp=amp_a
+        )
+        score.add_note(
+            "series_b", start=0.6, duration=held_dur - 1.0, freq=f0_b * k, amp=amp_b
+        )
 
     # Solo voice picks out specific partials above the texture
     solo_events: list[tuple[float, float, float]] = [
-        (6.0,  f0_a * 6, 0.26),
+        (6.0, f0_a * 6, 0.26),
         (14.0, f0_a * 8, 0.22),
         (22.0, f0_a * 7, 0.28),
         (30.0, f0_a * 5, 0.30),
@@ -531,7 +584,9 @@ def build_arpeggios_cross_sketch() -> Score:
         },
     )
     score.add_voice("voice_a", synth_defaults=shared_synth)
-    score.add_voice("voice_b", synth_defaults={**shared_synth, "harmonic_rolloff": 0.22})
+    score.add_voice(
+        "voice_b", synth_defaults={**shared_synth, "harmonic_rolloff": 0.22}
+    )
 
     score.add_note("drone", start=0.0, duration=44.0, partial=1.0, amp=0.12)
     score.add_note("drone", start=4.0, duration=38.0, partial=2.0, amp=0.06)
@@ -540,23 +595,51 @@ def build_arpeggios_cross_sketch() -> Score:
 
     # Voice A descends from 14 to 6 over ~40s
     voice_a_events: list[tuple[float, float, float]] = [
-        (0.0,  14, 0.26), (2.5,  12, 0.28), (5.0,  14, 0.22), (7.5,  11, 0.26),
-        (10.0, 10, 0.28), (12.5,  9, 0.30), (15.0, 11, 0.22), (17.5, 10, 0.26),
-        (20.0,  9, 0.26), (22.5,  8, 0.30), (25.0, 10, 0.22), (27.5,  9, 0.26),
-        (30.0,  8, 0.28), (32.5,  7, 0.32), (35.0,  8, 0.24), (38.0,  6, 0.34),
+        (0.0, 14, 0.26),
+        (2.5, 12, 0.28),
+        (5.0, 14, 0.22),
+        (7.5, 11, 0.26),
+        (10.0, 10, 0.28),
+        (12.5, 9, 0.30),
+        (15.0, 11, 0.22),
+        (17.5, 10, 0.26),
+        (20.0, 9, 0.26),
+        (22.5, 8, 0.30),
+        (25.0, 10, 0.22),
+        (27.5, 9, 0.26),
+        (30.0, 8, 0.28),
+        (32.5, 7, 0.32),
+        (35.0, 8, 0.24),
+        (38.0, 6, 0.34),
     ]
     # Voice B ascends from 6 to 14, offset by 1.2s so they interleave
     voice_b_events: list[tuple[float, float, float]] = [
-        (1.2,   6, 0.28), (3.7,   7, 0.26), (6.2,   6, 0.24), (8.7,   8, 0.28),
-        (11.2,  7, 0.28), (13.7,  9, 0.26), (16.2,  8, 0.24), (18.7, 10, 0.26),
-        (21.2,  9, 0.26), (23.7, 10, 0.26), (26.2,  9, 0.24), (28.7, 11, 0.26),
-        (31.2, 10, 0.24), (33.7, 12, 0.28), (36.2, 11, 0.24), (39.2, 14, 0.30),
+        (1.2, 6, 0.28),
+        (3.7, 7, 0.26),
+        (6.2, 6, 0.24),
+        (8.7, 8, 0.28),
+        (11.2, 7, 0.28),
+        (13.7, 9, 0.26),
+        (16.2, 8, 0.24),
+        (18.7, 10, 0.26),
+        (21.2, 9, 0.26),
+        (23.7, 10, 0.26),
+        (26.2, 9, 0.24),
+        (28.7, 11, 0.26),
+        (31.2, 10, 0.24),
+        (33.7, 12, 0.28),
+        (36.2, 11, 0.24),
+        (39.2, 14, 0.30),
     ]
 
     for start, partial, amp in voice_a_events:
-        score.add_note("voice_a", start=start, duration=note_dur, partial=partial, amp=amp)
+        score.add_note(
+            "voice_a", start=start, duration=note_dur, partial=partial, amp=amp
+        )
     for start, partial, amp in voice_b_events:
-        score.add_note("voice_b", start=start, duration=note_dur, partial=partial, amp=amp)
+        score.add_note(
+            "voice_b", start=start, duration=note_dur, partial=partial, amp=amp
+        )
 
     return score
 
@@ -596,11 +679,11 @@ def build_spiral_arch_sketch() -> Score:
     # Rhythmic pattern: quickens into the peak, broadens on arrival.
     # 7 notes → 6 inter-onset intervals (IOIs).
     # Ascending: short-short-LONG at the peak (index 3), then quick release
-    ascending_ioi  = [0.90, 0.65, 0.65, 1.50, 0.65, 0.85]
+    ascending_ioi = [0.90, 0.65, 0.65, 1.50, 0.65, 0.85]
     ascending_durs = [1.10, 0.80, 0.80, 2.00, 0.80, 1.00, 1.20]
     ascending_amps = [0.32, 0.28, 0.30, 0.42, 0.30, 0.28, 0.32]
     # Descending: mirror — broad at the start (the peak is now first), quickens away
-    descending_ioi  = [0.85, 0.65, 1.50, 0.65, 0.65, 0.90]
+    descending_ioi = [0.85, 0.65, 1.50, 0.65, 0.65, 0.90]
     descending_durs = [1.20, 1.00, 0.80, 2.00, 0.80, 0.80, 1.10]
     descending_amps = [0.42, 0.32, 0.28, 0.30, 0.30, 0.28, 0.32]
 
@@ -615,7 +698,7 @@ def build_spiral_arch_sketch() -> Score:
 
     section_gap = 2.0
     # Phrase duration = last onset + last note duration
-    ascending_phrase_dur = ascending_onsets[-1] + ascending_durs[-1]    # ~6.4s
+    ascending_phrase_dur = ascending_onsets[-1] + ascending_durs[-1]  # ~6.4s
     descending_phrase_dur = descending_onsets[-1] + descending_durs[-1]  # ~6.3s
 
     # Up: 55 → 82.5 → 123.75 → 185.625, then back: → 123.75 → 82.5 → 55
@@ -631,7 +714,13 @@ def build_spiral_arch_sketch() -> Score:
 
     cursor = 0.0
     for f0_section, shape, onsets, durs, amps, phrase_dur in zip(
-        sections, shapes, onsets_per_section, durs_per_section, amps_per_section, phrase_durs
+        sections,
+        shapes,
+        onsets_per_section,
+        durs_per_section,
+        amps_per_section,
+        phrase_durs,
+        strict=True,
     ):
         score.add_note(
             "drone",
@@ -640,7 +729,7 @@ def build_spiral_arch_sketch() -> Score:
             freq=f0_section * 2.0,
             amp=0.26,
         )
-        for ratio, onset, dur, amp in zip(shape, onsets, durs, amps):
+        for ratio, onset, dur, amp in zip(shape, onsets, durs, amps, strict=True):
             score.add_note(
                 "melody",
                 start=cursor + onset,
@@ -656,8 +745,8 @@ def build_spiral_arch_sketch() -> Score:
 def build_interference_v2_sketch() -> Score:
     """Beating texture that shifts gears: slow beating phase, then fast."""
     f0_a = 110.0
-    f0_b_slow = 110.5   # 0.5 Hz apart → beats 0.5k Hz per partial k
-    f0_b_fast = 113.0   # 3.0 Hz apart → beats 3.0k Hz per partial k
+    f0_b_slow = 110.5  # 0.5 Hz apart → beats 0.5k Hz per partial k
+    f0_b_fast = 113.0  # 3.0 Hz apart → beats 3.0k Hz per partial k
 
     score = Score(
         f0=f0_a,
@@ -706,17 +795,21 @@ def build_interference_v2_sketch() -> Score:
     # series_b phase 1: slow beating (0-35s, long release carries it further)
     for k in range(2, 9):
         amp_b = max(0.03, 0.12 - k * 0.01)
-        score.add_note("series_b", start=0.5, duration=32.0, freq=f0_b_slow * k, amp=amp_b)
+        score.add_note(
+            "series_b", start=0.5, duration=32.0, freq=f0_b_slow * k, amp=amp_b
+        )
 
     # series_b phase 2: fast beating enters at t=25, overlaps with phase 1
     for k in range(2, 9):
         amp_b = max(0.03, 0.12 - k * 0.01)
-        score.add_note("series_b", start=25.0, duration=30.0, freq=f0_b_fast * k, amp=amp_b)
+        score.add_note(
+            "series_b", start=25.0, duration=30.0, freq=f0_b_fast * k, amp=amp_b
+        )
 
     # Melody: active arc descending over the full texture
     melody_events: list[tuple[float, float, float]] = [
-        (3.0,  f0_a * 7, 0.28),
-        (7.0,  f0_a * 8, 0.24),
+        (3.0, f0_a * 7, 0.28),
+        (7.0, f0_a * 8, 0.24),
         (11.0, f0_a * 9, 0.22),
         (15.0, f0_a * 8, 0.26),
         (19.0, f0_a * 7, 0.28),
@@ -735,13 +828,13 @@ def build_interference_v2_sketch() -> Score:
 
 def build_interference_ji_sketch() -> Score:
     """Three JI-related drone series (root, fifth, harmonic seventh) entering in sequence."""
-    f0_a = 110.0           # root — 2nd partial of 55
+    f0_a = 110.0  # root — 2nd partial of 55
     f0_b = 110.0 * 3 / 2  # 165.0 — JI fifth, 3rd partial of 55
     f0_c = 110.0 * 7 / 4  # 192.5 — harmonic seventh, 7th/2 partial of 55
 
     score = Score(
         f0=f0_a,
-        master_effects=[_SOFT_REVERB],
+        master_effects=[_WARM_SATURATION, _SOFT_REVERB],
     )
 
     score.add_voice(
@@ -799,17 +892,21 @@ def build_interference_ji_sketch() -> Score:
     # series_b: JI fifth + harmonics, enters at t=5
     for k in range(1, 5):
         amp = max(0.04, 0.16 - k * 0.02)
-        score.add_note("series_b", start=5.0, duration=held_dur - 5.0, freq=f0_b * k, amp=amp)
+        score.add_note(
+            "series_b", start=5.0, duration=held_dur - 5.0, freq=f0_b * k, amp=amp
+        )
 
     # series_c: harmonic seventh + harmonics, enters at t=18
     for k in range(1, 4):
         amp = max(0.03, 0.12 - k * 0.02)
-        score.add_note("series_c", start=18.0, duration=held_dur - 18.0, freq=f0_c * k, amp=amp)
+        score.add_note(
+            "series_c", start=18.0, duration=held_dur - 18.0, freq=f0_c * k, amp=amp
+        )
 
     # Melody: explores the combined harmonic space, mostly in the 330-880 Hz range
     melody_events: list[tuple[float, float, float]] = [
-        (2.0,  f0_a * 6, 0.28),  # 660 Hz
-        (6.0,  f0_a * 8, 0.24),  # 880 Hz
+        (2.0, f0_a * 6, 0.28),  # 660 Hz
+        (6.0, f0_a * 8, 0.24),  # 880 Hz
         (10.0, f0_a * 7, 0.28),  # 770 Hz — septimal partial
         (14.0, f0_b * 4, 0.26),  # 660 Hz via fifth (=6×f0_a, reinforces)
         (18.0, f0_c * 2, 0.26),  # 385 Hz — 7th partial of f0_a
@@ -850,6 +947,7 @@ def build_articulation_study_sketch() -> Score:
             "attack": 0.03,
             "release": 0.35,
         },
+        effects=[EffectSpec("chorus", {"preset": "juno_subtle", "mix": 0.30})],
     )
 
     score.add_note("drone", start=0.0, duration=16.0, partial=1.0, amp=0.18)

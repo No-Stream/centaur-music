@@ -35,10 +35,15 @@ If `engine` is omitted, it defaults to `additive`.
 
 These are consumed by the score renderer after the engine returns a raw mono signal:
 
+- `amp_db: float`
 - `attack: float`
 - `decay: float`
 - `sustain_level: float`
 - `release: float`
+
+`amp_db` is the recommended authoring control for note loudness; it is converted
+to the renderer's linear `amp` internally. Linear `amp` is still supported, but
+it is less intuitive for balancing voices.
 
 These control the ADSR envelope applied in [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py).
 
@@ -102,6 +107,116 @@ Available presets:
 - `fm`: `bell`, `glass_lead`, `metal_bass`
 - `filtered_stack`: `warm_pad`, `reed_lead`, `round_bass`
 - `noise_perc`: `kickish`, `snareish`, `tick`
+
+## Effects
+
+Effects are attached with `EffectSpec(kind, params)` on either `Voice.effects`
+or `Score.master_effects`.
+
+The effect path is now stereo-aware:
+
+- mono effects can be chained before or after stereo effects
+- once an effect returns stereo, later effects keep working in stereo
+- `Score.render()` may therefore return either mono or stereo depending on the effect chain
+
+Effects that support presets resolve parameters in this order:
+
+1. effect preset values, if `preset` is set
+2. explicit `EffectSpec.params` overrides
+
+### `chorus`
+
+Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+
+Warm stereo chorus inspired by classic analog/BBD units and intended for subtle
+depth rather than obvious wobble.
+
+Parameters:
+
+- `preset: str`
+  Supported presets: `juno_subtle`, `juno_wide`, `ensemble_soft`
+- `mix: float`
+  Dry/wet blend from `0` to `1`. Typical musical use is around `0.2` to `0.33`.
+- `rate_hz: float`
+  Base LFO rate in Hertz.
+- `depth_ms: float`
+  Modulation depth in milliseconds.
+- `center_delay_ms: float`
+  Base chorus delay time in milliseconds.
+- `stereo_phase_deg: float`
+  Phase offset between left and right modulation.
+- `feedback: float`
+  Very light recirculation on the wet path.
+- `wet_lowpass_hz: float`
+  Darkens the wet path to keep the effect smooth.
+- `wet_highpass_hz: float`
+  Removes low-end smear from the wet path.
+- `drift_amount: float`
+  Adds a slower secondary modulation for analog drift.
+- `wet_saturation: float`
+  Adds slight nonlinearity on the wet path so the chorus feels less sterile.
+
+Notes:
+
+- chorus promotes mono input to stereo
+- `juno_subtle` is the safest general-purpose default
+
+Example:
+
+```python
+score.add_voice(
+    "pad",
+    synth_defaults={"engine": "filtered_stack", "preset": "warm_pad"},
+    effects=[EffectSpec("chorus", {"preset": "juno_subtle", "mix": 0.28})],
+)
+```
+
+### `saturation`
+
+Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+
+Subtle analog-style warming stage intended for tube/iron/preamp color rather
+than obvious distortion.
+
+Parameters:
+
+- `preset: str`
+  Supported presets: `tube_warm`, `iron_soft`, `neve_gentle`
+- `drive: float`
+  Amount of nonlinearity. Keep this conservative for bus sweetening.
+- `mix: float`
+  Dry/wet blend from `0` to `1`.
+- `bias: float`
+  Asymmetry control that nudges the transfer toward even-order warmth.
+- `even_harmonics: float`
+  Blend between a more symmetric and more asymmetric saturation curve.
+- `oversample_factor: int`
+  Oversampling factor used around the nonlinear stage.
+- `highpass_hz: float`
+  Removes excessive sub/DC before saturation.
+- `tone_tilt: float`
+  Tilts more low-mid or upper-mid energy into the nonlinear stage.
+- `output_lowpass_hz: float`
+  Smooths the post-saturation output.
+- `compensation: bool`
+  Applies output gain compensation so the result does not simply get louder.
+
+Notes:
+
+- default tuning is intentionally subtle enough for “always on” use
+- `tube_warm` is the safest default
+
+Example:
+
+```python
+score = Score(
+    f0=110.0,
+    master_effects=[
+        EffectSpec("saturation", {"preset": "tube_warm", "mix": 0.24}),
+        EffectSpec("reverb", {"room_size": 0.65, "damping": 0.45, "wet_level": 0.22}),
+    ],
+)
+```
 
 ## `additive`
 
@@ -199,12 +314,16 @@ Parameters:
   Source harmonic weighting. Supported values: `saw`, `square`, `pulse`, `triangle`.
 - `n_harmonics: int`
   Number of source harmonics to generate before Nyquist limiting.
-- `cutoff_ratio: float`
-  Base low-pass cutoff expressed as a multiple of the resolved note frequency.
+- `cutoff_hz: float`
+  Base low-pass cutoff in Hertz.
+- `keytrack: float`
+  Exponent controlling how strongly the cutoff follows note pitch relative to `reference_freq_hz`.
+- `reference_freq_hz: float`
+  Reference pitch for key tracking. When the note frequency equals this value, the effective cutoff is `cutoff_hz` before envelope modulation.
 - `resonance: float`
   Extra weighting around the moving cutoff region.
 - `filter_env_amount: float`
-  Multiplier controlling how much the cutoff starts above the base `cutoff_ratio`.
+  Multiplier controlling how much the cutoff starts above the base `cutoff_hz`.
 - `filter_env_decay: float`
   Time constant in seconds for the cutoff envelope to decay back toward the base cutoff.
 - `pulse_width: float`
@@ -213,7 +332,8 @@ Parameters:
 Validation:
 
 - `n_harmonics >= 1`
-- `cutoff_ratio > 0`
+- `cutoff_hz > 0`
+- `reference_freq_hz > 0`
 - `filter_env_decay > 0`
 - `0 < pulse_width < 1`
 
@@ -226,7 +346,8 @@ score.add_voice(
         "engine": "filtered_stack",
         "waveform": "square",
         "n_harmonics": 12,
-        "cutoff_ratio": 5.0,
+        "cutoff_hz": 550.0,
+        "keytrack": 0.15,
         "resonance": 0.15,
         "filter_env_amount": 0.8,
         "filter_env_decay": 0.18,

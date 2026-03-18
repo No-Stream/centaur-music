@@ -72,7 +72,9 @@ def test_save_analysis_artifacts_writes_manifest_and_plots(tmp_path: Path) -> No
     assert Path(saved_manifest["voices"]["bass"]["artifacts"]["spectrum"]).exists()
 
 
-def test_compare_analysis_manifests_reports_mix_and_score_deltas(tmp_path: Path) -> None:
+def test_compare_analysis_manifests_reports_mix_and_score_deltas(
+    tmp_path: Path,
+) -> None:
     before_manifest_path = tmp_path / "before.analysis.json"
     after_manifest_path = tmp_path / "after.analysis.json"
     comparison_path = tmp_path / "comparison.analysis.json"

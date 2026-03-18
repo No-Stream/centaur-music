@@ -93,7 +93,7 @@ def _render_partial_bank(
 
         partial_amp = harmonic_rolloff ** (harmonic_index - 1)
         if brightness_tilt != 0.0:
-            partial_amp *= harmonic_index ** brightness_tilt
+            partial_amp *= harmonic_index**brightness_tilt
 
         if harmonic_index % 2 == 0:
             partial_amp *= 1.0 - clamped_odd_even_balance
@@ -142,7 +142,7 @@ def _render_partial_bank_with_trajectory(
 
         partial_amp = harmonic_rolloff ** (harmonic_index - 1)
         if brightness_tilt != 0.0:
-            partial_amp *= harmonic_index ** brightness_tilt
+            partial_amp *= harmonic_index**brightness_tilt
 
         if harmonic_index % 2 == 0:
             partial_amp *= 1.0 - clamped_odd_even_balance

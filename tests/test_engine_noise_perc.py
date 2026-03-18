@@ -45,7 +45,9 @@ def test_noise_mix_changes_the_output_character() -> None:
         "params": common_params,
     }
 
-    pitched = render(**{**common_kwargs, "params": {**common_params, "noise_mix": 0.05}})
+    pitched = render(
+        **{**common_kwargs, "params": {**common_params, "noise_mix": 0.05}}
+    )
     noisy = render(**{**common_kwargs, "params": {**common_params, "noise_mix": 0.9}})
 
     assert not np.allclose(pitched, noisy)
@@ -66,10 +68,16 @@ def test_bandpass_and_click_params_materially_change_the_sound() -> None:
     }
 
     darker = render(
-        **{**base_kwargs, "params": {**base_params, "bandpass_ratio": 0.7, "click_amount": 0.02}},
+        **{
+            **base_kwargs,
+            "params": {**base_params, "bandpass_ratio": 0.7, "click_amount": 0.02},
+        },
     )
     brighter = render(
-        **{**base_kwargs, "params": {**base_params, "bandpass_ratio": 2.0, "click_amount": 0.25}},
+        **{
+            **base_kwargs,
+            "params": {**base_params, "bandpass_ratio": 2.0, "click_amount": 0.25},
+        },
     )
 
     assert not np.allclose(darker, brighter)

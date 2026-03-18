@@ -79,7 +79,8 @@ class PitchMotionSpec:
             target_partial = self.params.get("target_partial")
             target_ratio = self.params.get("target_ratio")
             target_count = sum(
-                value is not None for value in (target_freq, target_partial, target_ratio)
+                value is not None
+                for value in (target_freq, target_partial, target_ratio)
             )
             if target_count != 1:
                 raise ValueError(
@@ -159,7 +160,9 @@ def build_frequency_trajectory(
         start_ratio = float(motion.params.get("start_ratio", 1.0))
         end_ratio = float(motion.params.get("end_ratio", 1.0))
         ratio_trajectory = np.exp(
-            np.linspace(np.log(start_ratio), np.log(end_ratio), n_samples, endpoint=True)
+            np.linspace(
+                np.log(start_ratio), np.log(end_ratio), n_samples, endpoint=True
+            )
         )
         trajectory = base_freq * ratio_trajectory
     elif motion.kind == "vibrato":

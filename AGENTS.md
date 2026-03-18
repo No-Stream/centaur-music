@@ -42,12 +42,18 @@ interpreter and will fail with import errors.
 **Always use one of:**
 
 ```
+make all                           # default quality gate: format-check, lint, compile, typecheck, full tests
+make check                         # alias for make all
 make list                          # list registered pieces
 make render PIECE=harmonic_drift   # render a piece (adds --plot by default)
 make render PIECE=harmonic_drift PLOT=0  # render without plot
 make render-all                    # render every piece
-make test                          # run the test suite
-make lint                          # ruff check
+make test                          # run the full test suite
+make test-selected TESTS=tests/test_score.py  # run a focused subset while iterating
+make typecheck                     # basedpyright
+make compile                       # syntax / bytecode compilation check
+make lint                          # ruff check with bug-finding rules
+make format-check                  # verify formatting without modifying files
 make format                        # ruff format
 ```
 
@@ -61,6 +67,11 @@ PYTHONPATH=. uv run pytest tests/
 
 The Makefile's `UV_RUN = PYTHONPATH=. uv run` variable handles this for all
 standard targets.
+
+`make all` is the default target and should be the normal final verification step
+after meaningful code changes. It runs formatting verification, Ruff, Python
+compilation, basedpyright, and the full test suite. Use narrower commands while
+iterating if helpful, but do not stop there.
 
 ## Rendering Workflow
 
@@ -125,4 +136,3 @@ See `FUTURE.md` for way more ideas.
 - Focus on realistic, e2e tests (smoke, integration).  
 - No need for trivial tests or testing each unexpected edge case. First and foremost, tests should validate that code runs properly, end to end, without major bugs; and they should prevent regressions.
 - Backward compatibility is not always required or expected; this is a local, creative library not a business one.
-

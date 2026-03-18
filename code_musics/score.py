@@ -9,10 +9,16 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
-from code_musics.engines import render_note_signal, resolve_synth_params
-from code_musics.pitch_motion import PitchMotionSpec
-from code_musics.pitch_motion import build_frequency_trajectory
 from code_musics import synth
+from code_musics.engines import render_note_signal, resolve_synth_params
+from code_musics.humanize import (
+    EnvelopeHumanizeSpec,
+    TimingHumanizeSpec,
+    TimingTarget,
+    build_timing_offsets,
+    resolve_envelope_params,
+)
+from code_musics.pitch_motion import PitchMotionSpec, build_frequency_trajectory
 
 
 @dataclass(frozen=True)
@@ -29,7 +35,8 @@ class NoteEvent:
 
     start: float
     duration: float
-    amp: float = 1.0
+    amp: float | None = None
+    amp_db: float | None = None
     partial: float | None = None
     freq: float | None = None
     synth: dict[str, Any] | None = None
@@ -43,6 +50,19 @@ class NoteEvent:
             raise ValueError("start must be non-negative")
         if (self.partial is None) == (self.freq is None):
             raise ValueError("exactly one of partial or freq must be provided")
+        if self.amp is not None and self.amp_db is not None:
+            raise ValueError("provide amp or amp_db, not both")
+
+        resolved_amp = self.amp
+        if self.amp_db is not None:
+            resolved_amp = synth.db_to_amp(self.amp_db)
+        elif resolved_amp is None:
+            resolved_amp = 1.0
+
+        if resolved_amp <= 0:
+            raise ValueError("amp must be positive")
+
+        object.__setattr__(self, "amp", resolved_amp)
 
 
 @dataclass(frozen=True)
@@ -57,7 +77,8 @@ class Phrase:
         partials: list[float],
         note_dur: float,
         step: float,
-        amp: float = 1.0,
+        amp: float | None = None,
+        amp_db: float | None = None,
         synth_defaults: dict[str, Any] | None = None,
     ) -> Phrase:
         """Create a phrase from equally spaced harmonic partials."""
@@ -66,6 +87,7 @@ class Phrase:
                 start=index * step,
                 duration=note_dur,
                 amp=amp,
+                amp_db=amp_db,
                 partial=partial,
                 synth=dict(synth_defaults) if synth_defaults is not None else None,
             )
@@ -102,17 +124,22 @@ class Phrase:
             scaled_start = event.start * time_scale
             scaled_duration = event.duration * time_scale
             if reverse:
-                placed_start = start + ((phrase_duration - event.start - event.duration) * time_scale)
+                placed_start = start + (
+                    (phrase_duration - event.start - event.duration) * time_scale
+                )
             else:
                 placed_start = start + scaled_start
 
-            new_partial = None if event.partial is None else event.partial + partial_shift
+            resolved_amp = _require_resolved_amp(event)
+            new_partial = (
+                None if event.partial is None else event.partial + partial_shift
+            )
             transformed_events.append(
                 replace(
                     event,
                     start=placed_start,
                     duration=scaled_duration,
-                    amp=event.amp * amp_scale,
+                    amp=resolved_amp * amp_scale,
                     partial=new_partial,
                 )
             )
@@ -127,6 +154,8 @@ class Voice:
     name: str
     synth_defaults: dict[str, Any] = field(default_factory=dict)
     effects: list[EffectSpec] = field(default_factory=list)
+    envelope_humanize: EnvelopeHumanizeSpec | None = None
+    pan: float = 0.0
     notes: list[NoteEvent] = field(default_factory=list)
 
 
@@ -136,6 +165,7 @@ class Score:
 
     f0: float
     sample_rate: int = synth.SAMPLE_RATE
+    timing_humanize: TimingHumanizeSpec | None = None
     master_effects: list[EffectSpec] = field(default_factory=list)
     voices: dict[str, Voice] = field(default_factory=dict)
 
@@ -145,12 +175,18 @@ class Score:
         *,
         synth_defaults: dict[str, Any] | None = None,
         effects: list[EffectSpec] | None = None,
+        envelope_humanize: EnvelopeHumanizeSpec | None = None,
+        pan: float = 0.0,
     ) -> Voice:
         """Add or replace a named voice definition."""
+        if not -1.0 <= pan <= 1.0:
+            raise ValueError("pan must be between -1 and 1")
         voice = Voice(
             name=name,
             synth_defaults=dict(synth_defaults or {}),
             effects=list(effects or []),
+            envelope_humanize=envelope_humanize,
+            pan=pan,
         )
         self.voices[name] = voice
         return voice
@@ -169,7 +205,8 @@ class Score:
         duration: float,
         partial: float | None = None,
         freq: float | None = None,
-        amp: float = 1.0,
+        amp: float | None = None,
+        amp_db: float | None = None,
         pitch_motion: PitchMotionSpec | None = None,
         synth: dict[str, Any] | None = None,
         label: str | None = None,
@@ -181,6 +218,7 @@ class Score:
             partial=partial,
             freq=freq,
             amp=amp,
+            amp_db=amp_db,
             synth=dict(synth) if synth is not None else None,
             label=label,
             pitch_motion=pitch_motion,
@@ -230,16 +268,23 @@ class Score:
 
         mix = self._stack_signals(rendered_voices)
         if self.master_effects:
-            if mix.ndim != 1:
-                raise ValueError("master effect chains currently expect mono input")
             mix = synth.apply_effect_chain(mix, self.master_effects)
         return mix
 
     def render_stems(self) -> dict[str, np.ndarray]:
         """Render each voice independently before master-bus effects."""
         rendered_stems: dict[str, np.ndarray] = {}
+        timing_offsets = build_timing_offsets(
+            targets=self._timing_targets(),
+            humanize=self.timing_humanize,
+            total_dur=self.total_dur,
+        )
         for voice_name, voice in self.voices.items():
-            rendered_voice = self._render_voice(voice)
+            rendered_voice = self._render_voice(
+                voice_name=voice_name,
+                voice=voice,
+                timing_offsets=timing_offsets,
+            )
             if rendered_voice.size > 0:
                 rendered_stems[voice_name] = rendered_voice
         return rendered_stems
@@ -253,7 +298,12 @@ class Score:
             voice = self.voices[voice_name]
             base_y = row_index * 24
             for note in sorted(voice.notes, key=lambda item: item.start):
-                pitch_value = note.partial if note.partial is not None else note.freq / self.f0
+                if note.partial is not None:
+                    pitch_value = float(note.partial)
+                else:
+                    if note.freq is None:
+                        raise ValueError("note must define partial or freq")
+                    pitch_value = float(note.freq / self.f0)
                 axis.broken_barh(
                     [(note.start, note.duration)],
                     (base_y + pitch_value, 0.8),
@@ -275,9 +325,15 @@ class Score:
 
         return figure, axis
 
-    def _render_voice(self, voice: Voice) -> np.ndarray:
+    def _render_voice(
+        self,
+        *,
+        voice_name: str,
+        voice: Voice,
+        timing_offsets: dict[tuple[str, int], float],
+    ) -> np.ndarray:
         voice_signals: list[np.ndarray] = []
-        for note in voice.notes:
+        for note_index, note in enumerate(voice.notes):
             synth_params = dict(voice.synth_defaults)
             if note.synth is not None:
                 synth_params.update(note.synth)
@@ -285,6 +341,10 @@ class Score:
             attack_scale = float(synth_params.pop("attack_scale", 1.0))
             release_scale = float(synth_params.pop("release_scale", 1.0))
             note_freq = self._resolve_freq(note)
+            humanized_start = max(
+                0.0,
+                note.start + timing_offsets.get((voice_name, note_index), 0.0),
+            )
             freq_trajectory = None
             if note.pitch_motion is not None:
                 freq_trajectory = build_frequency_trajectory(
@@ -298,30 +358,55 @@ class Score:
             note_signal = render_note_signal(
                 freq=note_freq,
                 duration=note.duration,
-                amp=note.amp,
+                amp=_require_resolved_amp(note),
                 sample_rate=self.sample_rate,
                 params=synth_params,
                 freq_trajectory=freq_trajectory,
             )
+            attack, decay, sustain_level, release = resolve_envelope_params(
+                base_attack=float(synth_params.get("attack", 0.04)) * attack_scale,
+                base_decay=float(synth_params.get("decay", 0.1)),
+                base_sustain_level=float(synth_params.get("sustain_level", 0.75)),
+                base_release=float(synth_params.get("release", 0.3)) * release_scale,
+                note_start=note.start,
+                humanize=voice.envelope_humanize,
+                total_dur=self.total_dur,
+                voice_name=voice_name,
+            )
             note_signal = synth.adsr(
                 note_signal,
-                attack=synth_params.get("attack", 0.04) * attack_scale,
-                decay=synth_params.get("decay", 0.1),
-                sustain_level=synth_params.get("sustain_level", 0.75),
-                release=synth_params.get("release", 0.3) * release_scale,
+                attack=attack,
+                decay=decay,
+                sustain_level=sustain_level,
+                release=release,
                 sample_rate=self.sample_rate,
             )
-            voice_signals.append(synth.at_sample_rate(note_signal, note.start, self.sample_rate))
+            voice_signals.append(
+                synth.at_sample_rate(note_signal, humanized_start, self.sample_rate)
+            )
 
         if not voice_signals:
             return np.zeros(0)
 
         voice_mix = self._stack_signals(voice_signals)
+        if voice.pan != 0.0:
+            voice_mix = synth.apply_pan(voice_mix, pan=voice.pan)
         if voice.effects:
-            if voice_mix.ndim != 1:
-                raise ValueError("voice effect chains currently expect mono input")
             voice_mix = synth.apply_effect_chain(voice_mix, voice.effects)
         return voice_mix
+
+    def _timing_targets(self) -> list[TimingTarget]:
+        targets: list[TimingTarget] = []
+        for voice_name, voice in self.voices.items():
+            for note_index, note in enumerate(voice.notes):
+                targets.append(
+                    TimingTarget(
+                        key=(voice_name, note_index),
+                        voice_name=voice_name,
+                        start=note.start,
+                    )
+                )
+        return targets
 
     def _resolve_freq(self, note: NoteEvent) -> float:
         if note.freq is not None:
@@ -333,15 +418,25 @@ class Score:
     @staticmethod
     def _stack_signals(signals: list[np.ndarray]) -> np.ndarray:
         max_len = max(signal.shape[-1] for signal in signals)
-        first_signal = signals[0]
-        if first_signal.ndim == 1:
+        if all(signal.ndim == 1 for signal in signals):
             output = np.zeros(max_len)
             for signal in signals:
                 output[: signal.shape[-1]] += signal
             return output
 
-        channels = first_signal.shape[0]
+        channels = 2
         output = np.zeros((channels, max_len))
         for signal in signals:
-            output[:, : signal.shape[-1]] += signal
+            if signal.ndim == 1:
+                output[0, : signal.shape[-1]] += signal
+                output[1, : signal.shape[-1]] += signal
+            else:
+                output[:, : signal.shape[-1]] += signal
         return output
+
+
+def _require_resolved_amp(event: NoteEvent) -> float:
+    """Return a concrete amplitude for an event after NoteEvent validation."""
+    if event.amp is None:
+        raise ValueError("event amp unexpectedly missing")
+    return float(event.amp)

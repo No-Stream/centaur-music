@@ -8,22 +8,22 @@
     },
     "summary": {
       "band_energy_db": {
-        "air": -59.49156126558678,
-        "bass": 18.075164670250807,
-        "high": -34.97809498294621,
-        "low_mid": 17.510465514681652,
-        "mid": -3.8931576332800075,
-        "sub": -19.054786083337675
+        "air": -70.71504476903026,
+        "bass": 15.471647044188115,
+        "high": -39.028821723510625,
+        "low_mid": 12.237703110446759,
+        "mid": -9.832639901115508,
+        "sub": -18.802251226868265
       },
       "dominant_frequency_hz": 328.38134765625,
       "duration_seconds": 154.5,
-      "low_high_balance_db": 53.05325965319702,
-      "peak_dbfs": -1.848751269396133,
+      "low_high_balance_db": 54.50046876769874,
+      "peak_dbfs": -6.1455434388670245,
       "reference_tilt_db_per_octave": -3.0,
-      "rms_dbfs": -15.136453934175883,
-      "spectral_centroid_hz": 940.9699162687933,
-      "spectral_tilt_db_per_octave": -13.812127243600957,
-      "tilt_error_db_per_octave": -10.812127243600957,
+      "rms_dbfs": -19.98177197070839,
+      "spectral_centroid_hz": 777.1398427704719,
+      "spectral_tilt_db_per_octave": -15.75409517947155,
+      "tilt_error_db_per_octave": -12.75409517947155,
       "warnings": [
         "low band dominates high band strongly",
         "spectrum falls off faster than the reference tilt"
@@ -104,22 +104,22 @@
       },
       "summary": {
         "band_energy_db": {
-          "air": -151.1223441952791,
-          "bass": -30.93895653585232,
-          "high": -119.04920493053862,
-          "low_mid": -10.586005895590484,
-          "mid": -41.43481349015741,
-          "sub": -69.61804415478333
+          "air": -154.18525765439887,
+          "bass": -34.001869994956465,
+          "high": -122.1121183896412,
+          "low_mid": -13.64891935469463,
+          "mid": -44.497726949261654,
+          "sub": -72.68095761388741
         },
         "dominant_frequency_hz": 274.54833984375,
         "duration_seconds": 149.0,
-        "low_high_balance_db": 88.1102483946863,
-        "peak_dbfs": -9.836830829034906,
+        "low_high_balance_db": 88.11024839468473,
+        "peak_dbfs": -12.89974428813905,
         "reference_tilt_db_per_octave": -3.0,
-        "rms_dbfs": -26.673621967164788,
-        "spectral_centroid_hz": 530.6835437225577,
-        "spectral_tilt_db_per_octave": -24.322189561376,
-        "tilt_error_db_per_octave": -21.322189561376,
+        "rms_dbfs": -29.736535426268933,
+        "spectral_centroid_hz": 530.6835437225578,
+        "spectral_tilt_db_per_octave": -24.322189561385827,
+        "tilt_error_db_per_octave": -21.322189561385827,
         "warnings": [
           "low band dominates high band strongly",
           "spectrum falls off faster than the reference tilt"
@@ -132,22 +132,22 @@
       },
       "summary": {
         "band_energy_db": {
-          "air": -135.3034268085335,
-          "bass": 8.205657083706882,
-          "high": -115.12449152316333,
-          "low_mid": -4.573428756018295,
-          "mid": -60.28439844080279,
-          "sub": -32.5272958169996
+          "air": -137.94878858191112,
+          "bass": 5.380643606272108,
+          "high": -118.08003141215939,
+          "low_mid": -8.432659929774402,
+          "mid": -74.44439799083399,
+          "sub": -35.48727553278461
         },
         "dominant_frequency_hz": 183.0322265625,
         "duration_seconds": 154.5,
-        "low_high_balance_db": 123.33014860687021,
-        "peak_dbfs": -7.1946212476769675,
+        "low_high_balance_db": 123.46067501843149,
+        "peak_dbfs": -9.849825290546836,
         "reference_tilt_db_per_octave": -3.0,
-        "rms_dbfs": -16.905399402543036,
-        "spectral_centroid_hz": 234.58011257454137,
-        "spectral_tilt_db_per_octave": -19.173935391811717,
-        "tilt_error_db_per_octave": -16.173935391811717,
+        "rms_dbfs": -19.93307380424837,
+        "spectral_centroid_hz": 193.32043964651092,
+        "spectral_tilt_db_per_octave": -17.901564606890215,
+        "tilt_error_db_per_octave": -14.901564606890215,
         "warnings": [
           "low band dominates high band strongly",
           "spectrum falls off faster than the reference tilt"
@@ -160,22 +160,22 @@
       },
       "summary": {
         "band_energy_db": {
-          "air": -116.3762770748872,
-          "bass": -38.94676294209777,
-          "high": -83.6704390969921,
-          "low_mid": -0.42812141499806206,
-          "mid": -29.06932128119754,
-          "sub": -51.47306760890562
+          "air": -119.40754058523235,
+          "bass": -41.976323495797764,
+          "high": -87.06137421397807,
+          "low_mid": -3.430017609641346,
+          "mid": -32.05977994254172,
+          "sub": -54.5005690433169
         },
         "dominant_frequency_hz": 328.38134765625,
         "duration_seconds": 150.06,
-        "low_high_balance_db": 44.72367615489433,
-        "peak_dbfs": -10.79495963691214,
+        "low_high_balance_db": 45.085050718180305,
+        "peak_dbfs": -13.81864620155978,
         "reference_tilt_db_per_octave": -3.0,
-        "rms_dbfs": -20.895689254225957,
-        "spectral_centroid_hz": 825.3117889303576,
-        "spectral_tilt_db_per_octave": -19.812158067753693,
-        "tilt_error_db_per_octave": -16.812158067753693,
+        "rms_dbfs": -23.92273491512605,
+        "spectral_centroid_hz": 803.4066336918294,
+        "spectral_tilt_db_per_octave": -19.75540747778747,
+        "tilt_error_db_per_octave": -16.75540747778747,
         "warnings": [
           "low band dominates high band strongly",
           "spectrum falls off faster than the reference tilt"
@@ -188,22 +188,22 @@
       },
       "summary": {
         "band_energy_db": {
-          "air": -56.277152864436914,
-          "bass": -15.988934239261472,
-          "high": -31.825924749833483,
-          "low_mid": 14.523214420976577,
-          "mid": -3.7506757240712547,
-          "sub": -17.813686629759943
+          "air": -66.15898697270045,
+          "bass": -25.493987408900935,
+          "high": -40.13794802992911,
+          "low_mid": 5.222781531691004,
+          "mid": -12.635824219644226,
+          "sub": -27.27839591903488
         },
         "dominant_frequency_hz": 441.4306640625,
         "duration_seconds": 150.0,
-        "low_high_balance_db": 15.836990510572011,
-        "peak_dbfs": -4.717068476681799,
+        "low_high_balance_db": 14.643960621028178,
+        "peak_dbfs": -11.690933807771417,
         "reference_tilt_db_per_octave": -3.0,
-        "rms_dbfs": -13.940699985346388,
-        "spectral_centroid_hz": 1367.2040648086995,
-        "spectral_tilt_db_per_octave": -12.379709289938848,
-        "tilt_error_db_per_octave": -9.379709289938848,
+        "rms_dbfs": -23.230539926596503,
+        "spectral_centroid_hz": 1387.8229266395874,
+        "spectral_tilt_db_per_octave": -12.788684972559,
+        "tilt_error_db_per_octave": -9.788684972559,
         "warnings": [
           "mix leans warm and low-forward",
           "spectrum falls off faster than the reference tilt"
@@ -216,22 +216,22 @@
       },
       "summary": {
         "band_energy_db": {
-          "air": -146.0198394924246,
-          "bass": -7.504788479029822,
-          "high": -124.02095426375264,
-          "low_mid": -6.153996057452276,
-          "mid": -58.440530432535674,
-          "sub": -53.91469755730805
+          "air": -149.09890174649223,
+          "bass": -10.58385073314547,
+          "high": -127.10001651785689,
+          "low_mid": -9.233058311567927,
+          "mid": -61.51959268665107,
+          "sub": -56.99375981142369
         },
         "dominant_frequency_hz": 220.71533203125,
         "duration_seconds": 149.0,
-        "low_high_balance_db": 116.51616578472282,
-        "peak_dbfs": -11.383685689078074,
+        "low_high_balance_db": 116.51616578471142,
+        "peak_dbfs": -14.462747943193719,
         "reference_tilt_db_per_octave": -3.0,
-        "rms_dbfs": -26.09225580115369,
-        "spectral_centroid_hz": 359.4441822822017,
-        "spectral_tilt_db_per_octave": -20.781099958684692,
-        "tilt_error_db_per_octave": -17.781099958684692,
+        "rms_dbfs": -29.17131805526934,
+        "spectral_centroid_hz": 359.44418228220167,
+        "spectral_tilt_db_per_octave": -20.78109995865977,
+        "tilt_error_db_per_octave": -17.78109995865977,
         "warnings": [
           "low band dominates high band strongly",
           "spectrum falls off faster than the reference tilt"

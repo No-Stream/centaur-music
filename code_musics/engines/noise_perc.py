@@ -56,16 +56,24 @@ def render(
     pitch_env = np.exp(-t / pitch_decay)
 
     tone = np.sin(2.0 * np.pi * freq * t) * tone_env
-    tone += 0.35 * np.sin(2.0 * np.pi * freq * 2.0 * t) * np.exp(-t / (tone_decay * 0.7))
+    tone += (
+        0.35 * np.sin(2.0 * np.pi * freq * 2.0 * t) * np.exp(-t / (tone_decay * 0.7))
+    )
 
-    rng = _rng_for_note(freq=freq, duration=duration, amp=amp, sample_rate=sample_rate, params=params)
+    rng = _rng_for_note(
+        freq=freq, duration=duration, amp=amp, sample_rate=sample_rate, params=params
+    )
 
     noise = rng.standard_normal(n_samples)
-    noise = _bandpass_noise(noise, sample_rate=sample_rate, center_hz=freq * bandpass_ratio)
+    noise = _bandpass_noise(
+        noise, sample_rate=sample_rate, center_hz=freq * bandpass_ratio
+    )
     noise *= pitch_env
 
     click = _click_envelope(n_samples) * rng.standard_normal(n_samples)
-    click = _bandpass_noise(click, sample_rate=sample_rate, center_hz=min(sample_rate * 0.25, freq * 3.0))
+    click = _bandpass_noise(
+        click, sample_rate=sample_rate, center_hz=min(sample_rate * 0.25, freq * 3.0)
+    )
 
     signal = (1.0 - noise_mix) * tone + noise_mix * noise + click_amount * click
     peak = np.max(np.abs(signal))
@@ -78,12 +86,16 @@ def _click_envelope(n_samples: int) -> np.ndarray:
     """Short asymmetric burst for the initial transient."""
     if n_samples == 0:
         return np.zeros(0)
-    envelope = np.exp(-np.arange(n_samples, dtype=np.float64) / max(1.0, n_samples * 0.015))
+    envelope = np.exp(
+        -np.arange(n_samples, dtype=np.float64) / max(1.0, n_samples * 0.015)
+    )
     envelope[: max(1, n_samples // 256)] *= 2.5
     return envelope
 
 
-def _bandpass_noise(signal: np.ndarray, *, sample_rate: int, center_hz: float) -> np.ndarray:
+def _bandpass_noise(
+    signal: np.ndarray, *, sample_rate: int, center_hz: float
+) -> np.ndarray:
     """Shape white noise with a broad spectral band around `center_hz`."""
     if signal.size == 0:
         return signal

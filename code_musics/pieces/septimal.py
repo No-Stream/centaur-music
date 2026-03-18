@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 
@@ -62,8 +62,12 @@ def render_interval_demo() -> np.ndarray:
             },
         )
         score.add_note("drone", start=0.0, duration=note_dur, partial=1.0, amp=0.6)
-        score.add_note("upper", start=0.0, duration=note_dur, freq=ROOT * ratio, amp=0.6)
-        logger.info("  %s  %.2f Hz  (%.1f cents)", name, ROOT * ratio, ratio_to_cents(ratio))
+        score.add_note(
+            "upper", start=0.0, duration=note_dur, freq=ROOT * ratio, amp=0.6
+        )
+        logger.info(
+            "  %s  %.2f Hz  (%.1f cents)", name, ROOT * ratio, ratio_to_cents(ratio)
+        )
         segments.append(score.render())
 
     return sequence(*segments, gap=0.25)
@@ -87,11 +91,13 @@ def build_chord_4567_score() -> Score:
         },
     )
 
-    for ratio, name, offset in zip(ratios, names, entry_offsets):
+    for ratio, name, offset in zip(ratios, names, entry_offsets, strict=True):
         freq = ROOT * ratio
         note_dur = hold_until - offset
         logger.info("  %s  %.2f Hz  enters at %.1fs", name, freq, offset)
-        score.add_note("chord", start=offset, duration=note_dur, freq=freq, amp=0.55, label=name)
+        score.add_note(
+            "chord", start=offset, duration=note_dur, freq=freq, amp=0.55, label=name
+        )
 
     return score
 
@@ -116,7 +122,9 @@ def build_harmonic_drift_score() -> Score:
             "release": 4.0,
         },
     )
-    score.add_note("drone", start=0.0, duration=85.0, partial=1.0, amp=0.55, label="bass drone")
+    score.add_note(
+        "drone", start=0.0, duration=85.0, partial=1.0, amp=0.55, label="bass drone"
+    )
 
     score.add_voice(
         "mid_chord",
@@ -129,7 +137,9 @@ def build_harmonic_drift_score() -> Score:
         },
     )
     for partial, offset in [(4, 6.0), (6, 9.0), (5, 11.0), (7, 14.0)]:
-        score.add_note("mid_chord", start=offset, duration=30.0, partial=partial, amp=0.35)
+        score.add_note(
+            "mid_chord", start=offset, duration=30.0, partial=partial, amp=0.35
+        )
 
     score.add_voice("melody_a")
     score.add_voice("melody_b")
@@ -212,7 +222,9 @@ def build_harmonic_drift_score() -> Score:
         },
     )
     score.add_phrase("melody_a", canon_phrase, start=46.0)
-    score.add_phrase("melody_b", canon_phrase, start=49.0, partial_shift=4, amp_scale=0.34 / 0.42)
+    score.add_phrase(
+        "melody_b", canon_phrase, start=49.0, partial_shift=4, amp_scale=0.34 / 0.42
+    )
 
     score.add_voice(
         "pedal",
@@ -254,7 +266,9 @@ def build_harmonic_drift_score() -> Score:
     )
     for call_start, shift in [(54.0, 0.0), (60.0, 1.0), (66.0, 2.0)]:
         score.add_phrase("melody_a", call_phrase, start=call_start, partial_shift=shift)
-        score.add_phrase("melody_b", response_phrase, start=call_start + 2.5, partial_shift=shift)
+        score.add_phrase(
+            "melody_b", response_phrase, start=call_start + 2.5, partial_shift=shift
+        )
 
     contrary_up = Phrase.from_partials(
         [4, 5, 6, 7, 8, 9, 10, 12, 14],
@@ -338,8 +352,12 @@ def build_harmonic_window_score() -> Score:
             "release": 4.0,
         },
     )
-    score.add_note("drone", start=0.0, duration=52.0, partial=1.0, amp=0.42, label="root drone")
-    score.add_note("drone", start=12.0, duration=30.0, partial=2.0, amp=0.14, label="upper drone")
+    score.add_note(
+        "drone", start=0.0, duration=52.0, partial=1.0, amp=0.42, label="root drone"
+    )
+    score.add_note(
+        "drone", start=12.0, duration=30.0, partial=2.0, amp=0.14, label="upper drone"
+    )
 
     score.add_voice(
         "window_low",
@@ -424,8 +442,16 @@ def build_harmonic_window_score() -> Score:
             reverse=not reverse,
         )
 
-    for start, partial in [(10.0, 5.0), (18.0, 7.0), (26.0, 9.0), (34.0, 11.0), (42.0, 13.0)]:
-        score.add_note("punctuation", start=start, duration=5.2, partial=partial, amp=0.18)
+    for start, partial in [
+        (10.0, 5.0),
+        (18.0, 7.0),
+        (26.0, 9.0),
+        (34.0, 11.0),
+        (42.0, 13.0),
+    ]:
+        score.add_note(
+            "punctuation", start=start, duration=5.2, partial=partial, amp=0.18
+        )
 
     return score
 
@@ -481,17 +507,25 @@ def build_otonal_utonal_mirror_score() -> Score:
         },
     )
 
-    score.add_note("pedal", start=0.0, duration=44.0, partial=1.0, amp=0.30, label="pedal")
-    score.add_note("pedal", start=22.0, duration=18.0, partial=0.5, amp=0.12, label="sub pedal")
+    score.add_note(
+        "pedal", start=0.0, duration=44.0, partial=1.0, amp=0.30, label="pedal"
+    )
+    score.add_note(
+        "pedal", start=22.0, duration=18.0, partial=0.5, amp=0.12, label="sub pedal"
+    )
 
     otonal_bases = [55.0, 73.3333333333, 82.5]
     utonal_bases = [330.0, 275.0, 220.0]
     chord_partials = [4, 5, 6, 7]
 
     section_starts = [2.0, 14.0, 26.0]
-    for start, otonal_base, utonal_base in zip(section_starts, otonal_bases, utonal_bases):
+    for start, otonal_base, utonal_base in zip(
+        section_starts, otonal_bases, utonal_bases, strict=True
+    ):
         for freq in otonal(otonal_base, chord_partials):
-            score.add_note("otonal_chord", start=start, duration=6.5, freq=freq, amp=0.18)
+            score.add_note(
+                "otonal_chord", start=start, duration=6.5, freq=freq, amp=0.18
+            )
 
         bridge_phrase = Phrase.from_partials(
             [6, 7, 6, 5, 4],
@@ -509,7 +543,9 @@ def build_otonal_utonal_mirror_score() -> Score:
         score.add_phrase("bridge", bridge_phrase, start=start + 5.0, partial_shift=1.0)
 
         for freq in sorted(utonal(utonal_base, chord_partials)):
-            score.add_note("utonal_chord", start=start + 7.0, duration=7.5, freq=freq, amp=0.16)
+            score.add_note(
+                "utonal_chord", start=start + 7.0, duration=7.5, freq=freq, amp=0.16
+            )
 
     closing_phrase = Phrase.from_partials(
         [4, 5, 6, 7, 6, 5, 4],
@@ -699,7 +735,9 @@ def build_otonal_utonal_mirror_expanded_score() -> Score:
         partial_shift = float(section["partial_shift"])
         reverse_echo = bool(section["reverse_echo"])
 
-        score.add_note("pedal", start=start - 2.0, duration=14.5, freq=pedal_freq, amp=0.24)
+        score.add_note(
+            "pedal", start=start - 2.0, duration=14.5, freq=pedal_freq, amp=0.24
+        )
 
         if index > 0:
             score.add_note(
@@ -720,7 +758,9 @@ def build_otonal_utonal_mirror_expanded_score() -> Score:
                 amp=0.17 + (0.01 * chord_index),
             )
 
-        score.add_phrase("bridge", bridge_phrase, start=start + 5.2, partial_shift=partial_shift)
+        score.add_phrase(
+            "bridge", bridge_phrase, start=start + 5.2, partial_shift=partial_shift
+        )
         score.add_phrase(
             "high_echo",
             echo_phrase,
@@ -738,10 +778,16 @@ def build_otonal_utonal_mirror_expanded_score() -> Score:
                 amp=0.13 + (0.01 * chord_index),
             )
 
-    score.add_note("memory", start=69.0, duration=9.0, freq=165.0, amp=0.10, label="return")
-    score.add_note("pedal", start=68.0, duration=16.0, freq=110.0, amp=0.26, label="final pedal")
+    score.add_note(
+        "memory", start=69.0, duration=9.0, freq=165.0, amp=0.10, label="return"
+    )
+    score.add_note(
+        "pedal", start=68.0, duration=16.0, freq=110.0, amp=0.26, label="final pedal"
+    )
     score.add_phrase("bridge", closing_phrase, start=70.0)
-    score.add_phrase("high_echo", closing_phrase, start=71.0, partial_shift=3.0, amp_scale=0.55)
+    score.add_phrase(
+        "high_echo", closing_phrase, start=71.0, partial_shift=3.0, amp_scale=0.55
+    )
 
     for chord_index, freq in enumerate(otonal(55.0, chord_partials)):
         score.add_note(

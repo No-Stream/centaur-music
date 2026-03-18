@@ -36,6 +36,8 @@ Useful additions:
 - analysis manifests that make artifact paths and summary stats easy for agents
   to consume without relying purely on ears
 
+_^^mostly done?_
+
 ### Better piece-generation tools
 
 The score abstraction is in good shape, but composition could still become much
@@ -49,6 +51,8 @@ Most valuable next helpers:
 - utility functions for voice-leading inside otonal and utonal spaces
 - gesture builders such as `converge`, `diverge`, `spiral`, `comma_drift`,
   `harmonic_shadow`, and `undertow`
+- sectional/context drift helpers that re-realize ratio material against local
+  tonics without introducing fixed pitch-class identities
 - overlap and beating summaries so we can spot where a piece has become too
   static, too drony, or too crowded before full render
 
@@ -72,6 +76,16 @@ Useful directions:
 The main goal is not maximal flexibility for its own sake. It is to make pieces
 feel more alive and shaped over time.
 
+### Swing, Humanization
+- voices drift together a la Group Humanizer
+- simple imperfection in timing
+- swing
+
+### Slop and Osc/Env/Etc Drift
+
+- pitch drift at the osc, synth, voice level - not always a great idea in xenharmonic systems, but still useful. (not to be confused with comma drift)  
+- cutoff freq etc should offer drift
+
 ### Sound design and synthesis direction
 
 The current engine palette is a solid base, but there is room to broaden it
@@ -92,8 +106,8 @@ to explore:
 
 - darker subharmonic passages
 - overtone / undertone contrasts inside a single form
-- comma-drift and undertow gestures that preserve tuning identity while changing
-  harmonic interpretation
+- comma-drift and undertow gestures that change local harmonic interpretation
+  without forcing conventional pitch-class identity
 - pitch-motion idioms that make harmonic gravity and arrival bends more audible
 
 ### Better effect integration
@@ -103,7 +117,7 @@ fairly simple.
 
 Most promising directions:
 
-- chorus, tremolo, autopan, filtering, saturation, and transient shaping
+- chorus, tremolo, autopan, filtering, saturation, and transient shaping - chorus and saturation in particular would do a lot to make sounds lusher and more analog
 - role-based effect presets such as `glass_pad`, `sub_drone`, `reed_lead`, or
   `dark_hall`
 - better dry/wet and send-style routing so ambience can be shaped more
@@ -159,6 +173,16 @@ work.
 
 Export pieces to DAW-friendly MIDI with pitch bend so ideas can move more easily
 into other production environments.
+
+### Identity-preserving pitch drift
+
+Low priority, and likely optional if it ever exists.
+
+- exploratory system for notes that retain some tuning memory across sections
+- should not require fixed note names, scale degrees, or conservative
+  music-theory identities
+- contextual drift helpers are the preferred near-term direction; this would be
+  for stranger long-memory tuning behavior later, if it proves musically useful
 
 ### Granular synthesis
 

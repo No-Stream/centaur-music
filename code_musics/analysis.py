@@ -164,7 +164,12 @@ def analyze_score(
         voice_freqs: list[float] = []
         voice_attacks = 0
         for note in voice_notes:
-            resolved_freq = note.freq if note.freq is not None else score.f0 * float(note.partial)
+            if note.freq is not None:
+                resolved_freq = note.freq
+            else:
+                if note.partial is None:
+                    raise ValueError("note must define partial or freq")
+                resolved_freq = score.f0 * note.partial
             voice_freqs.append(resolved_freq)
             frequencies_hz.append(resolved_freq)
             if note.partial is not None:
@@ -179,7 +184,10 @@ def analyze_score(
 
             start_index = min(int(note.start / window_seconds), len(active_counts) - 1)
             end_index = min(
-                max(int(np.ceil((note.start + note.duration) / window_seconds)) - 1, start_index),
+                max(
+                    int(np.ceil((note.start + note.duration) / window_seconds)) - 1,
+                    start_index,
+                ),
                 len(active_counts) - 1,
             )
             for index in range(start_index, end_index + 1):
@@ -191,14 +199,22 @@ def analyze_score(
             "min_frequency_hz": float(np.min(voice_freqs)) if voice_freqs else 0.0,
             "max_frequency_hz": float(np.max(voice_freqs)) if voice_freqs else 0.0,
             "mean_note_duration_seconds": (
-                float(np.mean([note.duration for note in voice_notes])) if voice_notes else 0.0
+                float(np.mean([note.duration for note in voice_notes]))
+                if voice_notes
+                else 0.0
             ),
-            "attack_rate_hz": (voice_attacks / total_duration) if total_duration > 0 else 0.0,
+            "attack_rate_hz": (voice_attacks / total_duration)
+            if total_duration > 0
+            else 0.0,
         }
 
     notes_per_second = note_count / total_duration if total_duration > 0 else 0.0
-    mean_attack_density_hz = float(np.mean(onset_counts)) / window_seconds if onset_counts else 0.0
-    max_attack_density_hz = float(np.max(onset_counts)) / window_seconds if onset_counts else 0.0
+    mean_attack_density_hz = (
+        float(np.mean(onset_counts)) / window_seconds if onset_counts else 0.0
+    )
+    max_attack_density_hz = (
+        float(np.max(onset_counts)) / window_seconds if onset_counts else 0.0
+    )
     peak_simultaneous_notes = int(np.max(active_counts)) if active_counts else 0
     mean_simultaneous_notes = float(np.mean(active_counts)) if active_counts else 0.0
 
@@ -207,7 +223,11 @@ def analyze_score(
         warnings.append("dense texture across much of the score")
     if max_attack_density_hz >= 5.0:
         warnings.append("high attack density may feel busy or percussive")
-    if note_count > 0 and mean_note_duration_hz(score) > 2.5 and mean_attack_density_hz < 0.8:
+    if (
+        note_count > 0
+        and mean_note_duration_hz(score) > 2.5
+        and mean_attack_density_hz < 0.8
+    ):
         warnings.append("long-note bias may read as drony")
 
     return ScoreAnalysis(
@@ -223,7 +243,9 @@ def analyze_score(
             (float(np.min(partials)), float(np.max(partials))) if partials else None
         ),
         frequency_range_hz=(
-            (float(np.min(frequencies_hz)), float(np.max(frequencies_hz))) if frequencies_hz else None
+            (float(np.min(frequencies_hz)), float(np.max(frequencies_hz)))
+            if frequencies_hz
+            else None
         ),
         voice_summaries=voice_summaries,
         warnings=warnings,
@@ -265,14 +287,18 @@ def save_analysis_artifacts(
         title="Mix Spectrum",
         reference_tilt_db_per_octave=reference_tilt_db_per_octave,
     )
-    mix_spectrogram_path = prefix_path.with_name(f"{prefix_path.name}.mix_spectrogram.png")
+    mix_spectrogram_path = prefix_path.with_name(
+        f"{prefix_path.name}.mix_spectrogram.png"
+    )
     _save_spectrogram_plot(
         signal=mix_signal,
         sample_rate=sample_rate,
         path=mix_spectrogram_path,
         title="Mix Spectrogram",
     )
-    mix_band_energy_path = prefix_path.with_name(f"{prefix_path.name}.mix_band_energy.png")
+    mix_band_energy_path = prefix_path.with_name(
+        f"{prefix_path.name}.mix_band_energy.png"
+    )
     _save_band_energy_plot(
         band_energy_db=mix_analysis.band_energy_db,
         path=mix_band_energy_path,
@@ -286,7 +312,9 @@ def save_analysis_artifacts(
 
     if score is not None:
         score_analysis = analyze_score(score)
-        score_density_path = prefix_path.with_name(f"{prefix_path.name}.score_density.png")
+        score_density_path = prefix_path.with_name(
+            f"{prefix_path.name}.score_density.png"
+        )
         _save_score_density_plot(score=score, path=score_density_path)
         manifest["score"] = {
             "summary": score_analysis.to_dict(),
@@ -365,14 +393,24 @@ def compare_analysis_manifests(
         "warning_changes": {
             "mix_before": before_manifest["mix"]["summary"].get("warnings", []),
             "mix_after": after_manifest["mix"]["summary"].get("warnings", []),
-            "score_before": before_manifest.get("score", {}).get("summary", {}).get("warnings", []),
-            "score_after": after_manifest.get("score", {}).get("summary", {}).get("warnings", []),
+            "score_before": before_manifest.get("score", {})
+            .get("summary", {})
+            .get("warnings", []),
+            "score_after": after_manifest.get("score", {})
+            .get("summary", {})
+            .get("warnings", []),
         },
     }
 
-    for voice_name in sorted(set(before_manifest.get("voices", {})) | set(after_manifest.get("voices", {}))):
-        before_voice = before_manifest.get("voices", {}).get(voice_name, {}).get("summary", {})
-        after_voice = after_manifest.get("voices", {}).get(voice_name, {}).get("summary", {})
+    for voice_name in sorted(
+        set(before_manifest.get("voices", {})) | set(after_manifest.get("voices", {}))
+    ):
+        before_voice = (
+            before_manifest.get("voices", {}).get(voice_name, {}).get("summary", {})
+        )
+        after_voice = (
+            after_manifest.get("voices", {}).get(voice_name, {}).get("summary", {})
+        )
         comparison["voice_delta"][voice_name] = _compare_numeric_dicts(
             before_voice,
             after_voice,
@@ -397,30 +435,32 @@ def compare_analysis_manifests(
 def mean_note_duration_hz(score: Score) -> float:
     """Return the average note duration in seconds for warning heuristics."""
     durations = [
-        note.duration
-        for voice in score.voices.values()
-        for note in voice.notes
+        note.duration for voice in score.voices.values() for note in voice.notes
     ]
     return float(np.mean(durations)) if durations else 0.0
 
 
-def _average_spectrum(signal: np.ndarray, *, sample_rate: int) -> tuple[np.ndarray, np.ndarray]:
+def _average_spectrum(
+    signal: np.ndarray, *, sample_rate: int
+) -> tuple[np.ndarray, np.ndarray]:
     n_fft = min(8192, max(2048, int(2 ** np.ceil(np.log2(max(signal.size, 2_048))))))
-    window = np.hanning(min(n_fft, signal.size))
+    window = np.hanning(n_fft)
     if signal.size < n_fft:
         padded = np.zeros(n_fft, dtype=np.float64)
         padded[: signal.size] = signal
-        spectrum = np.fft.rfft(padded * np.hanning(n_fft))
+        spectrum = np.fft.rfft(padded * window)
     else:
         step = max(n_fft // 2, 1)
         magnitudes: list[np.ndarray] = []
         for start in range(0, signal.size - n_fft + 1, step):
-            frame = signal[start : start + n_fft] * np.hanning(n_fft)
+            frame = signal[start : start + n_fft] * window
             magnitudes.append(np.abs(np.fft.rfft(frame)))
         spectrum = np.mean(magnitudes, axis=0)
 
     freqs = np.fft.rfftfreq(n_fft, d=1.0 / sample_rate)
-    magnitude_db = 20.0 * np.log10(np.maximum(np.asarray(spectrum, dtype=np.float64), _EPSILON))
+    magnitude_db = 20.0 * np.log10(
+        np.maximum(np.asarray(spectrum, dtype=np.float64), _EPSILON)
+    )
     valid = freqs > 0
     return freqs[valid], magnitude_db[valid]
 
@@ -462,8 +502,8 @@ def _fit_spectral_tilt(*, freqs: np.ndarray, magnitude_db: np.ndarray) -> float:
     if np.count_nonzero(valid) < 4:
         return 0.0
     log2_freqs = np.log2(freqs[valid])
-    slope, _ = np.polyfit(log2_freqs, magnitude_db[valid], 1)
-    return float(slope)
+    coefficients = np.polyfit(log2_freqs, magnitude_db[valid], 1)
+    return float(coefficients[0])
 
 
 def _build_audio_warnings(
@@ -502,7 +542,7 @@ def _to_mono(signal: np.ndarray) -> np.ndarray:
     if signal.ndim == 1:
         return np.asarray(signal, dtype=np.float64)
     if signal.ndim == 2:
-        return np.mean(signal, axis=0, dtype=np.float64)
+        return np.asarray(np.mean(signal, axis=0, dtype=np.float64), dtype=np.float64)
     raise ValueError("signal must be mono or stereo")
 
 
@@ -612,7 +652,10 @@ def _save_score_density_plot(*, score: Score, path: Path) -> None:
             for note in voice.notes:
                 if window_start <= note.start < window_end:
                     onsets += 1
-                if note.start < window_end and (note.start + note.duration) > window_start:
+                if (
+                    note.start < window_end
+                    and (note.start + note.duration) > window_start
+                ):
                     active += 1
         onset_counts.append(onsets)
         active_counts.append(active)
@@ -634,7 +677,9 @@ def _amplitude_to_db(amplitude: float) -> float:
 
 
 def _sanitize_name(name: str) -> str:
-    return "".join(character if character.isalnum() else "_" for character in name).strip("_")
+    return "".join(
+        character if character.isalnum() else "_" for character in name
+    ).strip("_")
 
 
 def _json_dump(payload: dict[str, Any]) -> str:

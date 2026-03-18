@@ -2,8 +2,10 @@
   "venvPath": ".",
   "venv": ".venv",
   "pythonVersion": "3.12",
-  "include": ["code_musics", "tests"],
+  "typeCheckingMode": "standard",
+  "include": ["code_musics", "main.py"],
   "exclude": ["output", "sketches"],
+  "reportImportCycles": false,
   "reportMissingImports": true,
   "reportMissingModuleSource": false
 }

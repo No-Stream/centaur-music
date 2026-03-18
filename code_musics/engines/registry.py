@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 
-from code_musics.engines import additive
-from code_musics.engines import filtered_stack
-from code_musics.engines import fm
-from code_musics.engines import noise_perc
+from code_musics.engines import additive, filtered_stack, fm, noise_perc
 
 EngineRenderer = Callable[..., np.ndarray]
 
@@ -84,7 +82,8 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
         "warm_pad": {
             "waveform": "saw",
             "n_harmonics": 14,
-            "cutoff_ratio": 6.0,
+            "cutoff_hz": 900.0,
+            "keytrack": 0.15,
             "filter_env_amount": 0.8,
             "filter_env_decay": 0.35,
             "attack": 0.4,
@@ -93,7 +92,8 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
         "reed_lead": {
             "waveform": "square",
             "n_harmonics": 10,
-            "cutoff_ratio": 7.0,
+            "cutoff_hz": 2_200.0,
+            "keytrack": 0.2,
             "resonance": 0.18,
             "filter_env_amount": 0.5,
             "filter_env_decay": 0.18,
@@ -103,7 +103,8 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
         "round_bass": {
             "waveform": "triangle",
             "n_harmonics": 9,
-            "cutoff_ratio": 4.0,
+            "cutoff_hz": 450.0,
+            "keytrack": 0.1,
             "resonance": 0.08,
             "attack": 0.01,
             "release": 0.3,

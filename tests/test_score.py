@@ -6,10 +6,18 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from code_musics import synth
 from code_musics.composition import line
+from code_musics.humanize import (
+    EnvelopeHumanizeSpec,
+    TimingHumanizeSpec,
+    TimingTarget,
+    build_timing_offsets,
+    resolve_envelope_params,
+)
 from code_musics.pitch_motion import PitchMotionSpec
 from code_musics.render import render_piece
-from code_musics.score import NoteEvent, Phrase, Score
+from code_musics.score import EffectSpec, NoteEvent, Phrase, Score
 
 
 def test_total_duration_is_derived_from_note_endpoints() -> None:
@@ -33,15 +41,41 @@ def test_phrase_and_direct_note_have_matching_timing() -> None:
     assert placed[0].amp == direct.amp
 
 
+def test_note_event_and_add_note_support_amp_db() -> None:
+    score = Score(f0=55.0)
+    note = NoteEvent(start=0.0, duration=1.0, partial=4.0, amp_db=-12.0)
+    placed = score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp_db=-12.0)
+
+    assert note.amp == pytest.approx(10 ** (-12.0 / 20.0))
+    assert note.amp_db == pytest.approx(-12.0)
+    assert placed.amp == pytest.approx(note.amp)
+
+
+def test_note_event_rejects_amp_and_amp_db_together() -> None:
+    with pytest.raises(ValueError, match="amp or amp_db"):
+        NoteEvent(start=0.0, duration=1.0, partial=4.0, amp=0.5, amp_db=-6.0)
+
+
 def test_phrase_transforms_do_not_mutate_original() -> None:
     phrase = Phrase.from_partials([4, 5, 6], note_dur=1.0, step=0.8, amp=0.5)
     original_partials = [event.partial for event in phrase.events]
 
-    transformed = phrase.transformed(start=10.0, partial_shift=2.0, amp_scale=0.5, reverse=True)
+    transformed = phrase.transformed(
+        start=10.0, partial_shift=2.0, amp_scale=0.5, reverse=True
+    )
 
     assert [event.partial for event in phrase.events] == original_partials
     assert [event.partial for event in transformed] == [6.0, 7.0, 8.0]
     assert transformed[0].start > 10.0
+
+
+def test_phrase_from_partials_supports_amp_db() -> None:
+    phrase = Phrase.from_partials([4, 5], note_dur=1.0, step=0.5, amp_db=-18.0)
+
+    assert [event.amp_db for event in phrase.events] == [-18.0, -18.0]
+    assert [event.amp for event in phrase.events] == pytest.approx(
+        [10 ** (-18.0 / 20.0)] * 2
+    )
 
 
 def test_phrase_transform_preserves_pitch_motion_through_reverse_and_scale() -> None:
@@ -74,6 +108,236 @@ def test_render_overlapping_voices_returns_audio() -> None:
     assert audio.ndim == 1
     assert len(audio) == int(1.5 * score.sample_rate)
     assert np.max(np.abs(audio)) > 0
+
+
+def test_chorus_promotes_mono_to_stereo() -> None:
+    signal = np.sin(np.linspace(0.0, 8.0 * np.pi, synth.SAMPLE_RATE, endpoint=False))
+
+    processed = synth.apply_effect_chain(
+        signal,
+        [EffectSpec("chorus", {"preset": "juno_subtle"})],
+    )
+
+    assert processed.ndim == 2
+    assert processed.shape[0] == 2
+    assert processed.shape[1] == signal.shape[0]
+    assert not np.allclose(processed[0], processed[1])
+
+
+def test_effect_presets_allow_explicit_overrides() -> None:
+    signal = np.sin(np.linspace(0.0, 4.0 * np.pi, synth.SAMPLE_RATE, endpoint=False))
+
+    default_processed = synth.apply_effect_chain(
+        signal,
+        [EffectSpec("chorus", {"preset": "juno_subtle"})],
+    )
+    overridden_processed = synth.apply_effect_chain(
+        signal,
+        [EffectSpec("chorus", {"preset": "juno_subtle", "mix": 0.12})],
+    )
+
+    default_delta = np.mean(np.abs(default_processed - np.stack([signal, signal])))
+    overridden_delta = np.mean(
+        np.abs(overridden_processed - np.stack([signal, signal]))
+    )
+    assert overridden_delta < default_delta
+
+
+def test_score_renders_stereo_when_voice_effects_promote_signal() -> None:
+    score = Score(f0=55.0)
+    score.add_voice(
+        "lead",
+        effects=[EffectSpec("chorus", {"preset": "juno_subtle"})],
+    )
+    score.add_note("lead", start=0.0, duration=1.0, partial=4, amp=0.25)
+    score.add_note("plain", start=0.25, duration=0.8, partial=5, amp=0.2)
+
+    audio = score.render()
+
+    assert audio.ndim == 2
+    assert audio.shape[0] == 2
+    assert audio.shape[1] == int(1.05 * score.sample_rate)
+
+
+def test_voice_pan_promotes_mono_voice_to_stereo() -> None:
+    score = Score(f0=55.0)
+    score.add_voice("lead", pan=0.25)
+    score.add_note("lead", start=0.0, duration=1.0, partial=4, amp=0.25)
+
+    audio = score.render()
+
+    assert audio.ndim == 2
+    assert audio.shape[0] == 2
+    assert not np.allclose(audio[0], audio[1])
+
+
+def test_add_voice_rejects_out_of_range_pan() -> None:
+    score = Score(f0=55.0)
+
+    with pytest.raises(ValueError, match="pan must be between -1 and 1"):
+        score.add_voice("lead", pan=1.5)
+
+
+def test_timing_humanize_offsets_are_deterministic_for_seed() -> None:
+    targets = [
+        TimingTarget(key=("a", 0), voice_name="a", start=0.0),
+        TimingTarget(key=("a", 1), voice_name="a", start=2.0),
+        TimingTarget(key=("b", 0), voice_name="b", start=0.0),
+        TimingTarget(key=("b", 1), voice_name="b", start=2.0),
+    ]
+    humanize = TimingHumanizeSpec(seed=17, micro_jitter_ms=0.0)
+
+    first = build_timing_offsets(targets=targets, humanize=humanize, total_dur=4.0)
+    second = build_timing_offsets(targets=targets, humanize=humanize, total_dur=4.0)
+
+    assert first == second
+
+
+def test_timing_humanize_keeps_voices_strongly_correlated() -> None:
+    targets: list[TimingTarget] = []
+    for voice_name in ("lead", "alto", "bass"):
+        for index, start in enumerate(np.linspace(0.0, 18.0, 10)):
+            targets.append(
+                TimingTarget(
+                    key=(voice_name, index), voice_name=voice_name, start=float(start)
+                )
+            )
+
+    humanize = TimingHumanizeSpec(
+        seed=9,
+        ensemble_amount_ms=24.0,
+        follow_strength=0.94,
+        voice_spread_ms=4.0,
+        micro_jitter_ms=0.0,
+        chord_spread_ms=0.0,
+    )
+    offsets = build_timing_offsets(targets=targets, humanize=humanize, total_dur=20.0)
+
+    lead = np.asarray([offsets[("lead", index)] for index in range(10)])
+    alto = np.asarray([offsets[("alto", index)] for index in range(10)])
+    bass = np.asarray([offsets[("bass", index)] for index in range(10)])
+
+    assert np.corrcoef(lead, alto)[0, 1] > 0.9
+    assert np.corrcoef(lead, bass)[0, 1] > 0.9
+
+
+def test_timing_humanize_chord_spread_is_small_secondary_layer() -> None:
+    targets = [
+        TimingTarget(key=("lead", 0), voice_name="lead", start=3.0),
+        TimingTarget(key=("alto", 0), voice_name="alto", start=3.0),
+        TimingTarget(key=("bass", 0), voice_name="bass", start=3.0),
+    ]
+    humanize = TimingHumanizeSpec(
+        seed=3,
+        ensemble_amount_ms=0.0,
+        voice_spread_ms=0.0,
+        micro_jitter_ms=0.0,
+        chord_spread_ms=6.0,
+    )
+    offsets = build_timing_offsets(targets=targets, humanize=humanize, total_dur=6.0)
+    offset_values = np.asarray(list(offsets.values()))
+
+    assert np.isclose(offset_values.mean(), 0.0)
+    assert np.max(offset_values) == pytest.approx(0.003)
+    assert np.min(offset_values) == pytest.approx(-0.003)
+
+
+def test_envelope_humanize_varies_adsr_within_valid_ranges() -> None:
+    humanize = EnvelopeHumanizeSpec(preset="breathing_pad", seed=21)
+
+    early = resolve_envelope_params(
+        base_attack=0.4,
+        base_decay=0.2,
+        base_sustain_level=0.7,
+        base_release=1.0,
+        note_start=1.0,
+        humanize=humanize,
+        total_dur=20.0,
+        voice_name="pad",
+    )
+    late = resolve_envelope_params(
+        base_attack=0.4,
+        base_decay=0.2,
+        base_sustain_level=0.7,
+        base_release=1.0,
+        note_start=15.0,
+        humanize=humanize,
+        total_dur=20.0,
+        voice_name="pad",
+    )
+
+    assert early != late
+    for attack, decay, sustain_level, release in (early, late):
+        assert attack >= 0.0
+        assert decay >= 0.0
+        assert 0.0 <= sustain_level <= 1.0
+        assert release >= 0.0
+
+
+def test_score_render_is_deterministic_with_same_humanize_seed() -> None:
+    base_timing = TimingHumanizeSpec(seed=12)
+    first = Score(f0=55.0, timing_humanize=base_timing)
+    second = Score(f0=55.0, timing_humanize=base_timing)
+    for score in (first, second):
+        score.add_voice("lead", envelope_humanize=EnvelopeHumanizeSpec(seed=5))
+        score.add_voice("alto")
+        score.add_note("lead", start=0.0, duration=0.8, partial=4.0, amp=0.2)
+        score.add_note("lead", start=1.0, duration=0.8, partial=5.0, amp=0.2)
+        score.add_note("alto", start=0.0, duration=1.2, partial=3.0, amp=0.15)
+        score.add_note("alto", start=1.0, duration=1.0, partial=4.0, amp=0.15)
+
+    assert np.allclose(first.render(), second.render())
+
+
+def test_score_render_changes_with_different_humanize_seed() -> None:
+    neutral = Score(f0=55.0, timing_humanize=TimingHumanizeSpec(seed=10))
+    changed = Score(f0=55.0, timing_humanize=TimingHumanizeSpec(seed=11))
+    for score in (neutral, changed):
+        score.add_voice("lead")
+        score.add_note("lead", start=0.0, duration=0.8, partial=4.0, amp=0.2)
+        score.add_note("lead", start=1.0, duration=0.8, partial=5.0, amp=0.2)
+        score.add_note("lead", start=2.0, duration=0.8, partial=6.0, amp=0.2)
+
+    neutral_audio = neutral.render()
+    changed_audio = changed.render()
+
+    if neutral_audio.shape != changed_audio.shape:
+        assert neutral_audio.shape != changed_audio.shape
+        return
+
+    assert not np.allclose(neutral_audio, changed_audio)
+
+
+def test_stereo_effect_chain_continues_into_saturation() -> None:
+    signal = np.sin(np.linspace(0.0, 6.0 * np.pi, synth.SAMPLE_RATE, endpoint=False))
+
+    processed = synth.apply_effect_chain(
+        signal,
+        [
+            EffectSpec("chorus", {"preset": "juno_subtle"}),
+            EffectSpec("saturation", {"preset": "tube_warm"}),
+        ],
+    )
+
+    assert processed.ndim == 2
+    assert processed.shape[0] == 2
+    assert np.isfinite(processed).all()
+
+
+def test_saturation_gain_compensation_keeps_level_reasonable() -> None:
+    signal = 0.35 * np.sin(
+        np.linspace(0.0, 10.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
+    )
+
+    processed = synth.apply_effect_chain(
+        signal,
+        [EffectSpec("saturation", {"preset": "neve_gentle"})],
+    )
+
+    input_peak = np.max(np.abs(signal))
+    output_peak = np.max(np.abs(processed))
+    assert output_peak > 0
+    assert np.isclose(output_peak, input_peak, rtol=0.25)
 
 
 def test_plot_piano_roll_writes_file(tmp_path: Path) -> None:

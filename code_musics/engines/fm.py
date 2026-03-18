@@ -51,7 +51,9 @@ def render(
 
     if freq_trajectory is None:
         carrier_phase_increment = np.full(
-            n_samples, 2.0 * np.pi * freq * carrier_ratio / sample_rate, dtype=np.float64
+            n_samples,
+            2.0 * np.pi * freq * carrier_ratio / sample_rate,
+            dtype=np.float64,
         )
         mod_phase_increment = np.full(
             n_samples, 2.0 * np.pi * freq * mod_ratio / sample_rate, dtype=np.float64
@@ -62,7 +64,9 @@ def render(
             raise ValueError("freq_trajectory must be one-dimensional")
         if freq_trajectory.size != n_samples:
             raise ValueError("freq_trajectory length must match note duration")
-        carrier_phase_increment = 2.0 * np.pi * freq_trajectory * carrier_ratio / sample_rate
+        carrier_phase_increment = (
+            2.0 * np.pi * freq_trajectory * carrier_ratio / sample_rate
+        )
         mod_phase_increment = 2.0 * np.pi * freq_trajectory * mod_ratio / sample_rate
 
     signal = np.empty(n_samples, dtype=np.float64)

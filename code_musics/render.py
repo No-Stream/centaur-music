@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 import matplotlib.pyplot as plt
 
 from code_musics.analysis import save_analysis_artifacts
 from code_musics.pieces import PIECES
-from code_musics.synth import SAMPLE_RATE
-from code_musics.synth import write_wav
+from code_musics.synth import SAMPLE_RATE, write_wav
 
 logger = logging.getLogger(__name__)
 

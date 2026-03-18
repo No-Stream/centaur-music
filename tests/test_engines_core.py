@@ -70,8 +70,12 @@ def test_score_can_mix_multiple_engine_types() -> None:
     score = Score(f0=110.0)
     score.add_voice("pad", synth_defaults={"engine": "additive", "preset": "soft_pad"})
     score.add_voice("bell", synth_defaults={"engine": "fm", "preset": "bell"})
-    score.add_voice("bass", synth_defaults={"engine": "filtered_stack", "preset": "round_bass"})
-    score.add_voice("perc", synth_defaults={"engine": "noise_perc", "preset": "snareish"})
+    score.add_voice(
+        "bass", synth_defaults={"engine": "filtered_stack", "preset": "round_bass"}
+    )
+    score.add_voice(
+        "perc", synth_defaults={"engine": "noise_perc", "preset": "snareish"}
+    )
 
     score.add_note("pad", start=0.0, duration=0.8, partial=2.0, amp=0.2)
     score.add_note("bell", start=0.15, duration=0.5, partial=3.0, amp=0.2)
@@ -88,11 +92,15 @@ def test_score_can_mix_multiple_engine_types() -> None:
 
 def test_pitch_motion_renders_through_additive_engine() -> None:
     static_score = Score(f0=110.0)
-    static_score.add_voice("lead", synth_defaults={"engine": "additive", "preset": "bright_pluck"})
+    static_score.add_voice(
+        "lead", synth_defaults={"engine": "additive", "preset": "bright_pluck"}
+    )
     static_score.add_note("lead", start=0.0, duration=0.4, partial=2.0, amp=0.25)
 
     motion_score = Score(f0=110.0)
-    motion_score.add_voice("lead", synth_defaults={"engine": "additive", "preset": "bright_pluck"})
+    motion_score.add_voice(
+        "lead", synth_defaults={"engine": "additive", "preset": "bright_pluck"}
+    )
     motion_score.add_note(
         "lead",
         start=0.0,
@@ -112,11 +120,15 @@ def test_pitch_motion_renders_through_additive_engine() -> None:
 
 def test_pitch_motion_renders_through_fm_engine() -> None:
     static_score = Score(f0=110.0)
-    static_score.add_voice("lead", synth_defaults={"engine": "fm", "preset": "glass_lead"})
+    static_score.add_voice(
+        "lead", synth_defaults={"engine": "fm", "preset": "glass_lead"}
+    )
     static_score.add_note("lead", start=0.0, duration=0.5, partial=2.0, amp=0.25)
 
     motion_score = Score(f0=110.0)
-    motion_score.add_voice("lead", synth_defaults={"engine": "fm", "preset": "glass_lead"})
+    motion_score.add_voice(
+        "lead", synth_defaults={"engine": "fm", "preset": "glass_lead"}
+    )
     motion_score.add_note(
         "lead",
         start=0.0,
@@ -136,11 +148,15 @@ def test_pitch_motion_renders_through_fm_engine() -> None:
 
 def test_pitch_motion_renders_through_filtered_stack_engine() -> None:
     static_score = Score(f0=110.0)
-    static_score.add_voice("bass", synth_defaults={"engine": "filtered_stack", "preset": "round_bass"})
+    static_score.add_voice(
+        "bass", synth_defaults={"engine": "filtered_stack", "preset": "round_bass"}
+    )
     static_score.add_note("bass", start=0.0, duration=0.45, partial=1.0, amp=0.25)
 
     motion_score = Score(f0=110.0)
-    motion_score.add_voice("bass", synth_defaults={"engine": "filtered_stack", "preset": "round_bass"})
+    motion_score.add_voice(
+        "bass", synth_defaults={"engine": "filtered_stack", "preset": "round_bass"}
+    )
     motion_score.add_note(
         "bass",
         start=0.0,
@@ -174,14 +190,24 @@ def test_attack_and_release_scales_change_rendered_envelope() -> None:
     neutral = Score(f0=110.0)
     neutral.add_voice(
         "lead",
-        synth_defaults={"engine": "additive", "preset": "bright_pluck", "attack": 0.08, "release": 0.15},
+        synth_defaults={
+            "engine": "additive",
+            "preset": "bright_pluck",
+            "attack": 0.08,
+            "release": 0.15,
+        },
     )
     neutral.add_note("lead", start=0.0, duration=0.5, partial=2.0, amp=0.25)
 
     shaped = Score(f0=110.0)
     shaped.add_voice(
         "lead",
-        synth_defaults={"engine": "additive", "preset": "bright_pluck", "attack": 0.08, "release": 0.15},
+        synth_defaults={
+            "engine": "additive",
+            "preset": "bright_pluck",
+            "attack": 0.08,
+            "release": 0.15,
+        },
     )
     shaped.add_note(
         "lead",

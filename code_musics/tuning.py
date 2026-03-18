@@ -26,12 +26,12 @@ def edo_scale(f0: float, divisions: int, octaves: int = 1) -> list[float]:
     return [f0 * (2 ** (step / divisions)) for step in range(n_steps + 1)]
 
 
-def otonal(f0: float, partials: list[float]) -> list[float]:
+def otonal(f0: float, partials: list[float] | list[int]) -> list[float]:
     """Resolve harmonic partials over a fundamental."""
     return [f0 * partial for partial in partials]
 
 
-def utonal(f0: float, partials: list[float]) -> list[float]:
+def utonal(f0: float, partials: list[float] | list[int]) -> list[float]:
     """Resolve subharmonic partials over a fundamental."""
     return [f0 / partial for partial in partials]
 

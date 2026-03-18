@@ -26,7 +26,9 @@ def render(
 
     waveform = str(params.get("waveform", "saw")).lower()
     n_harmonics = int(params.get("n_harmonics", 12))
-    cutoff_ratio = float(params.get("cutoff_ratio", 8.0))
+    cutoff_hz = float(params.get("cutoff_hz", 1_800.0))
+    keytrack = float(params.get("keytrack", 0.0))
+    reference_freq_hz = float(params.get("reference_freq_hz", 220.0))
     resonance = float(params.get("resonance", 0.0))
     filter_env_amount = float(params.get("filter_env_amount", 0.0))
     filter_env_decay = float(params.get("filter_env_decay", 0.18))
@@ -34,8 +36,10 @@ def render(
 
     if n_harmonics < 1:
         raise ValueError("n_harmonics must be at least 1")
-    if cutoff_ratio <= 0:
-        raise ValueError("cutoff_ratio must be positive")
+    if cutoff_hz <= 0:
+        raise ValueError("cutoff_hz must be positive")
+    if reference_freq_hz <= 0:
+        raise ValueError("reference_freq_hz must be positive")
     if filter_env_decay <= 0:
         raise ValueError("filter_env_decay must be positive")
     if not 0.0 < pulse_width < 1.0:
@@ -61,7 +65,10 @@ def render(
 
     cutoff_envelope = 1.0 + filter_env_amount * np.exp(-t / filter_env_decay)
     cutoff_envelope = np.maximum(cutoff_envelope, 0.05)
-    cutoff_hz = freq_profile * cutoff_ratio * cutoff_envelope
+    keytracked_cutoff_hz = cutoff_hz * np.power(
+        freq_profile / reference_freq_hz, keytrack
+    )
+    cutoff_hz_profile = keytracked_cutoff_hz * cutoff_envelope
     nyquist_hz = sample_rate / 2.0
 
     for harmonic_index in range(1, n_harmonics + 1):
@@ -74,13 +81,17 @@ def render(
             continue
 
         lowpass_weight = 1.0 / (
-            1.0 + np.power(partial_freq_profile / np.maximum(cutoff_hz, 1e-9), 8.0)
+            1.0
+            + np.power(partial_freq_profile / np.maximum(cutoff_hz_profile, 1e-9), 8.0)
         )
 
         if resonance != 0.0:
-            resonance_width = np.maximum(cutoff_hz * 0.18, 1.0)
+            resonance_width = np.maximum(cutoff_hz_profile * 0.18, 1.0)
             resonance_bump = np.exp(
-                -0.5 * np.square((partial_freq_profile - cutoff_hz) / resonance_width)
+                -0.5
+                * np.square(
+                    (partial_freq_profile - cutoff_hz_profile) / resonance_width
+                )
             )
             lowpass_weight = lowpass_weight + resonance * resonance_bump
 
@@ -114,9 +125,7 @@ def _waveform_weight(waveform: str, harmonic_index: int, pulse_width: float) -> 
             return 0.0
         return 1.0 / harmonic_index
     if waveform == "pulse":
-        return np.sin(np.pi * harmonic_index * pulse_width) / (
-            np.pi * harmonic_index
-        )
+        return np.sin(np.pi * harmonic_index * pulse_width) / (np.pi * harmonic_index)
     if waveform == "triangle":
         if harmonic_index % 2 == 0:
             return 0.0
@@ -132,6 +141,8 @@ def _nyquist_fade(partial_freq_profile: np.ndarray, nyquist_hz: float) -> np.nda
     if fade_start_hz >= nyquist_hz:
         return (partial_freq_profile < nyquist_hz).astype(np.float64)
 
-    fade_progress = (partial_freq_profile - fade_start_hz) / (nyquist_hz - fade_start_hz)
+    fade_progress = (partial_freq_profile - fade_start_hz) / (
+        nyquist_hz - fade_start_hz
+    )
     fade = 1.0 - np.clip(fade_progress, 0.0, 1.0)
     return np.square(fade)
