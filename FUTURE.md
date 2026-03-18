@@ -145,6 +145,10 @@ Useful directions:
 
 ## Lower priority
 
+### Sound Quality improvements
+- aliasing, rendering at higher res and downsampling, etc. - esp for subtractive  
+- improved warmth via plugins or otherwise
+
 ### Parametric piece generation
 
 Generate families of pieces from parameters like root, prime limit, or chosen

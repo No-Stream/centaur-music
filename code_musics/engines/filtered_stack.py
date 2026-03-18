@@ -6,6 +6,8 @@ from typing import Any
 
 import numpy as np
 
+_NYQUIST_FADE_START = 0.85
+
 
 def render(
     *,
@@ -54,15 +56,17 @@ def render(
     else:
         freq_profile = np.full(n_samples, freq, dtype=np.float64)
 
-    signal = np.zeros(n_samples)
+    signal = np.zeros(n_samples, dtype=np.float64)
+    power_estimate = 0.0
 
     cutoff_envelope = 1.0 + filter_env_amount * np.exp(-t / filter_env_decay)
     cutoff_envelope = np.maximum(cutoff_envelope, 0.05)
     cutoff_hz = freq_profile * cutoff_ratio * cutoff_envelope
+    nyquist_hz = sample_rate / 2.0
 
     for harmonic_index in range(1, n_harmonics + 1):
         partial_freq_profile = freq_profile * harmonic_index
-        if np.max(partial_freq_profile) >= sample_rate / 2:
+        if np.min(partial_freq_profile) >= nyquist_hz:
             break
 
         harmonic_weight = _waveform_weight(waveform, harmonic_index, pulse_width)
@@ -80,6 +84,10 @@ def render(
             )
             lowpass_weight = lowpass_weight + resonance * resonance_bump
 
+        anti_alias_weight = _nyquist_fade(partial_freq_profile, nyquist_hz)
+        if np.max(anti_alias_weight) <= 0.0:
+            continue
+
         phase = np.cumsum(
             np.concatenate(
                 [
@@ -88,11 +96,12 @@ def render(
                 ]
             )
         )
-        signal += harmonic_weight * lowpass_weight * np.sin(phase)
+        partial_weight = harmonic_weight * lowpass_weight * anti_alias_weight
+        signal += partial_weight * np.sin(phase)
+        power_estimate += 0.5 * float(np.mean(np.square(partial_weight)))
 
-    peak = np.max(np.abs(signal))
-    if peak > 0:
-        signal = signal / peak
+    if power_estimate > 0.0:
+        signal = signal / np.sqrt(power_estimate)
     return amp * signal
 
 
@@ -115,3 +124,14 @@ def _waveform_weight(waveform: str, harmonic_index: int, pulse_width: float) -> 
         return sign / (harmonic_index * harmonic_index)
 
     raise ValueError(f"Unsupported waveform: {waveform}")
+
+
+def _nyquist_fade(partial_freq_profile: np.ndarray, nyquist_hz: float) -> np.ndarray:
+    """Gently fade the top of the spectrum before Nyquist to avoid brittle edges."""
+    fade_start_hz = nyquist_hz * _NYQUIST_FADE_START
+    if fade_start_hz >= nyquist_hz:
+        return (partial_freq_profile < nyquist_hz).astype(np.float64)
+
+    fade_progress = (partial_freq_profile - fade_start_hz) / (nyquist_hz - fade_start_hz)
+    fade = 1.0 - np.clip(fade_progress, 0.0, 1.0)
+    return np.square(fade)

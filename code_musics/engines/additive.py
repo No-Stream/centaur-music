@@ -6,6 +6,8 @@ from typing import Any
 
 import numpy as np
 
+_NYQUIST_FADE_START = 0.85
+
 
 def render(
     *,
@@ -79,13 +81,14 @@ def _render_partial_bank(
     brightness_tilt: float,
     odd_even_balance: float,
 ) -> np.ndarray:
-    signal = np.zeros_like(t)
+    signal = np.zeros_like(t, dtype=np.float64)
     total_amp = 0.0
     clamped_odd_even_balance = max(-0.95, min(0.95, odd_even_balance))
+    nyquist_hz = sample_rate / 2.0
 
     for harmonic_index in range(1, n_harmonics + 1):
         partial_freq = freq * harmonic_index
-        if partial_freq >= sample_rate / 2:
+        if partial_freq >= nyquist_hz:
             break
 
         partial_amp = harmonic_rolloff ** (harmonic_index - 1)
@@ -100,8 +103,13 @@ def _render_partial_bank(
         if partial_amp <= 0:
             continue
 
-        signal += partial_amp * np.sin(2.0 * np.pi * partial_freq * t)
-        total_amp += partial_amp
+        anti_alias_weight = _nyquist_fade_scalar(partial_freq, nyquist_hz)
+        if anti_alias_weight <= 0.0:
+            continue
+
+        weighted_partial_amp = partial_amp * anti_alias_weight
+        signal += weighted_partial_amp * np.sin(2.0 * np.pi * partial_freq * t)
+        total_amp += weighted_partial_amp
 
     if total_amp == 0.0:
         return signal
@@ -125,10 +133,11 @@ def _render_partial_bank_with_trajectory(
     signal = np.zeros_like(freq_trajectory, dtype=np.float64)
     total_amp = 0.0
     clamped_odd_even_balance = max(-0.95, min(0.95, odd_even_balance))
+    nyquist_hz = sample_rate / 2.0
 
     for harmonic_index in range(1, n_harmonics + 1):
         partial_freq_trajectory = freq_trajectory * harmonic_index
-        if np.max(partial_freq_trajectory) >= sample_rate / 2:
+        if np.min(partial_freq_trajectory) >= nyquist_hz:
             break
 
         partial_amp = harmonic_rolloff ** (harmonic_index - 1)
@@ -143,6 +152,10 @@ def _render_partial_bank_with_trajectory(
         if partial_amp <= 0:
             continue
 
+        anti_alias_weight = _nyquist_fade(partial_freq_trajectory, nyquist_hz)
+        if np.max(anti_alias_weight) <= 0.0:
+            continue
+
         phase = np.cumsum(
             np.concatenate(
                 [
@@ -151,8 +164,9 @@ def _render_partial_bank_with_trajectory(
                 ]
             )
         )
-        signal += partial_amp * np.sin(phase)
-        total_amp += partial_amp
+        partial_weight = partial_amp * anti_alias_weight
+        signal += partial_weight * np.sin(phase)
+        total_amp += float(np.mean(partial_weight))
 
     if total_amp == 0.0:
         return signal
@@ -169,3 +183,17 @@ def _unison_detunes(unison_voices: int, detune_cents: float) -> list[float]:
         ((voice_index / (unison_voices - 1)) - 0.5) * detune_cents
         for voice_index in range(unison_voices)
     ]
+
+
+def _nyquist_fade(freq_profile: np.ndarray, nyquist_hz: float) -> np.ndarray:
+    fade_start_hz = nyquist_hz * _NYQUIST_FADE_START
+    if fade_start_hz >= nyquist_hz:
+        return (freq_profile < nyquist_hz).astype(np.float64)
+
+    fade_progress = (freq_profile - fade_start_hz) / (nyquist_hz - fade_start_hz)
+    fade = 1.0 - np.clip(fade_progress, 0.0, 1.0)
+    return np.square(fade)
+
+
+def _nyquist_fade_scalar(freq_hz: float, nyquist_hz: float) -> float:
+    return float(_nyquist_fade(np.array([freq_hz], dtype=np.float64), nyquist_hz)[0])

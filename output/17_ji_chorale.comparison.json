@@ -1,0 +1,76 @@
+{
+  "after_manifest_path": "output/17_ji_chorale.analysis.json",
+  "before_manifest_path": "/tmp/17_ji_chorale.before.analysis.json",
+  "mix_delta": {
+    "dominant_frequency_hz": 145.34912109375,
+    "low_high_balance_db": -1.4005009898075542,
+    "peak_dbfs": 0.43416965653659245,
+    "rms_dbfs": -0.9388356116836576,
+    "spectral_centroid_hz": 159.64053911027457,
+    "spectral_tilt_db_per_octave": -9.5973812344255,
+    "tilt_error_db_per_octave": -9.5973812344255
+  },
+  "score_delta": {
+    "max_attack_density_hz": 0.0,
+    "mean_attack_density_hz": 0.0,
+    "mean_simultaneous_notes": -0.28387096774193576,
+    "note_count": 0.0,
+    "notes_per_second": 0.0,
+    "peak_simultaneous_notes": 0.0
+  },
+  "voice_delta": {
+    "alto": {
+      "low_high_balance_db": -4.0883410869938075,
+      "peak_dbfs": -0.33982943720844716,
+      "rms_dbfs": -3.485706417876731,
+      "spectral_centroid_hz": -26.923611760694143,
+      "spectral_tilt_db_per_octave": 1.4801294808553713
+    },
+    "bass": {
+      "low_high_balance_db": -7.343956830012644,
+      "peak_dbfs": -2.2965356155744585,
+      "rms_dbfs": -3.9756918730111437,
+      "spectral_centroid_hz": 45.18665978198959,
+      "spectral_tilt_db_per_octave": -0.5320741893090215
+    },
+    "counter": {
+      "low_high_balance_db": -2.6734641669853687,
+      "peak_dbfs": -1.2025416591206586,
+      "rms_dbfs": -2.008007877626536,
+      "spectral_centroid_hz": 136.62387013409216,
+      "spectral_tilt_db_per_octave": 1.9927898049087673
+    },
+    "lead": {
+      "low_high_balance_db": 13.027978300296176,
+      "peak_dbfs": 0.8819170939512819,
+      "rms_dbfs": -0.5720066779609567,
+      "spectral_centroid_hz": 230.3106752211346,
+      "spectral_tilt_db_per_octave": -11.369860164515078
+    },
+    "tenor": {
+      "low_high_balance_db": -5.353429091690614,
+      "peak_dbfs": -1.9973189182114872,
+      "rms_dbfs": -4.091126183473417,
+      "spectral_centroid_hz": -22.241436244154784,
+      "spectral_tilt_db_per_octave": 0.5400688858212916
+    }
+  },
+  "warning_changes": {
+    "mix_after": [
+      "low band dominates high band strongly",
+      "spectrum falls off faster than the reference tilt"
+    ],
+    "mix_before": [
+      "low band dominates high band strongly",
+      "spectrum falls off faster than the reference tilt"
+    ],
+    "score_after": [
+      "dense texture across much of the score",
+      "high attack density may feel busy or percussive"
+    ],
+    "score_before": [
+      "dense texture across much of the score",
+      "high attack density may feel busy or percussive"
+    ]
+  }
+}

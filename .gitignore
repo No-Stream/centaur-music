@@ -1,0 +1,20 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Music output - too large
+*.wav
+
+# Local configs
+.claude
+
+# Image diagnostics - useful but a bit large
+*.png
+*.vst*

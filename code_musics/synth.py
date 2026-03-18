@@ -1,6 +1,7 @@
 """Core synthesis utilities."""
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,27 @@ from scipy.io import wavfile
 logger: logging.Logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 44100
+
+# ---------------------------------------------------------------------------
+# Chow Tape Model VST3 (lazy-loaded singleton)
+# ---------------------------------------------------------------------------
+
+_CHOW_TAPE_PATH = Path.home() / ".vst3" / "CHOWTapeModel.vst3"
+_chow_tape_plugin: Any = None
+
+
+def _get_chow_tape() -> Any:
+    global _chow_tape_plugin
+    if _chow_tape_plugin is None:
+        os.environ.setdefault("DISPLAY", "")  # avoid X11 crash in headless env
+        from pedalboard import load_plugin  # noqa: PLC0415
+        if not _CHOW_TAPE_PATH.exists():
+            raise FileNotFoundError(
+                f"Chow Tape Model VST3 not found at {_CHOW_TAPE_PATH}. "
+                "Install from https://github.com/jatinchowdhury18/AnalogTapeModel/releases"
+            )
+        _chow_tape_plugin = load_plugin(str(_CHOW_TAPE_PATH))
+    return _chow_tape_plugin
 
 
 def tone(
@@ -163,6 +185,37 @@ def apply_reverb(
     return board(signal.astype(np.float32), SAMPLE_RATE)
 
 
+def apply_chow_tape(
+    signal: np.ndarray,
+    drive: float = 0.5,
+    saturation: float = 0.5,
+    bias: float = 0.5,
+    mix: float = 70.0,
+) -> np.ndarray:
+    """Apply Chow Tape Model tape saturation to a mono signal, returning mono.
+
+    Parameters
+    ----------
+    drive:      Tape drive amount (0–1). Higher = more harmonic saturation.
+    saturation: Tape saturation density (0–1).
+    bias:       Tape bias (0–1). Controls harmonic balance / even vs. odd character.
+    mix:        Dry/wet blend in percent (0–100).
+    """
+    plugin = _get_chow_tape()
+    plugin.tape_drive = drive
+    plugin.tape_saturation = saturation
+    plugin.tape_bias = bias
+    plugin.dry_wet = mix
+    plugin.wow_flutter_on_off = False  # pure saturation, no wow/flutter
+    plugin.loss_on_off = False         # pure saturation, no tape loss colouring
+
+    # Plugin expects stereo input; duplicate mono channel, then average back down
+    stereo_in = np.stack([signal.astype(np.float32), signal.astype(np.float32)])
+    stereo_out = plugin(stereo_in, SAMPLE_RATE)
+    mono_out = stereo_out.mean(axis=0) if stereo_out.ndim == 2 else stereo_out
+    return mono_out.astype(np.float64)
+
+
 def apply_bricasti(
     signal: np.ndarray,
     ir_name: str,
@@ -181,6 +234,43 @@ def apply_bricasti(
     return np.stack([left[:n_samples], right[:n_samples]])
 
 
+def apply_saturation(
+    signal: np.ndarray,
+    drive: float = 2.0,
+    mix: float = 0.3,
+    harmonics: float = 0.15,
+) -> np.ndarray:
+    """Apply tanh soft-clip saturation with subtle harmonic enrichment.
+
+    Args:
+        signal: Mono input signal.
+        drive: Saturation amount — higher values clip more aggressively (default 2.0).
+        mix: Wet/dry blend, 0.0 = fully dry, 1.0 = fully wet (default 0.3).
+        harmonics: Additive 2nd/3rd harmonic boost on the wet path, 0.0–1.0 (default 0.15).
+
+    Returns:
+        Mono ndarray with the same peak level as the input.
+    """
+    input_peak = np.max(np.abs(signal))
+
+    clipped = np.tanh(drive * signal)
+
+    # Additive harmonic enrichment: 2nd harmonic (even) adds warmth/body,
+    # 3rd harmonic (odd) adds brightness. Both are derived from the clipped signal.
+    second_harmonic = np.tanh(drive * signal * 2.0) * 0.5  # octave, half amplitude
+    third_harmonic = np.tanh(drive * signal * 3.0) / 3.0   # fifth+octave, third amplitude
+    wet = clipped + harmonics * (second_harmonic + third_harmonic)
+
+    blended = mix * wet + (1.0 - mix) * signal
+
+    # Preserve input loudness so saturation doesn't change perceived level.
+    output_peak = np.max(np.abs(blended))
+    if output_peak > 0 and input_peak > 0:
+        blended = blended * (input_peak / output_peak)
+
+    return blended
+
+
 def apply_effect_chain(
     signal: np.ndarray,
     effects: list[Any],
@@ -193,8 +283,12 @@ def apply_effect_chain(
             processed = apply_delay(processed, **params)
         elif effect.kind == "reverb":
             processed = apply_reverb(processed, **params)
+        elif effect.kind == "chow_tape":
+            processed = apply_chow_tape(processed, **params)
         elif effect.kind == "bricasti":
             processed = apply_bricasti(processed, **params)
+        elif effect.kind == "saturation":
+            processed = apply_saturation(processed, **params)
         else:
             raise ValueError(f"Unsupported effect kind: {effect.kind}")
     return processed

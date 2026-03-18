@@ -1,0 +1,242 @@
+{
+  "manifest_path": "output/17_ji_chorale.analysis.json",
+  "mix": {
+    "artifacts": {
+      "band_energy": "output/17_ji_chorale.mix_band_energy.png",
+      "spectrogram": "output/17_ji_chorale.mix_spectrogram.png",
+      "spectrum": "output/17_ji_chorale.mix_spectrum.png"
+    },
+    "summary": {
+      "band_energy_db": {
+        "air": -59.49156126558678,
+        "bass": 18.075164670250807,
+        "high": -34.97809498294621,
+        "low_mid": 17.510465514681652,
+        "mid": -3.8931576332800075,
+        "sub": -19.054786083337675
+      },
+      "dominant_frequency_hz": 328.38134765625,
+      "duration_seconds": 154.5,
+      "low_high_balance_db": 53.05325965319702,
+      "peak_dbfs": -1.848751269396133,
+      "reference_tilt_db_per_octave": -3.0,
+      "rms_dbfs": -15.136453934175883,
+      "spectral_centroid_hz": 940.9699162687933,
+      "spectral_tilt_db_per_octave": -13.812127243600957,
+      "tilt_error_db_per_octave": -10.812127243600957,
+      "warnings": [
+        "low band dominates high band strongly",
+        "spectrum falls off faster than the reference tilt"
+      ]
+    }
+  },
+  "reference_tilt_db_per_octave": -3.0,
+  "score": {
+    "artifacts": {
+      "density": "output/17_ji_chorale.score_density.png"
+    },
+    "summary": {
+      "frequency_range_hz": [
+        91.66666666666667,
+        880.0
+      ],
+      "max_attack_density_hz": 6.0,
+      "mean_attack_density_hz": 1.2838709677419355,
+      "mean_simultaneous_notes": 5.32258064516129,
+      "note_count": 199,
+      "notes_per_second": 1.2880258899676376,
+      "partial_range": null,
+      "peak_simultaneous_notes": 11,
+      "total_duration_seconds": 154.5,
+      "voice_count": 5,
+      "voice_summaries": {
+        "alto": {
+          "attack_rate_hz": 0.1423948220064725,
+          "max_frequency_hz": 550.0,
+          "mean_frequency_hz": 276.58333333333337,
+          "mean_note_duration_seconds": 7.572727272727272,
+          "min_frequency_hz": 183.33333333333334,
+          "note_count": 22
+        },
+        "bass": {
+          "attack_rate_hz": 0.1423948220064725,
+          "max_frequency_hz": 183.33333333333334,
+          "mean_frequency_hz": 139.79166666666666,
+          "mean_note_duration_seconds": 7.304545454545456,
+          "min_frequency_hz": 91.66666666666667,
+          "note_count": 22
+        },
+        "counter": {
+          "attack_rate_hz": 0.22653721682847897,
+          "max_frequency_hz": 412.5,
+          "mean_frequency_hz": 322.45714285714286,
+          "mean_note_duration_seconds": 2.7102857142857144,
+          "min_frequency_hz": 275.0,
+          "note_count": 35
+        },
+        "lead": {
+          "attack_rate_hz": 0.6407766990291263,
+          "max_frequency_hz": 880.0,
+          "mean_frequency_hz": 442.6666666666667,
+          "mean_note_duration_seconds": 1.4343434343434343,
+          "min_frequency_hz": 264.0,
+          "note_count": 99
+        },
+        "tenor": {
+          "attack_rate_hz": 0.13592233009708737,
+          "max_frequency_hz": 220.0,
+          "mean_frequency_hz": 193.72222222222223,
+          "mean_note_duration_seconds": 7.533333333333334,
+          "min_frequency_hz": 146.66666666666666,
+          "note_count": 21
+        }
+      },
+      "warnings": [
+        "dense texture across much of the score",
+        "high attack density may feel busy or percussive"
+      ]
+    }
+  },
+  "voices": {
+    "alto": {
+      "artifacts": {
+        "spectrum": "output/17_ji_chorale.voice_alto_spectrum.png"
+      },
+      "summary": {
+        "band_energy_db": {
+          "air": -151.1223441952791,
+          "bass": -30.93895653585232,
+          "high": -119.04920493053862,
+          "low_mid": -10.586005895590484,
+          "mid": -41.43481349015741,
+          "sub": -69.61804415478333
+        },
+        "dominant_frequency_hz": 274.54833984375,
+        "duration_seconds": 149.0,
+        "low_high_balance_db": 88.1102483946863,
+        "peak_dbfs": -9.836830829034906,
+        "reference_tilt_db_per_octave": -3.0,
+        "rms_dbfs": -26.673621967164788,
+        "spectral_centroid_hz": 530.6835437225577,
+        "spectral_tilt_db_per_octave": -24.322189561376,
+        "tilt_error_db_per_octave": -21.322189561376,
+        "warnings": [
+          "low band dominates high band strongly",
+          "spectrum falls off faster than the reference tilt"
+        ]
+      }
+    },
+    "bass": {
+      "artifacts": {
+        "spectrum": "output/17_ji_chorale.voice_bass_spectrum.png"
+      },
+      "summary": {
+        "band_energy_db": {
+          "air": -135.3034268085335,
+          "bass": 8.205657083706882,
+          "high": -115.12449152316333,
+          "low_mid": -4.573428756018295,
+          "mid": -60.28439844080279,
+          "sub": -32.5272958169996
+        },
+        "dominant_frequency_hz": 183.0322265625,
+        "duration_seconds": 154.5,
+        "low_high_balance_db": 123.33014860687021,
+        "peak_dbfs": -7.1946212476769675,
+        "reference_tilt_db_per_octave": -3.0,
+        "rms_dbfs": -16.905399402543036,
+        "spectral_centroid_hz": 234.58011257454137,
+        "spectral_tilt_db_per_octave": -19.173935391811717,
+        "tilt_error_db_per_octave": -16.173935391811717,
+        "warnings": [
+          "low band dominates high band strongly",
+          "spectrum falls off faster than the reference tilt"
+        ]
+      }
+    },
+    "counter": {
+      "artifacts": {
+        "spectrum": "output/17_ji_chorale.voice_counter_spectrum.png"
+      },
+      "summary": {
+        "band_energy_db": {
+          "air": -116.3762770748872,
+          "bass": -38.94676294209777,
+          "high": -83.6704390969921,
+          "low_mid": -0.42812141499806206,
+          "mid": -29.06932128119754,
+          "sub": -51.47306760890562
+        },
+        "dominant_frequency_hz": 328.38134765625,
+        "duration_seconds": 150.06,
+        "low_high_balance_db": 44.72367615489433,
+        "peak_dbfs": -10.79495963691214,
+        "reference_tilt_db_per_octave": -3.0,
+        "rms_dbfs": -20.895689254225957,
+        "spectral_centroid_hz": 825.3117889303576,
+        "spectral_tilt_db_per_octave": -19.812158067753693,
+        "tilt_error_db_per_octave": -16.812158067753693,
+        "warnings": [
+          "low band dominates high band strongly",
+          "spectrum falls off faster than the reference tilt"
+        ]
+      }
+    },
+    "lead": {
+      "artifacts": {
+        "spectrum": "output/17_ji_chorale.voice_lead_spectrum.png"
+      },
+      "summary": {
+        "band_energy_db": {
+          "air": -56.277152864436914,
+          "bass": -15.988934239261472,
+          "high": -31.825924749833483,
+          "low_mid": 14.523214420976577,
+          "mid": -3.7506757240712547,
+          "sub": -17.813686629759943
+        },
+        "dominant_frequency_hz": 441.4306640625,
+        "duration_seconds": 150.0,
+        "low_high_balance_db": 15.836990510572011,
+        "peak_dbfs": -4.717068476681799,
+        "reference_tilt_db_per_octave": -3.0,
+        "rms_dbfs": -13.940699985346388,
+        "spectral_centroid_hz": 1367.2040648086995,
+        "spectral_tilt_db_per_octave": -12.379709289938848,
+        "tilt_error_db_per_octave": -9.379709289938848,
+        "warnings": [
+          "mix leans warm and low-forward",
+          "spectrum falls off faster than the reference tilt"
+        ]
+      }
+    },
+    "tenor": {
+      "artifacts": {
+        "spectrum": "output/17_ji_chorale.voice_tenor_spectrum.png"
+      },
+      "summary": {
+        "band_energy_db": {
+          "air": -146.0198394924246,
+          "bass": -7.504788479029822,
+          "high": -124.02095426375264,
+          "low_mid": -6.153996057452276,
+          "mid": -58.440530432535674,
+          "sub": -53.91469755730805
+        },
+        "dominant_frequency_hz": 220.71533203125,
+        "duration_seconds": 149.0,
+        "low_high_balance_db": 116.51616578472282,
+        "peak_dbfs": -11.383685689078074,
+        "reference_tilt_db_per_octave": -3.0,
+        "rms_dbfs": -26.09225580115369,
+        "spectral_centroid_hz": 359.4441822822017,
+        "spectral_tilt_db_per_octave": -20.781099958684692,
+        "tilt_error_db_per_octave": -17.781099958684692,
+        "warnings": [
+          "low band dominates high band strongly",
+          "spectrum falls off faster than the reference tilt"
+        ]
+      }
+    }
+  }
+}

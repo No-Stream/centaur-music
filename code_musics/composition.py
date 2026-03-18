@@ -19,6 +19,7 @@ __all__ = [
     "staccato",
     "with_accent_pattern",
     "with_gate",
+    "with_synth_ramp",
     "with_tail_breath",
 ]
 
@@ -190,6 +191,39 @@ def with_tail_breath(phrase: Phrase, tail_breath: float) -> Phrase:
             synth=dict(last_event.synth) if last_event.synth is not None else None,
         )
     )
+    return Phrase(events=tuple(events))
+
+
+def with_synth_ramp(
+    phrase: Phrase,
+    *,
+    start: dict[str, float],
+    end: dict[str, float],
+) -> Phrase:
+    """Interpolate synth parameters across successive phrase events."""
+    if not phrase.events:
+        return phrase
+    if not start or not end:
+        raise ValueError("start and end synth ramps must not be empty")
+    if set(start) != set(end):
+        raise ValueError("start and end synth ramps must use the same parameter keys")
+
+    if len(phrase.events) == 1:
+        fractions = (0.0,)
+    else:
+        fractions = tuple(
+            index / (len(phrase.events) - 1)
+            for index in range(len(phrase.events))
+        )
+
+    events: list[NoteEvent] = []
+    for event, fraction in zip(phrase.events, fractions, strict=True):
+        note_synth = dict(event.synth or {})
+        for key in start:
+            start_value = float(start[key])
+            end_value = float(end[key])
+            note_synth[key] = start_value + ((end_value - start_value) * fraction)
+        events.append(replace(event, synth=note_synth))
     return Phrase(events=tuple(events))
 
 

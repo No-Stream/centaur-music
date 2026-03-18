@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import math
 
+from code_musics.composition import line, with_synth_ramp
 from code_musics.pieces.septimal import PieceDefinition
 from code_musics.score import EffectSpec, Score
 
@@ -68,40 +69,41 @@ def build_ji_chorale_score() -> Score:
     score = Score(
         f0=f0,
         master_effects=[
-            EffectSpec("delay",   {"delay_seconds": 0.32, "feedback": 0.20, "mix": 0.14}),
+            EffectSpec("delay",   {"delay_seconds": 0.28, "feedback": 0.16, "mix": 0.10}),
             # Bricasti "Large & Dark" hall — warm, long, dark character; outputs stereo
-            EffectSpec("bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.40}),
+            EffectSpec("bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.30}),
         ],
     )
 
-    # Bass: filtered_stack square — warm organ-pipe body; most reverberant for drone depth
+    # Bass: filtered_stack square — still warm, but a little more filtered-envelope
+    # motion and less long tail so the harmony can breathe.
     score.add_voice(
         "bass",
         synth_defaults={
             "engine": "filtered_stack",
             "waveform": "square",
-            "n_harmonics": 10,
-            "cutoff_ratio": 3.0,
-            "resonance": 0.06,
-            "filter_env_amount": 0.25,
-            "filter_env_decay": 1.0,
-            "attack": 0.42,
-            "decay": 0.22,
-            "sustain_level": 0.76,
-            "release": 2.2,
+            "n_harmonics": 8,
+            "cutoff_ratio": 4.2,
+            "resonance": 0.10,
+            "filter_env_amount": 0.55,
+            "filter_env_decay": 0.70,
+            "attack": 0.22,
+            "decay": 0.18,
+            "sustain_level": 0.60,
+            "release": 0.90,
         },
     )
-    # Tenor/alto: additive with gentle unison chorus
+    # Tenor/alto: slightly less legato mass so the bed supports rather than blankets.
     chord_defaults: dict = {
-        "harmonic_rolloff": 0.55,
+        "harmonic_rolloff": 0.48,
         "n_harmonics": 6,
-        "brightness_tilt": -0.12,
+        "brightness_tilt": 0.02,
         "unison_voices": 2,
-        "detune_cents": 3.0,
-        "attack": 0.42,
-        "decay": 0.22,
-        "sustain_level": 0.76,
-        "release": 1.8,
+        "detune_cents": 2.0,
+        "attack": 0.22,
+        "decay": 0.18,
+        "sustain_level": 0.56,
+        "release": 0.70,
     }
     score.add_voice("tenor", synth_defaults=dict(chord_defaults))
     score.add_voice("alto",  synth_defaults=dict(chord_defaults))
@@ -111,26 +113,31 @@ def build_ji_chorale_score() -> Score:
         synth_defaults={
             "engine": "filtered_stack",
             "preset": "reed_lead",
-            "attack": 0.10,
-            "decay": 0.15,
-            "sustain_level": 0.70,
-            "release": 1.0,
+            "cutoff_ratio": 8.0,
+            "resonance": 0.10,
+            "filter_env_amount": 0.95,
+            "attack": 0.03,
+            "decay": 0.12,
+            "sustain_level": 0.52,
+            "release": 0.30,
         },
     )
-    # Lead: FM with octave modulator — gentle mod_index for warmth without harshness
+    # Lead: filtered saw-like voice with gentle filter motion; clearer and less
+    # overtly synthetic than the brighter FM pass.
     score.add_voice(
         "lead",
         synth_defaults={
-            "engine": "fm",
-            "carrier_ratio": 1.0,
-            "mod_ratio": 2.0,
-            "mod_index": 0.7,
-            "index_decay": 0.20,
-            "index_sustain": 0.25,
-            "attack": 0.05,
-            "decay": 0.12,
-            "sustain_level": 0.72,
-            "release": 0.52,
+            "engine": "filtered_stack",
+            "waveform": "saw",
+            "n_harmonics": 11,
+            "cutoff_ratio": 7.5,
+            "resonance": 0.10,
+            "filter_env_amount": 0.55,
+            "filter_env_decay": 0.90,
+            "attack": 0.085,
+            "decay": 1.25,
+            "sustain_level": 0.48,
+            "release": 0.32,
         },
     )
 
@@ -139,7 +146,7 @@ def build_ji_chorale_score() -> Score:
     score.add_note("tenor", start=2.0, duration=10.0, freq=A3,  amp=0.15)
 
     # ── A section (12–54 s): 7-bar vi–iv alternation ────────────────────────
-    a_note_dur = 7.5  # slight bleed into next chord
+    a_note_dur = 6.9
     a_chords: list[tuple[float, float, float, float]] = [
         (12.0, Fs3, A3, Cs4),  # vi  F# minor  bar 1
         (18.0, D3,  F3, A3 ),  # iv  D minor   bar 2
@@ -150,36 +157,36 @@ def build_ji_chorale_score() -> Score:
         (48.0, Fs3, A3, Cs4),  # vi             bar 7
     ]
     for start, b, t, a in a_chords:
-        score.add_note("bass",  start=start, duration=a_note_dur, freq=b, amp=0.34)
-        score.add_note("tenor", start=start, duration=a_note_dur, freq=t, amp=0.28)
-        score.add_note("alto",  start=start, duration=a_note_dur, freq=a, amp=0.24)
+        score.add_note("bass",  start=start, duration=a_note_dur, freq=b, amp=0.25)
+        score.add_note("tenor", start=start, duration=a_note_dur, freq=t, amp=0.21)
+        score.add_note("alto",  start=start, duration=a_note_dur, freq=a, amp=0.18)
 
     # ── B section (54–75 s): I–V–I in A major ───────────────────────────────
-    b_note_dur = 8.0
+    b_note_dur = 7.2
     b_chords: list[tuple[float, float, float, float]] = [
         (54.0, A2,  E3,  Cs4),  # I   A major
         (61.0, E3,  Gs3, B3 ),  # V   E major (pure 5-limit)
         (68.0, A2,  E3,  Cs4),  # I   A major
     ]
     for start, b, t, a in b_chords:
-        score.add_note("bass",  start=start, duration=b_note_dur, freq=b, amp=0.30)
-        score.add_note("tenor", start=start, duration=b_note_dur, freq=t, amp=0.24)
-        score.add_note("alto",  start=start, duration=b_note_dur, freq=a, amp=0.20)
+        score.add_note("bass",  start=start, duration=b_note_dur, freq=b, amp=0.23)
+        score.add_note("tenor", start=start, duration=b_note_dur, freq=t, amp=0.20)
+        score.add_note("alto",  start=start, duration=b_note_dur, freq=a, amp=0.17)
 
     # ── Development (75–99 s): F#m7 → Bm → V ───────────────────────────────
-    dev_note_dur = 9.0
+    dev_note_dur = 8.1
     dev_chords: list[tuple[float, float, float, float]] = [
         (75.0, Fs2, A3,  Cs4),  # F#m7 (counter plays E4 = 7th)
         (83.0, B2,  D3,  Fs3),  # Bm
         (91.0, E3,  Gs3, B3 ),  # V — leads back to A
     ]
     for start, b, t, a in dev_chords:
-        score.add_note("bass",  start=start, duration=dev_note_dur, freq=b, amp=0.32)
-        score.add_note("tenor", start=start, duration=dev_note_dur, freq=t, amp=0.26)
-        score.add_note("alto",  start=start, duration=dev_note_dur, freq=a, amp=0.22)
+        score.add_note("bass",  start=start, duration=dev_note_dur, freq=b, amp=0.24)
+        score.add_note("tenor", start=start, duration=dev_note_dur, freq=t, amp=0.20)
+        score.add_note("alto",  start=start, duration=dev_note_dur, freq=a, amp=0.18)
 
     # ── Reprise (99–123 s): vi–I–vi–I ───────────────────────────────────────
-    rep_note_dur = 7.5
+    rep_note_dur = 6.8
     rep_chords: list[tuple[float, float, float, float]] = [
         (99.0,  Fs3, A3,  Cs4),  # vi
         (105.0, A2,  E3,  Cs4),  # I
@@ -187,34 +194,34 @@ def build_ji_chorale_score() -> Score:
         (117.0, A2,  E3,  Cs4),  # I
     ]
     for start, b, t, a in rep_chords:
-        score.add_note("bass",  start=start, duration=rep_note_dur, freq=b, amp=0.32)
-        score.add_note("tenor", start=start, duration=rep_note_dur, freq=t, amp=0.26)
-        score.add_note("alto",  start=start, duration=rep_note_dur, freq=a, amp=0.22)
+        score.add_note("bass",  start=start, duration=rep_note_dur, freq=b, amp=0.24)
+        score.add_note("tenor", start=start, duration=rep_note_dur, freq=t, amp=0.20)
+        score.add_note("alto",  start=start, duration=rep_note_dur, freq=a, amp=0.18)
 
     # ── Ending (123–150 s): wide vi → Dm7 → Amaj7 ───────────────────────────
     # Wide vi — F#2 sub-bass, A3, C#5 across 3 octaves
-    score.add_note("bass",  start=123.0, duration=9.2,  freq=Fs2, amp=0.36)
-    score.add_note("tenor", start=123.0, duration=9.2,  freq=A3,  amp=0.24)
-    score.add_note("alto",  start=123.0, duration=9.2,  freq=Cs5, amp=0.18)
+    score.add_note("bass",  start=123.0, duration=8.4,  freq=Fs2, amp=0.27)
+    score.add_note("tenor", start=123.0, duration=8.4,  freq=A3,  amp=0.20)
+    score.add_note("alto",  start=123.0, duration=8.4,  freq=Cs5, amp=0.21)
 
     # Dm7 — D / F / A / C4 (264 Hz — pure minor 7th, the spice)
-    score.add_note("bass",  start=131.0, duration=9.2,  freq=D3, amp=0.34)
-    score.add_note("tenor", start=131.0, duration=9.2,  freq=F3, amp=0.26)
-    score.add_note("alto",  start=131.0, duration=9.2,  freq=A3, amp=0.22)
-    score.add_note("alto",  start=131.0, duration=9.2,  freq=C4, amp=0.20)
+    score.add_note("bass",  start=131.0, duration=8.4,  freq=D3, amp=0.26)
+    score.add_note("tenor", start=131.0, duration=8.4,  freq=F3, amp=0.21)
+    score.add_note("alto",  start=131.0, duration=8.4,  freq=A3, amp=0.18)
+    score.add_note("alto",  start=131.0, duration=8.4,  freq=C4, amp=0.16)
 
     # Amaj7 — A2 / E3 / C#4 / G#4 (pure 15/8 above A) — unresolved
-    score.add_note("bass",  start=139.0, duration=11.0, freq=A2,  amp=0.30)
-    score.add_note("tenor", start=139.0, duration=11.0, freq=E3,  amp=0.24)
-    score.add_note("alto",  start=139.0, duration=11.0, freq=Cs4, amp=0.20)
-    score.add_note("alto",  start=139.0, duration=11.0, freq=Gs4, amp=0.18)
+    score.add_note("bass",  start=139.0, duration=10.0, freq=A2,  amp=0.23)
+    score.add_note("tenor", start=139.0, duration=10.0, freq=E3,  amp=0.19)
+    score.add_note("alto",  start=139.0, duration=10.0, freq=Cs4, amp=0.17)
+    score.add_note("alto",  start=139.0, duration=10.0, freq=Gs4, amp=0.17)
 
     # ── Counter voice (enters A section bar 3 = t=24) ────────────────────────
     # Moves in contrary motion to the lead; fills the inner voice above alto.
     def _add_counter(t_start: float, notes: list[tuple[float, float]]) -> None:
         t = t_start
         for freq, dur in notes:
-            score.add_note("counter", start=t, duration=dur * 1.12, freq=freq, amp=0.22)
+            score.add_note("counter", start=t, duration=dur * 1.02, freq=freq, amp=0.22)
             t += dur
 
     # A-section bars 3–7 (t=24–54)
@@ -239,7 +246,25 @@ def build_ji_chorale_score() -> Score:
     _add_counter(139.0, [(E4, 4.0), (Gs4, 4.0), (E4, 3.0)])  # Amaj7
 
     # ── Soprano lead — continuous from prologue pickup (t=8) ─────────────────
-    lead_notes: list[tuple[float, float]] = [
+    def _add_lead_phrase(
+        *,
+        start: float,
+        notes: list[tuple[float, float]],
+        synth_start: dict[str, float],
+        synth_end: dict[str, float],
+        amp: float,
+    ) -> None:
+        phrase = line(
+            tones=[freq for freq, _ in notes],
+            rhythm=[dur for _, dur in notes],
+            pitch_kind="freq",
+            amp=amp,
+            synth_defaults={"engine": "filtered_stack", "waveform": "saw"},
+        )
+        phrase = with_synth_ramp(phrase, start=synth_start, end=synth_end)
+        score.add_phrase("lead", phrase, start=start)
+
+    lead_prologue_and_a: list[tuple[float, float]] = [
         # Prologue pickup (8–12 s)
         (A4,  1.0), (Cs5, 1.0), (B4,  1.0), (A4,  1.0),
 
@@ -258,7 +283,9 @@ def build_ji_chorale_score() -> Score:
         (A4,  1.5), (F4,  1.0), (E4,  1.5), (D4,  1.5), (E4,  0.5),
         # A-section bar 7 vi (48–54 s)
         (Cs5, 2.5), (B4,  1.5), (A4,  1.5), (Gs4, 0.5),
+    ]
 
+    lead_b_and_development: list[tuple[float, float]] = [
         # B-section I (54–61 s)
         (E4,  1.5), (Cs5, 1.5), (A4,  2.0), (E4,  2.0),
         # B-section V (61–68 s)
@@ -272,7 +299,9 @@ def build_ji_chorale_score() -> Score:
         (D4,  1.0), (Fs4, 1.5), (A4,  2.0), (B4,  1.5), (A4,  2.0),
         # Development V (91–99 s)
         (Gs4, 2.0), (B4,  2.0), (Gs4, 1.5), (E4,  2.5),
+    ]
 
+    lead_reprise_and_ending: list[tuple[float, float]] = [
         # Reprise vi (99–105 s)
         (Cs5, 2.0), (B4,  1.5), (A4,  2.0), (Gs4, 0.5),
         # Reprise I (105–111 s) — tastefully major
@@ -290,10 +319,27 @@ def build_ji_chorale_score() -> Score:
         (Gs4, 2.0), (A4,  1.5), (Cs5, 2.5), (B4,  1.5), (A4,  3.5),
     ]
 
-    t = 8.0
-    for freq, dur in lead_notes:
-        score.add_note("lead", start=t, duration=dur, freq=freq, amp=0.28)
-        t += dur
+    _add_lead_phrase(
+        start=8.0,
+        notes=lead_prologue_and_a,
+        synth_start={"cutoff_ratio": 6.4, "filter_env_amount": 0.40, "release": 0.30},
+        synth_end={"cutoff_ratio": 6.9, "filter_env_amount": 0.46, "release": 0.28},
+        amp=0.29,
+    )
+    _add_lead_phrase(
+        start=54.0,
+        notes=lead_b_and_development,
+        synth_start={"cutoff_ratio": 7.3, "filter_env_amount": 0.50, "release": 0.26},
+        synth_end={"cutoff_ratio": 7.5, "filter_env_amount": 0.55, "release": 0.24},
+        amp=0.30,
+    )
+    _add_lead_phrase(
+        start=99.0,
+        notes=lead_reprise_and_ending,
+        synth_start={"cutoff_ratio": 7.0, "filter_env_amount": 0.50, "release": 0.26},
+        synth_end={"cutoff_ratio": 6.2, "filter_env_amount": 0.34, "release": 0.34},
+        amp=0.29,
+    )
 
     # Silence buffer — gives reverb and delay tails room to fully decay
     score.add_note("bass", start=154.0, duration=0.5, freq=A2, amp=0.001)

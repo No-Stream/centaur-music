@@ -7,7 +7,12 @@ from pathlib import Path
 
 import numpy as np
 
-from code_musics.analysis import analyze_audio, analyze_score, save_analysis_artifacts
+from code_musics.analysis import (
+    analyze_audio,
+    analyze_score,
+    compare_analysis_manifests,
+    save_analysis_artifacts,
+)
 from code_musics.score import Score
 
 
@@ -65,3 +70,104 @@ def test_save_analysis_artifacts_writes_manifest_and_plots(tmp_path: Path) -> No
     assert Path(saved_manifest["mix"]["artifacts"]["band_energy"]).exists()
     assert Path(saved_manifest["score"]["artifacts"]["density"]).exists()
     assert Path(saved_manifest["voices"]["bass"]["artifacts"]["spectrum"]).exists()
+
+
+def test_compare_analysis_manifests_reports_mix_and_score_deltas(tmp_path: Path) -> None:
+    before_manifest_path = tmp_path / "before.analysis.json"
+    after_manifest_path = tmp_path / "after.analysis.json"
+    comparison_path = tmp_path / "comparison.analysis.json"
+
+    before_manifest_path.write_text(
+        json.dumps(
+            {
+                "mix": {
+                    "summary": {
+                        "peak_dbfs": -4.0,
+                        "rms_dbfs": -18.0,
+                        "spectral_centroid_hz": 300.0,
+                        "dominant_frequency_hz": 110.0,
+                        "low_high_balance_db": 20.0,
+                        "spectral_tilt_db_per_octave": -8.0,
+                        "tilt_error_db_per_octave": -5.0,
+                        "warnings": ["dark"],
+                    }
+                },
+                "score": {
+                    "summary": {
+                        "note_count": 10,
+                        "notes_per_second": 1.0,
+                        "peak_simultaneous_notes": 4,
+                        "mean_simultaneous_notes": 3.0,
+                        "mean_attack_density_hz": 1.0,
+                        "max_attack_density_hz": 2.0,
+                        "warnings": ["dense"],
+                    }
+                },
+                "voices": {
+                    "lead": {
+                        "summary": {
+                            "peak_dbfs": -6.0,
+                            "rms_dbfs": -20.0,
+                            "spectral_centroid_hz": 500.0,
+                            "low_high_balance_db": 15.0,
+                            "spectral_tilt_db_per_octave": -7.0,
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    after_manifest_path.write_text(
+        json.dumps(
+            {
+                "mix": {
+                    "summary": {
+                        "peak_dbfs": -5.0,
+                        "rms_dbfs": -17.0,
+                        "spectral_centroid_hz": 420.0,
+                        "dominant_frequency_hz": 220.0,
+                        "low_high_balance_db": 14.0,
+                        "spectral_tilt_db_per_octave": -5.0,
+                        "tilt_error_db_per_octave": -2.0,
+                        "warnings": [],
+                    }
+                },
+                "score": {
+                    "summary": {
+                        "note_count": 10,
+                        "notes_per_second": 1.0,
+                        "peak_simultaneous_notes": 3,
+                        "mean_simultaneous_notes": 2.5,
+                        "mean_attack_density_hz": 1.0,
+                        "max_attack_density_hz": 2.0,
+                        "warnings": [],
+                    }
+                },
+                "voices": {
+                    "lead": {
+                        "summary": {
+                            "peak_dbfs": -7.0,
+                            "rms_dbfs": -19.0,
+                            "spectral_centroid_hz": 650.0,
+                            "low_high_balance_db": 10.0,
+                            "spectral_tilt_db_per_octave": -5.0,
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    comparison = compare_analysis_manifests(
+        before_manifest_path,
+        after_manifest_path,
+        output_path=comparison_path,
+    )
+
+    assert comparison["mix_delta"]["spectral_centroid_hz"] == 120.0
+    assert comparison["mix_delta"]["low_high_balance_db"] == -6.0
+    assert comparison["score_delta"]["peak_simultaneous_notes"] == -1.0
+    assert comparison["voice_delta"]["lead"]["spectral_centroid_hz"] == 150.0
+    assert comparison_path.exists()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -322,6 +323,77 @@ def save_analysis_artifacts(
     return manifest
 
 
+def compare_analysis_manifests(
+    before_manifest_path: str | Path,
+    after_manifest_path: str | Path,
+    *,
+    output_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Compare two analysis manifests and optionally save a delta report."""
+    before_manifest = json.loads(Path(before_manifest_path).read_text(encoding="utf-8"))
+    after_manifest = json.loads(Path(after_manifest_path).read_text(encoding="utf-8"))
+
+    comparison = {
+        "before_manifest_path": str(before_manifest_path),
+        "after_manifest_path": str(after_manifest_path),
+        "mix_delta": _compare_numeric_dicts(
+            before_manifest["mix"]["summary"],
+            after_manifest["mix"]["summary"],
+            keys=(
+                "peak_dbfs",
+                "rms_dbfs",
+                "spectral_centroid_hz",
+                "dominant_frequency_hz",
+                "low_high_balance_db",
+                "spectral_tilt_db_per_octave",
+                "tilt_error_db_per_octave",
+            ),
+        ),
+        "score_delta": _compare_numeric_dicts(
+            before_manifest.get("score", {}).get("summary", {}),
+            after_manifest.get("score", {}).get("summary", {}),
+            keys=(
+                "note_count",
+                "notes_per_second",
+                "peak_simultaneous_notes",
+                "mean_simultaneous_notes",
+                "mean_attack_density_hz",
+                "max_attack_density_hz",
+            ),
+        ),
+        "voice_delta": {},
+        "warning_changes": {
+            "mix_before": before_manifest["mix"]["summary"].get("warnings", []),
+            "mix_after": after_manifest["mix"]["summary"].get("warnings", []),
+            "score_before": before_manifest.get("score", {}).get("summary", {}).get("warnings", []),
+            "score_after": after_manifest.get("score", {}).get("summary", {}).get("warnings", []),
+        },
+    }
+
+    for voice_name in sorted(set(before_manifest.get("voices", {})) | set(after_manifest.get("voices", {}))):
+        before_voice = before_manifest.get("voices", {}).get(voice_name, {}).get("summary", {})
+        after_voice = after_manifest.get("voices", {}).get(voice_name, {}).get("summary", {})
+        comparison["voice_delta"][voice_name] = _compare_numeric_dicts(
+            before_voice,
+            after_voice,
+            keys=(
+                "peak_dbfs",
+                "rms_dbfs",
+                "spectral_centroid_hz",
+                "low_high_balance_db",
+                "spectral_tilt_db_per_octave",
+            ),
+        )
+
+    if output_path is not None:
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output_file.write_text(_json_dump(comparison), encoding="utf-8")
+        comparison["output_path"] = str(output_file)
+
+    return comparison
+
+
 def mean_note_duration_hz(score: Score) -> float:
     """Return the average note duration in seconds for warning heuristics."""
     durations = [
@@ -401,15 +473,23 @@ def _build_audio_warnings(
     spectral_centroid_hz: float,
 ) -> list[str]:
     warnings: list[str] = []
-    if low_high_balance_db >= 12.0:
+    if low_high_balance_db >= 18.0:
         warnings.append("low band dominates high band strongly")
-    elif low_high_balance_db <= -10.0:
+    elif low_high_balance_db >= 10.0:
+        warnings.append("mix leans warm and low-forward")
+    elif low_high_balance_db <= -14.0:
         warnings.append("high band dominates low band strongly")
+    elif low_high_balance_db <= -8.0:
+        warnings.append("mix leans bright relative to the low band")
 
-    if tilt_error_db_per_octave <= -2.5:
+    if tilt_error_db_per_octave <= -6.0:
         warnings.append("spectrum falls off faster than the reference tilt")
-    elif tilt_error_db_per_octave >= 2.5:
+    elif tilt_error_db_per_octave <= -3.0:
+        warnings.append("spectrum is warmer than most pop-style balances")
+    elif tilt_error_db_per_octave >= 6.0:
         warnings.append("spectrum is flatter or brighter than the reference tilt")
+    elif tilt_error_db_per_octave >= 3.0:
+        warnings.append("spectrum is somewhat brighter than the reference tilt")
 
     if spectral_centroid_hz < 180.0:
         warnings.append("very dark spectral centroid")
@@ -558,6 +638,17 @@ def _sanitize_name(name: str) -> str:
 
 
 def _json_dump(payload: dict[str, Any]) -> str:
-    import json
-
     return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def _compare_numeric_dicts(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    *,
+    keys: tuple[str, ...],
+) -> dict[str, float]:
+    deltas: dict[str, float] = {}
+    for key in keys:
+        if key in before and key in after:
+            deltas[key] = float(after[key]) - float(before[key])
+    return deltas

@@ -1,0 +1,9 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "include": ["code_musics", "tests"],
+  "exclude": ["output", "sketches"],
+  "reportMissingImports": true,
+  "reportMissingModuleSource": false
+}

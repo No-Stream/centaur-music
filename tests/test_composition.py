@@ -12,6 +12,7 @@ from code_musics.composition import (
     staccato,
     with_accent_pattern,
     with_tail_breath,
+    with_synth_ramp,
 )
 from code_musics.pitch_motion import PitchMotionSpec
 
@@ -109,6 +110,27 @@ def test_phrase_transforms_do_not_mutate_composition_helpers() -> None:
     assert [event.amp for event in phrase.events] == [0.3, 0.3, 0.3]
     assert [round(event.amp, 3) for event in accented.events] == [0.3, 0.21, 0.36]
     assert breathed.events[-1].duration == pytest.approx(accented.events[-1].duration - 0.2)
+
+
+def test_with_synth_ramp_interpolates_per_event_params() -> None:
+    phrase = line(
+        tones=[220.0, 247.5, 330.0],
+        rhythm=(0.5, 0.5, 0.5),
+        pitch_kind="freq",
+        synth_defaults={"engine": "fm", "mod_index": 0.6},
+    )
+
+    ramped = with_synth_ramp(
+        phrase,
+        start={"mod_index": 0.6, "release": 0.25},
+        end={"mod_index": 1.2, "release": 0.7},
+    )
+
+    assert ramped.events[0].synth is not None
+    assert ramped.events[0].synth["mod_index"] == pytest.approx(0.6)
+    assert ramped.events[1].synth["mod_index"] == pytest.approx(0.9)
+    assert ramped.events[2].synth["mod_index"] == pytest.approx(1.2)
+    assert ramped.events[2].synth["release"] == pytest.approx(0.7)
 
 
 def test_line_rejects_length_mismatch_and_non_positive_values() -> None:
