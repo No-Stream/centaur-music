@@ -15,7 +15,10 @@ from code_musics.humanize import (
     EnvelopeHumanizeSpec,
     TimingHumanizeSpec,
     TimingTarget,
+    VelocityHumanizeSpec,
+    VelocityTarget,
     build_timing_offsets,
+    build_velocity_multipliers,
     resolve_envelope_params,
 )
 from code_musics.pitch_motion import PitchMotionSpec, build_frequency_trajectory
@@ -37,6 +40,7 @@ class NoteEvent:
     duration: float
     amp: float | None = None
     amp_db: float | None = None
+    velocity: float = 1.0
     partial: float | None = None
     freq: float | None = None
     synth: dict[str, Any] | None = None
@@ -52,6 +56,8 @@ class NoteEvent:
             raise ValueError("exactly one of partial or freq must be provided")
         if self.amp is not None and self.amp_db is not None:
             raise ValueError("provide amp or amp_db, not both")
+        if self.velocity <= 0 or self.velocity > 2.0:
+            raise ValueError("velocity must be in the range (0, 2]")
 
         resolved_amp = self.amp
         if self.amp_db is not None:
@@ -79,6 +85,7 @@ class Phrase:
         step: float,
         amp: float | None = None,
         amp_db: float | None = None,
+        velocity: float = 1.0,
         synth_defaults: dict[str, Any] | None = None,
     ) -> Phrase:
         """Create a phrase from equally spaced harmonic partials."""
@@ -88,6 +95,7 @@ class Phrase:
                 duration=note_dur,
                 amp=amp,
                 amp_db=amp_db,
+                velocity=velocity,
                 partial=partial,
                 synth=dict(synth_defaults) if synth_defaults is not None else None,
             )
@@ -147,6 +155,36 @@ class Phrase:
         return transformed_events
 
 
+@dataclass(frozen=True)
+class VelocityParamMap:
+    """Linear velocity-to-parameter mapping."""
+
+    min_value: float
+    max_value: float
+    min_velocity: float = 0.75
+    max_velocity: float = 1.25
+
+    def __post_init__(self) -> None:
+        if self.min_velocity <= 0:
+            raise ValueError("min_velocity must be positive")
+        if self.max_velocity <= 0:
+            raise ValueError("max_velocity must be positive")
+        if self.min_velocity >= self.max_velocity:
+            raise ValueError("min_velocity must be < max_velocity")
+
+    def resolve(self, velocity: float) -> float:
+        bounded_velocity = float(
+            np.clip(velocity, self.min_velocity, self.max_velocity)
+        )
+        return float(
+            np.interp(
+                bounded_velocity,
+                [self.min_velocity, self.max_velocity],
+                [self.min_value, self.max_value],
+            )
+        )
+
+
 @dataclass
 class Voice:
     """Named collection of note events with shared synth/effect defaults."""
@@ -155,6 +193,12 @@ class Voice:
     synth_defaults: dict[str, Any] = field(default_factory=dict)
     effects: list[EffectSpec] = field(default_factory=list)
     envelope_humanize: EnvelopeHumanizeSpec | None = None
+    velocity_humanize: VelocityHumanizeSpec | None = field(
+        default_factory=VelocityHumanizeSpec
+    )
+    velocity_group: str | None = None
+    velocity_to_params: dict[str, VelocityParamMap] = field(default_factory=dict)
+    velocity_db_per_unit: float = 12.0
     pan: float = 0.0
     notes: list[NoteEvent] = field(default_factory=list)
 
@@ -176,16 +220,30 @@ class Score:
         synth_defaults: dict[str, Any] | None = None,
         effects: list[EffectSpec] | None = None,
         envelope_humanize: EnvelopeHumanizeSpec | None = None,
+        velocity_humanize: VelocityHumanizeSpec | None = None,
+        velocity_group: str | None = None,
+        velocity_to_params: dict[str, VelocityParamMap] | None = None,
+        velocity_db_per_unit: float = 12.0,
         pan: float = 0.0,
     ) -> Voice:
         """Add or replace a named voice definition."""
         if not -1.0 <= pan <= 1.0:
             raise ValueError("pan must be between -1 and 1")
+        if velocity_db_per_unit < 0:
+            raise ValueError("velocity_db_per_unit must be non-negative")
         voice = Voice(
             name=name,
             synth_defaults=dict(synth_defaults or {}),
             effects=list(effects or []),
             envelope_humanize=envelope_humanize,
+            velocity_humanize=(
+                VelocityHumanizeSpec()
+                if velocity_humanize is None
+                else velocity_humanize
+            ),
+            velocity_group=velocity_group,
+            velocity_to_params=dict(velocity_to_params or {}),
+            velocity_db_per_unit=velocity_db_per_unit,
             pan=pan,
         )
         self.voices[name] = voice
@@ -207,6 +265,7 @@ class Score:
         freq: float | None = None,
         amp: float | None = None,
         amp_db: float | None = None,
+        velocity: float = 1.0,
         pitch_motion: PitchMotionSpec | None = None,
         synth: dict[str, Any] | None = None,
         label: str | None = None,
@@ -219,6 +278,7 @@ class Score:
             freq=freq,
             amp=amp,
             amp_db=amp_db,
+            velocity=velocity,
             synth=dict(synth) if synth is not None else None,
             label=label,
             pitch_motion=pitch_motion,
@@ -279,11 +339,13 @@ class Score:
             humanize=self.timing_humanize,
             total_dur=self.total_dur,
         )
+        velocity_multipliers = self._build_velocity_multiplier_map()
         for voice_name, voice in self.voices.items():
             rendered_voice = self._render_voice(
                 voice_name=voice_name,
                 voice=voice,
                 timing_offsets=timing_offsets,
+                velocity_multipliers=velocity_multipliers,
             )
             if rendered_voice.size > 0:
                 rendered_stems[voice_name] = rendered_voice
@@ -331,6 +393,7 @@ class Score:
         voice_name: str,
         voice: Voice,
         timing_offsets: dict[tuple[str, int], float],
+        velocity_multipliers: dict[tuple[str, int], float],
     ) -> np.ndarray:
         voice_signals: list[np.ndarray] = []
         for note_index, note in enumerate(voice.notes):
@@ -338,6 +401,20 @@ class Score:
             if note.synth is not None:
                 synth_params.update(note.synth)
             synth_params = resolve_synth_params(synth_params)
+            resolved_velocity = float(
+                np.clip(
+                    note.velocity
+                    * velocity_multipliers.get((voice_name, note_index), 1.0),
+                    0.05,
+                    2.0,
+                )
+            )
+            synth_params.update(
+                {
+                    param_name: velocity_map.resolve(resolved_velocity)
+                    for param_name, velocity_map in voice.velocity_to_params.items()
+                }
+            )
             attack_scale = float(synth_params.pop("attack_scale", 1.0))
             release_scale = float(synth_params.pop("release_scale", 1.0))
             note_freq = self._resolve_freq(note)
@@ -358,7 +435,11 @@ class Score:
             note_signal = render_note_signal(
                 freq=note_freq,
                 duration=note.duration,
-                amp=_require_resolved_amp(note),
+                amp=self._resolve_note_amp(
+                    note=note,
+                    resolved_velocity=resolved_velocity,
+                    velocity_db_per_unit=voice.velocity_db_per_unit,
+                ),
                 sample_rate=self.sample_rate,
                 params=synth_params,
                 freq_trajectory=freq_trajectory,
@@ -408,12 +489,56 @@ class Score:
                 )
         return targets
 
+    def _velocity_targets(
+        self,
+    ) -> dict[VelocityHumanizeSpec | None, list[VelocityTarget]]:
+        targets: dict[VelocityHumanizeSpec | None, list[VelocityTarget]] = {}
+        for voice_name, voice in self.voices.items():
+            group_name = voice.velocity_group or voice_name
+            for note_index, note in enumerate(voice.notes):
+                targets.setdefault(voice.velocity_humanize, []).append(
+                    VelocityTarget(
+                        key=(voice_name, note_index),
+                        voice_name=voice_name,
+                        group_name=group_name,
+                        start=note.start,
+                    )
+                )
+        return targets
+
     def _resolve_freq(self, note: NoteEvent) -> float:
         if note.freq is not None:
             return note.freq
         if note.partial is None:
             raise ValueError("note must provide partial or freq")
         return self.f0 * note.partial
+
+    def _build_velocity_multiplier_map(self) -> dict[tuple[str, int], float]:
+        velocity_multipliers: dict[tuple[str, int], float] = {}
+        for humanize, targets in self._velocity_targets().items():
+            velocity_multipliers.update(
+                build_velocity_multipliers(
+                    targets=targets,
+                    humanize=humanize,
+                    total_dur=self.total_dur,
+                )
+            )
+        return velocity_multipliers
+
+    @staticmethod
+    def _resolve_note_amp(
+        *,
+        note: NoteEvent,
+        resolved_velocity: float,
+        velocity_db_per_unit: float,
+    ) -> float:
+        base_amp_db = (
+            note.amp_db
+            if note.amp_db is not None
+            else synth.amp_to_db(_require_resolved_amp(note))
+        )
+        velocity_db_offset = (resolved_velocity - 1.0) * velocity_db_per_unit
+        return synth.db_to_amp(base_amp_db + velocity_db_offset)
 
     @staticmethod
     def _stack_signals(signals: list[np.ndarray]) -> np.ndarray:

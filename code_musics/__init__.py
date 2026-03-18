@@ -8,8 +8,14 @@ from code_musics.composition import (
     line,
     staccato,
 )
-from code_musics.humanize import DriftSpec, EnvelopeHumanizeSpec, TimingHumanizeSpec
+from code_musics.humanize import (
+    DriftSpec,
+    EnvelopeHumanizeSpec,
+    TimingHumanizeSpec,
+    VelocityHumanizeSpec,
+)
 from code_musics.pitch_motion import PitchMotionSpec
+from code_musics.score import VelocityParamMap
 
 __all__ = [
     "ArticulationSpec",
@@ -18,6 +24,8 @@ __all__ = [
     "PitchMotionSpec",
     "RhythmCell",
     "TimingHumanizeSpec",
+    "VelocityHumanizeSpec",
+    "VelocityParamMap",
     "echo",
     "legato",
     "line",

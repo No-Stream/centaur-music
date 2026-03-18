@@ -12,9 +12,13 @@ from code_musics.humanize import (
     EnvelopeHumanizeSpec,
     TimingHumanizeSpec,
     TimingTarget,
+    VelocityHumanizeSpec,
+    VelocityTarget,
     build_timing_offsets,
+    build_velocity_multipliers,
     resolve_envelope_params,
 )
+from code_musics.pieces import PIECES
 from code_musics.pitch_motion import PitchMotionSpec
 from code_musics.render import render_piece
 from code_musics.score import EffectSpec, NoteEvent, Phrase, Score
@@ -51,6 +55,17 @@ def test_note_event_and_add_note_support_amp_db() -> None:
     assert placed.amp == pytest.approx(note.amp)
 
 
+def test_note_event_supports_velocity() -> None:
+    note = NoteEvent(start=0.0, duration=1.0, partial=4.0, velocity=0.85)
+
+    assert note.velocity == pytest.approx(0.85)
+
+
+def test_note_event_rejects_invalid_velocity() -> None:
+    with pytest.raises(ValueError, match="velocity"):
+        NoteEvent(start=0.0, duration=1.0, partial=4.0, velocity=0.0)
+
+
 def test_note_event_rejects_amp_and_amp_db_together() -> None:
     with pytest.raises(ValueError, match="amp or amp_db"):
         NoteEvent(start=0.0, duration=1.0, partial=4.0, amp=0.5, amp_db=-6.0)
@@ -78,6 +93,12 @@ def test_phrase_from_partials_supports_amp_db() -> None:
     )
 
 
+def test_phrase_from_partials_supports_velocity() -> None:
+    phrase = Phrase.from_partials([4, 5], note_dur=1.0, step=0.5, velocity=0.92)
+
+    assert [event.velocity for event in phrase.events] == pytest.approx([0.92, 0.92])
+
+
 def test_phrase_transform_preserves_pitch_motion_through_reverse_and_scale() -> None:
     phrase = line(
         tones=[4.0, 5.0],
@@ -95,6 +116,16 @@ def test_phrase_transform_preserves_pitch_motion_through_reverse_and_scale() -> 
     assert transformed[1].pitch_motion == phrase.events[1].pitch_motion
     assert transformed[0].duration == pytest.approx(1.0)
     assert transformed[1].duration == pytest.approx(2.0)
+
+
+def test_phrase_transform_preserves_velocity() -> None:
+    phrase = Phrase(
+        events=(NoteEvent(start=0.0, duration=1.0, partial=4.0, velocity=0.8),)
+    )
+
+    transformed = phrase.transformed(start=2.0, time_scale=1.5, reverse=True)
+
+    assert transformed[0].velocity == pytest.approx(0.8)
 
 
 def test_render_overlapping_voices_returns_audio() -> None:
@@ -274,6 +305,94 @@ def test_envelope_humanize_varies_adsr_within_valid_ranges() -> None:
         assert release >= 0.0
 
 
+def test_velocity_humanize_is_deterministic_for_seed() -> None:
+    targets = [
+        VelocityTarget(
+            key=("lead", 0), voice_name="lead", group_name="band", start=0.0
+        ),
+        VelocityTarget(
+            key=("lead", 1), voice_name="lead", group_name="band", start=2.0
+        ),
+        VelocityTarget(
+            key=("alto", 0), voice_name="alto", group_name="band", start=0.0
+        ),
+        VelocityTarget(
+            key=("alto", 1), voice_name="alto", group_name="band", start=2.0
+        ),
+    ]
+    humanize = VelocityHumanizeSpec(seed=17, note_jitter=0.0)
+
+    first = build_velocity_multipliers(
+        targets=targets,
+        humanize=humanize,
+        total_dur=4.0,
+    )
+    second = build_velocity_multipliers(
+        targets=targets,
+        humanize=humanize,
+        total_dur=4.0,
+    )
+
+    assert first == second
+
+
+def test_velocity_humanize_keeps_grouped_voices_strongly_correlated() -> None:
+    targets: list[VelocityTarget] = []
+    for voice_name in ("lead", "alto", "bass"):
+        for index, start in enumerate(np.linspace(0.0, 18.0, 10)):
+            targets.append(
+                VelocityTarget(
+                    key=(voice_name, index),
+                    voice_name=voice_name,
+                    group_name="ensemble",
+                    start=float(start),
+                )
+            )
+
+    humanize = VelocityHumanizeSpec(
+        seed=9,
+        group_amount=0.08,
+        follow_strength=0.95,
+        voice_spread=0.02,
+        note_jitter=0.0,
+        chord_spread=0.0,
+        min_multiplier=0.85,
+        max_multiplier=1.15,
+    )
+    multipliers = build_velocity_multipliers(
+        targets=targets,
+        humanize=humanize,
+        total_dur=20.0,
+    )
+
+    lead = np.asarray([multipliers[("lead", index)] for index in range(10)])
+    alto = np.asarray([multipliers[("alto", index)] for index in range(10)])
+    bass = np.asarray([multipliers[("bass", index)] for index in range(10)])
+
+    assert np.corrcoef(lead, alto)[0, 1] > 0.9
+    assert np.corrcoef(lead, bass)[0, 1] > 0.9
+
+
+def test_velocity_humanize_default_preset_stays_subtle() -> None:
+    targets = [
+        VelocityTarget(
+            key=("lead", index),
+            voice_name="lead",
+            group_name="lead",
+            start=float(index),
+        )
+        for index in range(8)
+    ]
+
+    multipliers = build_velocity_multipliers(
+        targets=targets,
+        humanize=VelocityHumanizeSpec(seed=4),
+        total_dur=8.0,
+    )
+
+    assert all(0.9 <= value <= 1.1 for value in multipliers.values())
+
+
 def test_score_render_is_deterministic_with_same_humanize_seed() -> None:
     base_timing = TimingHumanizeSpec(seed=12)
     first = Score(f0=55.0, timing_humanize=base_timing)
@@ -356,25 +475,70 @@ def test_render_piece_writes_audio_and_plot(tmp_path: Path) -> None:
     audio_path, plot_path = result
 
     assert audio_path.exists()
+    assert result.version_audio_path is not None
+    assert result.version_audio_path.exists()
+    assert "versions/chord_4567/" in str(result.version_audio_path)
     assert plot_path is not None
     assert plot_path.exists()
+    assert result.version_plot_path is not None
+    assert result.version_plot_path.exists()
+    assert result.analysis_manifest_path is not None
+    assert result.analysis_manifest_path.exists()
+    assert result.version_analysis_manifest_path is not None
+    assert result.version_analysis_manifest_path.exists()
+    assert result.render_metadata_path is not None
+    assert result.render_metadata_path.exists()
+    assert result.version_metadata_path is not None
+    assert result.version_metadata_path.exists()
+    manifest = json.loads(result.analysis_manifest_path.read_text(encoding="utf-8"))
+    assert Path(manifest["mix"]["artifacts"]["spectrum"]).exists()
+    render_metadata = json.loads(
+        result.render_metadata_path.read_text(encoding="utf-8")
+    )
+    assert render_metadata["piece_name"] == "chord_4567"
+    assert render_metadata["request"]["save_plot"] is True
+    assert render_metadata["score_summary"]["note_count"] == 4
+    assert render_metadata["score_summary"]["voice_names"] == ["chord"]
+    assert render_metadata["score_snapshot"]["voices"]["chord"]["notes"]
+    assert (
+        Path(render_metadata["artifacts"]["versioned"]["audio_path"])
+        == result.version_audio_path
+    )
+
+
+def test_render_piece_render_audio_surface_writes_audio_and_analysis(
+    tmp_path: Path,
+) -> None:
+    result = render_piece("interval_demo", output_dir=tmp_path, save_plot=True)
+    audio_path, plot_path = result
+
+    assert audio_path.exists()
+    assert result.version_audio_path is not None
+    assert result.version_audio_path.exists()
+    assert plot_path is None
     assert result.analysis_manifest_path is not None
     assert result.analysis_manifest_path.exists()
     manifest = json.loads(result.analysis_manifest_path.read_text(encoding="utf-8"))
     assert Path(manifest["mix"]["artifacts"]["spectrum"]).exists()
+    assert result.render_metadata_path is not None
+    assert result.render_metadata_path.exists()
+    render_metadata = json.loads(
+        result.render_metadata_path.read_text(encoding="utf-8")
+    )
+    assert render_metadata["piece_name"] == "interval_demo"
+    assert render_metadata["request"]["save_plot"] is True
+    assert "score_snapshot" not in render_metadata
+    assert (
+        Path(render_metadata["artifacts"]["latest"]["audio_path"]) == result.audio_path
+    )
 
 
-def test_new_piece_registry_entries_render(tmp_path: Path) -> None:
-    for piece_name in [
-        "harmonic_window",
-        "otonal_utonal_mirror",
-        "otonal_utonal_mirror_expanded",
-        "sketch_articulation_study",
-    ]:
-        result = render_piece(piece_name, output_dir=tmp_path, save_plot=True)
-        audio_path, plot_path = result
+def test_piece_registry_definitions_are_complete() -> None:
+    output_names = [definition.output_name for definition in PIECES.values()]
 
-        assert audio_path.exists()
-        assert plot_path is not None
-        assert plot_path.exists()
-        assert result.analysis_manifest_path is not None
+    assert output_names
+    assert len(output_names) == len(set(output_names))
+
+    for piece_name, definition in PIECES.items():
+        assert definition.name == piece_name
+        assert bool(definition.build_score) != bool(definition.render_audio)

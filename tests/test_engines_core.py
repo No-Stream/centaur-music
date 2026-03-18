@@ -6,8 +6,9 @@ import numpy as np
 import pytest
 
 from code_musics.engines.registry import render_note_signal, resolve_synth_params
+from code_musics.humanize import VelocityHumanizeSpec
 from code_musics.pitch_motion import PitchMotionSpec
-from code_musics.score import Score
+from code_musics.score import Score, VelocityParamMap
 
 
 def test_unknown_engine_raises_value_error() -> None:
@@ -224,3 +225,108 @@ def test_attack_and_release_scales_change_rendered_envelope() -> None:
     assert neutral_audio.shape == shaped_audio.shape
     assert np.all(np.isfinite(shaped_audio))
     assert not np.allclose(neutral_audio, shaped_audio)
+
+
+def test_velocity_changes_rendered_loudness_on_db_scale() -> None:
+    soft = Score(f0=110.0)
+    loud = Score(f0=110.0)
+    for score in (soft, loud):
+        score.add_voice(
+            "lead",
+            synth_defaults={"engine": "additive", "preset": "bright_pluck"},
+            velocity_humanize=None,
+        )
+
+    soft.add_note(
+        "lead",
+        start=0.0,
+        duration=0.5,
+        partial=2.0,
+        amp_db=-18.0,
+        velocity=0.8,
+    )
+    loud.add_note(
+        "lead",
+        start=0.0,
+        duration=0.5,
+        partial=2.0,
+        amp_db=-18.0,
+        velocity=1.2,
+    )
+
+    soft_audio = soft.render()
+    loud_audio = loud.render()
+
+    assert soft_audio.shape == loud_audio.shape
+    assert np.max(np.abs(loud_audio)) > np.max(np.abs(soft_audio))
+
+
+def test_velocity_can_modulate_synth_parameters() -> None:
+    dark = Score(f0=110.0)
+    bright = Score(f0=110.0)
+    for score in (dark, bright):
+        score.add_voice(
+            "lead",
+            synth_defaults={"engine": "filtered_stack", "preset": "round_bass"},
+            velocity_humanize=None,
+            velocity_to_params={
+                "cutoff_hz": VelocityParamMap(
+                    min_value=250.0,
+                    max_value=1_600.0,
+                    min_velocity=0.8,
+                    max_velocity=1.2,
+                )
+            },
+        )
+
+    dark.add_note("lead", start=0.0, duration=0.5, partial=1.0, amp=0.25, velocity=0.8)
+    bright.add_note(
+        "lead",
+        start=0.0,
+        duration=0.5,
+        partial=1.0,
+        amp=0.25,
+        velocity=1.2,
+    )
+
+    dark_audio = dark.render()
+    bright_audio = bright.render()
+
+    assert dark_audio.shape == bright_audio.shape
+    assert np.all(np.isfinite(bright_audio))
+    assert not np.allclose(dark_audio, bright_audio)
+
+
+def test_velocity_group_humanize_correlates_across_voices() -> None:
+    score = Score(f0=110.0)
+    shared_velocity = VelocityHumanizeSpec(
+        seed=5,
+        group_amount=0.08,
+        follow_strength=0.96,
+        voice_spread=0.02,
+        note_jitter=0.0,
+        chord_spread=0.0,
+        min_multiplier=0.85,
+        max_multiplier=1.15,
+    )
+    for voice_name in ("lead", "alto"):
+        score.add_voice(
+            voice_name,
+            synth_defaults={"engine": "additive", "preset": "bright_pluck"},
+            velocity_humanize=shared_velocity,
+            velocity_group="ensemble",
+        )
+        for index, start in enumerate(np.linspace(0.0, 7.0, 8)):
+            score.add_note(
+                voice_name,
+                start=float(start),
+                duration=0.4,
+                partial=(2.0 + index) if voice_name == "lead" else (3.0 + index),
+                amp=0.2,
+            )
+
+    multipliers = score._build_velocity_multiplier_map()
+    lead = np.asarray([multipliers[("lead", index)] for index in range(8)])
+    alto = np.asarray([multipliers[("alto", index)] for index in range(8)])
+
+    assert np.corrcoef(lead, alto)[0, 1] > 0.9

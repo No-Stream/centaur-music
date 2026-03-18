@@ -25,6 +25,13 @@ def db_to_amp(db: float) -> float:
     return float(10.0 ** (db / 20.0))
 
 
+def amp_to_db(amp: float) -> float:
+    """Convert a linear amplitude multiplier to decibels."""
+    if amp <= 0:
+        raise ValueError("amp must be positive")
+    return float(20.0 * np.log10(amp))
+
+
 # ---------------------------------------------------------------------------
 # Chow Tape Model VST3 (lazy-loaded singleton)
 # ---------------------------------------------------------------------------

@@ -77,6 +77,29 @@ _ENVELOPE_PRESETS: dict[str, dict[str, Any]] = {
     },
 }
 
+_VELOCITY_PRESETS: dict[str, dict[str, Any]] = {
+    "subtle_living": {
+        "drift": {"style": "smooth_noise", "rate_hz": 0.08, "smoothness": 0.82},
+        "group_amount": 0.045,
+        "follow_strength": 0.9,
+        "voice_spread": 0.015,
+        "note_jitter": 0.012,
+        "chord_spread": 0.01,
+        "min_multiplier": 0.9,
+        "max_multiplier": 1.1,
+    },
+    "breathing_ensemble": {
+        "drift": {"style": "random_walk", "rate_hz": 0.04, "smoothness": 0.86},
+        "group_amount": 0.075,
+        "follow_strength": 0.93,
+        "voice_spread": 0.022,
+        "note_jitter": 0.015,
+        "chord_spread": 0.014,
+        "min_multiplier": 0.84,
+        "max_multiplier": 1.16,
+    },
+}
+
 
 @dataclass(frozen=True)
 class DriftSpec:
@@ -102,6 +125,16 @@ class TimingTarget:
 
     key: tuple[str, int]
     voice_name: str
+    start: float
+
+
+@dataclass(frozen=True)
+class VelocityTarget:
+    """Resolved note target used during render-time velocity humanization."""
+
+    key: tuple[str, int]
+    voice_name: str
+    group_name: str
     start: float
 
 
@@ -226,6 +259,92 @@ class EnvelopeHumanizeSpec:
             raise ValueError("sustain_amount_pct must be non-negative")
         if release_amount_pct < 0:
             raise ValueError("release_amount_pct must be non-negative")
+
+
+@dataclass(frozen=True)
+class VelocityHumanizeSpec:
+    """Smooth note-velocity variation over score time."""
+
+    preset: str | None = None
+    drift: DriftSpec | None = None
+    group_amount: float | None = None
+    follow_strength: float | None = None
+    voice_spread: float | None = None
+    note_jitter: float | None = None
+    chord_spread: float | None = None
+    min_multiplier: float | None = None
+    max_multiplier: float | None = None
+    seed: int | None = None
+
+    def __post_init__(self) -> None:
+        preset_name = self.preset or "subtle_living"
+        if preset_name not in _VELOCITY_PRESETS:
+            raise ValueError(f"Unknown velocity humanize preset: {preset_name!r}")
+        preset = _VELOCITY_PRESETS[preset_name]
+
+        drift_value = self.drift or DriftSpec(**preset["drift"])
+        group_amount = float(
+            preset["group_amount"]
+            if self.group_amount is None
+            else self.group_amount
+        )
+        follow_strength = float(
+            preset["follow_strength"]
+            if self.follow_strength is None
+            else self.follow_strength
+        )
+        voice_spread = float(
+            preset["voice_spread"]
+            if self.voice_spread is None
+            else self.voice_spread
+        )
+        note_jitter = float(
+            preset["note_jitter"]
+            if self.note_jitter is None
+            else self.note_jitter
+        )
+        chord_spread = float(
+            preset["chord_spread"]
+            if self.chord_spread is None
+            else self.chord_spread
+        )
+        min_multiplier = float(
+            preset["min_multiplier"]
+            if self.min_multiplier is None
+            else self.min_multiplier
+        )
+        max_multiplier = float(
+            preset["max_multiplier"]
+            if self.max_multiplier is None
+            else self.max_multiplier
+        )
+
+        object.__setattr__(self, "preset", preset_name)
+        object.__setattr__(self, "drift", drift_value)
+        object.__setattr__(self, "group_amount", group_amount)
+        object.__setattr__(self, "follow_strength", follow_strength)
+        object.__setattr__(self, "voice_spread", voice_spread)
+        object.__setattr__(self, "note_jitter", note_jitter)
+        object.__setattr__(self, "chord_spread", chord_spread)
+        object.__setattr__(self, "min_multiplier", min_multiplier)
+        object.__setattr__(self, "max_multiplier", max_multiplier)
+
+        if group_amount < 0:
+            raise ValueError("group_amount must be non-negative")
+        if not 0.0 <= follow_strength <= 1.0:
+            raise ValueError("follow_strength must be between 0 and 1")
+        if voice_spread < 0:
+            raise ValueError("voice_spread must be non-negative")
+        if note_jitter < 0:
+            raise ValueError("note_jitter must be non-negative")
+        if chord_spread < 0:
+            raise ValueError("chord_spread must be non-negative")
+        if min_multiplier <= 0:
+            raise ValueError("min_multiplier must be positive")
+        if max_multiplier <= 0:
+            raise ValueError("max_multiplier must be positive")
+        if min_multiplier > max_multiplier:
+            raise ValueError("min_multiplier must be <= max_multiplier")
 
 
 def build_timing_offsets(
@@ -398,6 +517,119 @@ def resolve_envelope_params(
     return attack, decay, sustain_level, release
 
 
+def build_velocity_multipliers(
+    *,
+    targets: list[VelocityTarget],
+    humanize: VelocityHumanizeSpec | None,
+    total_dur: float,
+) -> dict[tuple[str, int], float]:
+    """Return render-time velocity multipliers for each note target."""
+    if not targets:
+        return {}
+    if humanize is None:
+        return {target.key: 1.0 for target in targets}
+
+    drift = humanize.drift
+    if drift is None:
+        raise ValueError("drift must be resolved")
+    group_amount = humanize.group_amount
+    if group_amount is None:
+        raise ValueError("group_amount must be resolved")
+    follow_strength = humanize.follow_strength
+    if follow_strength is None:
+        raise ValueError("follow_strength must be resolved")
+    voice_spread = humanize.voice_spread
+    if voice_spread is None:
+        raise ValueError("voice_spread must be resolved")
+    note_jitter = humanize.note_jitter
+    if note_jitter is None:
+        raise ValueError("note_jitter must be resolved")
+    chord_spread = humanize.chord_spread
+    if chord_spread is None:
+        raise ValueError("chord_spread must be resolved")
+    min_multiplier = humanize.min_multiplier
+    if min_multiplier is None:
+        raise ValueError("min_multiplier must be resolved")
+    max_multiplier = humanize.max_multiplier
+    if max_multiplier is None:
+        raise ValueError("max_multiplier must be resolved")
+
+    velocity_seed = _seed_or_default(humanize.seed, "velocity", humanize.preset)
+    grouped_targets: dict[str, list[VelocityTarget]] = {}
+    for target in targets:
+        grouped_targets.setdefault(target.group_name, []).append(target)
+
+    multipliers: dict[tuple[str, int], float] = {}
+    for group_name, group_targets in grouped_targets.items():
+        group_times = np.asarray(
+            [target.start for target in group_targets], dtype=np.float64
+        )
+        group_seed = _stable_seed(velocity_seed, "group", group_name)
+        shared_curve = _sample_drift_curve(
+            drift,
+            times=group_times,
+            total_dur=total_dur,
+            seed=group_seed,
+        )
+
+        voice_static_offsets: dict[str, float] = {}
+        voice_dynamic_curves: dict[str, np.ndarray] = {}
+        for voice_name in {target.voice_name for target in group_targets}:
+            voice_seed = _stable_seed(group_seed, "voice", voice_name)
+            voice_rng = np.random.default_rng(voice_seed)
+            voice_static_offsets[voice_name] = float(
+                voice_rng.uniform(-voice_spread, voice_spread)
+            )
+            voice_dynamic_curves[voice_name] = (
+                voice_spread
+                * (1.0 - follow_strength)
+                * _sample_drift_curve(
+                    DriftSpec(
+                        style="smooth_noise",
+                        rate_hz=max(drift.rate_hz * 1.35, 0.01),
+                        smoothness=min(1.0, drift.smoothness + 0.05),
+                    ),
+                    times=group_times,
+                    total_dur=total_dur,
+                    seed=_stable_seed(voice_seed, "dynamic"),
+                )
+            )
+
+        chord_offsets = _build_velocity_chord_offsets(
+            targets=group_targets,
+            chord_spread=chord_spread,
+            seed=_stable_seed(group_seed, "chords"),
+        )
+        for index, target in enumerate(group_targets):
+            note_seed = _stable_seed(
+                group_seed, "note", target.voice_name, target.key[1]
+            )
+            note_rng = np.random.default_rng(note_seed)
+            note_jitter_offset = 0.0
+            if note_jitter > 0:
+                note_jitter_offset = float(
+                    np.clip(
+                        note_rng.normal(loc=0.0, scale=note_jitter / 2.5),
+                        -note_jitter,
+                        note_jitter,
+                    )
+                )
+
+            multiplier = (
+                1.0
+                + (group_amount * shared_curve[index])
+                + voice_static_offsets[target.voice_name]
+                + voice_dynamic_curves[target.voice_name][index]
+                + chord_offsets[target.key]
+                + note_jitter_offset
+            )
+            multipliers[target.key] = float(
+                np.clip(multiplier, min_multiplier, max_multiplier)
+            )
+
+    return multipliers
+
+
 def _build_chord_spread_offsets(
     *,
     targets: list[TimingTarget],
@@ -424,6 +656,38 @@ def _build_chord_spread_offsets(
             group,
             key=lambda target: _stable_seed(
                 seed, "group", start_time, target.voice_name, target.key[1]
+            ),
+        )
+        for target, spread in zip(ordering, spread_values, strict=True):
+            offsets[target.key] = float(spread)
+
+    return offsets
+
+
+def _build_velocity_chord_offsets(
+    *,
+    targets: list[VelocityTarget],
+    chord_spread: float,
+    seed: int,
+) -> dict[tuple[str, int], float]:
+    if chord_spread <= 0:
+        return {target.key: 0.0 for target in targets}
+
+    grouped_targets: dict[tuple[str, float], list[VelocityTarget]] = {}
+    for target in targets:
+        grouped_targets.setdefault((target.group_name, target.start), []).append(target)
+
+    offsets: dict[tuple[str, int], float] = {}
+    for group_key, group in grouped_targets.items():
+        if len(group) == 1:
+            offsets[group[0].key] = 0.0
+            continue
+
+        spread_values = np.linspace(-chord_spread / 2.0, chord_spread / 2.0, len(group))
+        ordering = sorted(
+            group,
+            key=lambda target: _stable_seed(
+                seed, "group", group_key, target.voice_name, target.key[1]
             ),
         )
         for target, spread in zip(ordering, spread_values, strict=True):

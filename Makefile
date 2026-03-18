@@ -1,10 +1,13 @@
 .DEFAULT_GOAL := all
 
 PYTHONPATH_PREFIX = PYTHONPATH=.
-UV_RUN = $(PYTHONPATH_PREFIX) uv run
+UV_CACHE_DIR ?= $(CURDIR)/.uv-cache
+UV_RUN = UV_CACHE_DIR=$(UV_CACHE_DIR) $(PYTHONPATH_PREFIX) uv run
 PIECE ?=
 PLOT ?= 1
 TESTS ?= tests
+PYTEST_N ?= 4
+PYTEST_FLAGS = -n $(PYTEST_N)
 
 ifeq ($(PLOT),1)
 RENDER_PLOT_FLAG = --plot
@@ -44,11 +47,11 @@ typecheck:
 
 .PHONY: test
 test:
-	$(UV_RUN) pytest $(TESTS)
+	$(UV_RUN) pytest $(PYTEST_FLAGS) $(TESTS)
 
 .PHONY: test-selected
 test-selected:
-	$(UV_RUN) pytest $(TESTS)
+	$(UV_RUN) pytest $(PYTEST_FLAGS) $(TESTS)
 
 .PHONY: render
 render:

@@ -18,6 +18,7 @@ dependencies = [
 dev = [
     "basedpyright>=1.38.3",
     "pytest>=9.0.2",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.15.6",
 ]
 
@@ -36,3 +37,6 @@ select = [
 ignore = [
     "E501",
 ]
+
+[tool.pytest.ini_options]
+addopts = "--durations=10"
