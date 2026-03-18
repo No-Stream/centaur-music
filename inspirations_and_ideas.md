@@ -1,9 +1,0 @@
-- ji
-- harmonic series, otonal and utonal
-- aphex twin, both the simple and pleasant side (avril, aisatsana) and the chaotic side
-- bach, the GOAT
-- making xenharmonic ideas sound weird is pretty easy, making them sound pleasant is harder. let's bias in the pleasant direction, but not be constrained to narrow ideas of what pleasant is
-- why are most xenharmonic pieces more like experimentations or sketches and not complete pieces? let's err on the side of making music that sounds musical. which shouldn't wall off experimentation and riffing, but can we make full compositions?
-- bittersweet, haunting. (think burial - untrue or MBV loveless)
-- spacious, reverb, lofi (BoC, m83's dead cities)
-- spicy but euphonic chords, creative voicing, voice leading, sevenths and septimal harmony

@@ -4,9 +4,15 @@
 
 - `code_musics/` is the main package.
 - `docs/synth_api.md` documents synth engines, presets, and engine-specific params.
+- `docs/score_api.md` documents the concrete `NoteEvent` / `Phrase` / `Voice` /
+  `Score` API, render-time expression controls, and the render path.
+- `docs/composition_api.md` documents the higher-level composition helpers plus
+  phrase-building helpers that sit above the core score model.
 - `code_musics/synth.py` contains low-level DSP, rendering, and effect helpers.
 - `code_musics/score.py` contains the composition abstractions: `NoteEvent`,
-  `Phrase`, `Voice`, `Score`, and `EffectSpec`.
+  `Phrase`, `Voice`, `Score`, `EffectSpec`, and `VelocityParamMap`.
+- `code_musics/humanize.py` contains timing, envelope, and velocity humanization
+  specs plus the drift helpers they build on.
 - `code_musics/engines/` contains the synth engine registry and per-engine renderers.
 - `code_musics/tuning.py` contains small just-intonation, harmonic-series, utonal,
   and EDO helper functions.
@@ -21,17 +27,45 @@
 
 - `NoteEvent` is the atomic musical event. It stores timing, amplitude, and either a
   `partial` relative to `Score.f0` or an absolute `freq`.
+- `NoteEvent` also supports per-note `velocity`, `amp_db`, and optional
+  `pitch_motion`. Velocity is a first-class expressive control now, not just an
+  engine detail.
 - `Phrase` is a reusable collection of relative-time `NoteEvent`s. Use it for motifs,
   sequences, and transformed restatement.
 - `Score.add_note(...)` is the escape hatch for one-off pedals, accents, blooms, and
   transitions.
 - `Score.add_phrase(...)` is the main composing API. It supports placement transforms
   like `time_scale`, `partial_shift`, `amp_scale`, and `reverse`.
-- `Voice` stores note events plus synth defaults and voice-level effects.
+- `Voice` stores note events plus synth defaults, voice-level effects, pan, envelope
+  humanization, velocity humanization, and optional velocity-to-parameter mappings.
 - `Score` owns the timeline, derives `total_dur`, renders audio, and can save a
   piano-roll plot.
+- `Score.timing_humanize` applies render-time ensemble timing drift across the whole
+  score, while voice-level humanizers shape envelope and velocity variation.
 - `Voice.synth_defaults` and note-level `synth={...}` overrides accept an `engine`
   name, optional `preset`, and engine-specific params documented in `docs/synth_api.md`.
+- For detailed score-surface semantics, parameter meanings, and render-order
+  behavior, read `docs/score_api.md`.
+
+## Expression Model
+
+- Prefer `amp_db` over raw `amp` for authoring levels. Linear `amp` still works, but
+  dB is usually easier to reason about in mixes.
+- Use note-level `velocity` for accents and phrasing. By default it affects loudness
+  through `velocity_db_per_unit`, and it can also drive synth params through
+  `VelocityParamMap`.
+- `velocity_humanize` is voice-level and on by default when adding voices. Set it to
+  `None` when you want a fully fixed/programmed result.
+- `velocity_group` lets multiple voices share correlated velocity drift, which is the
+  right tool for ensemble breathing rather than independent per-voice wobble.
+- `envelope_humanize` is for subtle ADSR variation over score time. This is the
+  current "env slop" surface.
+- `timing_humanize` is score-level. Use it for ensemble looseness and shared drift,
+  not for rewriting rhythmic structure.
+- When documenting or changing these APIs, keep `AGENTS.md` high-level and put the
+  parameter-by-parameter details in `docs/score_api.md`,
+  `docs/composition_api.md`, and
+  `docs/synth_api.md`.
 
 ## Running Commands — IMPORTANT
 
@@ -121,8 +155,13 @@ See `FUTURE.md` for way more ideas.
 ## Implementation Notes
 
 - Prefer phrase-first composition, but keep direct note insertion available.
+- Treat velocity, timing humanization, and envelope humanization as part of the
+  normal composition surface, not as obscure implementation details.
 - Keep low-level synthesis simple unless a task explicitly calls for DSP changes.
 - Treat effect chains declaratively with `EffectSpec` on voices or the master bus.
+- If you change score/expression parameters or presets, update the docs in the same
+  pass. `AGENTS.md` should mention the feature exists; the detailed semantics belong
+  in the docs, especially `docs/score_api.md` for score-surface changes.
 - When using or extending synth engines, read `docs/synth_api.md` first for the
   current engine names, presets, and parameter surface.
 - Prefer absolute imports and typed, readable Python.
@@ -136,3 +175,20 @@ See `FUTURE.md` for way more ideas.
 - Focus on realistic, e2e tests (smoke, integration).  
 - No need for trivial tests or testing each unexpected edge case. First and foremost, tests should validate that code runs properly, end to end, without major bugs; and they should prevent regressions.
 - Backward compatibility is not always required or expected; this is a local, creative library not a business one.
+
+---
+
+## Loose Inspirations & Ideas to Explore
+
+- ji
+- septimal harmony
+- harmonic series, otonal and utonal
+- aphex twin, both the simple and pleasant side (avril, aisatsana) and the chaotic side
+- bach, the GOAT
+- making xenharmonic ideas sound weird is pretty easy, making them sound pleasant is harder. let's bias in the pleasant direction, but not be constrained to narrow ideas of what pleasant is
+- why are most xenharmonic pieces more like experimentations or sketches and not complete pieces? let's err on the side of making music that sounds musical. which shouldn't wall off experimentation and riffing, but can we make full compositions?
+- commas and quirks of tuning systems (but musically; think Giant Steps)
+- bittersweet, haunting. (think burial - untrue or MBV loveless)
+- spacious, reverb, lofi (BoC, m83's dead cities)
+- spicy but euphonic chords, creative voicing, voice leading, sevenths and septimal harmony
+
