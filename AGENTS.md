@@ -3,9 +3,11 @@
 ## Overview
 
 - `code_musics/` is the main package.
+- `docs/synth_api.md` documents synth engines, presets, and engine-specific params.
 - `code_musics/synth.py` contains low-level DSP, rendering, and effect helpers.
 - `code_musics/score.py` contains the composition abstractions: `NoteEvent`,
   `Phrase`, `Voice`, `Score`, and `EffectSpec`.
+- `code_musics/engines/` contains the synth engine registry and per-engine renderers.
 - `code_musics/tuning.py` contains small just-intonation, harmonic-series, utonal,
   and EDO helper functions.
 - `code_musics/pieces/` contains named musical works that can be rendered by the
@@ -28,6 +30,8 @@
 - `Voice` stores note events plus synth defaults and voice-level effects.
 - `Score` owns the timeline, derives `total_dur`, renders audio, and can save a
   piano-roll plot.
+- `Voice.synth_defaults` and note-level `synth={...}` overrides accept an `engine`
+  name, optional `preset`, and engine-specific params documented in `docs/synth_api.md`.
 
 ## Running Commands — IMPORTANT
 
@@ -107,6 +111,8 @@ implemented yet:
 - Prefer phrase-first composition, but keep direct note insertion available.
 - Keep low-level synthesis simple unless a task explicitly calls for DSP changes.
 - Treat effect chains declaratively with `EffectSpec` on voices or the master bus.
+- When using or extending synth engines, read `docs/synth_api.md` first for the
+  current engine names, presets, and parameter surface.
 - Prefer absolute imports and typed, readable Python.
 - Add tests for score timing, phrase transforms, tuning math, and piece integration
   when changing behavior.

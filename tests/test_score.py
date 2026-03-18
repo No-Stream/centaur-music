@@ -3,7 +3,10 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
+from code_musics.composition import line
+from code_musics.pitch_motion import PitchMotionSpec
 from code_musics.render import render_piece
 from code_musics.score import NoteEvent, Phrase, Score
 
@@ -38,6 +41,25 @@ def test_phrase_transforms_do_not_mutate_original() -> None:
     assert [event.partial for event in phrase.events] == original_partials
     assert [event.partial for event in transformed] == [6.0, 7.0, 8.0]
     assert transformed[0].start > 10.0
+
+
+def test_phrase_transform_preserves_pitch_motion_through_reverse_and_scale() -> None:
+    phrase = line(
+        tones=[4.0, 5.0],
+        rhythm=(0.5, 1.0),
+        pitch_motion=(
+            PitchMotionSpec.linear_bend(target_partial=5.0),
+            PitchMotionSpec.ratio_glide(start_ratio=1.0, end_ratio=6 / 5),
+        ),
+    )
+
+    transformed = phrase.transformed(start=2.0, time_scale=2.0, reverse=True)
+
+    assert phrase.events[0].pitch_motion is not None
+    assert transformed[0].pitch_motion == phrase.events[0].pitch_motion
+    assert transformed[1].pitch_motion == phrase.events[1].pitch_motion
+    assert transformed[0].duration == pytest.approx(1.0)
+    assert transformed[1].duration == pytest.approx(2.0)
 
 
 def test_render_overlapping_voices_returns_audio() -> None:
@@ -77,6 +99,7 @@ def test_new_piece_registry_entries_render(tmp_path: Path) -> None:
         "harmonic_window",
         "otonal_utonal_mirror",
         "otonal_utonal_mirror_expanded",
+        "sketch_articulation_study",
     ]:
         audio_path, plot_path = render_piece(piece_name, output_dir=tmp_path, save_plot=True)
 

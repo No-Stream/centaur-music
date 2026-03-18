@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from code_musics.engines import render_note_signal, resolve_synth_params
+from code_musics.pitch_motion import PitchMotionSpec
+from code_musics.pitch_motion import build_frequency_trajectory
 from code_musics import synth
 
 
@@ -32,6 +34,7 @@ class NoteEvent:
     freq: float | None = None
     synth: dict[str, Any] | None = None
     label: str | None = None
+    pitch_motion: PitchMotionSpec | None = None
 
     def __post_init__(self) -> None:
         if self.duration <= 0:
@@ -167,6 +170,7 @@ class Score:
         partial: float | None = None,
         freq: float | None = None,
         amp: float = 1.0,
+        pitch_motion: PitchMotionSpec | None = None,
         synth: dict[str, Any] | None = None,
         label: str | None = None,
     ) -> NoteEvent:
@@ -179,6 +183,7 @@ class Score:
             amp=amp,
             synth=dict(synth) if synth is not None else None,
             label=label,
+            pitch_motion=pitch_motion,
         )
         self.get_voice(voice_name).notes.append(note)
         return note
@@ -272,20 +277,33 @@ class Score:
             if note.synth is not None:
                 synth_params.update(note.synth)
             synth_params = resolve_synth_params(synth_params)
+            attack_scale = float(synth_params.pop("attack_scale", 1.0))
+            release_scale = float(synth_params.pop("release_scale", 1.0))
+            note_freq = self._resolve_freq(note)
+            freq_trajectory = None
+            if note.pitch_motion is not None:
+                freq_trajectory = build_frequency_trajectory(
+                    base_freq=note_freq,
+                    duration=note.duration,
+                    sample_rate=self.sample_rate,
+                    motion=note.pitch_motion,
+                    score_f0=self.f0,
+                )
 
             note_signal = render_note_signal(
-                freq=self._resolve_freq(note),
+                freq=note_freq,
                 duration=note.duration,
                 amp=note.amp,
                 sample_rate=self.sample_rate,
                 params=synth_params,
+                freq_trajectory=freq_trajectory,
             )
             note_signal = synth.adsr(
                 note_signal,
-                attack=synth_params.get("attack", 0.04),
+                attack=synth_params.get("attack", 0.04) * attack_scale,
                 decay=synth_params.get("decay", 0.1),
                 sustain_level=synth_params.get("sustain_level", 0.75),
-                release=synth_params.get("release", 0.3),
+                release=synth_params.get("release", 0.3) * release_scale,
                 sample_rate=self.sample_rate,
             )
             voice_signals.append(synth.at_sample_rate(note_signal, note.start, self.sample_rate))

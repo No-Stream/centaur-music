@@ -28,6 +28,29 @@ adding more reusable building blocks:
 - utility functions for voice-leading inside otonal and utonal spaces
 - lightweight analysis helpers for inspecting phrase density, registral spread, and
   timing
+- richer gesture helpers built on the new composition layer, such as `bloom`,
+  `canon`, `pedal_with_ornament`, `spiral`, and `converge` / `diverge`
+- tuning-native transforms such as `comma_drift`, `harmonic_shadow`, `undertow`,
+  and `otonal_to_utonal_morph`
+- articulation analysis helpers for overlap profile, attack density, and where a
+  piece is still defaulting to long-legato writing
+- more articulated phrase builders that make staccato, legato, breath, and accents
+  easy to express without losing the existing phrase-first workflow
+- motion-aware builders for ratio glides, partial bends, and subtle vibrato so JI
+  motion stays visible instead of collapsing back to fixed pitches
+- gesture generators for echoes, spiral restatements, call-and-response, and pedaled
+  figures that make longer forms easier to sketch
+- overlap and beating summaries so we can see when the music is becoming too drony or
+  too crowded before rendering
+
+Pitch motion is now starting to exist at the note level, so the next useful layer is
+likely to be a bit more expressive rather than broader:
+
+- curved bends and richer glide shapes
+- comma drift and other small ratio-space deformations
+- motion that can target overtone or undertone anchors directly
+- motion-aware analysis for spotting over-legato or over-static passages
+- phrase tools that combine gate, accent, and motion into one reusable gesture
 
 ### Stronger visual analysis
 
@@ -38,6 +61,9 @@ agentic iteration:
 - spectrograms over time
 - interval and partial-distribution summaries
 - render-to-render comparison views when revising a piece
+- articulation and overlap heatmaps so we can see where notes are really connected
+- pitch-motion traces that show bends, glides, and vibrato against the static pitch
+  grid
 
 ## Medium priority
 
@@ -74,6 +100,12 @@ We already have helper functions, but there is more compositional territory to e
 - darker subharmonic passages
 - otonal / utonal contrasts inside a single form
 - more deliberate harmonic motion between overtone and undertone worlds
+- more pitch-motion idioms that show tuning structure directly, such as arrival
+  bends, harmonic gravity, subharmonic drifts, and axis-based reflections
+- comma-drift and undertow gestures that move the same material between harmonic
+  interpretations without sounding like a generic transpose
+- overtone/undertone morphs that keep the tuning identity audible while the harmony
+  changes underneath
 
 ### Better effect integration
 
