@@ -1,5 +1,6 @@
 """Score abstraction tests."""
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -87,11 +88,16 @@ def test_plot_piano_roll_writes_file(tmp_path: Path) -> None:
 
 
 def test_render_piece_writes_audio_and_plot(tmp_path: Path) -> None:
-    audio_path, plot_path = render_piece("chord_4567", output_dir=tmp_path, save_plot=True)
+    result = render_piece("chord_4567", output_dir=tmp_path, save_plot=True)
+    audio_path, plot_path = result
 
     assert audio_path.exists()
     assert plot_path is not None
     assert plot_path.exists()
+    assert result.analysis_manifest_path is not None
+    assert result.analysis_manifest_path.exists()
+    manifest = json.loads(result.analysis_manifest_path.read_text(encoding="utf-8"))
+    assert Path(manifest["mix"]["artifacts"]["spectrum"]).exists()
 
 
 def test_new_piece_registry_entries_render(tmp_path: Path) -> None:
@@ -101,8 +107,10 @@ def test_new_piece_registry_entries_render(tmp_path: Path) -> None:
         "otonal_utonal_mirror_expanded",
         "sketch_articulation_study",
     ]:
-        audio_path, plot_path = render_piece(piece_name, output_dir=tmp_path, save_plot=True)
+        result = render_piece(piece_name, output_dir=tmp_path, save_plot=True)
+        audio_path, plot_path = result
 
         assert audio_path.exists()
         assert plot_path is not None
         assert plot_path.exists()
+        assert result.analysis_manifest_path is not None

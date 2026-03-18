@@ -1,213 +1,162 @@
 # Future Work
 
-This file is for ideas that are still ahead of us. Core infrastructure like the
-`Score` / `Voice` / `Phrase` model, piano-roll plotting, named-piece rendering, and
-basic tuning helpers are already implemented.
+This file tracks what still feels highest-value from the current state of the
+project. Core infrastructure such as the `Score` / `Voice` / `Phrase` model,
+named-piece rendering, piano-roll plotting, multiple synth engines, presets,
+articulation helpers, and note-level pitch motion already exist.
 
 ## High priority
 
 ### More complete pieces
 
-The big musical question is still the same: can we make xenharmonic music that feels
-like full composition rather than only demonstration or experiment?
+The main artistic question is still the same: can we make xenharmonic music
+that feels like full composition rather than only study, sketch, or demo?
 
-Areas to push:
+Most valuable directions:
 
 - stronger large-scale form
 - more memorable motifs and thematic return
-- clearer contrast and release across sections
+- clearer contrast, release, and pacing across sections
 - better balance between "pleasant" and "strange"
+- more deliberate orchestration so pieces feel arranged, not merely layered
+
+### Analysis and feedback tooling
+
+We now have a usable render pipeline, but we still need better feedback loops.
+Audio plus a piano roll is not enough when iterating on orchestration, density,
+and spectral balance, especially for agent-driven workflows.
+
+Useful additions:
+
+- rendered-audio FFT / averaged spectrum views
+- spectrograms over time
+- coarse band-energy summaries and spectral-tilt diagnostics
+- score-derived density, overlap, and registral-spread summaries
+- render-to-render comparison views when revising a piece
+- analysis manifests that make artifact paths and summary stats easy for agents
+  to consume without relying purely on ears
 
 ### Better piece-generation tools
 
-We now have a usable score abstraction, but we could still make composition faster by
-adding more reusable building blocks:
+The score abstraction is in good shape, but composition could still become much
+faster through a richer helper layer.
 
-- phrase transformation helpers beyond the current placement options
-- idiomatic generators for canons, pedals, blooms, and harmonic-series gestures
+Most valuable next helpers:
+
+- phrase transformation helpers beyond current placement options
+- idiomatic generators for canons, pedals, blooms, echoes, and harmonic-series
+  gestures
 - utility functions for voice-leading inside otonal and utonal spaces
-- lightweight analysis helpers for inspecting phrase density, registral spread, and
-  timing
-- richer gesture helpers built on the new composition layer, such as `bloom`,
-  `canon`, `pedal_with_ornament`, `spiral`, and `converge` / `diverge`
-- tuning-native transforms such as `comma_drift`, `harmonic_shadow`, `undertow`,
-  and `otonal_to_utonal_morph`
-- articulation analysis helpers for overlap profile, attack density, and where a
-  piece is still defaulting to long-legato writing
-- more articulated phrase builders that make staccato, legato, breath, and accents
-  easy to express without losing the existing phrase-first workflow
-- motion-aware builders for ratio glides, partial bends, and subtle vibrato so JI
-  motion stays visible instead of collapsing back to fixed pitches
-- gesture generators for echoes, spiral restatements, call-and-response, and pedaled
-  figures that make longer forms easier to sketch
-- overlap and beating summaries so we can see when the music is becoming too drony or
-  too crowded before rendering
-
-Pitch motion is now starting to exist at the note level, so the next useful layer is
-likely to be a bit more expressive rather than broader:
-
-- curved bends and richer glide shapes
-- comma drift and other small ratio-space deformations
-- motion that can target overtone or undertone anchors directly
-- motion-aware analysis for spotting over-legato or over-static passages
-- phrase tools that combine gate, accent, and motion into one reusable gesture
-
-### Stronger visual analysis
-
-The piano roll exists today, but richer analysis views would help both composition and
-agentic iteration:
-
-- FFT plots for rendered excerpts
-- spectrograms over time
-- interval and partial-distribution summaries
-- render-to-render comparison views when revising a piece
-- articulation and overlap heatmaps so we can see where notes are really connected
-- pitch-motion traces that show bends, glides, and vibrato against the static pitch
-  grid
+- gesture builders such as `converge`, `diverge`, `spiral`, `comma_drift`,
+  `harmonic_shadow`, and `undertow`
+- overlap and beating summaries so we can spot where a piece has become too
+  static, too drony, or too crowded before full render
 
 ## Medium priority
 
+### Timbre and synth automation
+
+This is now a particularly attractive next step. The engine/preset layer exists,
+but most timbral behavior is still static over the life of a note or phrase.
+
+Useful directions:
+
+- time-varying synth parameters at note, phrase, or voice scope
+- automation curves for brightness, filter cutoff, resonance, FM index, detune,
+  stereo spread, and effect wetness
+- phrase-level timbre gestures so sounds can evolve musically without requiring
+  low-level parameter plumbing in every piece
+- automation-aware analysis so agents can see whether a sound actually opens,
+  darkens, widens, or settles the way intended
+
+The main goal is not maximal flexibility for its own sake. It is to make pieces
+feel more alive and shaped over time.
+
 ### Sound design and synthesis direction
 
-The current additive synth is a good base, but it is too narrow to carry the whole
-project. We should broaden the palette without losing the tuning-first workflow.
+The current engine palette is a solid base, but there is room to broaden it
+without losing the tuning-first workflow.
 
-Preferred direction:
+Likely useful directions:
 
-- keep the `Score` / `Voice` model as the composition layer
-- support multiple synth engines behind a consistent note / voice interface
-- prefer small, dependable building blocks over a giant custom DSP system
-- use libraries where they save real time and complexity
-- stay open to freeware VSTs or existing plugins when they genuinely expand the sound
-  world, but avoid making fragile plugin hosting the core of the project
-
-Likely useful voice / engine types:
-
-- richer additive voices with detune, partial weighting, brightness tilt, and stereo spread
-- FM voices, especially ratio-based operator setups that interact well with JI material
-- plucked or struck voices for clearer attacks and more articulated lines
-- noise-plus-tone voices for drum-ish and hybrid percussive sounds
-- simple pad / lead / bass role presets so pieces can differentiate musical function
-
-FM synthesis still looks especially promising here. Rational operator ratios could mesh
-well with JI materials, while more inharmonic ratios could support the stranger
-sections without abandoning the tuning focus.
+- richer additive voices with more role-specific presets
+- more FM presets and parameter idioms that interact well with JI materials
+- plucked or struck voices for clearer articulation
+- noise-plus-tone and hybrid percussion voices
+- more explicit role presets for bed, lead, counterpoint, bass, and accent layers
 
 ### Utonal and subharmonic writing
 
-We already have helper functions, but there is more compositional territory to explore:
+The helper functions exist, but there is still a lot of compositional territory
+to explore:
 
 - darker subharmonic passages
-- otonal / utonal contrasts inside a single form
-- more deliberate harmonic motion between overtone and undertone worlds
-- more pitch-motion idioms that show tuning structure directly, such as arrival
-  bends, harmonic gravity, subharmonic drifts, and axis-based reflections
-- comma-drift and undertow gestures that move the same material between harmonic
-  interpretations without sounding like a generic transpose
-- overtone/undertone morphs that keep the tuning identity audible while the harmony
-  changes underneath
+- overtone / undertone contrasts inside a single form
+- comma-drift and undertow gestures that preserve tuning identity while changing
+  harmonic interpretation
+- pitch-motion idioms that make harmonic gravity and arrival bends more audible
 
 ### Better effect integration
 
-The declarative effect model is in place, but there is room to improve the palette:
+The declarative effect model is in place, but the palette and routing are still
+fairly simple.
 
-- richer built-in ambience and modulation options
-- cleaner support for external tools or VST-style workflows where practical
-- more repeatable effect presets tied to musical roles
+Most promising directions:
 
-Specific directions worth exploring:
+- chorus, tremolo, autopan, filtering, saturation, and transient shaping
+- role-based effect presets such as `glass_pad`, `sub_drone`, `reed_lead`, or
+  `dark_hall`
+- better dry/wet and send-style routing so ambience can be shaped more
+  deliberately
+- **stereo rendering and per-voice panning**: voices currently render mono and
+  are summed before any stereo effect (e.g. Bricasti) is applied; per-voice pan
+  position would make counterpoint and layered textures much more legible
+- **warmth and saturation** (high interest): several strong candidates already
+  owned — SPL TwinTube, Black Box HG-2, Arturia True Iron / Pre 1973 / Tape
+  MELLO-FI, and free options like Softube Saturation Knob and iZotope Vinyl;
+  macOS builds are also available for many of these but are equally unusable
+  under Linux; the VST loading problem in WSL2 has several realistic paths:
+  - **yabridge**: bridges Windows VST2/VST3 → Linux via Wine; well-maintained,
+    widely used in Linux DAW setups; would unlock the full existing Windows
+    plugin library from within the normal render pipeline — highest payoff if
+    setup succeeds
+  - **Chow Tape Model**: free, Linux-native VST3 (and LV2), excellent tape
+    saturation character; best "no new infrastructure" option for warmth
+  - **WSL2 Windows interop**: WSL2 can call Windows executables directly; a
+    thin `render_vst.py` running under Windows Python + pedalboard could apply
+    a plugin and write audio back; fragile but zero new dependencies
+  - **Python-native waveshaping**: implement tanh soft-clipping and a harmonic
+    exciter (2nd/3rd partial boost) directly in `synth.py` as a new `EffectSpec`
+    kind; no plugin dependency, deterministic, fits the existing model cleanly;
+    less character than hardware emulations but immediately usable
 
-- chorus, ensemble, tremolo, autopan, filtering, saturation, and transient shaping
-- effect presets tied to musical jobs such as `glass_pad`, `sub_drone`, `reed_lead`,
-  `bell_fm`, `soft_room`, or `dark_hall`
-- better dry/wet and send-style routing so ambience can be shaped more deliberately
-- support for render-time comparison when changing effect chains
+### Rhythm and mixed voice roles
 
-### Libraries and plugin strategy
+Pieces would benefit from stronger rhythmic identity and clearer timbral role
+separation.
 
-We should avoid reinventing the wheel when existing tools can give us more interesting
-results quickly.
+Useful directions:
 
-Practical default:
-
-- first prefer Python-accessible libraries and stable native dependencies
-- keep the built-in synth and effect path simple and deterministic
-- treat plugin hosting as an expansion path, not the first dependency
-
-Reasons:
-
-- native Python / library-based rendering is easier to test and less brittle in WSL2
-- plugin discovery, licensing, GUI requirements, and platform quirks can make VST
-  workflows unreliable
-- paid plugins may not load cleanly in this environment, so we should not depend on
-  them for core rendering
-
-Still, VSTs are worth exploring where they unlock a lot:
-
-- freeware synths or effects that bring strong timbral value
-- Windows-installed plugins that can be rendered offline if the bridge is reliable
-- external rendering paths that complement the Python toolchain instead of replacing it
-
-Possible implementation path:
-
-- phase 1: expand the native synth / effect palette inside Python
-- phase 2: add a thin abstraction for external or plugin-backed renderers
-- phase 3: experiment with a curated set of freeware VSTs that are likely to work well
-  under the current environment
-
-Selection criteria for any external tool:
-
-- renders offline and repeatably
-- works without a fragile interactive GUI dependency
-- is scriptable enough to fit the current workflow
-- adds genuinely new musical value rather than duplicating what a simple built-in tool
-  can already do
-
-### Rhythm
-
-Generate drum-ish sounds and add some rhythm
-
-### Mixed Voice Types
-
-Possibly via libraries or plugins, we can have e.g. chords/keys/pads/leads/basses etc.
-Not necessarily tied to traditional instrument roles, but perhaps some differentiation.
-
-A useful framing here is not strict instrument emulation, but clearer timbral roles:
-
-- sustained harmonic bed
-- lyrical lead
-- articulated counterpoint voice
-- bass / pedal anchor
-- percussive or noisy accent layer
-
-That should make pieces sound more intentionally orchestrated even when the materials
-stay obviously synthetic and xenharmonic.
-
-### More traditional songs
-
-Working with chords, chord progressions, leads, basses, and rhythms, but with 
-nontrivial xenharmonic character.
+- drum-ish and hybrid percussion layers
+- clearer distinctions between harmonic bed, lead, bass/pedal, counterpoint,
+  and accent layers
+- more traditional song-like structures that still retain meaningful
+  xenharmonic character
 
 ## Lower priority
 
 ### Parametric piece generation
 
 Generate families of pieces from parameters like root, prime limit, or chosen
-partials, mainly as a composition aid rather than a replacement for hand-written work.
+partials, mainly as a composition aid rather than a replacement for hand-written
+work.
 
 ### Microtonal MIDI export
 
-Export pieces to DAW-friendly MIDI with pitch bend so ideas can move more easily into
-other production environments.
+Export pieces to DAW-friendly MIDI with pitch bend so ideas can move more easily
+into other production environments.
 
 ### Granular synthesis
 
 A granular layer could open up a nice middle ground between harmonic writing and
 texture design, especially for transitions or atmospheric sections.
-
----
-
-## WiP / To Continue
-
-- sketch spiral arch  
-- 

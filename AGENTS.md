@@ -105,6 +105,7 @@ implemented yet:
 - push further into utonal and subharmonic writing as a structural device
 - explore FM and other timbral approaches that interact well with JI ratios
 - support fuller composition, not just studies, demos, or sketches
+See `FUTURE.md` for way more ideas.
 
 ## Implementation Notes
 
@@ -118,3 +119,10 @@ implemented yet:
   when changing behavior.
 - If a doc in this repo describes something as future work, verify it against the code
   before repeating it. Several foundational ideas are already implemented.
+
+## Test Philosophy
+- Test early and often. Ideally write tests _first_ then code (TDD).  
+- Focus on realistic, e2e tests (smoke, integration).  
+- No need for trivial tests or testing each unexpected edge case. First and foremost, tests should validate that code runs properly, end to end, without major bugs; and they should prevent regressions.
+- Backward compatibility is not always required or expected; this is a local, creative library not a business one.
+

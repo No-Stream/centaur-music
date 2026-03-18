@@ -223,11 +223,7 @@ class Score:
 
     def render(self) -> np.ndarray:
         """Render the score to mono or stereo audio."""
-        rendered_voices: list[np.ndarray] = []
-        for voice in self.voices.values():
-            rendered_voice = self._render_voice(voice)
-            if rendered_voice.size > 0:
-                rendered_voices.append(rendered_voice)
+        rendered_voices = list(self.render_stems().values())
 
         if not rendered_voices:
             return np.zeros(0)
@@ -238,6 +234,15 @@ class Score:
                 raise ValueError("master effect chains currently expect mono input")
             mix = synth.apply_effect_chain(mix, self.master_effects)
         return mix
+
+    def render_stems(self) -> dict[str, np.ndarray]:
+        """Render each voice independently before master-bus effects."""
+        rendered_stems: dict[str, np.ndarray] = {}
+        for voice_name, voice in self.voices.items():
+            rendered_voice = self._render_voice(voice)
+            if rendered_voice.size > 0:
+                rendered_stems[voice_name] = rendered_voice
+        return rendered_stems
 
     def plot_piano_roll(self, path: str | Path | None = None) -> tuple[Any, Any]:
         """Plot score events as a piano-roll style visualization."""

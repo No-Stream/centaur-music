@@ -35,17 +35,31 @@ sides of Aphex Twin.
 List available pieces:
 
 ```bash
-python main.py --list
+make list
 ```
 
 Render a piece:
 
 ```bash
-python main.py harmonic_drift
+make render PIECE=harmonic_drift
 ```
 
 Render a piece and save a piano-roll plot when available:
 
 ```bash
-python main.py harmonic_drift --plot
+make render PIECE=harmonic_drift
+```
+
+Render a piece without the piano roll:
+
+```bash
+make render PIECE=harmonic_drift PLOT=0
+```
+
+By default, renders now also emit analysis artifacts and a JSON manifest into
+`output/`, alongside the WAV file. Use the CLI directly if you want to disable
+analysis for a render:
+
+```bash
+PYTHONPATH=. uv run python main.py harmonic_drift --no-analysis
 ```
