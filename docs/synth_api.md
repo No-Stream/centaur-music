@@ -341,6 +341,128 @@ score = Score(
 )
 ```
 
+### `tal_chorus_lx`
+
+Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+
+Wrapper around the TAL-Chorus-LX VST3, a Roland Juno-60 BBD chorus emulation.
+
+Parameters:
+
+- `mix: float`
+  Dry/wet blend from `0` to `1`.
+- `chorus_1: bool`
+  Enable chorus mode I (subtle, slower LFO). Default `True`.
+- `chorus_2: bool`
+  Enable chorus mode II (wider, faster LFO). Default `False`. Both modes can be
+  enabled simultaneously.
+- `stereo: float`
+  Stereo width from `0` to `1`. Default `1.0`.
+
+Notes:
+
+- expects `~/.vst3/TAL-Chorus-LX.vst3` to be installed
+- promotes mono to stereo
+- mode I alone is the closest match to a classic Juno-60 Chorus I sound; enabling
+  both gives the Juno Chorus I+II character (wider, slightly faster)
+
+Example:
+
+```python
+score.add_voice(
+    "pad",
+    effects=[EffectSpec("tal_chorus_lx", {"mix": 0.25, "chorus_1": True})],
+)
+```
+
+### `tal_reverb2`
+
+Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+
+Wrapper around TAL-Reverb-2, a vintage-flavored algorithmic reverb with a warm
+plate character.
+
+Parameters:
+
+- `wet: float`
+  Wet level from `0` to `1`. Default `0.3`.
+- `room_size: float`
+  Room size from `0` to `1`. Default `0.75`.
+- `pre_delay: float`
+  Pre-delay from `0` to `1` (plugin's normalized range). Default `0.13`.
+- `stereo: float`
+  Stereo width from `0` to `1`. Default `1.0`.
+
+Notes:
+
+- expects `~/.vst3/TAL-Reverb-2.vst3` to be installed
+- always sets dry to `1.0`; wet is an additive level, not a crossfade
+- promotes mono to stereo
+
+Example:
+
+```python
+score.add_voice(
+    "lead",
+    effects=[EffectSpec("tal_reverb2", {"wet": 0.22, "room_size": 0.60})],
+)
+```
+
+### `dragonfly`
+
+Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+
+Unified wrapper for the Dragonfly Reverb VST3 suite. Selects a plugin variant
+via the `variant` parameter.
+
+Parameters:
+
+- `variant: str`
+  Selects the plugin: `"plate"`, `"room"`, `"hall"`, or `"early"`.
+- `wet_level: float`
+  Wet level from `0` to `100` (percent). Default `20.0`.
+- `decay_s: float`
+  Reverb decay in seconds. Default `0.4`.
+- `width: float`
+  Stereo width. Plate range: `50`–`150`; room/hall range: `0`–`100`. Default `100.0`.
+- `predelay_ms: float`
+  Pre-delay in milliseconds. Default `0.0`.
+- `low_cut_hz: float`
+  Low-cut frequency in Hz. Supported by plate (`0`–`200`), room, hall.
+- `high_cut_hz: float`
+  High-cut frequency in Hz. Supported by plate, room, hall.
+- `dampen_hz: float`
+  Damping cutoff in Hz. Plate only. Default `13000.0`.
+- `size_m: float`
+  Room/hall size in metres. Room and hall only. Default `12.0`.
+- `diffuse: float`
+  Diffusion `0`–`100`. Room and hall only. Default `70.0`.
+
+Notes:
+
+- expects the appropriate `~/.vst3/DragonflY*.vst3` to be installed
+- `dry_level` is always set to `100`; `wet_level` is an additive level
+- promotes mono to stereo
+- plate is the cleanest choice for voice-level pre-reverb; room and hall suit
+  wider spatial treatments
+
+Example:
+
+```python
+score.add_voice(
+    "lead",
+    effects=[
+        EffectSpec("dragonfly", {
+            "variant": "plate",
+            "wet_level": 16.0,
+            "decay_s": 0.55,
+            "low_cut_hz": 350.0,
+            "predelay_ms": 8.0,
+        })
+    ],
+)
+```
+
 ## `additive`
 
 Implementation: [code_musics/engines/additive.py](/home/jan/workspace/code-musics/code_musics/engines/additive.py)

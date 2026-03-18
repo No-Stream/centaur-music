@@ -57,6 +57,85 @@ def _get_chow_tape() -> Any:
     return _chow_tape_plugin
 
 
+# ---------------------------------------------------------------------------
+# TAL-Chorus-LX VST3 (lazy-loaded singleton)
+# ---------------------------------------------------------------------------
+
+_TAL_CHORUS_LX_PATH = Path.home() / ".vst3" / "TAL-Chorus-LX.vst3"
+_tal_chorus_lx_plugin: Any = None
+
+
+def _get_tal_chorus_lx() -> Any:
+    global _tal_chorus_lx_plugin
+    if _tal_chorus_lx_plugin is None:
+        os.environ.setdefault("DISPLAY", "")
+        from pedalboard import (
+            load_plugin,  # noqa: PLC0415  # type: ignore[attr-defined]
+        )
+
+        if not _TAL_CHORUS_LX_PATH.exists():
+            raise FileNotFoundError(
+                f"TAL-Chorus-LX VST3 not found at {_TAL_CHORUS_LX_PATH}"
+            )
+        _tal_chorus_lx_plugin = load_plugin(str(_TAL_CHORUS_LX_PATH))
+    return _tal_chorus_lx_plugin
+
+
+# ---------------------------------------------------------------------------
+# TAL-Reverb-2 VST3 (lazy-loaded singleton)
+# ---------------------------------------------------------------------------
+
+_TAL_REVERB2_PATH = Path.home() / ".vst3" / "TAL-Reverb-2.vst3"
+_tal_reverb2_plugin: Any = None
+
+
+def _get_tal_reverb2() -> Any:
+    global _tal_reverb2_plugin
+    if _tal_reverb2_plugin is None:
+        os.environ.setdefault("DISPLAY", "")
+        from pedalboard import (
+            load_plugin,  # noqa: PLC0415  # type: ignore[attr-defined]
+        )
+
+        if not _TAL_REVERB2_PATH.exists():
+            raise FileNotFoundError(
+                f"TAL-Reverb-2 VST3 not found at {_TAL_REVERB2_PATH}"
+            )
+        _tal_reverb2_plugin = load_plugin(str(_TAL_REVERB2_PATH))
+    return _tal_reverb2_plugin
+
+
+# ---------------------------------------------------------------------------
+# Dragonfly Reverb VST3 plugins (lazy-loaded per variant)
+# ---------------------------------------------------------------------------
+
+_DRAGONFLY_PATHS: dict[str, Path] = {
+    "plate": Path.home() / ".vst3" / "DragonflyPlateReverb.vst3",
+    "room": Path.home() / ".vst3" / "DragonflyRoomReverb.vst3",
+    "hall": Path.home() / ".vst3" / "DragonflyHallReverb.vst3",
+    "early": Path.home() / ".vst3" / "DragonflyEarlyReflections.vst3",
+}
+_dragonfly_plugins: dict[str, Any] = {}
+
+
+def _get_dragonfly(variant: str) -> Any:
+    if variant not in _DRAGONFLY_PATHS:
+        raise ValueError(
+            f"Unknown Dragonfly variant {variant!r}. Choose from: {list(_DRAGONFLY_PATHS)}"
+        )
+    if variant not in _dragonfly_plugins:
+        os.environ.setdefault("DISPLAY", "")
+        from pedalboard import (
+            load_plugin,  # noqa: PLC0415  # type: ignore[attr-defined]
+        )
+
+        path = _DRAGONFLY_PATHS[variant]
+        if not path.exists():
+            raise FileNotFoundError(f"Dragonfly {variant} VST3 not found at {path}")
+        _dragonfly_plugins[variant] = load_plugin(str(path))
+    return _dragonfly_plugins[variant]
+
+
 def tone(
     freq: float,
     duration: float,
@@ -387,6 +466,113 @@ def apply_bricasti(
     return np.stack([left[:n_samples], right[:n_samples]]).astype(np.float64)
 
 
+def apply_tal_chorus_lx(
+    signal: np.ndarray,
+    mix: float = 0.5,
+    chorus_1: bool = True,
+    chorus_2: bool = False,
+    stereo: float = 1.0,
+) -> np.ndarray:
+    """Apply TAL-Chorus-LX (Roland Juno-60 BBD chorus emulation).
+
+    Parameters
+    ----------
+    mix:      Dry/wet blend 0–1. Mapped to plugin's 0–10 dry_wet control.
+    chorus_1: Enable chorus mode I (subtle, slower LFO).
+    chorus_2: Enable chorus mode II (wider, faster LFO). Both can be on together.
+    stereo:   Stereo width 0–1. Mapped to plugin's 0–10 stereo control.
+    """
+    plugin = _get_tal_chorus_lx()
+    plugin.chorus_1 = 1.0 if chorus_1 else 0.0
+    plugin.chorus_2 = 1.0 if chorus_2 else 0.0
+    plugin.dry_wet = float(mix) * 10.0
+    plugin.stereo = float(stereo) * 10.0
+    plugin.volume = 5.0  # unity gain
+
+    stereo_in = _ensure_stereo(signal).astype(np.float32)
+    stereo_out = plugin(stereo_in, SAMPLE_RATE)
+    return _match_input_layout(_coerce_signal_layout(stereo_out), signal)
+
+
+def apply_tal_reverb2(
+    signal: np.ndarray,
+    wet: float = 0.3,
+    room_size: float = 0.75,
+    pre_delay: float = 0.13,
+    stereo: float = 1.0,
+) -> np.ndarray:
+    """Apply TAL-Reverb-2 algorithmic reverb.
+
+    Parameters
+    ----------
+    wet:        Wet level 0–1.
+    room_size:  Room size 0–1.
+    pre_delay:  Pre-delay 0–1 (plugin's normalized range).
+    stereo:     Stereo width 0–1.
+    """
+    plugin = _get_tal_reverb2()
+    plugin.dry = 1.0
+    plugin.wet = float(wet)
+    plugin.room_size = float(room_size)
+    plugin.pre_delay = float(pre_delay)
+    plugin.stereo = float(stereo)
+
+    stereo_in = _ensure_stereo(signal).astype(np.float32)
+    stereo_out = plugin(stereo_in, SAMPLE_RATE)
+    return _match_input_layout(_coerce_signal_layout(stereo_out), signal)
+
+
+def apply_dragonfly(
+    signal: np.ndarray,
+    variant: str = "plate",
+    wet_level: float = 20.0,
+    decay_s: float = 0.4,
+    width: float = 100.0,
+    predelay_ms: float = 0.0,
+    low_cut_hz: float = 200.0,
+    high_cut_hz: float = 16000.0,
+    dampen_hz: float = 13000.0,
+    size_m: float = 12.0,
+    diffuse: float = 70.0,
+) -> np.ndarray:
+    """Apply a Dragonfly Reverb plugin.
+
+    Parameters
+    ----------
+    variant:      "plate", "room", "hall", or "early".
+    wet_level:    Wet level 0–100 (percent).
+    decay_s:      Reverb decay in seconds.
+    width:        Stereo width 0–100.
+    predelay_ms:  Pre-delay in milliseconds.
+    low_cut_hz:   Low-cut frequency (plate, room, hall).
+    high_cut_hz:  High-cut frequency (plate, room, hall).
+    dampen_hz:    Damping cutoff — plate only; ignored for other variants.
+    size_m:       Room/hall size in metres — room and hall only.
+    diffuse:      Diffusion 0–100 — room and hall only.
+    """
+    plugin = _get_dragonfly(variant)
+    plugin.dry_level = 100.0
+    plugin.wet_level = float(wet_level)
+    plugin.decay_s = float(decay_s)
+    plugin.width = float(width)
+    if hasattr(plugin, "predelay_ms"):
+        plugin.predelay_ms = float(predelay_ms)
+    if hasattr(plugin, "low_cut_hz"):
+        plugin.low_cut_hz = float(low_cut_hz)
+    if hasattr(plugin, "high_cut_hz"):
+        plugin.high_cut_hz = float(high_cut_hz)
+    if variant == "plate" and hasattr(plugin, "dampen_hz"):
+        plugin.dampen_hz = float(dampen_hz)
+    if variant in {"room", "hall"} and hasattr(plugin, "size_m"):
+        plugin.size_m = float(size_m)
+    if variant in {"room", "hall"} and hasattr(plugin, "diffuse"):
+        plugin.diffuse = float(diffuse)
+
+    stereo_in = _ensure_stereo(signal).astype(np.float32)
+    stereo_out = plugin(stereo_in, SAMPLE_RATE)
+    return _match_input_layout(_coerce_signal_layout(stereo_out), signal)
+
+
 _CHORUS_PRESETS: dict[str, dict[str, float]] = {
     "juno_subtle": {
         "mix": 0.28,
@@ -637,6 +823,12 @@ def apply_effect_chain(
             processed = apply_chorus(processed, **params)
         elif effect.kind == "saturation":
             processed = apply_saturation(processed, **params)
+        elif effect.kind == "tal_chorus_lx":
+            processed = apply_tal_chorus_lx(processed, **params)
+        elif effect.kind == "tal_reverb2":
+            processed = apply_tal_reverb2(processed, **params)
+        elif effect.kind == "dragonfly":
+            processed = apply_dragonfly(processed, **params)
         else:
             raise ValueError(f"Unsupported effect kind: {effect.kind}")
     return processed

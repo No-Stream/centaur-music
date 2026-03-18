@@ -92,6 +92,11 @@ def build_ji_chorale_score() -> Score:
             EffectSpec(
                 "saturation", {"preset": "neve_gentle", "mix": 0.22, "drive": 1.16}
             ),
+            # Subtle tape warmth — glues the mix with light nonlinearity.
+            EffectSpec(
+                "chow_tape",
+                {"drive": 0.15, "saturation": 0.18, "bias": 0.5, "mix": 50.0},
+            ),
             EffectSpec("delay", {"delay_seconds": 0.28, "feedback": 0.16, "mix": 0.10}),
             # Bricasti "Large & Dark" hall — warm, long, dark character; outputs stereo
             EffectSpec("bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.30}),
@@ -195,7 +200,7 @@ def build_ji_chorale_score() -> Score:
         synth_defaults={
             "engine": "filtered_stack",
             "waveform": "saw",
-            "n_harmonics": 11,
+            "n_harmonics": 18,
             "cutoff_hz": 3_000.0,
             "keytrack": 0.05,
             "resonance": 0.10,
@@ -207,9 +212,23 @@ def build_ji_chorale_score() -> Score:
             "release": 0.32,
         },
         effects=[
+            # TAL-Chorus-LX: authentic Juno-60 BBD chorus; mode I for subtle width.
             EffectSpec(
-                "chorus", {"preset": "juno_subtle", "mix": 0.22, "depth_ms": 1.9}
-            )
+                "tal_chorus_lx", {"mix": 0.22, "chorus_1": True, "chorus_2": False}
+            ),
+            # Dragonfly plate: intimate pre-reverb before the master Bricasti hall —
+            # gives the soprano line a "singer in a room" quality.
+            EffectSpec(
+                "dragonfly",
+                {
+                    "variant": "plate",
+                    "wet_level": 16.0,
+                    "decay_s": 0.55,
+                    "low_cut_hz": 180.0,
+                    "high_cut_hz": 14000.0,
+                    "predelay_ms": 8.0,
+                },
+            ),
         ],
         pan=0.20,
         velocity_group="melody",
@@ -219,13 +238,22 @@ def build_ji_chorale_score() -> Score:
         # filter_env_amount replaces the ramp's value at note level; ramp only handles cutoff_hz.
         velocity_to_params={
             "filter_env_amount": VelocityParamMap(min_value=0.30, max_value=0.75),
-            "resonance": VelocityParamMap(min_value=0.04, max_value=0.22),
+            "resonance": VelocityParamMap(min_value=0.04, max_value=0.12),
         },
     )
 
-    # ── Prologue (0–12 s): sparse Fs2+A3 drone ──────────────────────────────
-    score.add_note("bass", start=0.0, duration=12.0, freq=Fs2, amp=0.20, velocity=0.80)
-    score.add_note("tenor", start=2.0, duration=10.0, freq=A3, amp=0.15, velocity=0.80)
+    # ── Prologue (0–12 s): sparse Fs2+A3 drone with rhythmic pickup ─────────
+    # Bass: three articulations build into the A section — sub-bass pulses in.
+    score.add_note("bass", start=0.0, duration=3.2, freq=Fs2, amp=0.17, velocity=0.72)
+    score.add_note("bass", start=3.8, duration=2.6, freq=Fs2, amp=0.20, velocity=0.78)
+    score.add_note("bass", start=6.8, duration=5.2, freq=Fs2, amp=0.22, velocity=0.82)
+    # Tenor: "la  laaa  la  la  la  laaaa" figure — simple F#m pickup before bar 1.
+    score.add_note("tenor", start=2.0, duration=0.9, freq=A3, amp=0.12, velocity=0.72)
+    score.add_note("tenor", start=3.5, duration=1.4, freq=Cs4, amp=0.13, velocity=0.78)
+    score.add_note("tenor", start=5.5, duration=0.7, freq=B3, amp=0.12, velocity=0.73)
+    score.add_note("tenor", start=6.5, duration=0.6, freq=A3, amp=0.11, velocity=0.70)
+    score.add_note("tenor", start=7.4, duration=0.5, freq=Cs4, amp=0.11, velocity=0.72)
+    score.add_note("tenor", start=8.2, duration=3.8, freq=A3, amp=0.14, velocity=0.80)
 
     # ── A section (12–54 s): 7-bar vi–iv alternation ────────────────────────
     # Velocity builds through bar 5 (the A5 climax) then eases back.

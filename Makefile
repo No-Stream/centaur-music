@@ -36,6 +36,7 @@ format-check:
 .PHONY: format
 format:
 	$(UV_RUN) ruff format .
+	$(UV_RUN) ruff check --fix .
 
 .PHONY: compile
 compile:

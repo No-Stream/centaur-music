@@ -1,10 +1,10 @@
 {
-  "manifest_path": "output/17_ji_chorale.analysis.json",
+  "manifest_path": "output/versions/ji_chorale/17_ji_chorale__20260318-202516.analysis.json",
   "mix": {
     "artifacts": {
-      "band_energy": "output/17_ji_chorale.mix_band_energy.png",
-      "spectrogram": "output/17_ji_chorale.mix_spectrogram.png",
-      "spectrum": "output/17_ji_chorale.mix_spectrum.png"
+      "band_energy": "output/versions/ji_chorale/17_ji_chorale__20260318-202516.mix_band_energy.png",
+      "spectrogram": "output/versions/ji_chorale/17_ji_chorale__20260318-202516.mix_spectrogram.png",
+      "spectrum": "output/versions/ji_chorale/17_ji_chorale__20260318-202516.mix_spectrum.png"
     },
     "summary": {
       "band_energy_db": {
@@ -33,7 +33,7 @@
   "reference_tilt_db_per_octave": -3.0,
   "score": {
     "artifacts": {
-      "density": "output/17_ji_chorale.score_density.png"
+      "density": "output/versions/ji_chorale/17_ji_chorale__20260318-202516.score_density.png"
     },
     "summary": {
       "frequency_range_hz": [
@@ -100,7 +100,7 @@
   "voices": {
     "alto": {
       "artifacts": {
-        "spectrum": "output/17_ji_chorale.voice_alto_spectrum.png"
+        "spectrum": "output/versions/ji_chorale/17_ji_chorale__20260318-202516.voice_alto_spectrum.png"
       },
       "summary": {
         "band_energy_db": {
@@ -128,7 +128,7 @@
     },
     "bass": {
       "artifacts": {
-        "spectrum": "output/17_ji_chorale.voice_bass_spectrum.png"
+        "spectrum": "output/versions/ji_chorale/17_ji_chorale__20260318-202516.voice_bass_spectrum.png"
       },
       "summary": {
         "band_energy_db": {
@@ -156,7 +156,7 @@
     },
     "counter": {
       "artifacts": {
-        "spectrum": "output/17_ji_chorale.voice_counter_spectrum.png"
+        "spectrum": "output/versions/ji_chorale/17_ji_chorale__20260318-202516.voice_counter_spectrum.png"
       },
       "summary": {
         "band_energy_db": {
@@ -184,7 +184,7 @@
     },
     "lead": {
       "artifacts": {
-        "spectrum": "output/17_ji_chorale.voice_lead_spectrum.png"
+        "spectrum": "output/versions/ji_chorale/17_ji_chorale__20260318-202516.voice_lead_spectrum.png"
       },
       "summary": {
         "band_energy_db": {
@@ -211,7 +211,7 @@
     },
     "tenor": {
       "artifacts": {
-        "spectrum": "output/17_ji_chorale.voice_tenor_spectrum.png"
+        "spectrum": "output/versions/ji_chorale/17_ji_chorale__20260318-202516.voice_tenor_spectrum.png"
       },
       "summary": {
         "band_energy_db": {

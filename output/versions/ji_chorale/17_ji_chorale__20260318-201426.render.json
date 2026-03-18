@@ -2,14 +2,16 @@
   "artifacts": {
     "latest": {
       "analysis_manifest_path": "output/17_ji_chorale.analysis.json",
-      "audio_path": "output/17_ji_chorale.wav"
+      "audio_path": "output/17_ji_chorale.wav",
+      "plot_path": "output/17_ji_chorale.png"
     },
     "versioned": {
-      "analysis_manifest_path": "output/versions/ji_chorale/17_ji_chorale__20260318-202516.analysis.json",
-      "audio_path": "output/versions/ji_chorale/17_ji_chorale__20260318-202516.wav"
+      "analysis_manifest_path": "output/versions/ji_chorale/17_ji_chorale__20260318-201426.analysis.json",
+      "audio_path": "output/versions/ji_chorale/17_ji_chorale__20260318-201426.wav",
+      "plot_path": "output/versions/ji_chorale/17_ji_chorale__20260318-201426.png"
     }
   },
-  "metadata_path": "output/17_ji_chorale.render.json",
+  "metadata_path": "output/versions/ji_chorale/17_ji_chorale__20260318-201426.render.json",
   "output_name": "17_ji_chorale.wav",
   "piece_name": "ji_chorale",
   "provenance": {
@@ -19,13 +21,13 @@
     "git_is_dirty": true,
     "module": "code_musics.pieces.ji_studies",
     "source_file": "/home/jan/workspace/code-musics/code_musics/pieces/ji_studies.py",
-    "source_sha256": "b6cafcc9f03d5f101031b46abbf03b2d2052d6ce941a4f71bfe0608f6a586405"
+    "source_sha256": "8f4bf1895214b89614f44331d21d404f24eae987fd104b6a14c08c38350bdeaa"
   },
-  "rendered_at_utc": "20260318-202516",
+  "rendered_at_utc": "20260318-201426",
   "request": {
     "output_dir": "output",
     "save_analysis": true,
-    "save_plot": false
+    "save_plot": true
   },
   "schema_version": 1,
   "score_snapshot": {
@@ -43,9 +45,9 @@
         "kind": "chow_tape",
         "params": {
           "bias": 0.5,
-          "drive": 0.15,
+          "drive": 0.35,
           "mix": 50.0,
-          "saturation": 0.18
+          "saturation": 0.3
         }
       },
       {
@@ -423,40 +425,16 @@
         "name": "bass",
         "notes": [
           {
-            "amp": 0.17,
+            "amp": 0.2,
             "amp_db": null,
-            "duration": 3.2,
+            "duration": 12.0,
             "freq": 91.66666666666667,
             "label": null,
             "partial": null,
             "pitch_motion": null,
             "start": 0.0,
             "synth": null,
-            "velocity": 0.72
-          },
-          {
-            "amp": 0.2,
-            "amp_db": null,
-            "duration": 2.6,
-            "freq": 91.66666666666667,
-            "label": null,
-            "partial": null,
-            "pitch_motion": null,
-            "start": 3.8,
-            "synth": null,
-            "velocity": 0.78
-          },
-          {
-            "amp": 0.22,
-            "amp_db": null,
-            "duration": 5.2,
-            "freq": 91.66666666666667,
-            "label": null,
-            "partial": null,
-            "pitch_motion": null,
-            "start": 6.8,
-            "synth": null,
-            "velocity": 0.82
+            "velocity": 0.8
           },
           {
             "amp": 0.25,
@@ -2971,7 +2949,7 @@
           "filter_env_amount": 0.55,
           "filter_env_decay": 0.9,
           "keytrack": 0.05,
-          "n_harmonics": 18,
+          "n_harmonics": 11,
           "release": 0.32,
           "resonance": 0.1,
           "sustain_level": 0.48,
@@ -3004,7 +2982,7 @@
             "min_velocity": 0.75
           },
           "resonance": {
-            "max_value": 0.12,
+            "max_value": 0.22,
             "max_velocity": 1.25,
             "min_value": 0.04,
             "min_velocity": 0.75
@@ -3030,74 +3008,14 @@
         "name": "tenor",
         "notes": [
           {
-            "amp": 0.12,
+            "amp": 0.15,
             "amp_db": null,
-            "duration": 0.9,
+            "duration": 10.0,
             "freq": 220.0,
             "label": null,
             "partial": null,
             "pitch_motion": null,
             "start": 2.0,
-            "synth": null,
-            "velocity": 0.72
-          },
-          {
-            "amp": 0.13,
-            "amp_db": null,
-            "duration": 1.4,
-            "freq": 275.0,
-            "label": null,
-            "partial": null,
-            "pitch_motion": null,
-            "start": 3.5,
-            "synth": null,
-            "velocity": 0.78
-          },
-          {
-            "amp": 0.12,
-            "amp_db": null,
-            "duration": 0.7,
-            "freq": 247.5,
-            "label": null,
-            "partial": null,
-            "pitch_motion": null,
-            "start": 5.5,
-            "synth": null,
-            "velocity": 0.73
-          },
-          {
-            "amp": 0.11,
-            "amp_db": null,
-            "duration": 0.6,
-            "freq": 220.0,
-            "label": null,
-            "partial": null,
-            "pitch_motion": null,
-            "start": 6.5,
-            "synth": null,
-            "velocity": 0.7
-          },
-          {
-            "amp": 0.11,
-            "amp_db": null,
-            "duration": 0.5,
-            "freq": 275.0,
-            "label": null,
-            "partial": null,
-            "pitch_motion": null,
-            "start": 7.4,
-            "synth": null,
-            "velocity": 0.72
-          },
-          {
-            "amp": 0.14,
-            "amp_db": null,
-            "duration": 3.8,
-            "freq": 220.0,
-            "label": null,
-            "partial": null,
-            "pitch_motion": null,
-            "start": 8.2,
             "synth": null,
             "velocity": 0.8
           },
@@ -3399,9 +3317,9 @@
         "kind": "chow_tape",
         "params": {
           "bias": 0.5,
-          "drive": 0.15,
+          "drive": 0.35,
           "mix": 50.0,
-          "saturation": 0.18
+          "saturation": 0.3
         }
       },
       {
@@ -3420,7 +3338,7 @@
         }
       }
     ],
-    "note_count": 206,
+    "note_count": 199,
     "sample_rate": 44100,
     "total_duration_seconds": 154.5,
     "voice_count": 5,
@@ -3461,7 +3379,7 @@
           183.33333333333334
         ],
         "labels": [],
-        "note_count": 24,
+        "note_count": 22,
         "pan": -0.08,
         "partial_range": null,
         "synth_defaults": {
@@ -3540,7 +3458,7 @@
           "filter_env_amount": 0.55,
           "filter_env_decay": 0.9,
           "keytrack": 0.05,
-          "n_harmonics": 18,
+          "n_harmonics": 11,
           "release": 0.32,
           "resonance": 0.1,
           "sustain_level": 0.48,
@@ -3551,10 +3469,10 @@
         "effects": [],
         "frequency_range_hz": [
           146.66666666666666,
-          275.0
+          220.0
         ],
         "labels": [],
-        "note_count": 26,
+        "note_count": 21,
         "pan": -0.16,
         "partial_range": null,
         "synth_defaults": {
@@ -3571,5 +3489,5 @@
       }
     }
   },
-  "version_metadata_path": "output/versions/ji_chorale/17_ji_chorale__20260318-202516.render.json"
+  "version_metadata_path": "output/versions/ji_chorale/17_ji_chorale__20260318-201426.render.json"
 }
