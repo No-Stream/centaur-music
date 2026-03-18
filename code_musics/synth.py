@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 from pedalboard import Convolution, Delay, Pedalboard, Reverb
+from scipy.signal import butter, sosfilt
 from scipy.io import wavfile
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -19,15 +20,16 @@ def tone(
     amp: float = 1.0,
     harmonic_rolloff: float = 0.5,
     n_harmonics: int = 6,
+    sample_rate: int = SAMPLE_RATE,
 ) -> np.ndarray:
     """Additive synthesis: fundamental + harmonics with geometric rolloff."""
-    n_samples = int(SAMPLE_RATE * duration)
+    n_samples = int(sample_rate * duration)
     t = np.linspace(0, duration, n_samples, endpoint=False)
     signal = np.zeros(n_samples)
     total_amp = 0.0
     for n in range(1, n_harmonics + 1):
         partial_freq = freq * n
-        if partial_freq >= SAMPLE_RATE / 2:
+        if partial_freq >= sample_rate / 2:
             break
         partial_amp = harmonic_rolloff ** (n - 1)
         signal += partial_amp * np.sin(2 * np.pi * partial_freq * t)
@@ -41,12 +43,13 @@ def adsr(
     decay: float = 0.1,
     sustain_level: float = 0.75,
     release: float = 0.3,
+    sample_rate: int = SAMPLE_RATE,
 ) -> np.ndarray:
     """Apply ADSR amplitude envelope."""
     n = len(signal)
-    n_attack = int(attack * SAMPLE_RATE)
-    n_decay = int(decay * SAMPLE_RATE)
-    n_release = int(release * SAMPLE_RATE)
+    n_attack = int(attack * sample_rate)
+    n_decay = int(decay * sample_rate)
+    n_release = int(release * sample_rate)
     n_sustain = max(0, n - n_attack - n_decay - n_release)
 
     envelope = np.concatenate(
@@ -75,6 +78,12 @@ def at(signal: np.ndarray, offset_seconds: float) -> np.ndarray:
     return np.concatenate([pad, signal])
 
 
+def at_sample_rate(signal: np.ndarray, offset_seconds: float, sample_rate: int) -> np.ndarray:
+    """Pad signal with silence at the front using an explicit sample rate."""
+    pad = np.zeros(int(offset_seconds * sample_rate))
+    return np.concatenate([pad, signal])
+
+
 def sequence(*segments: np.ndarray, gap: float = 0.05) -> np.ndarray:
     """Concatenate segments with a short silence between each."""
     silence = np.zeros(int(gap * SAMPLE_RATE))
@@ -84,6 +93,28 @@ def sequence(*segments: np.ndarray, gap: float = 0.05) -> np.ndarray:
         if index < len(segments) - 1:
             parts.append(silence)
     return np.concatenate(parts)
+
+
+def lowpass(signal: np.ndarray, cutoff_hz: float, sample_rate: int, order: int = 2) -> np.ndarray:
+    """Apply a stable low-pass filter to a mono signal."""
+    nyquist = sample_rate / 2.0
+    if cutoff_hz <= 0:
+        return np.zeros_like(signal)
+    if cutoff_hz >= nyquist * 0.995:
+        return signal
+    sos = butter(order, cutoff_hz / nyquist, btype="lowpass", output="sos")
+    return sosfilt(sos, signal)
+
+
+def highpass(signal: np.ndarray, cutoff_hz: float, sample_rate: int, order: int = 2) -> np.ndarray:
+    """Apply a stable high-pass filter to a mono signal."""
+    nyquist = sample_rate / 2.0
+    if cutoff_hz <= 0:
+        return signal
+    if cutoff_hz >= nyquist * 0.995:
+        return np.zeros_like(signal)
+    sos = butter(order, cutoff_hz / nyquist, btype="highpass", output="sos")
+    return sosfilt(sos, signal)
 
 
 BRICASTI_IR_DIR = Path(

@@ -70,3 +70,16 @@ def test_render_piece_writes_audio_and_plot(tmp_path: Path) -> None:
     assert audio_path.exists()
     assert plot_path is not None
     assert plot_path.exists()
+
+
+def test_new_piece_registry_entries_render(tmp_path: Path) -> None:
+    for piece_name in [
+        "harmonic_window",
+        "otonal_utonal_mirror",
+        "otonal_utonal_mirror_expanded",
+    ]:
+        audio_path, plot_path = render_piece(piece_name, output_dir=tmp_path, save_plot=True)
+
+        assert audio_path.exists()
+        assert plot_path is not None
+        assert plot_path.exists()

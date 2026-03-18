@@ -9,6 +9,7 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
+from code_musics.engines import render_note_signal, resolve_synth_params
 from code_musics import synth
 
 
@@ -270,13 +271,14 @@ class Score:
             synth_params = dict(voice.synth_defaults)
             if note.synth is not None:
                 synth_params.update(note.synth)
+            synth_params = resolve_synth_params(synth_params)
 
-            note_signal = synth.tone(
+            note_signal = render_note_signal(
                 freq=self._resolve_freq(note),
                 duration=note.duration,
                 amp=note.amp,
-                harmonic_rolloff=synth_params.get("harmonic_rolloff", 0.5),
-                n_harmonics=synth_params.get("n_harmonics", 6),
+                sample_rate=self.sample_rate,
+                params=synth_params,
             )
             note_signal = synth.adsr(
                 note_signal,
@@ -284,8 +286,9 @@ class Score:
                 decay=synth_params.get("decay", 0.1),
                 sustain_level=synth_params.get("sustain_level", 0.75),
                 release=synth_params.get("release", 0.3),
+                sample_rate=self.sample_rate,
             )
-            voice_signals.append(synth.at(note_signal, note.start))
+            voice_signals.append(synth.at_sample_rate(note_signal, note.start, self.sample_rate))
 
         if not voice_signals:
             return np.zeros(0)
