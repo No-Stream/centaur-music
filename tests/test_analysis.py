@@ -16,7 +16,7 @@ from code_musics.analysis import (
 )
 from code_musics.humanize import TimingHumanizeSpec
 from code_musics.pieces.registry import PieceSection
-from code_musics.score import EffectSpec, Score, VelocityParamMap
+from code_musics.score import EffectSpec, Score, VelocityParamMap, VoiceSend
 
 
 def test_analyze_audio_reports_expected_band_bias() -> None:
@@ -166,9 +166,16 @@ def test_build_score_timeline_includes_sections_and_resolved_notes() -> None:
 
 def test_save_analysis_artifacts_writes_manifest_and_plots(tmp_path: Path) -> None:
     score = Score(f0=55.0)
+    score.add_send_bus(
+        "room",
+        effects=[
+            EffectSpec("delay", {"delay_seconds": 0.1, "feedback": 0.0, "mix": 1.0})
+        ],
+    )
     score.master_effects = [
         EffectSpec("compressor", {"threshold_db": -30.0, "ratio": 3.0})
     ]
+    score.add_voice("bass", sends=[VoiceSend("room", send_db=-6.0)])
     score.add_note("bass", start=0.0, duration=1.0, partial=2.0, amp=0.2)
     score.add_note("lead", start=0.25, duration=0.75, partial=6.0, amp=0.2)
 
@@ -202,6 +209,7 @@ def test_save_analysis_artifacts_writes_manifest_and_plots(tmp_path: Path) -> No
     assert Path(saved_manifest["voices"]["bass"]["artifacts"]["spectrum"]).exists()
     assert saved_manifest["effect_analysis"] == effect_analysis
     assert saved_manifest["effect_analysis"]["mix_effects"]
+    assert saved_manifest["effect_analysis"]["send_effects"]["room"]
 
 
 def test_save_analysis_artifacts_records_pre_export_mix_summary(tmp_path: Path) -> None:
@@ -227,7 +235,9 @@ def test_save_analysis_artifacts_does_not_flag_intentional_export_normalization(
 ) -> None:
     sample_rate = 44_100
     duration_seconds = 2.0
-    time = np.arange(int(sample_rate * duration_seconds), dtype=np.float64) / sample_rate
+    time = (
+        np.arange(int(sample_rate * duration_seconds), dtype=np.float64) / sample_rate
+    )
     pre_export_signal = 0.01 * np.sin(2.0 * np.pi * 220.0 * time)
     export_signal = pre_export_signal * 10.0
 
@@ -250,7 +260,9 @@ def test_save_analysis_artifacts_flags_loudness_jump_with_crest_collapse(
 ) -> None:
     sample_rate = 44_100
     duration_seconds = 2.0
-    time = np.arange(int(sample_rate * duration_seconds), dtype=np.float64) / sample_rate
+    time = (
+        np.arange(int(sample_rate * duration_seconds), dtype=np.float64) / sample_rate
+    )
     pre_export_signal = 0.01 * np.sin(2.0 * np.pi * 220.0 * time)
     export_signal = 0.1 * np.sign(np.sin(2.0 * np.pi * 220.0 * time))
 
@@ -264,7 +276,10 @@ def test_save_analysis_artifacts_flags_loudness_jump_with_crest_collapse(
 
     mix_risk_codes = {risk["code"] for risk in manifest["artifact_risk"]["mix"]}
 
-    assert "export_loudness_jump" in mix_risk_codes or "heavy_export_compression" in mix_risk_codes
+    assert (
+        "export_loudness_jump" in mix_risk_codes
+        or "heavy_export_compression" in mix_risk_codes
+    )
 
 
 def test_save_analysis_artifacts_records_artifact_risk_report(tmp_path: Path) -> None:

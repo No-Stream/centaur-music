@@ -38,6 +38,9 @@
 - `Voice` stores note events plus synth defaults, voice-level effects, pan,
   humanization settings, optional velocity-to-parameter mappings, and optional
   voice-time automation.
+- `Score` also supports shared named send buses so multiple voices can feed the
+  same reverb, delay, or other return-style effect chain without duplicating
+  insert effects per voice.
 - `Score` owns the timeline, derives `total_dur`, renders audio, and can save a
   piano-roll plot.
 - `Score.timing_humanize` applies render-time ensemble timing drift across the whole

@@ -32,8 +32,8 @@ The current design is intentionally simple:
 
 ## `EffectSpec`
 
-`EffectSpec` is the declarative effect-chain item used by voices and the master
-bus.
+`EffectSpec` is the declarative effect-chain item used by voices, shared send
+buses, and the master bus.
 
 Fields:
 
@@ -43,6 +43,7 @@ Fields:
 Use it in:
 
 - `Voice.effects`
+- `SendBusSpec.effects`
 - `Score.master_effects`
 
 Example:
@@ -233,6 +234,7 @@ Fields:
 - `velocity_db_per_unit`
 - `pre_fx_gain_db`
 - `mix_db`
+- `sends`
 - `normalize_lufs`
 - `pan`
 - `automation`
@@ -256,10 +258,45 @@ Practical interpretation:
 - `velocity_to_params` makes louder/softer notes timbrally different
 - `pre_fx_gain_db` is the voice input trim before voice effects; use it when you want to hit chorus, saturation, compression, or reverb harder or softer without changing the note writing
 - `mix_db` is the voice fader after voice effects and before the master bus; this is the preferred "mixer volume" control for balancing voices
+- `sends` routes the post-fader voice signal into one or more shared send buses
 - `normalize_lufs` applies an integrated-LUFS stem gain trim before `pre_fx_gain_db`, pan, voice effects, and `mix_db`
 - in normal authoring, prefer `amp_db`, `pre_fx_gain_db`, and `mix_db` for musical balance and effect drive; `normalize_lufs` is a specialist stem-standardization option that is usually best left at its default
 - `pan` places the rendered voice in stereo
 - `automation` adds explicit score-time parameter lanes beyond humanization
+
+## `VoiceSend`
+
+`VoiceSend` routes a voice into a named shared send bus.
+
+Fields:
+
+- `target: str`
+- `send_db: float = 0.0`
+
+Behavior:
+
+- `target` must be a non-empty send-bus name defined on the score
+- `send_db` must be finite
+- sends are post-fader in v1, so they follow the voice's `mix_db`
+- sends tap the voice after normalization, `pre_fx_gain_db`, pan, and `effects`
+
+## `SendBusSpec`
+
+`SendBusSpec` defines a shared aux return bus on the score.
+
+Fields:
+
+- `name: str`
+- `effects: list[EffectSpec] = []`
+- `return_db: float = 0.0`
+- `pan: float = 0.0`
+
+Behavior:
+
+- send-bus names must be unique within a score
+- `return_db` must be finite
+- `pan` must be in `[-1.0, 1.0]`
+- buses are meant for shared return-style processing such as reverb, delay, or chorus
 
 ## `Score`
 
@@ -275,6 +312,7 @@ Fields:
 - `master_bus_max_true_peak_dbfs: float = -6.0`
 - `master_input_gain_db: float = 0.0`
 - `master_effects: list[EffectSpec] = []`
+- `send_buses: list[SendBusSpec] = []`
 - `voices: dict[str, Voice] = {}`
 
 ### `Score.add_voice(...)`
@@ -293,6 +331,7 @@ Parameters:
 - `velocity_db_per_unit`
 - `pre_fx_gain_db`
 - `mix_db`
+- `sends`
 - `normalize_lufs`
 - `pan`
 
@@ -303,6 +342,7 @@ Important behavior:
 - if you want to disable velocity humanization after a voice exists, set `voice.velocity_humanize = None`
 - `pre_fx_gain_db` defaults to `0.0` and acts like a pre-insert trim
 - `mix_db` defaults to `0.0` and acts like a post-insert voice fader
+- `sends` defaults to `[]` and routes the post-fader voice into named shared aux buses
 - `normalize_lufs=None` disables the default per-voice auto-normalization if you want raw stem gain instead
 - with the default `normalize_lufs=-24.0`, it is normal and recommended to do most balancing with authored note `amp_db`, `pre_fx_gain_db`, and `mix_db` instead of moving the LUFS target around
 
@@ -336,6 +376,20 @@ score.add_voice(
     pan=-0.15,
 )
 ```
+
+### `Score.add_send_bus(...)`
+
+Adds or replaces a named shared send bus definition.
+
+Parameters:
+
+- `name`
+- `effects`
+- `return_db`
+- `pan`
+
+Use shared send buses when several voices should feed the same reverb, delay,
+or modulation return instead of duplicating similar insert chains per voice.
 
 ### `Score.get_voice(name)`
 
@@ -394,7 +448,7 @@ This value drives:
 
 ### `Score.render()`
 
-Renders the full score, including voice effects and master effects.
+Renders the full score, including voice effects, shared send returns, and master effects.
 
 Behavior:
 
@@ -404,6 +458,7 @@ Behavior:
   toward `master_bus_target_lufs` before the master bus while keeping premaster
   true peak under `master_bus_max_true_peak_dbfs`
 - applies `master_input_gain_db` to the summed mix before `master_effects`
+- mixes shared send returns into the premaster mix before the master bus
 - applies `master_effects` after the voices are mixed
 - does not perform export mastering itself; the named-piece render workflow applies
   final LUFS/true-peak mastering when writing the final WAV
@@ -444,7 +499,7 @@ Behavior:
 
 ### `Score.render_stems()`
 
-Renders each voice independently before master-bus effects.
+Renders each voice independently before shared send returns and master-bus effects.
 
 Returns:
 
@@ -519,10 +574,12 @@ The practical render path for one note is:
 13. apply `pre_fx_gain_db`
 14. apply pan and voice effects
 15. apply `mix_db`
-16. mix voices together
-17. if enabled, auto-stage the premaster mix for the master bus
-18. apply `master_input_gain_db`
-19. apply master effects
+16. derive any post-fader voice sends
+17. sum dry voices and separately sum/process shared send returns
+18. mix dry voices and send returns together
+19. if enabled, auto-stage the premaster mix for the master bus
+20. apply `master_input_gain_db`
+21. apply master effects
 
 That ordering matters because it explains why:
 

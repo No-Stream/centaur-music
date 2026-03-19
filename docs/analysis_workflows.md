@@ -158,6 +158,8 @@ Current analysis outputs for score-backed renders include:
 - export-time log lines with peak, true-peak, and integrated LUFS diagnostics
 - drift summary and drift-window stats inside the score analysis payload
 - effect-chain diagnostics for mix and voice effects, including native
+  send-bus return chains,
+  plus native
   compressor gain-reduction stats plus before/after density/clipping proxies for
   saturation and plugin stages
 
@@ -167,6 +169,7 @@ The analysis manifest now includes an `effect_analysis` section with:
 
 - `mix_effects`: ordered diagnostics for `Score.master_effects`
 - `voice_effects`: ordered diagnostics for each `Voice.effects` chain
+- `send_effects`: ordered diagnostics for each `SendBusSpec.effects` chain
 
 Current effect metrics are intentionally pragmatic:
 

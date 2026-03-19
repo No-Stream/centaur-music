@@ -406,7 +406,7 @@ def save_analysis_artifacts(
         "voices": {},
         "effect_analysis": effect_analysis
         if effect_analysis is not None
-        else {"mix_effects": [], "voice_effects": {}},
+        else {"mix_effects": [], "voice_effects": {}, "send_effects": {}},
     }
     if pre_master_mix_signal is not None:
         pre_master_analysis = analyze_audio(
@@ -1184,10 +1184,7 @@ def _build_artifact_risk_report(
     pre_export_mix_analysis: AudioAnalysis | None,
 ) -> ArtifactRiskReport:
     mix_risks = list(mix_analysis.artifact_risks)
-    if (
-        pre_master_mix_analysis is not None
-        and pre_export_mix_analysis is not None
-    ):
+    if pre_master_mix_analysis is not None and pre_export_mix_analysis is not None:
         loudness_delta_lufs = (
             pre_export_mix_analysis.integrated_lufs
             - pre_master_mix_analysis.integrated_lufs
@@ -1600,6 +1597,9 @@ def _log_effect_analysis_warnings(effect_analysis: dict[str, Any]) -> None:
     for voice_name, entries in effect_analysis.get("voice_effects", {}).items():
         for entry in entries:
             _log_effect_entry_warnings(scope=f"voice_fx:{voice_name}", entry=entry)
+    for bus_name, entries in effect_analysis.get("send_effects", {}).items():
+        for entry in entries:
+            _log_effect_entry_warnings(scope=f"send_fx:{bus_name}", entry=entry)
 
 
 def _log_effect_entry_warnings(*, scope: str, entry: dict[str, Any]) -> None:

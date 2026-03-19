@@ -43,6 +43,38 @@ class EffectSpec:
 
 
 @dataclass(frozen=True)
+class VoiceSend:
+    """Post-fader routing from a voice into a named shared send bus."""
+
+    target: str
+    send_db: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not self.target:
+            raise ValueError("voice send target must be non-empty")
+        if not np.isfinite(self.send_db):
+            raise ValueError("voice send_db must be finite")
+
+
+@dataclass(frozen=True)
+class SendBusSpec:
+    """Shared aux return bus fed by one or more voice sends."""
+
+    name: str
+    effects: list[EffectSpec] = field(default_factory=list)
+    return_db: float = 0.0
+    pan: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("send bus name must be non-empty")
+        if not np.isfinite(self.return_db):
+            raise ValueError("send bus return_db must be finite")
+        if not -1.0 <= self.pan <= 1.0:
+            raise ValueError("send bus pan must be between -1 and 1")
+
+
+@dataclass(frozen=True)
 class NoteEvent:
     """Atomic score event, represented in relative or absolute time."""
 
@@ -231,6 +263,7 @@ class Voice:
     velocity_db_per_unit: float = 12.0
     pre_fx_gain_db: float = 0.0
     mix_db: float = 0.0
+    sends: list[VoiceSend] = field(default_factory=list)
     normalize_lufs: float | None = -24.0
     pan: float = 0.0
     automation: list[AutomationSpec] = field(default_factory=list)
@@ -266,6 +299,7 @@ class Score:
     master_bus_max_true_peak_dbfs: float = -6.0
     master_input_gain_db: float = 0.0
     master_effects: list[EffectSpec] = field(default_factory=list)
+    send_buses: list[SendBusSpec] = field(default_factory=list)
     voices: dict[str, Voice] = field(default_factory=dict)
     time_origin_seconds: float = 0.0
     time_reference_total_dur: float | None = None
@@ -277,6 +311,9 @@ class Score:
             raise ValueError("master_bus_max_true_peak_dbfs must be finite")
         if not np.isfinite(self.master_input_gain_db):
             raise ValueError("master_input_gain_db must be finite")
+        self._validate_send_buses()
+        for voice in self.voices.values():
+            self._validate_voice_sends(voice.sends)
 
     def add_voice(
         self,
@@ -291,6 +328,7 @@ class Score:
         velocity_db_per_unit: float = 12.0,
         pre_fx_gain_db: float = 0.0,
         mix_db: float = 0.0,
+        sends: list[VoiceSend] | None = None,
         normalize_lufs: float | None = -24.0,
         pan: float = 0.0,
         automation: list[AutomationSpec] | None = None,
@@ -306,6 +344,8 @@ class Score:
             raise ValueError("mix_db must be finite")
         if normalize_lufs is not None and not np.isfinite(normalize_lufs):
             raise ValueError("normalize_lufs must be finite when provided")
+        resolved_sends = list(sends or [])
+        self._validate_voice_sends(resolved_sends)
         voice = Voice(
             name=name,
             synth_defaults=dict(synth_defaults or {}),
@@ -321,12 +361,38 @@ class Score:
             velocity_db_per_unit=velocity_db_per_unit,
             pre_fx_gain_db=pre_fx_gain_db,
             mix_db=mix_db,
+            sends=resolved_sends,
             normalize_lufs=normalize_lufs,
             pan=pan,
             automation=list(automation or []),
         )
         self.voices[name] = voice
         return voice
+
+    def add_send_bus(
+        self,
+        name: str,
+        *,
+        effects: list[EffectSpec] | None = None,
+        return_db: float = 0.0,
+        pan: float = 0.0,
+    ) -> SendBusSpec:
+        """Add or replace a named shared send bus definition."""
+        send_bus = SendBusSpec(
+            name=name,
+            effects=list(effects or []),
+            return_db=return_db,
+            pan=pan,
+        )
+        existing_index = next(
+            (index for index, bus in enumerate(self.send_buses) if bus.name == name),
+            None,
+        )
+        if existing_index is None:
+            self.send_buses.append(send_bus)
+        else:
+            self.send_buses[existing_index] = send_bus
+        return send_bus
 
     def get_voice(self, name: str) -> Voice:
         """Get or create a voice with no defaults."""
@@ -402,21 +468,31 @@ class Score:
 
     def render(self) -> np.ndarray:
         """Render the score to mono or stereo audio."""
-        stems = self.render_stems()
-        if not stems:
+        stems, send_returns, _, _ = self._render_mix_components_internal(
+            collect_effect_analysis=False
+        )
+        mix_inputs = [*stems.values(), *send_returns.values()]
+        if not mix_inputs:
             return np.zeros(0)
-        mix = self._stack_signals(list(stems.values()))
+        mix = self._stack_signals(mix_inputs)
         return self._apply_master_bus_processing(mix)
 
     def render_with_effect_analysis(
         self,
     ) -> tuple[np.ndarray, dict[str, np.ndarray], dict[str, Any]]:
         """Render the score plus per-effect diagnostics for agents and analysis."""
-        stems, voice_effects = self._render_stems_internal(collect_effect_analysis=True)
-        if not stems:
-            return np.zeros(0), {}, {"mix_effects": [], "voice_effects": {}}
+        stems, send_returns, voice_effects, send_effects = (
+            self._render_mix_components_internal(collect_effect_analysis=True)
+        )
+        mix_inputs = [*stems.values(), *send_returns.values()]
+        if not mix_inputs:
+            return (
+                np.zeros(0),
+                {},
+                {"mix_effects": [], "voice_effects": {}, "send_effects": {}},
+            )
 
-        mix = self._stack_signals(list(stems.values()))
+        mix = self._stack_signals(mix_inputs)
         mix_effects: list[synth.EffectAnalysisEntry] = []
         mix = self._apply_master_bus_processing(
             mix,
@@ -432,6 +508,10 @@ class Score:
                 "voice_effects": {
                     voice_name: [entry.to_dict() for entry in entries]
                     for voice_name, entries in voice_effects.items()
+                },
+                "send_effects": {
+                    bus_name: [entry.to_dict() for entry in entries]
+                    for bus_name, entries in send_effects.items()
                 },
             },
         )
@@ -474,6 +554,7 @@ class Score:
             master_bus_max_true_peak_dbfs=self.master_bus_max_true_peak_dbfs,
             master_input_gain_db=self.master_input_gain_db,
             master_effects=list(self.master_effects),
+            send_buses=list(self.send_buses),
             voices=shifted_voices,
             time_origin_seconds=self.time_origin_seconds + start_seconds,
             time_reference_total_dur=reference_total_dur,
@@ -481,14 +562,16 @@ class Score:
 
     def render_stems(self) -> dict[str, np.ndarray]:
         """Render each voice independently before master-bus effects."""
-        rendered_stems, _ = self._render_stems_internal(collect_effect_analysis=False)
+        rendered_stems, _, _, _ = self._render_mix_components_internal(
+            collect_effect_analysis=False
+        )
         return rendered_stems
 
     def render_stems_with_effect_analysis(
         self,
     ) -> tuple[dict[str, np.ndarray], dict[str, list[dict[str, Any]]]]:
         """Render stems plus voice-level effect diagnostics."""
-        rendered_stems, voice_effects = self._render_stems_internal(
+        rendered_stems, _, voice_effects, _ = self._render_mix_components_internal(
             collect_effect_analysis=True
         )
         return rendered_stems, {
@@ -496,29 +579,46 @@ class Score:
             for voice_name, entries in voice_effects.items()
         }
 
-    def _render_stems_internal(
+    def _render_mix_components_internal(
         self,
         *,
         collect_effect_analysis: bool,
-    ) -> tuple[dict[str, np.ndarray], dict[str, list[synth.EffectAnalysisEntry]]]:
-        """Render stems and optionally capture effect-chain diagnostics."""
+    ) -> tuple[
+        dict[str, np.ndarray],
+        dict[str, np.ndarray],
+        dict[str, list[synth.EffectAnalysisEntry]],
+        dict[str, list[synth.EffectAnalysisEntry]],
+    ]:
+        """Render dry stems, send returns, and optional effect diagnostics."""
         rendered_stems: dict[str, np.ndarray] = {}
         voice_effects: dict[str, list[synth.EffectAnalysisEntry]] = {}
+        send_inputs: dict[str, list[np.ndarray]] = {
+            send_bus.name: [] for send_bus in self.send_buses
+        }
         timing_offsets = self.resolve_timing_offsets()
         velocity_multipliers = self._build_velocity_multiplier_map()
         for voice_name, voice in self.voices.items():
-            rendered_voice, rendered_effect_analysis = self._render_voice(
-                voice_name=voice_name,
-                voice=voice,
-                timing_offsets=timing_offsets,
-                velocity_multipliers=velocity_multipliers,
-                collect_effect_analysis=collect_effect_analysis,
+            self._validate_voice_sends(voice.sends)
+            rendered_voice, rendered_send_inputs, rendered_effect_analysis = (
+                self._render_voice(
+                    voice_name=voice_name,
+                    voice=voice,
+                    timing_offsets=timing_offsets,
+                    velocity_multipliers=velocity_multipliers,
+                    collect_effect_analysis=collect_effect_analysis,
+                )
             )
             if rendered_voice.size > 0:
                 rendered_stems[voice_name] = rendered_voice
+            for bus_name, bus_signal in rendered_send_inputs.items():
+                send_inputs.setdefault(bus_name, []).append(bus_signal)
             if rendered_effect_analysis:
                 voice_effects[voice_name] = rendered_effect_analysis
-        return rendered_stems, voice_effects
+        send_returns, send_effects = self._render_send_returns(
+            send_inputs=send_inputs,
+            collect_effect_analysis=collect_effect_analysis,
+        )
+        return rendered_stems, send_returns, voice_effects, send_effects
 
     def resolve_timing_offsets(self) -> dict[tuple[str, int], float]:
         """Return the deterministic render-time timing offset for each note."""
@@ -601,7 +701,11 @@ class Score:
         timing_offsets: dict[tuple[str, int], float],
         velocity_multipliers: dict[tuple[str, int], float],
         collect_effect_analysis: bool,
-    ) -> tuple[np.ndarray, list[synth.EffectAnalysisEntry]]:
+    ) -> tuple[
+        np.ndarray,
+        dict[str, np.ndarray],
+        list[synth.EffectAnalysisEntry],
+    ]:
         voice_signals: list[np.ndarray] = []
         for note_index, note in enumerate(voice.notes):
             synth_params = normalize_synth_spec(voice.synth_defaults)
@@ -716,7 +820,7 @@ class Score:
             )
 
         if not voice_signals:
-            return np.zeros(0), []
+            return np.zeros(0), {}, []
 
         voice_mix = self._stack_signals(voice_signals)
         if voice.normalize_lufs is not None:
@@ -749,7 +853,56 @@ class Score:
                 )
         if voice.mix_db != 0.0:
             voice_mix = voice_mix * synth.db_to_amp(voice.mix_db)
-        return voice_mix, effect_analysis
+        send_signals = {
+            send.target: voice_mix * synth.db_to_amp(send.send_db)
+            for send in voice.sends
+        }
+        return voice_mix, send_signals, effect_analysis
+
+    def _render_send_returns(
+        self,
+        *,
+        send_inputs: dict[str, list[np.ndarray]],
+        collect_effect_analysis: bool,
+    ) -> tuple[
+        dict[str, np.ndarray],
+        dict[str, list[synth.EffectAnalysisEntry]],
+    ]:
+        """Render summed shared send returns after collecting all voice feeds."""
+        send_returns: dict[str, np.ndarray] = {}
+        send_effects: dict[str, list[synth.EffectAnalysisEntry]] = {}
+        for send_bus in self.send_buses:
+            bus_inputs = send_inputs.get(send_bus.name, [])
+            if not bus_inputs:
+                continue
+            bus_mix = self._stack_signals(bus_inputs)
+            effect_analysis: list[synth.EffectAnalysisEntry] = []
+            if send_bus.effects:
+                if collect_effect_analysis:
+                    processed_bus_mix, rendered_effect_analysis = cast(
+                        tuple[np.ndarray, list[synth.EffectAnalysisEntry]],
+                        synth.apply_effect_chain(
+                            bus_mix,
+                            send_bus.effects,
+                            return_analysis=True,
+                        ),
+                    )
+                    bus_mix = processed_bus_mix
+                    effect_analysis = rendered_effect_analysis
+                else:
+                    bus_mix = cast(
+                        np.ndarray,
+                        synth.apply_effect_chain(bus_mix, send_bus.effects),
+                    )
+            if send_bus.return_db != 0.0:
+                bus_mix = bus_mix * synth.db_to_amp(send_bus.return_db)
+            if send_bus.pan != 0.0:
+                bus_mix = synth.apply_pan(bus_mix, pan=send_bus.pan)
+            if bus_mix.size > 0:
+                send_returns[send_bus.name] = bus_mix
+            if effect_analysis:
+                send_effects[send_bus.name] = effect_analysis
+        return send_returns, send_effects
 
     def _timing_targets(self) -> list[TimingTarget]:
         targets: list[TimingTarget] = []
@@ -788,6 +941,25 @@ class Score:
         if self.time_reference_total_dur is not None:
             return self.time_reference_total_dur
         return self.time_origin_seconds + self.total_dur
+
+    def _validate_send_buses(self) -> None:
+        send_bus_names = [send_bus.name for send_bus in self.send_buses]
+        if len(send_bus_names) != len(set(send_bus_names)):
+            raise ValueError("send bus names must be unique")
+
+    def _validate_voice_sends(self, sends: list[VoiceSend]) -> None:
+        send_bus_names = {send_bus.name for send_bus in self.send_buses}
+        seen_targets: set[str] = set()
+        for send in sends:
+            if send.target in seen_targets:
+                raise ValueError(
+                    f"voice send targets must be unique per voice: {send.target}"
+                )
+            seen_targets.add(send.target)
+            if send.target not in send_bus_names:
+                raise ValueError(
+                    f"voice send target does not exist on score: {send.target}"
+                )
 
     def _apply_master_bus_processing(
         self,

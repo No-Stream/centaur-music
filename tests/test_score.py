@@ -22,7 +22,14 @@ from code_musics.humanize import (
 from code_musics.pieces import PIECES
 from code_musics.pitch_motion import PitchMotionSpec
 from code_musics.render import RenderWindow, render_piece
-from code_musics.score import EffectSpec, NoteEvent, Phrase, Score
+from code_musics.score import (
+    EffectSpec,
+    NoteEvent,
+    Phrase,
+    Score,
+    SendBusSpec,
+    VoiceSend,
+)
 
 
 def test_total_duration_is_derived_from_note_endpoints() -> None:
@@ -204,6 +211,64 @@ def test_render_overlapping_voices_returns_audio() -> None:
     assert audio.ndim == 1
     assert len(audio) == int(1.8 * score.sample_rate)
     assert np.max(np.abs(audio)) > 0
+
+
+def test_score_send_bus_adds_shared_return_to_mix() -> None:
+    dry_reference = Score(f0=55.0, auto_master_gain_stage=False)
+    dry_reference.add_voice("lead", normalize_lufs=None)
+    dry_reference.add_note("lead", start=0.0, duration=0.3, partial=4.0, amp=0.2)
+
+    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score.add_send_bus(
+        "slap",
+        effects=[
+            EffectSpec(
+                "delay",
+                {"delay_seconds": 0.12, "feedback": 0.0, "mix": 1.0},
+            )
+        ],
+    )
+    score.add_voice("lead", normalize_lufs=None, sends=[VoiceSend("slap", send_db=0.0)])
+    score.add_note("lead", start=0.0, duration=0.3, partial=4.0, amp=0.2)
+
+    dry_stem = score.render_stems()["lead"]
+    full_mix = score.render()
+
+    assert np.allclose(dry_stem, dry_reference.render_stems()["lead"])
+    assert not np.allclose(full_mix, dry_stem)
+
+
+def test_multiple_voices_can_share_send_bus() -> None:
+    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score.add_send_bus("room")
+    score.add_voice("lead", normalize_lufs=None, sends=[VoiceSend("room", send_db=0.0)])
+    score.add_voice("pad", normalize_lufs=None, sends=[VoiceSend("room", send_db=0.0)])
+    score.add_note("lead", start=0.0, duration=0.5, partial=4.0, amp=0.1)
+    score.add_note("pad", start=0.0, duration=0.5, partial=5.0, amp=0.1)
+
+    rendered = score.render()
+
+    assert rendered.size > 0
+    assert np.max(np.abs(rendered)) > 0.15
+
+
+def test_send_bus_supports_non_reverb_effects() -> None:
+    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score.add_send_bus(
+        "width",
+        effects=[EffectSpec("chorus", {"preset": "juno_subtle", "mix": 1.0})],
+    )
+    score.add_voice(
+        "lead",
+        normalize_lufs=None,
+        sends=[VoiceSend("width", send_db=-3.0)],
+    )
+    score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.2)
+
+    rendered = score.render()
+
+    assert rendered.ndim == 2
+    assert rendered.shape[0] == 2
 
 
 def test_render_extends_note_past_note_end_for_release_tail() -> None:
@@ -669,6 +734,83 @@ def test_voice_mix_db_applies_after_voice_effects() -> None:
     assert lowered_peak == pytest.approx(base_peak * synth.db_to_amp(-6.0), rel=5e-2)
 
 
+def test_voice_send_is_post_fader() -> None:
+    base_score = Score(f0=55.0, auto_master_gain_stage=False)
+    base_score.add_send_bus("room")
+    base_score.add_voice(
+        "lead",
+        normalize_lufs=None,
+        sends=[VoiceSend("room", send_db=0.0)],
+    )
+    base_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.2)
+
+    lowered_score = Score(f0=55.0, auto_master_gain_stage=False)
+    lowered_score.add_send_bus("room")
+    lowered_score.add_voice(
+        "lead",
+        normalize_lufs=None,
+        mix_db=-6.0,
+        sends=[VoiceSend("room", send_db=0.0)],
+    )
+    lowered_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.2)
+
+    base_peak = np.max(np.abs(base_score.render()))
+    lowered_peak = np.max(np.abs(lowered_score.render()))
+
+    assert lowered_peak == pytest.approx(base_peak * synth.db_to_amp(-6.0), rel=5e-2)
+
+
+def test_voice_send_uses_post_insert_signal() -> None:
+    base_score = Score(f0=55.0, auto_master_gain_stage=False)
+    base_score.add_send_bus("room")
+    base_score.add_voice(
+        "lead",
+        normalize_lufs=None,
+        sends=[VoiceSend("room", send_db=0.0)],
+    )
+    base_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.1)
+
+    boosted_score = Score(f0=55.0, auto_master_gain_stage=False)
+    boosted_score.add_send_bus("room")
+    boosted_score.add_voice(
+        "lead",
+        normalize_lufs=None,
+        pre_fx_gain_db=6.0,
+        sends=[VoiceSend("room", send_db=0.0)],
+    )
+    boosted_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.1)
+
+    base_peak = np.max(np.abs(base_score.render()))
+    boosted_peak = np.max(np.abs(boosted_score.render()))
+
+    assert boosted_peak == pytest.approx(base_peak * synth.db_to_amp(6.0), rel=5e-2)
+
+
+def test_render_stems_excludes_send_returns() -> None:
+    dry_reference = Score(f0=55.0, auto_master_gain_stage=False)
+    dry_reference.add_voice("lead", normalize_lufs=None)
+    dry_reference.add_note("lead", start=0.0, duration=0.25, partial=4.0, amp=0.2)
+
+    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score.add_send_bus(
+        "echo",
+        effects=[
+            EffectSpec(
+                "delay",
+                {"delay_seconds": 0.16, "feedback": 0.0, "mix": 1.0},
+            )
+        ],
+    )
+    score.add_voice("lead", normalize_lufs=None, sends=[VoiceSend("echo", send_db=0.0)])
+    score.add_note("lead", start=0.0, duration=0.25, partial=4.0, amp=0.2)
+
+    dry_stem = score.render_stems()["lead"]
+    full_mix = score.render()
+
+    assert np.allclose(dry_stem, dry_reference.render_stems()["lead"])
+    assert not np.allclose(full_mix, dry_stem)
+
+
 def test_add_voice_rejects_non_finite_gain_controls() -> None:
     score = Score(f0=55.0)
 
@@ -677,6 +819,44 @@ def test_add_voice_rejects_non_finite_gain_controls() -> None:
 
     with pytest.raises(ValueError, match="mix_db must be finite"):
         score.add_voice("lead", mix_db=float("nan"))
+
+
+def test_send_bus_validation_rejects_invalid_configs() -> None:
+    with pytest.raises(ValueError, match="send bus names must be unique"):
+        Score(
+            f0=55.0,
+            send_buses=[SendBusSpec(name="room"), SendBusSpec(name="room")],
+        )
+
+    with pytest.raises(ValueError, match="voice send target does not exist on score"):
+        Score(f0=55.0).add_voice("lead", sends=[VoiceSend("missing")])
+
+    with pytest.raises(ValueError, match="voice send_db must be finite"):
+        VoiceSend("room", send_db=float("inf"))
+
+    with pytest.raises(ValueError, match="send bus return_db must be finite"):
+        SendBusSpec(name="room", return_db=float("nan"))
+
+
+def test_render_with_effect_analysis_includes_send_effects() -> None:
+    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score.add_send_bus(
+        "room",
+        effects=[
+            EffectSpec(
+                "compressor",
+                {"threshold_db": -28.0, "ratio": 3.0, "attack_ms": 4.0},
+            )
+        ],
+    )
+    score.add_voice("lead", normalize_lufs=None, sends=[VoiceSend("room", send_db=0.0)])
+    score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.3)
+
+    _mix, stems, effect_analysis = score.render_with_effect_analysis()
+
+    assert "lead" in stems
+    assert "room" in effect_analysis["send_effects"]
+    assert effect_analysis["send_effects"]["room"]
 
 
 def test_score_auto_master_gain_stage_raises_balanced_mix_toward_target() -> None:
@@ -769,6 +949,18 @@ def test_extract_window_preserves_master_input_gain_db() -> None:
     assert window.master_bus_target_lufs == pytest.approx(-22.0)
     assert window.master_bus_max_true_peak_dbfs == pytest.approx(-8.0)
     assert window.master_input_gain_db == pytest.approx(3.0)
+
+
+def test_extract_window_preserves_send_buses() -> None:
+    score = Score(f0=55.0)
+    score.add_send_bus("room", return_db=-3.0)
+    score.add_voice("lead", sends=[VoiceSend("room", send_db=-6.0)])
+    score.add_note("lead", start=1.0, duration=1.0, partial=4.0, amp=0.1)
+
+    window = score.extract_window(start_seconds=0.5, end_seconds=2.5)
+
+    assert [send_bus.name for send_bus in window.send_buses] == ["room"]
+    assert window.voices["lead"].sends == [VoiceSend("room", send_db=-6.0)]
 
 
 def test_true_peak_estimation_uses_loudest_stereo_channel() -> None:

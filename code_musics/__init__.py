@@ -29,7 +29,7 @@ from code_musics.humanize import (
 )
 from code_musics.meter import B, E, H, M, Q, S, SwingSpec, Timeline, W, dotted, triplet
 from code_musics.pitch_motion import PitchMotionSpec
-from code_musics.score import VelocityParamMap
+from code_musics.score import SendBusSpec, VelocityParamMap, VoiceSend
 
 __all__ = [
     "AutomationSegment",
@@ -52,6 +52,8 @@ __all__ = [
     "SwingSpec",
     "VelocityHumanizeSpec",
     "VelocityParamMap",
+    "SendBusSpec",
+    "VoiceSend",
     "W",
     "bar_automation",
     "canon",

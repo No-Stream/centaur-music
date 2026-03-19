@@ -117,7 +117,7 @@ def build_ji_chorale_v2_score() -> Score:
         [
             EffectSpec(
                 "chow_tape",
-                {"drive": 0.15, "saturation": 0.20, "bias": 0.5, "mix": 50.0},
+                {"drive": 0.50, "saturation": 0.50, "bias": 0.5, "mix": 50.0},
             ),
         ]
     )
