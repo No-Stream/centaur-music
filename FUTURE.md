@@ -72,7 +72,7 @@ Most promising directions:
 
 - richer additive presets with clearer arrangement roles
 - more FM presets and FM parameter idioms that interact musically with JI
-  material
+  material. _subtle ones_ that work with harmonies and don't shout
 - stronger plucked, struck, and hybrid percussive voices
 - more explicit role presets for bed, lead, counterpoint, bass, and accent
   layers
@@ -80,6 +80,13 @@ Most promising directions:
   technical engine coverage
 
 ## Medium priority
+
+### Slop, swing, and drift extensions
+
+Some of this is implemented already through timing, envelope, and velocity
+humanization; what remains is the more specialized layer.
+We recently added notes (rather than just time-based) arranging.
+And we have humanization + imperfection. But we should eventually add swing.
 
 ### Timbre and mix automation
 
@@ -128,7 +135,7 @@ Most promising directions:
 
 #### Plugin reliability follow-up
 
-The recent plugin work surfaced real issues around cached state and repeatable
+The recent plugin work surfaced issues around cached state and repeatable
 render behavior. Some of that has been fixed, but reliability is still a real
 follow-up area.
 
@@ -192,14 +199,10 @@ Still worthwhile, but not blocked on infrastructure:
 Useful later once the current filter palette has settled:
 
 - a ladder-style low-pass flavor for `polyblep` or a related subtractive engine
-- more emphasis on musical resonance and color than on maximal analog modeling
+- potential other analog-inspired filters like SEM
+- more emphasis on musicality (analog influence can be useful but not required)
 - treat this as an additional flavor, not a replacement for the current filter
   path
-
-### Slop, swing, and drift extensions
-
-Some of this is implemented already through timing, envelope, and velocity
-humanization; what remains is the more specialized or riskier layer.
 
 Possible later additions:
 

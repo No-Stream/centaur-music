@@ -190,7 +190,7 @@ def build_ji_chorale_score() -> Score:
                 },
             ),
         ],
-        mix_db=-7.0,
+        mix_db=-9.5,
         pan=0.14,
         velocity_group="harmony",
         envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
@@ -381,16 +381,18 @@ def build_ji_chorale_score() -> Score:
             velocity=velocity,
         )
 
-    dev_note_dur = 6.3
+    # Last dev chord extended to 99s to fill gap before reprise (dominant preparation).
+    dev_note_durs = [6.3, 6.3, 12.0]
     dev_chords: list[tuple[float, float, float, float]] = [
         (75.0, Fs2, A3, Cs4),
         (81.0, B2, D3, Fs3),
         (87.0, E3, Gs3, B3),
     ]
     dev_velocities = [1.02, 1.08, 1.14]
-    for (start, bass_freq, tenor_freq, alto_freq), velocity in zip(
+    for (start, bass_freq, tenor_freq, alto_freq), velocity, dev_note_dur in zip(
         dev_chords,
         dev_velocities,
+        dev_note_durs,
         strict=True,
     ):
         score.add_note(
@@ -456,8 +458,8 @@ def build_ji_chorale_score() -> Score:
             velocity=velocity,
         )
 
-    # Reprise: brief Gs4 in alto on the final I chord — seeds the Amaj7 that blooms at 136s
-    score.add_note("alto", start=114.0, duration=3.5, freq=Gs4, amp=0.09, velocity=0.72)
+    # Reprise: Gs4 in alto holds for the full I chord — Amaj7 texture (counter added below).
+    score.add_note("alto", start=114.0, duration=5.3, freq=Gs4, amp=0.09, velocity=0.72)
 
     score.add_note("bass", start=120.0, duration=8.0, freq=Fs2, amp=0.27, velocity=1.05)
     score.add_note("tenor", start=120.0, duration=8.0, freq=A3, amp=0.20, velocity=1.05)
@@ -492,21 +494,24 @@ def build_ji_chorale_score() -> Score:
             )
             t += duration
 
-    _add_counter(22.5, [(E4, 2.2, 1.00), (D4, 1.75, 0.93), (Cs4, 1.3, 0.85)])
+    _add_counter(22.5, [(E4, 2.25, 1.00), (D4, 1.75, 0.93), (Cs4, 1.25, 0.85)])
     _add_counter(27.75, [(F4, 1.75, 1.05), (E4, 1.75, 0.97), (D4, 1.75, 0.88)])
-    _add_counter(33.0, [(E4, 1.3, 1.02), (Cs4, 1.75, 0.92), (E4, 2.2, 1.00)])
-    _add_counter(38.25, [(D4, 1.75, 0.92), (E4, 2.2, 1.00), (F4, 1.3, 1.08)])
-    _add_counter(43.5, [(Cs4, 1.75, 1.02), (E4, 2.2, 1.05), (D4, 1.3, 0.90)])
+    _add_counter(33.0, [(E4, 1.25, 1.02), (Cs4, 1.75, 0.92), (E4, 2.25, 1.00)])
+    # D4→F4→A4: chord tones of D minor; avoids E4 which clashes with F3 bass (maj-7).
+    _add_counter(38.25, [(D4, 1.75, 0.92), (F4, 2.25, 1.00), (A4, 1.25, 1.05)])
+    _add_counter(43.5, [(Cs4, 1.75, 1.02), (E4, 2.25, 1.05), (D4, 1.25, 0.90)])
 
     # B section: embryonic E→G# hint — same Gs4 that blooms fully at the Ending
     _add_counter(59.5, [(E4, 2.0, 0.90), (Gs4, 3.5, 0.85)])
 
-    _add_counter(75.0, [(E4, 2.2, 1.05), (Cs4, 1.9, 0.92), (E4, 1.9, 1.00)])
-    _add_counter(81.0, [(Fs4, 2.2, 1.10), (E4, 1.9, 1.00), (D4, 1.9, 0.90)])
-    _add_counter(87.0, [(Gs4, 2.2, 1.18), (Fs4, 1.5, 1.02), (E4, 2.3, 0.88)])
+    _add_counter(75.0, [(E4, 2.25, 1.05), (Cs4, 1.75, 0.92), (E4, 2.0, 1.00)])
+    _add_counter(81.0, [(Fs4, 2.25, 1.10), (E4, 2.0, 1.00), (D4, 2.0, 0.90)])
+    _add_counter(87.0, [(Gs4, 2.25, 1.18), (Fs4, 1.5, 1.02), (E4, 2.25, 0.88)])
 
     _add_counter(99.0, [(E4, 2.5, 1.08), (Cs4, 2.5, 0.90)])
-    _add_counter(109.0, [(Cs4, 2.2, 0.95), (E4, 2.8, 1.05)])
+    _add_counter(109.0, [(Cs4, 2.25, 0.95), (E4, 2.75, 1.05)])
+    # Amaj7 moment at 114s: counter traces maj7→9 over held Amaj7 chord.
+    _add_counter(114.0, [(Gs4, 2.75, 1.05), (B4, 2.25, 0.95)])
 
     _add_counter(120.0, [(E4, 4.0, 1.00), (Cs4, 4.0, 0.90)])
     _add_counter(128.0, [(F4, 4.0, 1.08), (E4, 4.0, 0.95)])
@@ -577,7 +582,8 @@ def build_ji_chorale_score() -> Score:
         (E4, 1.5),
         (D4, 1.5),
         (E4, 0.5),
-        (Cs5, 2.5),
+        (Cs5, 0.75),  # ends at D-minor onset (48.75s); Cs5 over Amaj avoids tritone clash
+        (A4, 1.75),   # chord tone of D minor
         (B4, 1.5),
         (A4, 1.5),
         (Gs4, 0.5),
@@ -623,6 +629,7 @@ def build_ji_chorale_score() -> Score:
         0.85,
         0.80,
         1.02,
+        0.90,  # new A4 note
         0.92,
         0.85,
         0.75,

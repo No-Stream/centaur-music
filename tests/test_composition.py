@@ -8,13 +8,19 @@ from code_musics.composition import (
     ArticulationSpec,
     ContextSectionSpec,
     HarmonicContext,
+    MeteredSectionSpec,
     RhythmCell,
     build_context_sections,
     canon,
     concat,
     echo,
+    grid_canon,
+    grid_line,
+    grid_ratio_line,
+    grid_sequence,
     legato,
     line,
+    metered_sections,
     overlay,
     place_ratio_chord,
     place_ratio_line,
@@ -29,6 +35,7 @@ from code_musics.composition import (
     with_synth_ramp,
     with_tail_breath,
 )
+from code_musics.meter import B, E, M, Q, Timeline, dotted
 from code_musics.pieces.sketches import (
     build_composition_tools_consonant_score,
     build_composition_tools_showcase_score,
@@ -84,6 +91,37 @@ def test_line_supports_absolute_frequency_mode() -> None:
     assert [event.start for event in phrase.events] == [0.0, 0.25, 0.75]
 
 
+def test_grid_line_matches_seconds_based_phrase_timing() -> None:
+    timeline = Timeline(bpm=120.0)
+
+    phrase = grid_line(
+        tones=[4.0, 5.0, 6.0],
+        durations=[Q, E, dotted(Q)],
+        timeline=timeline,
+        amp=0.2,
+    )
+
+    assert [event.start for event in phrase.events] == pytest.approx([0.0, 0.5, 0.75])
+    assert [event.duration for event in phrase.events] == pytest.approx(
+        [0.5, 0.25, 0.75]
+    )
+
+
+def test_grid_ratio_line_resolves_context_with_beat_durations() -> None:
+    phrase = grid_ratio_line(
+        tones=[1.0, 5 / 4, 3 / 2],
+        durations=[Q, Q, E],
+        context=HarmonicContext(tonic=220.0),
+        timeline=Timeline(bpm=120.0),
+        amp=0.2,
+    )
+
+    assert [event.freq for event in phrase.events] == pytest.approx(
+        [220.0, 275.0, 330.0]
+    )
+    assert [event.start for event in phrase.events] == pytest.approx([0.0, 0.5, 1.0])
+
+
 def test_harmonic_context_resolves_ratios_and_supports_drift() -> None:
     context = HarmonicContext(tonic=220.0, name="root")
     drifted = context.drifted(by_ratio=80 / 81, name="drifted")
@@ -109,6 +147,24 @@ def test_build_context_sections_places_windows_from_base_tonic() -> None:
     assert [section.duration for section in sections] == pytest.approx([2.5, 2.5])
     assert [section.context.tonic for section in sections] == pytest.approx(
         [220.0, 220.0 * (80 / 81)]
+    )
+
+
+def test_metered_sections_build_context_windows_from_bars() -> None:
+    sections = metered_sections(
+        timeline=Timeline(bpm=120.0),
+        base_tonic=220.0,
+        start=M(2),
+        specs=(
+            MeteredSectionSpec(name="A", bars=1.0),
+            MeteredSectionSpec(name="B", bars=2.0, tonic_ratio=3 / 2),
+        ),
+    )
+
+    assert [section.start for section in sections] == pytest.approx([2.0, 4.0])
+    assert [section.duration for section in sections] == pytest.approx([2.0, 4.0])
+    assert [section.context.tonic for section in sections] == pytest.approx(
+        [220.0, 330.0]
     )
 
 
@@ -557,6 +613,81 @@ def test_canon_supports_repeats_and_scalar_delay_and_rejects_invalid_inputs() ->
             delays=(1.0,),
             sections=(),
         )
+
+
+def test_grid_sequence_places_entries_from_bar_and_beat_positions() -> None:
+    score = Score(f0=55.0)
+    phrase = grid_line(
+        tones=[4.0, 5.0],
+        durations=[Q, Q],
+        timeline=Timeline(bpm=120.0),
+        amp=0.2,
+    )
+
+    placed = grid_sequence(
+        score,
+        "lead",
+        phrase,
+        timeline=Timeline(bpm=120.0),
+        at=[M(1), B(6.0)],
+    )
+
+    assert [note.start for note in placed[0]] == pytest.approx([0.0, 0.5])
+    assert [note.start for note in placed[1]] == pytest.approx([3.0, 3.5])
+
+
+def test_grid_canon_uses_beat_delays_and_repeat_gap() -> None:
+    timeline = Timeline(bpm=120.0)
+    score = Score(f0=55.0)
+    phrase = grid_line(
+        tones=[4.0],
+        durations=[Q],
+        timeline=timeline,
+        amp=0.2,
+    )
+
+    placed = grid_canon(
+        score,
+        voice_names=("a", "b"),
+        phrase=phrase,
+        timeline=timeline,
+        start=M(1),
+        delays=[B(2.0)],
+        repeats=2,
+        repeat_gap=B(1.0),
+    )
+
+    assert [entry[0].start for entry in placed["a"]] == pytest.approx([0.0, 1.0])
+    assert [entry[0].start for entry in placed["b"]] == pytest.approx([1.0, 2.0])
+
+
+def test_grid_helpers_build_renderable_score() -> None:
+    timeline = Timeline(bpm=96.0)
+    score = Score(f0=55.0)
+    score.add_voice("lead", synth_defaults={"engine": "additive", "preset": "organ"})
+    score.add_voice("answer", synth_defaults={"engine": "additive", "preset": "organ"})
+
+    motif = grid_line(
+        tones=[1.0, 5 / 4, 3 / 2, 5 / 4],
+        durations=[Q, Q, Q, Q],
+        timeline=timeline,
+        amp=0.12,
+    )
+
+    grid_sequence(score, "lead", motif, timeline=timeline, at=[M(1), M(2)])
+    grid_canon(
+        score,
+        voice_names=("answer",),
+        phrase=motif,
+        timeline=timeline,
+        start=B(2.0),
+        delays=B(0.0),
+    )
+
+    rendered = score.render()
+
+    assert score.total_dur == pytest.approx(5.0)
+    assert rendered.size > 0
 
 
 def test_voiced_ratio_chord_supports_voicing_inversion_and_register() -> None:

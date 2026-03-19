@@ -13,6 +13,10 @@ The composition layer is phrase-first and xen-friendly:
 - it keeps timing in seconds rather than MIDI/grid assumptions
 - it supports ratio-aware pitch motion for JI and harmonic-series writing
 
+There is now also an optional high-level musical-time layer for authoring in
+beats and bars. It compiles back down to the same `Phrase` / `Score` surfaces,
+so the underlying render model is still seconds-based.
+
 ## Where This Is Used
 
 - [code_musics/composition.py](/home/jan/workspace/code-musics/code_musics/composition.py)
@@ -50,6 +54,77 @@ tone list, that is treated as an error.
 - `gates < 1.0` gives clipped/staccato phrasing
 - `gates = 1.0` fills the full span
 - `gates > 1.0` creates overlap and legato smear
+
+## Musical-Time Layer
+
+Use `code_musics.meter` when you want musical time rather than raw seconds.
+
+Core APIs:
+
+- `Timeline(bpm=..., meter=(num, den))`
+- rhythmic values: `W`, `H`, `Q`, `E`, `S`
+- helpers: `B(...)`, `M(...)`, `dotted(...)`, `triplet(...)`
+
+Example:
+
+```python
+from code_musics.composition import grid_line, grid_sequence
+from code_musics.meter import M, Q, Timeline
+
+timeline = Timeline(bpm=96, meter=(4, 4))
+
+motif = grid_line(
+    tones=[1.0, 5 / 4, 3 / 2, 5 / 4],
+    durations=[Q, Q, Q, Q],
+    timeline=timeline,
+    amp_db=-14.0,
+)
+
+grid_sequence(
+    score,
+    "lead",
+    motif,
+    timeline=timeline,
+    at=[M(1), M(2), M(3)],
+)
+```
+
+Important conventions:
+
+- the low-level score is still authored and rendered in seconds
+- the new helpers compile beats/bars into seconds before creating notes
+- plain numeric durations in the grid helpers are interpreted as beats
+- `B(...)` is a beat span or absolute beat offset from time zero
+- `M(...)` is a bar-position reference where `M(1)` is the first bar start
+
+### `Timeline`
+
+`Timeline` is the conversion layer between musical time and seconds.
+
+Useful methods:
+
+- `timeline.duration(Q)`
+- `timeline.measures(2.0)`
+- `timeline.at(bar=3, beat=1.5)`
+- `timeline.position(M(2.5))`
+- `timeline.locate(seconds)`
+
+`meter` affects bar length. Beat values are expressed in quarter-note beats, so
+`Q` is always one beat and `meter=(6, 8)` gives a 3-beat bar.
+
+### Grid Helpers
+
+These helpers mirror the existing composition helpers but accept musical-time
+inputs:
+
+- `grid_line(...)`
+- `grid_ratio_line(...)`
+- `grid_sequence(...)`
+- `grid_canon(...)`
+- `metered_sections(...)`
+
+They are additive APIs, not replacements. Use the original seconds-based
+helpers when direct control is clearer.
 
 ### `ArticulationSpec`
 

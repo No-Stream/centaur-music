@@ -8,6 +8,14 @@ from itertools import cycle, islice
 from typing import TYPE_CHECKING, Any
 
 from code_musics import synth
+from code_musics.meter import (
+    BeatSpan,
+    BeatValue,
+    DurationLike,
+    MeasurePosition,
+    Timeline,
+    TimePointLike,
+)
 from code_musics.pitch_motion import PitchMotionSpec
 from code_musics.score import NoteEvent, Phrase
 
@@ -19,14 +27,20 @@ __all__ = [
     "ContextSection",
     "ContextSectionSpec",
     "HarmonicContext",
+    "MeteredSectionSpec",
     "PitchMotionSpec",
     "RhythmCell",
     "build_context_sections",
     "canon",
     "concat",
     "echo",
+    "grid_canon",
+    "grid_line",
+    "grid_ratio_line",
+    "grid_sequence",
     "legato",
     "line",
+    "metered_sections",
     "overlay",
     "place_ratio_chord",
     "place_ratio_line",
@@ -120,6 +134,21 @@ class ContextSectionSpec:
     def __post_init__(self) -> None:
         if self.duration <= 0:
             raise ValueError("duration must be positive")
+        if self.tonic_ratio <= 0:
+            raise ValueError("tonic_ratio must be positive")
+
+
+@dataclass(frozen=True)
+class MeteredSectionSpec:
+    """Specification for a harmonic section measured in bars."""
+
+    bars: float
+    tonic_ratio: float = 1.0
+    name: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.bars <= 0:
+            raise ValueError("bars must be positive")
         if self.tonic_ratio <= 0:
             raise ValueError("tonic_ratio must be positive")
 
@@ -244,6 +273,35 @@ def line(
     return Phrase(events=tuple(events))
 
 
+def grid_line(
+    tones: Sequence[float],
+    durations: Sequence[DurationLike],
+    *,
+    timeline: Timeline,
+    pitch_kind: str = "partial",
+    amp: float | None = None,
+    amp_db: float | None = None,
+    synth_defaults: dict[str, Any] | None = None,
+    articulation: ArticulationSpec | None = None,
+    motions: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
+    pitch_motion: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
+    labels: Sequence[str] | None = None,
+) -> Phrase:
+    """Build a phrase from beat-relative durations on a musical timeline."""
+    return line(
+        tones=tones,
+        rhythm=_resolve_duration_sequence(durations, timeline=timeline),
+        pitch_kind=pitch_kind,
+        amp=amp,
+        amp_db=amp_db,
+        synth_defaults=synth_defaults,
+        articulation=articulation,
+        motions=motions,
+        pitch_motion=pitch_motion,
+        labels=labels,
+    )
+
+
 def build_context_sections(
     *,
     base_tonic: float,
@@ -276,6 +334,34 @@ def build_context_sections(
     return tuple(sections)
 
 
+def metered_sections(
+    *,
+    timeline: Timeline,
+    base_tonic: float,
+    specs: Sequence[MeteredSectionSpec],
+    start: TimePointLike | None = None,
+) -> tuple[ContextSection, ...]:
+    """Build harmonic sections measured in bars on a musical timeline."""
+    if not specs:
+        raise ValueError("specs must not be empty")
+
+    return build_context_sections(
+        base_tonic=base_tonic,
+        specs=tuple(
+            ContextSectionSpec(
+                duration=timeline.measures(spec.bars),
+                tonic_ratio=spec.tonic_ratio,
+                name=spec.name,
+            )
+            for spec in specs
+        ),
+        start=_resolve_time_point(
+            MeasurePosition(1.0) if start is None else start,
+            timeline=timeline,
+        ),
+    )
+
+
 def resolve_ratios(
     context: HarmonicContext,
     ratios: Sequence[float],
@@ -305,6 +391,35 @@ def ratio_line(
         tones=resolve_ratios(context, tones),
         rhythm=rhythm,
         pitch_kind="freq",
+        amp=amp,
+        amp_db=amp_db,
+        synth_defaults=synth_defaults,
+        articulation=articulation,
+        motions=motions,
+        pitch_motion=pitch_motion,
+        labels=labels,
+    )
+
+
+def grid_ratio_line(
+    tones: Sequence[float],
+    durations: Sequence[DurationLike],
+    *,
+    context: HarmonicContext,
+    timeline: Timeline,
+    amp: float | None = None,
+    amp_db: float | None = None,
+    synth_defaults: dict[str, Any] | None = None,
+    articulation: ArticulationSpec | None = None,
+    motions: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
+    pitch_motion: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
+    labels: Sequence[str] | None = None,
+) -> Phrase:
+    """Build a ratio-authored phrase from beat-relative durations."""
+    return ratio_line(
+        tones=tones,
+        rhythm=_resolve_duration_sequence(durations, timeline=timeline),
+        context=context,
         amp=amp,
         amp_db=amp_db,
         synth_defaults=synth_defaults,
@@ -701,6 +816,35 @@ def sequence(
     return placed_entries
 
 
+def grid_sequence(
+    score: Score,
+    voice_name: str,
+    phrase: Phrase,
+    *,
+    timeline: Timeline,
+    at: Sequence[TimePointLike],
+    time_scales: float | Sequence[float] = 1.0,
+    partial_shifts: float | Sequence[float] = 0.0,
+    amp_scales: float | Sequence[float] = 1.0,
+    reverses: bool | Sequence[bool] = False,
+    sections: Sequence[ContextSection | None] | None = None,
+    source_tonic: float = 1.0,
+) -> list[list[NoteEvent]]:
+    """Place repeated phrase entries using beat/bar references."""
+    return sequence(
+        score,
+        voice_name,
+        phrase,
+        starts=tuple(_resolve_time_point(value, timeline=timeline) for value in at),
+        time_scales=time_scales,
+        partial_shifts=partial_shifts,
+        amp_scales=amp_scales,
+        reverses=reverses,
+        sections=sections,
+        source_tonic=source_tonic,
+    )
+
+
 def canon(
     score: Score,
     *,
@@ -796,6 +940,54 @@ def canon(
             source_tonic=source_tonic,
         )
     return placed
+
+
+def grid_canon(
+    score: Score,
+    *,
+    voice_names: Sequence[str],
+    phrase: Phrase,
+    timeline: Timeline,
+    start: TimePointLike,
+    delays: DurationLike | Sequence[DurationLike],
+    repeats: int = 1,
+    repeat_gap: float | DurationLike = 0.0,
+    amp_scales: float | Sequence[float] = 1.0,
+    partial_shifts: float | Sequence[float] = 0.0,
+    time_scales: float | Sequence[float] = 1.0,
+    reverses: bool | Sequence[bool] = False,
+    sections: Sequence[ContextSection | None] | None = None,
+    source_tonic: float = 1.0,
+) -> dict[str, list[list[NoteEvent]]]:
+    """Place delayed imitative entries using beat/bar timing references."""
+    resolved_delays = (
+        _resolve_duration_value(delays, timeline=timeline, allow_zero=True)
+        if isinstance(delays, (int, float, BeatSpan, BeatValue))
+        else tuple(
+            _resolve_duration_value(delay, timeline=timeline, allow_zero=True)
+            for delay in delays
+        )
+    )
+
+    return canon(
+        score,
+        voice_names=voice_names,
+        phrase=phrase,
+        start=_resolve_time_point(start, timeline=timeline),
+        delays=resolved_delays,
+        repeats=repeats,
+        repeat_gap=_resolve_duration_value(
+            repeat_gap,
+            timeline=timeline,
+            allow_zero=True,
+        ),
+        amp_scales=amp_scales,
+        partial_shifts=partial_shifts,
+        time_scales=time_scales,
+        reverses=reverses,
+        sections=sections,
+        source_tonic=source_tonic,
+    )
 
 
 def voiced_ratio_chord(
@@ -1193,3 +1385,37 @@ def _fit_chord_to_register(
             freq /= 2.0
         fitted[index] = freq
     return sorted(fitted)
+
+
+def _resolve_duration_sequence(
+    durations: Sequence[DurationLike],
+    *,
+    timeline: Timeline,
+) -> tuple[float, ...]:
+    if not durations:
+        raise ValueError("durations must not be empty")
+    return tuple(
+        _resolve_duration_value(duration, timeline=timeline, allow_zero=False)
+        for duration in durations
+    )
+
+
+def _resolve_duration_value(
+    value: float | DurationLike,
+    *,
+    timeline: Timeline,
+    allow_zero: bool,
+) -> float:
+    if allow_zero and isinstance(value, (int, float)) and float(value) == 0.0:
+        return 0.0
+    if allow_zero and isinstance(value, (BeatSpan, BeatValue)) and value.beats == 0.0:
+        return 0.0
+    return timeline.duration(value)
+
+
+def _resolve_time_point(
+    value: TimePointLike,
+    *,
+    timeline: Timeline,
+) -> float:
+    return timeline.position(value)

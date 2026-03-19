@@ -19,6 +19,8 @@
 - `code_musics/pieces/` contains named musical works that can be rendered by the
   registry, including smaller themed study modules plus JI subpackages.
 - `code_musics/render.py` is the named-piece orchestration layer.
+- `code_musics/meter.py` contains the optional high-level musical-time layer:
+  `Timeline`, beat/bar helpers, rhythmic values, and bar-aware location math.
 - `main.py` is the main entrypoint for listing and rendering pieces.
 
 ## Composition Model
@@ -46,8 +48,12 @@
   section building. High-level examples: `line(...)` / `ratio_line(...)` for phrase
   creation, `concat(...)` / `overlay(...)` / `echo(...)` for phrase transforms,
   `sequence(...)` / `canon(...)` for repeated placement, and
-  `voiced_ratio_chord(...)` / `progression(...)` for harmonic writing. Full API
-  details live in `docs/composition_api.md`.
+  `voiced_ratio_chord(...)` / `progression(...)` for harmonic writing. The optional
+  high-level timing layer adds `Timeline`, rhythmic values like `Q` / `E`, and
+  grid-style helpers such as `grid_line(...)`, `grid_sequence(...)`,
+  `grid_canon(...)`, and `metered_sections(...)` that compile back down to the
+  existing seconds-based score model. Full API details live in
+  `docs/composition_api.md`.
 - For detailed score-surface semantics, parameter meanings, and render-order
   behavior, read `docs/score_api.md`.
 
