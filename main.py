@@ -3,6 +3,11 @@
 import argparse
 import logging
 
+from code_musics.inspection import (
+    format_inspection_summary,
+    inspect_piece_timestamp,
+    parse_timestamp_seconds,
+)
 from code_musics.render import list_pieces, render_piece
 
 
@@ -25,6 +30,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip analysis artifacts and JSON manifest generation.",
     )
+    parser.add_argument(
+        "--inspect-at",
+        help="Inspect what is happening at a timestamp like 130 or 2:10 instead of rendering.",
+    )
+    parser.add_argument(
+        "--inspect-window",
+        type=float,
+        default=8.0,
+        help="Inspection window size in seconds used with --inspect-at.",
+    )
     return parser.parse_args()
 
 
@@ -36,6 +51,17 @@ def main() -> None:
     if args.list or args.piece is None:
         for piece_name in list_pieces():
             print(piece_name)
+        return
+
+    if args.inspect_at is not None:
+        if args.piece in {None, "all"}:
+            raise ValueError("--inspect-at requires a single score-backed piece name")
+        inspection = inspect_piece_timestamp(
+            piece_name=args.piece,
+            timestamp_seconds=parse_timestamp_seconds(args.inspect_at),
+            window_seconds=args.inspect_window,
+        )
+        print(format_inspection_summary(inspection))
         return
 
     piece_names = list_pieces() if args.piece == "all" else [args.piece]

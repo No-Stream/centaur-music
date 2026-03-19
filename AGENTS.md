@@ -81,6 +81,7 @@ make check                         # alias for make all
 make list                          # list registered pieces
 make render PIECE=harmonic_drift   # render a piece (adds --plot by default)
 make render PIECE=harmonic_drift PLOT=0  # render without plot
+make inspect PIECE=ji_chorale AT=2:10    # inspect score context around a timestamp
 make render-all                    # render every piece
 make test                          # run the full test suite
 make test-selected TESTS=tests/test_score.py  # run a focused subset while iterating
@@ -112,6 +113,8 @@ iterating if helpful, but do not stop there.
 - `make list` — see all registered pieces.
 - `make render PIECE=<name>` — render a named piece and save a piano-roll PNG.
 - `make render PIECE=<name> PLOT=0` — render without the plot.
+- `make inspect PIECE=<name> AT=<timestamp>` — inspect a score-backed piece around
+  a timestamp like `130` or `2:10`.
 - Pieces should expose either a `build_score()` function or a direct `render_audio()`
   function if they do not fit the score abstraction cleanly.
 
@@ -171,6 +174,12 @@ See `FUTURE.md` for way more ideas.
 - If you change score/expression parameters or presets, update the docs in the same
   pass. `AGENTS.md` should mention the feature exists; the detailed semantics belong
   in the docs, especially `docs/score_api.md` for score-surface changes.
+- Timestamp inspection is part of the normal workflow now. Prefer the timeline
+  artifacts and `make inspect` when responding to comments like "2:10 in
+  ji_chorale" instead of manually hunting through score code.
+- Score analysis now includes timing-drift diagnostics. Overall drift is fine, but
+  inter-voice spread should stay musically plausible across the piece; keep the
+  warning thresholds and artifact details documented under `docs/`.
 - When using or extending synth engines, read `docs/synth_api.md` first for the
   current engine names, presets, and parameter surface.
 - Prefer absolute imports and typed, readable Python.

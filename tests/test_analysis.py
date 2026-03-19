@@ -10,9 +10,12 @@ import numpy as np
 from code_musics.analysis import (
     analyze_audio,
     analyze_score,
+    build_score_timeline,
     compare_analysis_manifests,
     save_analysis_artifacts,
 )
+from code_musics.humanize import TimingHumanizeSpec
+from code_musics.pieces.registry import PieceSection
 from code_musics.score import Score
 
 
@@ -67,6 +70,48 @@ def test_analyze_score_reports_density_and_ranges() -> None:
     assert analysis.peak_simultaneous_notes >= 2
     assert analysis.partial_range == (2.0, 7.0)
     assert "lead" in analysis.voice_summaries
+    assert analysis.timing_drift_summary["max_absolute_offset_ms"] == 0.0
+    assert analysis.timing_drift_summary["max_inter_voice_spread_ms"] == 0.0
+
+
+def test_analyze_score_reports_timing_drift_stats() -> None:
+    score = Score(
+        f0=55.0,
+        timing_humanize=TimingHumanizeSpec(
+            preset="loose_late_night",
+            ensemble_amount_ms=24.0,
+            voice_spread_ms=8.0,
+            micro_jitter_ms=1.0,
+            chord_spread_ms=6.0,
+            seed=7,
+        ),
+    )
+    for start in (0.0, 1.0, 2.0, 3.0):
+        score.add_note("bass", start=start, duration=0.7, partial=2.0, amp=0.2)
+        score.add_note("lead", start=start, duration=0.7, partial=6.0, amp=0.2)
+
+    analysis = analyze_score(score)
+
+    assert analysis.timing_drift_summary["max_absolute_offset_ms"] > 0.0
+    assert analysis.timing_drift_summary["max_inter_voice_spread_ms"] > 0.0
+    assert analysis.timing_drift_windows
+
+
+def test_build_score_timeline_includes_sections_and_resolved_notes() -> None:
+    score = Score(f0=55.0)
+    score.add_note("bass", start=0.0, duration=1.0, partial=2.0, amp=0.2)
+    score.add_note(
+        "lead", start=0.5, duration=0.5, partial=6.0, amp=0.2, label="pickup"
+    )
+
+    timeline = build_score_timeline(
+        score=score,
+        sections=(PieceSection(label="Intro", start_seconds=0.0, end_seconds=2.0),),
+    )
+
+    assert timeline["sections"][0]["label"] == "Intro"
+    assert timeline["notes"][1]["label"] == "pickup"
+    assert timeline["windows"]
 
 
 def test_save_analysis_artifacts_writes_manifest_and_plots(tmp_path: Path) -> None:
@@ -82,6 +127,9 @@ def test_save_analysis_artifacts_writes_manifest_and_plots(tmp_path: Path) -> No
         sample_rate=score.sample_rate,
         stems=stems,
         score=score,
+        piece_sections=(
+            PieceSection(label="Intro", start_seconds=0.0, end_seconds=1.0),
+        ),
     )
 
     manifest_path = Path(manifest["manifest_path"])
@@ -93,6 +141,7 @@ def test_save_analysis_artifacts_writes_manifest_and_plots(tmp_path: Path) -> No
     assert Path(saved_manifest["mix"]["artifacts"]["band_energy"]).exists()
     assert "pre_export_summary" not in saved_manifest["mix"]
     assert Path(saved_manifest["score"]["artifacts"]["density"]).exists()
+    assert Path(saved_manifest["score"]["artifacts"]["timeline"]).exists()
     assert Path(saved_manifest["voices"]["bass"]["artifacts"]["spectrum"]).exists()
 
 

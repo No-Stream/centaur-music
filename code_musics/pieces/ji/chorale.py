@@ -12,7 +12,7 @@ from code_musics.humanize import (
     TimingHumanizeSpec,
     VelocityHumanizeSpec,
 )
-from code_musics.pieces.registry import PieceDefinition
+from code_musics.pieces.registry import PieceDefinition, PieceSection
 from code_musics.score import EffectSpec, Score, VelocityParamMap
 
 logger = logging.getLogger(__name__)
@@ -710,5 +710,13 @@ PIECES: dict[str, PieceDefinition] = {
         name="ji_chorale",
         output_name="17_ji_chorale.wav",
         build_score=build_ji_chorale_score,
+        sections=(
+            PieceSection(label="Prologue", start_seconds=0.0, end_seconds=12.0),
+            PieceSection(label="A", start_seconds=12.0, end_seconds=54.0),
+            PieceSection(label="B", start_seconds=54.0, end_seconds=75.0),
+            PieceSection(label="Development", start_seconds=75.0, end_seconds=99.0),
+            PieceSection(label="Reprise", start_seconds=99.0, end_seconds=123.0),
+            PieceSection(label="Ending", start_seconds=123.0, end_seconds=150.0),
+        ),
     )
 }

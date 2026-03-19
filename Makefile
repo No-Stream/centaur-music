@@ -5,6 +5,8 @@ UV_CACHE_DIR ?= $(CURDIR)/.uv-cache
 UV_RUN = UV_CACHE_DIR=$(UV_CACHE_DIR) $(PYTHONPATH_PREFIX) uv run
 PIECE ?=
 PLOT ?= 1
+AT ?=
+WINDOW ?= 8
 TESTS ?= tests
 PYTEST_N ?= 4
 PYTEST_FLAGS = -n $(PYTEST_N)
@@ -60,6 +62,16 @@ ifndef PIECE
 	$(error PIECE is required, for example `make render PIECE=harmonic_window`)
 endif
 	$(UV_RUN) python main.py $(PIECE) $(RENDER_PLOT_FLAG)
+
+.PHONY: inspect
+inspect:
+ifndef PIECE
+	$(error PIECE is required, for example `make inspect PIECE=ji_chorale AT=2:10`)
+endif
+ifndef AT
+	$(error AT is required, for example `make inspect PIECE=ji_chorale AT=2:10`)
+endif
+	$(UV_RUN) python main.py $(PIECE) --inspect-at "$(AT)" --inspect-window $(WINDOW)
 
 .PHONY: render-sketches
 render-sketches:

@@ -397,6 +397,35 @@ Useful for:
 - inspecting per-voice rendering
 - exporting stems later if that becomes a workflow
 
+### `Score.resolve_timing_offsets()`
+
+Returns the deterministic render-time timing offset for each note key after
+applying `Score.timing_humanize`.
+
+Returns:
+
+- `dict[tuple[str, int], float]`
+
+Use this when you need to inspect how far notes drifted from authored score
+time without rendering audio.
+
+### `Score.resolved_timing_notes()`
+
+Returns resolved timing snapshots for all score notes after score-level timing
+humanization.
+
+Each snapshot includes:
+
+- voice name and note index
+- authored start time
+- resolved start and end time
+- resolved timing offset
+- duration
+- resolved frequency and optional partial
+- optional label
+
+Use this for timestamp inspection, timeline export, and timing-drift analysis.
+
 ### `Score.plot_piano_roll(...)`
 
 Plots score events as a piano-roll style view.

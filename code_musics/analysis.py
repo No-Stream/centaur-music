@@ -12,6 +12,7 @@ import numpy as np
 from scipy.signal import spectrogram
 
 from code_musics import synth
+from code_musics.pieces.registry import PieceSection
 from code_musics.score import Score
 
 _EPSILON = 1e-12
@@ -70,6 +71,8 @@ class ScoreAnalysis:
     partial_range: tuple[float, float] | None
     frequency_range_hz: tuple[float, float] | None
     voice_summaries: dict[str, dict[str, float | int]]
+    timing_drift_summary: dict[str, Any]
+    timing_drift_windows: list[dict[str, Any]]
     warnings: list[str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -188,6 +191,7 @@ def analyze_score(
         raise ValueError("window_seconds must be positive")
 
     total_duration = score.total_dur
+    resolved_notes = score.resolved_timing_notes()
     voice_summaries: dict[str, dict[str, float | int]] = {}
     frequencies_hz: list[float] = []
     partials: list[float] = []
@@ -277,6 +281,13 @@ def analyze_score(
     ):
         warnings.append("long-note bias may read as drony")
 
+    timing_drift_summary, timing_drift_windows = _analyze_timing_drift(
+        resolved_notes=resolved_notes,
+        total_duration=total_duration,
+        window_seconds=window_seconds,
+    )
+    warnings.extend(timing_drift_summary["warnings"])
+
     return ScoreAnalysis(
         total_duration_seconds=total_duration,
         note_count=note_count,
@@ -295,6 +306,8 @@ def analyze_score(
             else None
         ),
         voice_summaries=voice_summaries,
+        timing_drift_summary=timing_drift_summary,
+        timing_drift_windows=timing_drift_windows,
         warnings=warnings,
     )
 
@@ -307,6 +320,7 @@ def save_analysis_artifacts(
     pre_export_mix_signal: np.ndarray | None = None,
     stems: dict[str, np.ndarray] | None = None,
     score: Score | None = None,
+    piece_sections: tuple[PieceSection, ...] = (),
     reference_tilt_db_per_octave: float = -3.0,
 ) -> dict[str, Any]:
     """Write plots and a JSON manifest for a render."""
@@ -370,9 +384,19 @@ def save_analysis_artifacts(
             f"{prefix_path.name}.score_density.png"
         )
         _save_score_density_plot(score=score, path=score_density_path)
+        timeline = build_score_timeline(
+            score=score,
+            sections=piece_sections,
+            window_seconds=1.0,
+        )
+        timeline_path = prefix_path.with_name(f"{prefix_path.name}.timeline.json")
+        timeline_path.write_text(_json_dump(timeline), encoding="utf-8")
         manifest["score"] = {
             "summary": score_analysis.to_dict(),
-            "artifacts": {"density": str(score_density_path)},
+            "artifacts": {
+                "density": str(score_density_path),
+                "timeline": str(timeline_path),
+            },
         }
 
     for voice_name, stem_signal in (stems or {}).items():
@@ -496,6 +520,286 @@ def mean_note_duration_hz(score: Score) -> float:
         note.duration for voice in score.voices.values() for note in voice.notes
     ]
     return float(np.mean(durations)) if durations else 0.0
+
+
+def build_score_timeline(
+    *,
+    score: Score,
+    sections: tuple[PieceSection, ...] = (),
+    window_seconds: float = 1.0,
+) -> dict[str, Any]:
+    """Build a machine-readable timeline artifact for score inspection."""
+    if window_seconds <= 0:
+        raise ValueError("window_seconds must be positive")
+
+    resolved_notes = sorted(
+        score.resolved_timing_notes(),
+        key=lambda note: (note.resolved_start, note.voice_name, note.note_index),
+    )
+    return {
+        "total_duration_seconds": score.total_dur,
+        "window_seconds": window_seconds,
+        "voice_names": list(score.voices),
+        "sections": [
+            {
+                "label": section.label,
+                "start_seconds": section.start_seconds,
+                "end_seconds": section.end_seconds,
+            }
+            for section in sections
+        ],
+        "notes": [
+            {
+                "voice_name": note.voice_name,
+                "note_index": note.note_index,
+                "authored_start_seconds": note.authored_start,
+                "resolved_start_seconds": note.resolved_start,
+                "resolved_end_seconds": note.resolved_end,
+                "duration_seconds": note.duration,
+                "timing_offset_ms": note.timing_offset_seconds * 1_000.0,
+                "freq_hz": note.freq_hz,
+                "partial": note.partial,
+                "label": note.label,
+            }
+            for note in resolved_notes
+        ],
+        "windows": _build_timeline_windows(
+            resolved_notes=resolved_notes,
+            total_duration=score.total_dur,
+            window_seconds=window_seconds,
+        ),
+    }
+
+
+def _analyze_timing_drift(
+    *,
+    resolved_notes: list[Any],
+    total_duration: float,
+    window_seconds: float,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    clusters = _cluster_resolved_notes_by_authored_start(resolved_notes)
+    absolute_offsets_ms = np.asarray(
+        [abs(note.timing_offset_seconds) * 1_000.0 for note in resolved_notes],
+        dtype=np.float64,
+    )
+    inter_voice_spreads_ms = np.asarray(
+        [
+            cluster["inter_voice_spread_ms"]
+            for cluster in clusters
+            if cluster["voice_count"] >= 2
+        ],
+        dtype=np.float64,
+    )
+    pairwise_summary = _build_pairwise_spread_summary(clusters)
+    drift_windows = _build_timing_drift_windows(
+        clusters=clusters,
+        total_duration=total_duration,
+        window_seconds=window_seconds,
+    )
+
+    warnings: list[str] = []
+    if _safe_percentile(inter_voice_spreads_ms, 95.0) >= 35.0:
+        warnings.append("timing drift regularly exceeds a human ensemble feel")
+    if _safe_max(inter_voice_spreads_ms) >= 55.0:
+        warnings.append("large inter-voice timing spreads may blur coordinated attacks")
+    if any(window["max_inter_voice_spread_ms"] >= 45.0 for window in drift_windows):
+        warnings.append("some score windows drift more than the surrounding texture")
+    for pair_name, pair_stats in pairwise_summary.items():
+        if (
+            int(pair_stats["cluster_count"]) >= 4
+            and abs(float(pair_stats["mean_signed_spread_ms"])) >= 15.0
+        ):
+            warnings.append(f"voice pair {pair_name} shows a persistent lead-lag bias")
+
+    return (
+        {
+            "note_count": len(resolved_notes),
+            "cluster_count": len(clusters),
+            "mean_absolute_offset_ms": _safe_mean(absolute_offsets_ms),
+            "median_absolute_offset_ms": _safe_percentile(absolute_offsets_ms, 50.0),
+            "p95_absolute_offset_ms": _safe_percentile(absolute_offsets_ms, 95.0),
+            "max_absolute_offset_ms": _safe_max(absolute_offsets_ms),
+            "mean_inter_voice_spread_ms": _safe_mean(inter_voice_spreads_ms),
+            "median_inter_voice_spread_ms": _safe_percentile(
+                inter_voice_spreads_ms,
+                50.0,
+            ),
+            "p95_inter_voice_spread_ms": _safe_percentile(
+                inter_voice_spreads_ms,
+                95.0,
+            ),
+            "max_inter_voice_spread_ms": _safe_max(inter_voice_spreads_ms),
+            "per_voice_pair": pairwise_summary,
+            "warnings": warnings,
+        },
+        drift_windows,
+    )
+
+
+def _cluster_resolved_notes_by_authored_start(
+    resolved_notes: list[Any],
+    *,
+    authored_start_tolerance_seconds: float = 1e-6,
+) -> list[dict[str, Any]]:
+    sorted_notes = sorted(
+        resolved_notes,
+        key=lambda note: (note.authored_start, note.voice_name, note.note_index),
+    )
+    if not sorted_notes:
+        return []
+
+    clusters: list[list[Any]] = [[sorted_notes[0]]]
+    for note in sorted_notes[1:]:
+        if (
+            abs(note.authored_start - clusters[-1][-1].authored_start)
+            <= authored_start_tolerance_seconds
+        ):
+            clusters[-1].append(note)
+        else:
+            clusters.append([note])
+
+    return [
+        {
+            "authored_start_seconds": notes[0].authored_start,
+            "voice_count": len({note.voice_name for note in notes}),
+            "note_count": len(notes),
+            "inter_voice_spread_ms": (
+                float(
+                    (
+                        max(note.resolved_start for note in notes)
+                        - min(note.resolved_start for note in notes)
+                    )
+                    * 1_000.0
+                )
+                if len(notes) >= 2
+                else 0.0
+            ),
+            "notes": notes,
+        }
+        for notes in clusters
+    ]
+
+
+def _build_pairwise_spread_summary(
+    clusters: list[dict[str, Any]],
+) -> dict[str, dict[str, float | int]]:
+    pairwise_values: dict[str, list[float]] = {}
+    for cluster in clusters:
+        notes = sorted(
+            cluster["notes"], key=lambda note: (note.voice_name, note.note_index)
+        )
+        for left_index, left_note in enumerate(notes):
+            for right_note in notes[left_index + 1 :]:
+                if left_note.voice_name == right_note.voice_name:
+                    continue
+                pair_name = f"{left_note.voice_name}|{right_note.voice_name}"
+                pairwise_values.setdefault(pair_name, []).append(
+                    (right_note.resolved_start - left_note.resolved_start) * 1_000.0
+                )
+
+    return {
+        pair_name: {
+            "cluster_count": len(values),
+            "mean_signed_spread_ms": float(np.mean(values)),
+            "mean_absolute_spread_ms": float(np.mean(np.abs(values))),
+            "max_absolute_spread_ms": float(np.max(np.abs(values))),
+        }
+        for pair_name, values in sorted(pairwise_values.items())
+    }
+
+
+def _build_timing_drift_windows(
+    *,
+    clusters: list[dict[str, Any]],
+    total_duration: float,
+    window_seconds: float,
+) -> list[dict[str, Any]]:
+    if total_duration <= 0:
+        return []
+
+    windows: list[dict[str, Any]] = []
+    window_start = 0.0
+    while window_start < total_duration:
+        window_end = min(total_duration, window_start + window_seconds)
+        window_clusters = [
+            cluster
+            for cluster in clusters
+            if window_start <= cluster["authored_start_seconds"] < window_end
+        ]
+        window_spreads = np.asarray(
+            [
+                cluster["inter_voice_spread_ms"]
+                for cluster in window_clusters
+                if cluster["voice_count"] >= 2
+            ],
+            dtype=np.float64,
+        )
+        windows.append(
+            {
+                "start_seconds": window_start,
+                "end_seconds": window_end,
+                "cluster_count": len(window_clusters),
+                "mean_inter_voice_spread_ms": _safe_mean(window_spreads),
+                "max_inter_voice_spread_ms": _safe_max(window_spreads),
+            }
+        )
+        window_start = window_end
+    return windows
+
+
+def _build_timeline_windows(
+    *,
+    resolved_notes: list[Any],
+    total_duration: float,
+    window_seconds: float,
+) -> list[dict[str, Any]]:
+    if total_duration <= 0:
+        return []
+
+    windows: list[dict[str, Any]] = []
+    window_start = 0.0
+    while window_start < total_duration:
+        window_end = min(total_duration, window_start + window_seconds)
+        notes_starting = [
+            note
+            for note in resolved_notes
+            if window_start <= note.resolved_start < window_end
+        ]
+        notes_active = [
+            note
+            for note in resolved_notes
+            if note.resolved_start < window_end and note.resolved_end > window_start
+        ]
+        windows.append(
+            {
+                "start_seconds": window_start,
+                "end_seconds": window_end,
+                "onset_count": len(notes_starting),
+                "active_note_count": len(notes_active),
+                "active_voice_names": sorted(
+                    {note.voice_name for note in notes_active}
+                ),
+                "mean_freq_hz": (
+                    float(np.mean([note.freq_hz for note in notes_active]))
+                    if notes_active
+                    else 0.0
+                ),
+            }
+        )
+        window_start = window_end
+    return windows
+
+
+def _safe_mean(values: np.ndarray) -> float:
+    return float(np.mean(values)) if values.size > 0 else 0.0
+
+
+def _safe_max(values: np.ndarray) -> float:
+    return float(np.max(values)) if values.size > 0 else 0.0
+
+
+def _safe_percentile(values: np.ndarray, percentile: float) -> float:
+    return float(np.percentile(values, percentile)) if values.size > 0 else 0.0
 
 
 def _average_spectrum(

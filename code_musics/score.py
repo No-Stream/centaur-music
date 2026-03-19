@@ -212,6 +212,23 @@ class Voice:
     notes: list[NoteEvent] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class ResolvedTimingNote:
+    """Note timing snapshot after score-level timing humanization."""
+
+    key: tuple[str, int]
+    voice_name: str
+    note_index: int
+    authored_start: float
+    resolved_start: float
+    timing_offset_seconds: float
+    duration: float
+    resolved_end: float
+    freq_hz: float
+    partial: float | None
+    label: str | None
+
+
 @dataclass
 class Score:
     """Top-level composition model and renderer."""
@@ -351,11 +368,7 @@ class Score:
     def render_stems(self) -> dict[str, np.ndarray]:
         """Render each voice independently before master-bus effects."""
         rendered_stems: dict[str, np.ndarray] = {}
-        timing_offsets = build_timing_offsets(
-            targets=self._timing_targets(),
-            humanize=self.timing_humanize,
-            total_dur=self.total_dur,
-        )
+        timing_offsets = self.resolve_timing_offsets()
         velocity_multipliers = self._build_velocity_multiplier_map()
         for voice_name, voice in self.voices.items():
             rendered_voice = self._render_voice(
@@ -367,6 +380,41 @@ class Score:
             if rendered_voice.size > 0:
                 rendered_stems[voice_name] = rendered_voice
         return rendered_stems
+
+    def resolve_timing_offsets(self) -> dict[tuple[str, int], float]:
+        """Return the deterministic render-time timing offset for each note."""
+        return build_timing_offsets(
+            targets=self._timing_targets(),
+            humanize=self.timing_humanize,
+            total_dur=self.total_dur,
+        )
+
+    def resolved_timing_notes(self) -> list[ResolvedTimingNote]:
+        """Return note timing data after score-level timing humanization."""
+        timing_offsets = self.resolve_timing_offsets()
+        resolved_notes: list[ResolvedTimingNote] = []
+        for voice_name, voice in self.voices.items():
+            for note_index, note in enumerate(voice.notes):
+                resolved_start = max(
+                    0.0,
+                    note.start + timing_offsets.get((voice_name, note_index), 0.0),
+                )
+                resolved_notes.append(
+                    ResolvedTimingNote(
+                        key=(voice_name, note_index),
+                        voice_name=voice_name,
+                        note_index=note_index,
+                        authored_start=note.start,
+                        resolved_start=resolved_start,
+                        timing_offset_seconds=resolved_start - note.start,
+                        duration=note.duration,
+                        resolved_end=resolved_start + note.duration,
+                        freq_hz=self._resolve_freq(note),
+                        partial=note.partial,
+                        label=note.label,
+                    )
+                )
+        return resolved_notes
 
     def plot_piano_roll(self, path: str | Path | None = None) -> tuple[Any, Any]:
         """Plot score events as a piano-roll style visualization."""

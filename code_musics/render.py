@@ -93,6 +93,7 @@ def render_piece(
                 sample_rate=score.sample_rate,
                 stems=score.render_stems(),
                 score=score,
+                piece_sections=definition.sections,
             )
             version_analysis_manifest_path = Path(
                 str(version_analysis_artifacts["manifest_path"])
@@ -118,6 +119,7 @@ def render_piece(
             sample_rate=score.sample_rate if score is not None else SAMPLE_RATE,
             stems=score.render_stems() if score is not None else None,
             score=score,
+            piece_sections=definition.sections,
         )
         version_analysis_manifest_path = Path(
             str(version_analysis_artifacts["manifest_path"])
