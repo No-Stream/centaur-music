@@ -143,8 +143,20 @@ def build_ji_chorale_score() -> Score:
     }
     score.add_voice(
         "tenor",
-        synth_defaults=dict(chord_defaults)
-        | {"n_harmonics": 12, "brightness_tilt": 0.28, "harmonic_rolloff": 0.2},
+        synth_defaults={
+            "engine": "filtered_stack",
+            "waveform": "saw",
+            "n_harmonics": 12,
+            "cutoff_hz": 1_000.0,
+            "keytrack": 0.1,
+            "resonance": 0.08,
+            "filter_env_amount": 0.18,
+            "filter_env_decay": 0.5,
+            "attack": 0.05,
+            "decay": 0.25,
+            "sustain_level": 0.56,
+            "release": 0.70,
+        },
         effects=[
             EffectSpec(
                 "eq",
@@ -155,14 +167,14 @@ def build_ji_chorale_score() -> Score:
                 },
             ),
         ],
-        mix_db=-7.0,
+        mix_db=-11.0,
         pan=-0.16,
         velocity_group="harmony",
         envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
         velocity_humanize=VelocityHumanizeSpec(preset="breathing_ensemble"),
         velocity_db_per_unit=8.0,
         velocity_to_params={
-            "brightness_tilt": VelocityParamMap(min_value=-0.02, max_value=0.06)
+            "cutoff_hz": VelocityParamMap(min_value=750.0, max_value=1_300.0)
         },
     )
     score.add_voice(
@@ -269,7 +281,7 @@ def build_ji_chorale_score() -> Score:
                 },
             ),
         ],
-        mix_db=-6.0,
+        mix_db=-4.0,
         pan=0.20,
         velocity_group="melody",
         envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog"),

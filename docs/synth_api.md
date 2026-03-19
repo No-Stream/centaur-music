@@ -309,8 +309,11 @@ Parameters:
   Attack time in milliseconds. Default `15.0`. Intended musical range includes
   roughly `0.5` to `50`.
 - `release_ms: float`
-  Release time in milliseconds. Default `180.0`. Intended musical range includes
-  roughly `50` to `1000+`.
+  Primary release time in milliseconds. Default `180.0`. Intended musical range
+  includes roughly `50` to `1000+`.
+- `release_tail_ms: float | None`
+  Optional slower second-stage release tail in milliseconds. Leave as `None` for
+  a single-stage release using only `release_ms`.
 - `knee_db: float`
   Soft-knee width in dB. Default `6.0`.
 - `makeup_gain_db: float`
@@ -331,8 +334,10 @@ Notes:
 - detector EQ is the native control-path tone-shaping surface; use it for things
   like bass-insensitive bus compression via a detector highpass
 - this implementation intentionally does not yet expose an external sidechain input
-- the release path is mildly program-dependent rather than a single fixed release
-  coefficient all the way back to zero gain reduction
+- `release_ms` is the main “easy” release knob; add `release_tail_ms` only when
+  you want a faster bounce-back followed by a slower, gentler tail
+- the gain release is two-stage when `release_tail_ms` is set, which tends to feel
+  more musical than a single fixed release all the way back to zero reduction
 
 Example:
 
@@ -346,7 +351,8 @@ score = Score(
                 "threshold_db": -22.0,
                 "ratio": 2.5,
                 "attack_ms": 12.0,
-                "release_ms": 220.0,
+                "release_ms": 90.0,
+                "release_tail_ms": 260.0,
                 "knee_db": 6.0,
                 "topology": "feedback",
                 "detector_mode": "rms",

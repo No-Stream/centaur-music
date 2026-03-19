@@ -358,6 +358,7 @@ def test_compressor_effect_runs_through_apply_effect_chain() -> None:
                     "ratio": 3.0,
                     "attack_ms": 6.0,
                     "release_ms": 180.0,
+                    "release_tail_ms": 320.0,
                     "detector_bands": [
                         {
                             "kind": "highpass",

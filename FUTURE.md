@@ -1,285 +1,223 @@
 # Future Work
 
 This file tracks what still feels highest-value from the current state of the
-project. Core infrastructure such as the `Score` / `Voice` / `Phrase` model,
-named-piece rendering, piano-roll plotting, multiple synth engines, presets,
-articulation helpers, and note-level pitch motion already exist.
+project, and distinguishes that from capabilities that already exist.
+
+The repo is no longer at the "basic scaffolding" stage. We already have:
+
+- a solid `Score` / `Voice` / `Phrase` / `NoteEvent` composition model
+- phrase-first composition helpers such as `line`, `ratio_line`, `concat`,
+  `overlay`, `echo`, `sequence`, `canon`, `voiced_ratio_chord`, and
+  `progression`
+- multiple synth engines with presets: additive, FM, filtered-stack, polyBLEP,
+  and noise/percussion
+- render-time expression surfaces including note `velocity`, note
+  `pitch_motion`, score-level timing humanization, voice-level envelope and
+  velocity humanization, velocity-to-parameter mapping, and score/note
+  automation
+- a declarative effect chain with native EQ, native compressor, saturation,
+  delay, algorithmic reverb, Bricasti convolution, stereo-aware routing, and a
+  working Linux plugin path through `pedalboard`
+- snippet rendering, exact-window rendering, timestamp inspection, timeline JSON
+  artifacts, analysis manifests, and drift/artifact-risk diagnostics
+- named pieces and studies substantial enough that the bottleneck is now more
+  often musical direction than missing infrastructure
+
+So the main question is no longer "can this system render xenharmonic music at
+all?" It can. The question is how to turn the current toolkit into stronger
+music, faster iteration, and a broader but still coherent sonic language.
 
 ## High priority
 
 ### More complete pieces
 
-The main artistic question is still the same: can we make xenharmonic music
-that feels like full composition rather than only study, sketch, or demo?
+This is still the top priority.
+
+The central artistic question remains: can we make xenharmonic music that feels
+like full composition rather than only study, sketch, or demo?
 
 Most valuable directions:
 
 - stronger large-scale form
 - more memorable motifs and thematic return
-- clearer contrast, release, and pacing across sections
+- clearer contrast, release, pacing, and arrival across sections
 - better balance between "pleasant" and "strange"
 - more deliberate orchestration so pieces feel arranged, not merely layered
+- more works that feel finished enough to revisit, compare, and refine rather
+  than discard after one experiment
 
-### Better piece-generation tools
+### Better piece-generation and phrase-writing tools
 
-The score abstraction is in good shape, but composition could still become much
-faster through a richer helper layer.
+The composition layer is now real and useful, but it can still become much
+faster and more musical.
 
 Most valuable next helpers:
 
-- phrase transformation helpers beyond current placement options
-- idiomatic generators for canons, pedals, blooms, echoes, and harmonic-series
-  gestures
-- utility functions for voice-leading inside otonal and utonal spaces
-- gesture builders such as `converge`, `diverge`, `spiral`, `comma_drift`,
-  `harmonic_shadow`, and `undertow`
-- sectional/context drift helpers that re-realize ratio material against local
-  tonics without introducing fixed pitch-class identities
-- overlap and beating summaries so we can spot where a piece has become too
-  static, too drony, or too crowded before full render
-
-_todo: update, think we added some of this_
-
-### Section-wise rendering
-- for fast iteration, just render segments
+- richer phrase transformation helpers beyond the current set
+- more idiomatic generators for pedals, blooms, suspensions, staggered entries,
+  harmonic-series gestures, and contrapuntal restatement
+- voice-leading helpers for otonal and utonal spaces that stay readable rather
+  than turning into tuning math soup
+- higher-level section builders that make it easier to restate material with new
+  orchestration, local tonic reinterpretation, or registral shift
+- overlap, beating, density, and register summaries that better flag when a
+  texture has become too static, too crowded, or too continuously drony
 
 ### Sound design and synthesis direction
 
-The current engine palette is a solid base, but there is room to broaden it
-without losing the tuning-first workflow.
-
-Likely useful directions:
-
-- richer additive voices with more role-specific presets
-- more FM presets and parameter idioms that interact well with JI materials
-- plucked or struck voices for clearer articulation
-- noise-plus-tone and hybrid percussion voices
-- more explicit role presets for bed, lead, counterpoint, bass, and accent layers
-
-## Medium priority
-
-### Plugin/VST reliability follow-up
-
-The recent `ji_chorale` artifact debugging surfaced two real plugin-path issues:
-stateful cached plugin instances and suspicious behavior from TAL-Chorus-LX in
-one real piece. This deserves a more deliberate follow-up rather than staying a
-one-off workaround.
-
-Most valuable next steps:
-
-- reproduce the `ji_chorale` TAL-Chorus-LX tremolo / divebomb artifact in a
-  minimal fixture
-- define a reliable test strategy for VST / plugin integrations so modulation,
-  reset behavior, repeated renders, and on/off toggles are much more
-  bulletproof
-- separate "host bug", "plugin bug", and "our parameter mapping bug" cases with
-  tighter diagnostic helpers
-- stress-test repeated renders and plugin reset semantics for stateful effects
-  such as chorus, compressor, and reverb
-- decide where native in-repo effects should be preferred over external plugins
-  when stability matters more than exact flavor
-
-### Repo structure follow-up
-
-The current piece-module split should make the codebase easier to navigate, but
-there are still a couple of worthwhile architecture follow-ups:
-
-- split `code_musics/render.py` into render orchestration vs artifact/version
-  metadata helpers
-- tighten the package API boundary so internal modules import concrete modules
-  directly instead of leaning on package-level compatibility surfaces
-- decide whether the repo-root `synth.py` compatibility wrapper should stay,
-  move to a more clearly legacy location, or be removed entirely
-- consider whether generated `output/` artifacts should keep living in the repo
-  root by default or move behind a clearer workspace/output boundary
-
-### Timbre and synth automation
-
-This is now a particularly attractive next step. The engine/preset layer exists,
-but most timbral behavior is still static over the life of a note or phrase.
-
-Useful directions:
-
-- time-varying synth parameters at note, phrase, or voice scope
-- extend the new automation surface beyond synth params into pan, gain, plugin
-  params, effect wetness, and other mix controls
-- phrase-level timbre gestures so sounds can evolve musically without requiring
-  low-level parameter plumbing in every piece
-- automation-aware analysis so agents can see whether a sound actually opens,
-  darkens, widens, or settles the way intended
-
-The main goal is not maximal flexibility for its own sake. It is to make pieces
-feel more alive and shaped over time.
-
-### Utonal and subharmonic writing
-
-The helper functions exist, but there is still a lot of compositional territory
-to explore:
-
-- darker subharmonic passages
-- overtone / undertone contrasts inside a single form
-- comma-drift and undertow gestures that change local harmonic interpretation
-  without forcing conventional pitch-class identity
-- pitch-motion idioms that make harmonic gravity and arrival bends more audible
-
-### JI drift harmony and recontextualization
-
-The current context helpers cover the basics, but there is still room for more
-musically direct tooling around ratio-space reinterpretation.
-
-Useful directions:
-
-- stronger phrase-level recontextualization helpers
-- comma-drift movement that is easier to author as normal compositional material
-- voice-leading helpers that stay elegant while local tonics shift
-- sectional harmonic reinterpretation without falling back to fixed pitch-class
-  identity
-
-### Better effect integration
-
-The declarative effect model is in place and already supports a useful core:
-delay, algorithmic reverb, Bricasti IR convolution, native saturation, Chow
-Tape, chorus, stereo-aware effect chains, and per-voice pan. The next step is
-less "invent effects from scratch" and more "round out the palette so mixes can
-be shaped deliberately inside the existing render path."
+The engine palette is strong enough to compose with now; the next step is
+making it broader and more role-aware rather than merely adding more knobs.
 
 Most promising directions:
 
-- EQ (incl clean HP/LP) and compression as first-class mix tools; these are now the most obvious
-  gaps. (think we have these now but not used via LSP linux studio plugs?)
-- filtering and other conveniences for convolution reverb
+- richer additive presets with clearer arrangement roles
+- more FM presets and FM parameter idioms that interact musically with JI
+  material
+- stronger plucked, struck, and hybrid percussive voices
+- more explicit role presets for bed, lead, counterpoint, bass, and accent
+  layers
+- more preset curation around "musical default sounds" rather than only
+  technical engine coverage
+
+## Medium priority
+
+### Timbre and mix automation
+
+Automation now exists, but it is still an intentionally limited v1 surface.
+
+Useful next steps:
+
+- extend automation beyond the current synth-param and `pitch_ratio` targets
+  into pan, gain, effect wetness, and plugin parameters
+- phrase-level timbre gestures so sounds can evolve musically without low-level
+  automation plumbing in every piece
+- more reusable automation idioms for opening, darkening, widening, blooming,
+  and settling
+- stronger analysis feedback so we can verify whether a sound actually opens,
+  softens, or narrows the way intended
+
+### Utonal, subharmonic, and drift-based harmony
+
+The helper layer exists, but there is still a lot of compositional ground left
+to cover.
+
+Most interesting directions:
+
+- darker subharmonic passages that feel structurally intentional, not just novel
+- stronger overtone / undertone contrasts inside a single form
+- phrase-level recontextualization helpers that make comma drift and local tonic
+  reinterpretation easier to write as normal music
+- voice-leading idioms that stay elegant while harmonic context shifts
+
+### Better effect integration and routing
+
+The effect story is much better than it used to be, so this is no longer about
+basic availability. It is about making the mix path more deliberate and easier
+to shape.
+
+Most promising directions:
+
 - richer modulation and shaping such as tremolo, autopan, filtering, and
-  transient shaping
+  transient emphasis
 - role-based effect presets such as `glass_pad`, `sub_drone`, `reed_lead`, or
   `dark_hall`
 - better dry/wet and send-style routing so ambience can be shaped more
-  deliberately
-- plugin-backed EQ / glue / color inside the current `pedalboard`-based
-  pipeline, with a bias toward Linux-native VST3 or LV2 before chasing
-  Windows-only favorites through bridges
+  intentionally
+- continued plugin-backed EQ / glue / color exploration with a bias toward
+  stable Linux-native VST3 or LV2 paths
 
-#### Plugin shortlist
+#### Plugin reliability follow-up
 
-These are the most attractive near-term plugin candidates to widen the sound
-without opening a large tuning or host-integration project:
+The recent plugin work surfaced real issues around cached state and repeatable
+render behavior. Some of that has been fixed, but reliability is still a real
+follow-up area.
 
-- **LSP Plugins**: highest-value utility bundle; broad Linux-native coverage for
-  parametric EQ, compression, multiband control, and convolution
-- **x42 EQ / x42 Compressor**: lean, Linux-native workhorse pair if a smaller
-  set of mix staples is preferable to a huge suite
-- **Airwindows Consolidated**: very attractive for subtle console-ish color,
-  tape-ish sweetening, and low-friction analog glue
-- **Bandbreite**: another saturation color to complement Chow Tape rather than
-  replace it
-- **TAL-Chorus-LX**: classic analog-style widening/polish that could be useful
-  even with the current native chorus available
-- **Dragonfly Reverb** and/or a TAL reverb: broader ambience palette beyond the
-  existing built-in reverb and Bricasti IR path
+Most valuable next steps:
 
-Suggested install / evaluation order:
-
-- EQ + compressor first: LSP or x42
-- color / glue next: Airwindows, then Bandbreite
-- extra modulation / space after that: TAL-Chorus-LX, Dragonfly, TAL reverb
-
-WSL2 / Linux plugin-hosting notes:
-
-- Prefer Linux-native VST3 or LV2 first; that is the least annoying path
-- **yabridge** is still the best "unlock the Windows plugin folder later"
-  option if native Linux choices prove insufficient but sadly no WSL2 support
-- a Windows-side render helper remains possible, but should be treated as a
-  fallback rather than the default architecture
-
-_todo: some of these are added, need to update this section_
-
-#### Synth plugins
-
-Backlog rather than near-term priority.
-
-Interesting Linux-friendly synths may exist, but the xenharmonic workflow makes
-them a separate project because proper tuning support would likely require
-pitch-bend batching, MPE, MTS-ESP, or some other tuning-aware host strategy.
-Effects give much higher payoff right now with less integration risk.
-
-### Rhythm and mixed voice roles
-
-Pieces would benefit from stronger rhythmic identity and clearer timbral role
-separation.
-
-Useful directions:
-
-- drum-ish and hybrid percussion layers
-- clearer distinctions between harmonic bed, lead, bass/pedal, counterpoint,
-  and accent layers
-- more traditional song-like structures that still retain meaningful
-  xenharmonic character
+- reproduce plugin-specific artifacts in minimal fixtures when they show up in
+  real pieces
+- define a tighter test strategy for repeated renders, reset behavior, and
+  on/off toggles
+- sharpen the debugging split between host bugs, plugin bugs, and our parameter
+  mapping bugs
+- decide more explicitly when native effects should be preferred over external
+  plugins for stability
 
 ### Analysis and feedback tooling
 
-We now have a usable render pipeline and the core analysis/artifact path is in
-good shape, so this is no longer urgent. It is still worth improving when the
-composition loop starts to feel bottlenecked again.
+Analysis is now useful and part of the normal workflow. Future work here should
+stay focused on iteration speed, not on building an in-repo DAW.
 
 Useful additions:
 
 - richer render-to-render comparison views
-- clearer summaries for orchestration, density, and spectral balance
-- analysis manifests that are even easier for agents to consume
-- selective improvements to plots or summary diagnostics when they materially
-  improve iteration speed
+- clearer summaries for orchestration, density, register use, and spectral
+  balance
+- analysis outputs that are even easier for agents to consume directly
+- selective visual improvements when they materially speed up listening and
+  revision loops
 
-### Ladder filter for subtractive voices
+### Repo structure follow-up
 
-Useful later once the current analog-style filter path has settled:
+The repo is in better shape than before, but a few architectural cleanups still
+look worthwhile:
 
-- add a ladder-style low-pass character filter for `polyblep` or a related
-  subtractive engine
-- bias toward musical resonance and tone color rather than maximal circuit
-  realism
-- treat this as a distinct flavor on top of the current ZDF/TPT filter, not a
-  replacement
+- split `code_musics/render.py` further into render orchestration vs artifact
+  metadata helpers if it keeps growing
+- tighten package API boundaries so internal modules rely less on compatibility
+  surfaces
+- decide whether the repo-root `synth.py` compatibility wrapper should stay,
+  move, or go away
+- consider whether generated `output/` artifacts should keep living in the repo
+  root by default or move behind a clearer workspace/output boundary
+
+### Wavetable engine
+- allows unique timbres, somewhat complicated, needs to be done right (aliasing etc)
 
 ## Lower priority
 
-### Swing, Humanization
-- voices drift together a la Group Humanizer
-- simple imperfection in timing
-- swing
+### Rhythm and clearer voice roles
 
-### Slop and Osc/Env/Etc Drift
+Still worthwhile, but not blocked on infrastructure:
 
-- pitch drift at the osc, synth, voice level - not always a great idea in xenharmonic systems, but still useful. (not to be confused with comma drift)
-- cutoff freq etc should offer drift
+- stronger rhythmic identity in more pieces
+- more drum-ish and hybrid percussion layers
+- clearer distinctions among harmonic bed, lead, bass/pedal, counterpoint, and
+  accent layers
+- more song-like or suite-like structures that still retain meaningful
+  xenharmonic character
 
-### Sound Quality improvements
-- aliasing, rendering at higher res and downsampling, etc. - esp for subtractive  
-- improved warmth via plugins or otherwise
-- paid Linux-capable effects already owned, such as `u-he Satin` and
-  `u-he Presswerk`, are still attractive but should stay low-priority until a
-  low-friction activation path under WSL2/Linux is in place
+### Additional subtractive color
 
-### Parametric piece generation
+Useful later once the current filter palette has settled:
 
-Generate families of pieces from parameters like root, prime limit, or chosen
-partials, mainly as a composition aid rather than a replacement for hand-written
-work.
+- a ladder-style low-pass flavor for `polyblep` or a related subtractive engine
+- more emphasis on musical resonance and color than on maximal analog modeling
+- treat this as an additional flavor, not a replacement for the current filter
+  path
 
-### Microtonal MIDI export
+### Slop, swing, and drift extensions
 
-Export pieces to DAW-friendly MIDI with pitch bend so ideas can move more easily
-into other production environments.
+Some of this is implemented already through timing, envelope, and velocity
+humanization; what remains is the more specialized or riskier layer.
 
-### Identity-preserving pitch drift
+Possible later additions:
 
-Low priority, and likely optional if it ever exists.
+- swing-oriented helpers where it actually serves the music
+- more correlated ensemble behavior across voices for specific groove feels
+- selective synth-parameter drift such as cutoff drift or mild oscillator drift
+  where it helps rather than muddies tuning clarity
 
-- exploratory system for notes that retain some tuning memory across sections
-- should not require fixed note names, scale degrees, or conservative
-  music-theory identities
-- contextual drift helpers are the preferred near-term direction; this would be
-  for stranger long-memory tuning behavior later, if it proves musically useful
+### Sound-quality refinement
 
-### Granular synthesis
+The project already sounds good enough to make real musical decisions with.
+These items matter, but they should stay behind composition and tooling wins.
 
-A granular layer could open up a nice middle ground between harmonic writing and
-texture design, especially for transitions or atmospheric sections.
+Likely later directions:
+
+- further anti-aliasing and oversampling/downsampling improvements for brighter
+  subtractive material
+- more "warmth" and glue through either better native processing or carefully
+  chosen plugins
+- eventual use of paid Linux-capable effects already owned, such as `u-he
+  Satin` and `u-he Presswerk`, once the activation path is low-friction enough

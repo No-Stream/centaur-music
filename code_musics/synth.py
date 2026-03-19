@@ -1100,6 +1100,22 @@ def _linked_detector_signal(signal: np.ndarray) -> np.ndarray:
     return np.max(np.abs(normalized), axis=0)
 
 
+def _resolve_compressor_release_times(
+    *,
+    release_ms: float,
+    release_tail_ms: float | None,
+) -> tuple[float, float]:
+    if release_ms <= 0.0:
+        raise ValueError("release_ms must be positive")
+    if release_tail_ms is None:
+        return float(release_ms), float(release_ms)
+    if release_tail_ms <= 0.0:
+        raise ValueError("release_tail_ms must be positive")
+    if release_tail_ms < release_ms:
+        raise ValueError("release_tail_ms must be greater than or equal to release_ms")
+    return float(release_ms), float(release_tail_ms)
+
+
 def apply_compressor(
     signal: np.ndarray,
     *,
@@ -1107,6 +1123,7 @@ def apply_compressor(
     ratio: float = 3.0,
     attack_ms: float = 15.0,
     release_ms: float = 180.0,
+    release_tail_ms: float | None = None,
     knee_db: float = 6.0,
     makeup_gain_db: float = 0.0,
     mix: float = 1.0,
@@ -1120,8 +1137,6 @@ def apply_compressor(
         raise ValueError("ratio must be at least 1")
     if attack_ms <= 0.0:
         raise ValueError("attack_ms must be positive")
-    if release_ms <= 0.0:
-        raise ValueError("release_ms must be positive")
     if knee_db < 0.0:
         raise ValueError("knee_db must be non-negative")
     if not 0.0 <= mix <= 1.0:
@@ -1135,6 +1150,13 @@ def apply_compressor(
     if normalized_detector_mode not in {"peak", "rms"}:
         raise ValueError("detector_mode must be 'peak' or 'rms'")
 
+    resolved_release_stage1_ms, resolved_release_stage2_ms = (
+        _resolve_compressor_release_times(
+            release_ms=release_ms,
+            release_tail_ms=release_tail_ms,
+        )
+    )
+
     input_signal = _coerce_signal_layout(signal)
     detector_source = input_signal
     if detector_bands is not None:
@@ -1145,9 +1167,14 @@ def apply_compressor(
         )
 
     attack_coeff = _time_constant_to_coeff(attack_ms, sample_rate)
-    release_coeff_slow = _time_constant_to_coeff(release_ms, sample_rate)
-    release_coeff_fast = _time_constant_to_coeff(
-        max(15.0, release_ms * 0.35), sample_rate
+    detector_release_coeff = _time_constant_to_coeff(
+        resolved_release_stage2_ms, sample_rate
+    )
+    release_stage1_coeff = _time_constant_to_coeff(
+        resolved_release_stage1_ms, sample_rate
+    )
+    release_stage2_coeff = _time_constant_to_coeff(
+        resolved_release_stage2_ms, sample_rate
     )
     makeup_gain = db_to_amp(makeup_gain_db)
 
@@ -1171,7 +1198,7 @@ def apply_compressor(
             target_level = detector_input * detector_input
 
         detector_coeff = (
-            attack_coeff if target_level > detector_state else release_coeff_slow
+            attack_coeff if target_level > detector_state else detector_release_coeff
         )
         detector_state = (detector_coeff * detector_state) + (
             (1.0 - detector_coeff) * target_level
@@ -1192,9 +1219,11 @@ def apply_compressor(
         if target_gain_db < smoothed_gain_db:
             gain_coeff = attack_coeff
         else:
-            release_blend = float(np.clip(abs(smoothed_gain_db) / 12.0, 0.0, 1.0))
-            gain_coeff = (release_blend * release_coeff_fast) + (
-                (1.0 - release_blend) * release_coeff_slow
+            release_progress = float(
+                np.clip(abs(smoothed_gain_db) / max(abs(target_gain_db), 1.0), 0.0, 1.0)
+            )
+            gain_coeff = (release_progress * release_stage2_coeff) + (
+                (1.0 - release_progress) * release_stage1_coeff
             )
         smoothed_gain_db = (gain_coeff * smoothed_gain_db) + (
             (1.0 - gain_coeff) * target_gain_db

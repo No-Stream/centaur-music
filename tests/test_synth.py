@@ -422,6 +422,24 @@ def test_apply_compressor_rejects_invalid_topology() -> None:
         )
 
 
+def test_apply_compressor_rejects_negative_release_tail() -> None:
+    with pytest.raises(ValueError, match="release_tail_ms must be positive"):
+        synth.apply_compressor(
+            np.ones(64, dtype=np.float64),
+            release_ms=180.0,
+            release_tail_ms=-1.0,
+        )
+
+
+def test_apply_compressor_rejects_release_tail_faster_than_primary_release() -> None:
+    with pytest.raises(ValueError, match="greater than or equal to release_ms"):
+        synth.apply_compressor(
+            np.ones(64, dtype=np.float64),
+            release_ms=180.0,
+            release_tail_ms=90.0,
+        )
+
+
 def test_apply_compressor_reduces_hot_signal() -> None:
     signal = 1.1 * _sine_wave(
         220.0,
@@ -538,3 +556,34 @@ def test_apply_compressor_preserves_stereo_layout() -> None:
 
     assert processed.shape == stereo.shape
     assert np.isfinite(processed).all()
+
+
+def test_apply_compressor_two_stage_release_recovers_fast_then_tails_out() -> None:
+    sample_rate = synth.SAMPLE_RATE
+    time = np.linspace(0.0, 1.0, sample_rate, endpoint=False)
+    signal = 0.18 * np.sin(2.0 * np.pi * 220.0 * time)
+    burst = 1.25 * np.sin(2.0 * np.pi * 220.0 * time[: int(0.10 * sample_rate)])
+    signal[: burst.size] = burst
+
+    processed = synth.apply_compressor(
+        signal,
+        threshold_db=-26.0,
+        ratio=4.0,
+        attack_ms=0.5,
+        release_ms=25.0,
+        release_tail_ms=350.0,
+        knee_db=2.0,
+    )
+
+    early_window = slice(int(0.11 * sample_rate), int(0.16 * sample_rate))
+    late_window = slice(int(0.40 * sample_rate), int(0.45 * sample_rate))
+    early_recovery_ratio = float(
+        np.sqrt(np.mean(np.square(processed[early_window])))
+        / np.sqrt(np.mean(np.square(signal[early_window])))
+    )
+    late_recovery_ratio = float(
+        np.sqrt(np.mean(np.square(processed[late_window])))
+        / np.sqrt(np.mean(np.square(signal[late_window])))
+    )
+
+    assert early_recovery_ratio < late_recovery_ratio
