@@ -43,6 +43,10 @@ Stores onset spans and optional gate values.
 `spans` define when each note starts relative to the next onset. `gates` define
 how much of each span is actually sounded.
 
+If `spans` is shorter than the tone list passed to `line(...)` or
+`ratio_line(...)`, the rhythm cell is cycled to fit. If it is longer than the
+tone list, that is treated as an error.
+
 - `gates < 1.0` gives clipped/staccato phrasing
 - `gates = 1.0` fills the full span
 - `gates > 1.0` creates overlap and legato smear
@@ -350,6 +354,10 @@ It accepts:
 - optional `ArticulationSpec`
 - optional pitch motion, either scalar or per-note
 
+When you pass a shorter rhythm cell than the tone list, the onset spans and
+rhythm-cell gates repeat automatically. This makes it easy to write a repeating
+rhythmic cell against a longer melodic contour.
+
 It returns an ordinary `Phrase`, so existing `Score.add_phrase(...)`,
 `Phrase.transformed(...)`, and piece code continue to work.
 
@@ -380,6 +388,16 @@ from code_musics.composition import RhythmCell, line
 phrase = line(
     tones=[4.0, 5.0, 6.0],
     rhythm=RhythmCell(spans=(1.0, 1.0, 1.0), gates=1.1),
+    amp_db=-18.0,
+)
+```
+
+### Cycling a shorter rhythm cell
+
+```python
+phrase = line(
+    tones=[1.0, 9 / 8, 5 / 4, 4 / 3, 3 / 2, 5 / 3, 15 / 8],
+    rhythm=RhythmCell(spans=(0.5, 0.5, 0.75, 0.25)),
     amp_db=-18.0,
 )
 ```
@@ -483,9 +501,19 @@ These all return new phrases and do not mutate the source:
 - `staccato(...)`
 - `legato(...)`
 - `echo(...)`
+- `concat(...)`
+- `overlay(...)`
 
 Use them when a phrase is already built and you want a fast re-articulation pass
 without rewriting the note list.
+
+`echo(...)` now supports both pitch surfaces:
+
+- use `partial_shift` for partial-authored phrases
+- use `freq_scale` for frequency-authored phrases
+
+If you try to use `partial_shift` on a frequency-authored phrase, it raises
+instead of silently doing nothing.
 
 ## Section Helpers
 
@@ -495,8 +523,11 @@ section.
 - `recontextualize_phrase(...)` resolves an existing phrase into a new local
   tonic as concrete frequencies.
 - `sequence(...)` places one phrase multiple times with per-entry transforms.
-- `canon(...)` places delayed imitative entries across voices.
-- `voiced_ratio_chord(...)` resolves ratios into a register-aware voicing.
+- `canon(...)` places delayed imitative entries across voices and can repeat the
+  subject inside each voice with `repeats` and `repeat_gap`.
+- `voiced_ratio_chord(...)` resolves ratios into a register-aware voicing,
+  including `drop2` and `drop3` alongside the earlier `close`, `open`, and
+  `spread` modes.
 - `progression(...)` places simple harmonic accompaniment patterns from a list
   of sections and ratio chords.
 
@@ -505,6 +536,13 @@ Current `progression(...)` pattern modes:
 - `block`
 - `arpeggio`
 - `pedal_upper`
+
+For `pattern="arpeggio"`, `arpeggio_order` can be:
+
+- `"ascending"`
+- `"descending"`
+- `"inside_out"`
+- an explicit index order into the voiced/sorted chord
 
 ## Recipes
 

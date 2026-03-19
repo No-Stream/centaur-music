@@ -49,6 +49,19 @@ class MasteringResult:
     true_peak_dbfs: float
 
 
+@dataclass(frozen=True)
+class SignalLevelDiagnostics:
+    """Peak and loudness measurements for a rendered signal."""
+
+    peak_dbfs: float
+    true_peak_dbfs: float
+    integrated_lufs: float
+    active_window_fraction: float
+
+
+_LOW_EXPORT_PEAK_WARNING_DBFS = -3.0
+
+
 def db_to_amp(db: float) -> float:
     """Convert decibels to a linear amplitude multiplier."""
     return float(10.0 ** (db / 20.0))
@@ -111,6 +124,40 @@ def estimate_true_peak_amplitude(
         for channel in channels
     ]
     return float(max(channel_peaks, default=0.0))
+
+
+def measure_signal_levels(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    oversample_factor: int = 4,
+) -> SignalLevelDiagnostics:
+    """Measure peak and loudness diagnostics for mono or stereo audio."""
+    normalized_signal = np.asarray(signal, dtype=np.float64)
+    channels = to_analysis_channels(normalized_signal)
+    if channels.shape[-1] == 0:
+        return SignalLevelDiagnostics(
+            peak_dbfs=float("-inf"),
+            true_peak_dbfs=float("-inf"),
+            integrated_lufs=float("-inf"),
+            active_window_fraction=0.0,
+        )
+
+    peak_amplitude = float(np.max(np.abs(channels)))
+    true_peak_amplitude = estimate_true_peak_amplitude(
+        normalized_signal,
+        oversample_factor=oversample_factor,
+    )
+    integrated_loudness_lufs, active_window_fraction = integrated_lufs(
+        normalized_signal,
+        sample_rate=sample_rate,
+    )
+    return SignalLevelDiagnostics(
+        peak_dbfs=amp_to_db(max(peak_amplitude, 1e-12)),
+        true_peak_dbfs=amp_to_db(max(true_peak_amplitude, 1e-12)),
+        integrated_lufs=integrated_loudness_lufs,
+        active_window_fraction=active_window_fraction,
+    )
 
 
 def gated_rms_dbfs(
@@ -357,6 +404,52 @@ def _design_high_shelf_biquad(
             2.0 * ((amplitude - 1.0) - (amplitude + 1.0) * cosine),
             (amplitude + 1.0)
             - (amplitude - 1.0) * cosine
+            - 2.0 * sqrt_amplitude * alpha,
+        ],
+        dtype=np.float64,
+    )
+    return b / a[0], a / a[0]
+
+
+def _design_low_shelf_biquad(
+    *,
+    sample_rate: int,
+    center_hz: float,
+    q: float,
+    gain_db: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    amplitude = 10.0 ** (gain_db / 40.0)
+    omega = 2.0 * np.pi * center_hz / sample_rate
+    alpha = np.sin(omega) / (2.0 * q)
+    cosine = np.cos(omega)
+    sqrt_amplitude = np.sqrt(amplitude)
+
+    b = np.array(
+        [
+            amplitude
+            * (
+                (amplitude + 1.0)
+                - (amplitude - 1.0) * cosine
+                + 2.0 * sqrt_amplitude * alpha
+            ),
+            2.0 * amplitude * ((amplitude - 1.0) - (amplitude + 1.0) * cosine),
+            amplitude
+            * (
+                (amplitude + 1.0)
+                - (amplitude - 1.0) * cosine
+                - 2.0 * sqrt_amplitude * alpha
+            ),
+        ],
+        dtype=np.float64,
+    )
+    a = np.array(
+        [
+            (amplitude + 1.0)
+            + (amplitude - 1.0) * cosine
+            + 2.0 * sqrt_amplitude * alpha,
+            -2.0 * ((amplitude - 1.0) + (amplitude + 1.0) * cosine),
+            (amplitude + 1.0)
+            + (amplitude - 1.0) * cosine
             - 2.0 * sqrt_amplitude * alpha,
         ],
         dtype=np.float64,
@@ -692,6 +785,78 @@ def highpass(
     return np.asarray(sosfilt(sos, signal))
 
 
+def _apply_tilt_eq(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    tilt_db: float,
+    pivot_hz: float,
+    q: float = 0.707,
+) -> np.ndarray:
+    """Apply a simple tilt EQ around a pivot using complementary shelving filters."""
+    if tilt_db == 0.0:
+        return np.asarray(signal, dtype=np.float64)
+
+    nyquist = sample_rate / 2.0
+    if pivot_hz <= 0.0 or pivot_hz >= nyquist * 0.995:
+        raise ValueError("tilt_pivot_hz must be between 0 and Nyquist")
+
+    low_shelf_sos = tf2sos(
+        *_design_low_shelf_biquad(
+            sample_rate=sample_rate,
+            center_hz=pivot_hz,
+            q=q,
+            gain_db=-(tilt_db / 2.0),
+        )
+    )
+    high_shelf_sos = tf2sos(
+        *_design_high_shelf_biquad(
+            sample_rate=sample_rate,
+            center_hz=pivot_hz,
+            q=q,
+            gain_db=tilt_db / 2.0,
+        )
+    )
+    tilted = sosfilt(low_shelf_sos, np.asarray(signal, dtype=np.float64))
+    tilted = sosfilt(high_shelf_sos, tilted)
+    return np.asarray(tilted, dtype=np.float64)
+
+
+def _shape_reverb_return(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    highpass_hz: float = 0.0,
+    lowpass_hz: float = 0.0,
+    tilt_db: float = 0.0,
+    tilt_pivot_hz: float = 1_500.0,
+) -> np.ndarray:
+    """Apply basic tone shaping to a wet reverb return."""
+    if highpass_hz < 0.0:
+        raise ValueError("highpass_hz must be non-negative")
+    if lowpass_hz < 0.0:
+        raise ValueError("lowpass_hz must be non-negative")
+    if highpass_hz > 0.0 and lowpass_hz > 0.0 and highpass_hz >= lowpass_hz:
+        raise ValueError("highpass_hz must be lower than lowpass_hz")
+
+    def _process_channel(channel: np.ndarray) -> np.ndarray:
+        shaped = np.asarray(channel, dtype=np.float64)
+        if highpass_hz > 0.0:
+            shaped = highpass(shaped, cutoff_hz=highpass_hz, sample_rate=sample_rate)
+        if lowpass_hz > 0.0:
+            shaped = lowpass(shaped, cutoff_hz=lowpass_hz, sample_rate=sample_rate)
+        if tilt_db != 0.0:
+            shaped = _apply_tilt_eq(
+                shaped,
+                sample_rate=sample_rate,
+                tilt_db=tilt_db,
+                pivot_hz=tilt_pivot_hz,
+            )
+        return np.asarray(shaped, dtype=np.float64)
+
+    return _apply_per_channel(signal, _process_channel)
+
+
 def _is_stereo(signal: np.ndarray) -> bool:
     """Return True when the signal uses the repo's stereo layout."""
     return signal.ndim == 2 and signal.shape[0] == 2
@@ -796,7 +961,7 @@ def normalize_true_peak(
     target_peak_dbfs: float,
     oversample_factor: int = 4,
 ) -> np.ndarray:
-    """Apply uniform gain so the estimated true peak reaches the target ceiling."""
+    """Apply attenuation when needed so the estimated true peak stays below ceiling."""
     true_peak_amplitude = estimate_true_peak_amplitude(
         signal,
         oversample_factor=oversample_factor,
@@ -806,7 +971,27 @@ def normalize_true_peak(
 
     target_amplitude = db_to_amp(target_peak_dbfs)
     required_gain = target_amplitude / true_peak_amplitude
+    if required_gain >= 1.0:
+        return np.asarray(signal, dtype=np.float64)
     return np.asarray(signal, dtype=np.float64) * required_gain
+
+
+def _float_to_int16_pcm(
+    signal: np.ndarray,
+    *,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray:
+    """Convert float audio in [-1, 1] to dithered int16 PCM."""
+    normalized = np.asarray(signal, dtype=np.float64)
+    quantization_step = 1.0 / 32768.0
+    clipped = np.clip(normalized, -1.0, 1.0 - quantization_step)
+    resolved_rng = rng if rng is not None else np.random.default_rng()
+    dither = (
+        resolved_rng.random(clipped.shape, dtype=np.float64)
+        + resolved_rng.random(clipped.shape, dtype=np.float64)
+        - 1.0
+    ) * quantization_step
+    return np.rint((clipped + dither) * 32767.0).astype(np.int16)
 
 
 def apply_delay(
@@ -881,22 +1066,39 @@ def apply_bricasti(
     signal: np.ndarray,
     ir_name: str,
     wet: float = 0.35,
+    highpass_hz: float = 0.0,
+    lowpass_hz: float = 0.0,
+    tilt_db: float = 0.0,
+    tilt_pivot_hz: float = 1_500.0,
 ) -> np.ndarray:
     """Convolve a mono or stereo signal with a Bricasti stereo impulse response."""
+    if not 0.0 <= wet <= 1.0:
+        raise ValueError("wet must be between 0 and 1")
+
     ir_l = BRICASTI_IR_DIR / f"{ir_name}, 44K L.wav"
     ir_r = BRICASTI_IR_DIR / f"{ir_name}, 44K R.wav"
     if not ir_l.exists() or not ir_r.exists():
         raise FileNotFoundError(f"IR not found: {ir_name!r} - check BRICASTI_IR_DIR")
 
     stereo_signal = _ensure_stereo(signal).astype(np.float32)
-    left = _PEDALBOARD_CLS([_CONVOLUTION_CLS(str(ir_l), mix=wet)])(
+    left = _PEDALBOARD_CLS([_CONVOLUTION_CLS(str(ir_l), mix=1.0)])(
         stereo_signal[0], SAMPLE_RATE
     )
-    right = _PEDALBOARD_CLS([_CONVOLUTION_CLS(str(ir_r), mix=wet)])(
+    right = _PEDALBOARD_CLS([_CONVOLUTION_CLS(str(ir_r), mix=1.0)])(
         stereo_signal[1], SAMPLE_RATE
     )
     n_samples = stereo_signal.shape[-1]
-    return np.stack([left[:n_samples], right[:n_samples]]).astype(np.float64)
+    wet_signal = np.stack([left[:n_samples], right[:n_samples]]).astype(np.float64)
+    wet_signal = _shape_reverb_return(
+        wet_signal,
+        sample_rate=SAMPLE_RATE,
+        highpass_hz=highpass_hz,
+        lowpass_hz=lowpass_hz,
+        tilt_db=tilt_db,
+        tilt_pivot_hz=tilt_pivot_hz,
+    )
+    blended = ((1.0 - wet) * stereo_signal.astype(np.float64)) + (wet * wet_signal)
+    return _match_input_layout(blended.astype(np.float64), signal)
 
 
 def apply_tal_chorus_lx(
@@ -1141,7 +1343,7 @@ def finalize_master(
 
         limiter_input_gain_db += loudness_error
         mastered = apply_lsp_limiter(
-            signal,
+            mastered,
             threshold_db=true_peak_ceiling_dbfs,
             input_gain_db=limiter_input_gain_db,
             output_gain_db=limiter_output_gain_db,
@@ -1439,10 +1641,27 @@ def write_wav(path: str | Path, signal: np.ndarray) -> None:
     """Write mono (1D) or stereo (2, samples) signal to a 16-bit WAV file."""
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    level_diagnostics = measure_signal_levels(signal, sample_rate=SAMPLE_RATE)
 
     if signal.ndim == 2:
-        int16 = (signal.T * 32767).astype(np.int16)
+        int16 = _float_to_int16_pcm(signal.T)
     else:
-        int16 = (signal * 32767).astype(np.int16)
+        int16 = _float_to_int16_pcm(signal)
     wavfile.write(str(output_path), SAMPLE_RATE, int16)
-    logger.info("Wrote %s", output_path)
+    logger.info(
+        "Wrote %s (peak %.2f dBFS, true peak %.2f dBFS, integrated loudness %.2f LUFS)",
+        output_path,
+        level_diagnostics.peak_dbfs,
+        level_diagnostics.true_peak_dbfs,
+        level_diagnostics.integrated_lufs,
+    )
+    if np.isfinite(level_diagnostics.peak_dbfs) and (
+        level_diagnostics.peak_dbfs <= _LOW_EXPORT_PEAK_WARNING_DBFS
+    ):
+        logger.warning(
+            "Export peak is unexpectedly low at %.2f dBFS for %s; "
+            "the mastering/limiting pipeline may not have driven the file "
+            "to the expected ceiling.",
+            level_diagnostics.peak_dbfs,
+            output_path,
+        )

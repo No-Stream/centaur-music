@@ -513,6 +513,11 @@ def test_finalize_master_targets_lufs_and_true_peak_with_limiter(
         return np.clip(processed, -ceiling, ceiling)
 
     monkeypatch.setattr(synth, "apply_lsp_limiter", fake_apply_lsp_limiter)
+    monkeypatch.setattr(
+        synth,
+        "normalize_true_peak",
+        lambda signal, **_: np.asarray(signal, dtype=np.float64),
+    )
     signal = 0.04 * np.sin(
         np.linspace(0.0, 40.0 * np.pi, synth.SAMPLE_RATE * 2, endpoint=False)
     )
@@ -527,6 +532,62 @@ def test_finalize_master_targets_lufs_and_true_peak_with_limiter(
 
     assert mastering_result.integrated_lufs == pytest.approx(-18.0, abs=1.5)
     assert mastering_result.true_peak_dbfs <= -0.5 + 0.1
+
+
+def test_finalize_master_iterative_limiter_reuses_current_mastered_buffer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(synth, "has_external_plugin", lambda plugin_name: True)
+    limiter_inputs: list[np.ndarray] = []
+    lufs_values = iter([(-30.0, 1.0), (-25.0, 1.0), (-18.0, 1.0), (-18.0, 1.0)])
+
+    def fake_integrated_lufs(
+        signal: np.ndarray,
+        *,
+        sample_rate: int,
+    ) -> tuple[float, float]:
+        del signal, sample_rate
+        return next(lufs_values)
+
+    def fake_apply_lsp_limiter(
+        signal: np.ndarray,
+        *,
+        threshold_db: float,
+        input_gain_db: float,
+        output_gain_db: float,
+    ) -> np.ndarray:
+        del threshold_db, input_gain_db, output_gain_db
+        limiter_inputs.append(np.asarray(signal, dtype=np.float64).copy())
+        return np.asarray(signal, dtype=np.float64) * 0.5
+
+    monkeypatch.setattr(synth, "integrated_lufs", fake_integrated_lufs)
+    monkeypatch.setattr(synth, "apply_lsp_limiter", fake_apply_lsp_limiter)
+    monkeypatch.setattr(
+        synth,
+        "normalize_true_peak",
+        lambda signal, **_: np.asarray(signal, dtype=np.float64) + 0.25,
+    )
+    monkeypatch.setattr(
+        synth, "estimate_true_peak_amplitude", lambda *args, **kwargs: 0.9
+    )
+
+    signal = np.ones(16, dtype=np.float64)
+    synth.finalize_master(signal, sample_rate=synth.SAMPLE_RATE, max_iterations=4)
+
+    np.testing.assert_allclose(limiter_inputs[0], signal)
+    np.testing.assert_allclose(limiter_inputs[1], np.full_like(signal, 0.75))
+
+
+def test_normalize_true_peak_does_not_boost_under_ceiling_signal() -> None:
+    signal = np.array([0.0, 0.1, -0.1, 0.0], dtype=np.float64)
+
+    normalized = synth.normalize_true_peak(
+        signal,
+        target_peak_dbfs=-0.5,
+        oversample_factor=1,
+    )
+
+    np.testing.assert_allclose(normalized, signal)
 
 
 def test_voice_pan_promotes_mono_voice_to_stereo() -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from itertools import cycle, islice
 from typing import TYPE_CHECKING, Any
 
 from code_musics import synth
@@ -22,9 +23,11 @@ __all__ = [
     "RhythmCell",
     "build_context_sections",
     "canon",
+    "concat",
     "echo",
     "legato",
     "line",
+    "overlay",
     "place_ratio_chord",
     "place_ratio_line",
     "progression",
@@ -175,8 +178,7 @@ def line(
     rhythm_cell = (
         rhythm if isinstance(rhythm, RhythmCell) else RhythmCell(spans=tuple(rhythm))
     )
-    if len(rhythm_cell.spans) != len(tones):
-        raise ValueError("tones and spans must have the same length")
+    rhythm_spans, rhythm_gates = _resolve_rhythm_values(rhythm_cell, len(tones))
     note_labels = tuple(labels) if labels is not None else (None,) * len(tones)
     if len(note_labels) != len(tones):
         raise ValueError("labels must have the same length as tones")
@@ -185,7 +187,6 @@ def line(
     note_motions = _expand_motions(motion_input, len(tones))
 
     articulation = articulation or ArticulationSpec()
-    rhythm_gates = _expand_positive_values(rhythm_cell.gates, len(tones), "gates")
     articulation_gates = _expand_positive_values(articulation.gate, len(tones), "gate")
     accents = _expand_non_negative_values(
         articulation.accent_pattern, len(tones), "accent_pattern"
@@ -204,7 +205,7 @@ def line(
     ) in enumerate(
         zip(
             tones,
-            rhythm_cell.spans,
+            rhythm_spans,
             rhythm_gates,
             articulation_gates,
             accents,
@@ -501,18 +502,40 @@ def echo(
     delay: float,
     amp_scale: float = 0.7,
     partial_shift: float = 0.0,
+    freq_scale: float = 1.0,
 ) -> Phrase:
     """Return a delayed, quieter copy of a phrase."""
     if delay < 0:
         raise ValueError("delay must be non-negative")
     if amp_scale <= 0:
         raise ValueError("amp_scale must be positive")
+    if freq_scale <= 0:
+        raise ValueError("freq_scale must be positive")
+
+    has_partial_events = any(event.partial is not None for event in phrase.events)
+    has_freq_events = any(event.freq is not None for event in phrase.events)
+    if (
+        has_partial_events
+        and has_freq_events
+        and partial_shift != 0.0
+        and freq_scale != 1.0
+    ):
+        raise ValueError(
+            "partial_shift and freq_scale are mutually exclusive for mixed-pitch phrases"
+        )
+    if partial_shift != 0.0 and has_freq_events:
+        raise ValueError(
+            "partial_shift has no effect on freq-pitched events; use freq_scale instead"
+        )
 
     echoed_events: list[NoteEvent] = []
     for event in phrase.events:
         new_partial = event.partial
         if new_partial is not None:
             new_partial += partial_shift
+        new_freq = event.freq
+        if new_freq is not None:
+            new_freq *= freq_scale
         resolved_amp = _require_resolved_amp(event)
         echoed_events.append(
             replace(
@@ -520,10 +543,52 @@ def echo(
                 start=event.start + delay,
                 amp=resolved_amp * amp_scale,
                 partial=new_partial,
+                freq=new_freq,
                 synth=dict(event.synth) if event.synth is not None else None,
             )
         )
     return Phrase(events=tuple(echoed_events))
+
+
+def concat(*phrases: Phrase) -> Phrase:
+    """Chain phrases end-to-end."""
+    if not phrases:
+        raise ValueError("phrases must not be empty")
+
+    events: list[NoteEvent] = []
+    cursor = 0.0
+    for phrase in phrases:
+        for event in phrase.events:
+            events.append(
+                replace(
+                    event,
+                    start=event.start + cursor,
+                    synth=dict(event.synth) if event.synth is not None else None,
+                )
+            )
+        cursor += phrase.duration
+    return Phrase(events=tuple(sorted(events, key=lambda event: event.start)))
+
+
+def overlay(*phrases: Phrase, offset: float = 0.0) -> Phrase:
+    """Superimpose phrases, optionally staggering each successive phrase."""
+    if not phrases:
+        raise ValueError("phrases must not be empty")
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
+
+    events: list[NoteEvent] = []
+    for index, phrase in enumerate(phrases):
+        phrase_offset = index * offset
+        for event in phrase.events:
+            events.append(
+                replace(
+                    event,
+                    start=event.start + phrase_offset,
+                    synth=dict(event.synth) if event.synth is not None else None,
+                )
+            )
+    return Phrase(events=tuple(sorted(events, key=lambda event: event.start)))
 
 
 def recontextualize_phrase(
@@ -643,18 +708,24 @@ def canon(
     phrase: Phrase,
     start: float,
     delays: float | Sequence[float],
+    repeats: int = 1,
+    repeat_gap: float = 0.0,
     amp_scales: float | Sequence[float] = 1.0,
     partial_shifts: float | Sequence[float] = 0.0,
     time_scales: float | Sequence[float] = 1.0,
     reverses: bool | Sequence[bool] = False,
     sections: Sequence[ContextSection | None] | None = None,
     source_tonic: float = 1.0,
-) -> dict[str, list[NoteEvent]]:
+) -> dict[str, list[list[NoteEvent]]]:
     """Place delayed imitative entries of a phrase across voices."""
     if start < 0:
         raise ValueError("start must be non-negative")
     if not voice_names:
         raise ValueError("voice_names must not be empty")
+    if repeats <= 0:
+        raise ValueError("repeats must be positive")
+    if repeat_gap < 0:
+        raise ValueError("repeat_gap must be non-negative")
 
     entry_count = len(voice_names)
     if isinstance(delays, (int, float)):
@@ -689,7 +760,7 @@ def canon(
         if len(expanded_sections) != entry_count:
             raise ValueError("sections length must match voice_names")
 
-    placed: dict[str, list[NoteEvent]] = {}
+    placed: dict[str, list[list[NoteEvent]]] = {}
     for (
         voice_name,
         entry_start,
@@ -708,18 +779,22 @@ def canon(
         expanded_sections,
         strict=True,
     ):
+        repeat_starts = tuple(
+            entry_start + (repeat_index * ((phrase.duration * time_scale) + repeat_gap))
+            for repeat_index in range(repeats)
+        )
         placed[voice_name] = sequence(
             score,
             voice_name,
             phrase,
-            starts=(entry_start,),
-            amp_scales=(amp_scale,),
-            partial_shifts=(partial_shift,),
-            time_scales=(time_scale,),
-            reverses=(reverse,),
-            sections=(section,),
+            starts=repeat_starts,
+            amp_scales=(amp_scale,) * repeats,
+            partial_shifts=(partial_shift,) * repeats,
+            time_scales=(time_scale,) * repeats,
+            reverses=(reverse,) * repeats,
+            sections=(section,) * repeats,
             source_tonic=source_tonic,
-        )[0]
+        )
     return placed
 
 
@@ -735,8 +810,10 @@ def voiced_ratio_chord(
     """Resolve ratio material into a voiced chord in a target register."""
     if not ratios:
         raise ValueError("ratios must not be empty")
-    if voicing not in {"close", "open", "spread"}:
-        raise ValueError("voicing must be 'close', 'open', or 'spread'")
+    if voicing not in {"close", "open", "spread", "drop2", "drop3"}:
+        raise ValueError(
+            "voicing must be 'close', 'open', 'spread', 'drop2', or 'drop3'"
+        )
 
     voiced_freqs = sorted(resolve_ratios(context, ratios))
     inversion_count = int(inversion)
@@ -754,6 +831,10 @@ def voiced_ratio_chord(
         for index in range(1, len(voiced_freqs)):
             voiced_freqs[index] *= 2.0**index
         voiced_freqs.sort()
+    elif voicing == "drop2":
+        _drop_chord_tone(voiced_freqs, drop_number=2)
+    elif voicing == "drop3":
+        _drop_chord_tone(voiced_freqs, drop_number=3)
 
     if low_hz is not None and low_hz <= 0:
         raise ValueError("low_hz must be positive")
@@ -782,6 +863,7 @@ def progression(
     duration_scale: float = 1.0,
     voicing: str = "close",
     inversion: int | Sequence[int] = 0,
+    arpeggio_order: Sequence[int] | str = "ascending",
     low_hz: float | None = None,
     high_hz: float | None = None,
 ) -> list[NoteEvent]:
@@ -831,9 +913,10 @@ def progression(
             continue
 
         if pattern == "arpeggio":
-            step = section.duration / len(freqs)
+            ordered_freqs = _ordered_arpeggio_freqs(freqs, arpeggio_order)
+            step = section.duration / len(ordered_freqs)
             per_note_amp = amp_value
-            for index, freq in enumerate(freqs):
+            for index, freq in enumerate(ordered_freqs):
                 placed_notes.append(
                     score.add_note(
                         voice_name,
@@ -876,6 +959,84 @@ def _require_resolved_amp(event: NoteEvent) -> float:
     if event.amp is None:
         raise ValueError("event amp unexpectedly missing")
     return float(event.amp)
+
+
+def _resolve_rhythm_values(
+    rhythm_cell: RhythmCell,
+    tone_count: int,
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    if len(rhythm_cell.spans) > tone_count:
+        raise ValueError(
+            "tones and spans must have the same length or a shorter rhythm"
+        )
+
+    if len(rhythm_cell.spans) == tone_count:
+        spans = rhythm_cell.spans
+        gates = _expand_positive_values(rhythm_cell.gates, tone_count, "gates")
+        return spans, gates
+
+    base_gates = _expand_positive_values(
+        rhythm_cell.gates,
+        len(rhythm_cell.spans),
+        "gates",
+    )
+    spans = tuple(islice(cycle(rhythm_cell.spans), tone_count))
+    gates = tuple(islice(cycle(base_gates), tone_count))
+    return spans, gates
+
+
+def _drop_chord_tone(voiced_freqs: list[float], *, drop_number: int) -> None:
+    if len(voiced_freqs) < drop_number:
+        raise ValueError(f"{drop_number=} requires at least {drop_number} chord tones")
+    drop_index = len(voiced_freqs) - drop_number
+    voiced_freqs[drop_index] *= 0.5
+    voiced_freqs.sort()
+
+
+def _ordered_arpeggio_freqs(
+    freqs: Sequence[float],
+    arpeggio_order: Sequence[int] | str,
+) -> list[float]:
+    if isinstance(arpeggio_order, str):
+        if arpeggio_order == "ascending":
+            order = list(range(len(freqs)))
+        elif arpeggio_order == "descending":
+            order = list(range(len(freqs) - 1, -1, -1))
+        elif arpeggio_order == "inside_out":
+            order = _inside_out_order(len(freqs))
+        else:
+            raise ValueError(
+                "arpeggio_order must be 'ascending', 'descending', 'inside_out', or a valid index sequence"
+            )
+    else:
+        order = [int(index) for index in arpeggio_order]
+        if len(order) != len(freqs):
+            raise ValueError("custom arpeggio_order length must match the chord size")
+        if len(set(order)) != len(freqs):
+            raise ValueError("custom arpeggio_order must not repeat indices")
+        if any(index < 0 or index >= len(freqs) for index in order):
+            raise ValueError(
+                "custom arpeggio_order indices must be within chord bounds"
+            )
+
+    return [freqs[index] for index in order]
+
+
+def _inside_out_order(count: int) -> list[int]:
+    if count <= 0:
+        return []
+
+    order = [count // 2]
+    left_index = (count // 2) - 1
+    right_index = (count // 2) + 1
+    while len(order) < count:
+        if left_index >= 0:
+            order.append(left_index)
+            left_index -= 1
+        if right_index < count:
+            order.append(right_index)
+            right_index += 1
+    return order
 
 
 def _resolve_motion_input(

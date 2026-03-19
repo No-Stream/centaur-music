@@ -121,8 +121,9 @@ be shaped deliberately inside the existing render path."
 
 Most promising directions:
 
-- EQ and compression as first-class mix tools; these are now the most obvious
+- EQ (incl clean HP/LP) and compression as first-class mix tools; these are now the most obvious
   gaps. (think we have these now but not used via LSP linux studio plugs?)
+- filtering and other conveniences for convolution reverb
 - richer modulation and shaping such as tremolo, autopan, filtering, and
   transient shaping
 - role-based effect presets such as `glass_pad`, `sub_drone`, `reed_lead`, or

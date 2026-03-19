@@ -363,6 +363,15 @@ class Score:
         mix = self._stack_signals(rendered_voices)
         if self.master_effects:
             mix = synth.apply_effect_chain(mix, self.master_effects)
+
+        # Transparent output ceiling: only reduces gain if the signal exceeds
+        # -0.5 dBFS (~0.944), so normal mixes are untouched but accidental
+        # overloads cannot hard-clip the final output.
+        ceiling = 0.944
+        peak = float(np.max(np.abs(mix))) if mix.size > 0 else 0.0
+        if peak > ceiling:
+            mix = mix * (ceiling / peak)
+
         return mix
 
     def render_stems(self) -> dict[str, np.ndarray]:

@@ -42,6 +42,12 @@
   score, while voice-level humanizers shape envelope and velocity variation.
 - `Voice.synth_defaults` and note-level `synth={...}` overrides accept an `engine`
   name, optional `preset`, and engine-specific params documented in `docs/synth_api.md`.
+- `code_musics.composition` includes phrase-first helpers for melodic writing and
+  section building. High-level examples: `line(...)` / `ratio_line(...)` for phrase
+  creation, `concat(...)` / `overlay(...)` / `echo(...)` for phrase transforms,
+  `sequence(...)` / `canon(...)` for repeated placement, and
+  `voiced_ratio_chord(...)` / `progression(...)` for harmonic writing. Full API
+  details live in `docs/composition_api.md`.
 - For detailed score-surface semantics, parameter meanings, and render-order
   behavior, read `docs/score_api.md`.
 
@@ -49,9 +55,15 @@
 
 - Prefer `amp_db` over raw `amp` for authoring levels. Linear `amp` still works, but
   dB is usually easier to reason about in mixes.
+- Voices are LUFS-normalized by default (`normalize_lufs=-24.0`), so do not treat a
+  synth engine's raw output level as the main mix decision. Mix intentionally with
+  `amp_db`, note levels, voice defaults, and effect balances; use those "volume
+  slider" style controls aggressively to shape the arrangement.
 - Use note-level `velocity` for accents and phrasing. By default it affects loudness
   through `velocity_db_per_unit`, and it can also drive synth params through
   `VelocityParamMap`.
+- Set `normalize_lufs=None` on a voice only when you explicitly want raw stem gain
+  instead of the default auto-normalized workflow.
 - `velocity_humanize` is voice-level and on by default when adding voices. Set it to
   `None` when you want a fully fixed/programmed result.
 - `velocity_group` lets multiple voices share correlated velocity drift, which is the
@@ -162,6 +174,8 @@ See `FUTURE.md` for way more ideas.
   normal composition surface, not as obscure implementation details.
 - Keep low-level synthesis simple unless a task explicitly calls for DSP changes.
 - Treat effect chains declaratively with `EffectSpec` on voices or the master bus.
+- The `bricasti` convolution wrapper now supports basic wet-return tone shaping
+  (`highpass_hz`, `lowpass_hz`, `tilt_db`) for cleaner, darker, or brighter tails.
 - The local Linux environment now has a small plugin palette installed for
   experimentation: `LSP` utilities in `~/.vst` and `~/.lv2`, `Dragonfly Reverb`
   in `~/.vst3` and `~/.lv2`, `TAL-Chorus-LX` and `TAL-Reverb-2` in `~/.vst3`,
@@ -174,12 +188,20 @@ See `FUTURE.md` for way more ideas.
 - If you change score/expression parameters or presets, update the docs in the same
   pass. `AGENTS.md` should mention the feature exists; the detailed semantics belong
   in the docs, especially `docs/score_api.md` for score-surface changes.
+- When you add new functionality that future agents are likely to use, add a brief
+  high-level callout to `AGENTS.md` in the same pass so the capability persists
+  across sessions. Keep the mention short and intuitive here, and put the full API
+  semantics in `docs/composition_api.md`, `docs/score_api.md`, or
+  `docs/synth_api.md` as appropriate.
 - Timestamp inspection is part of the normal workflow now. Prefer the timeline
   artifacts and `make inspect` when responding to comments like "2:10 in
   ji_chorale" instead of manually hunting through score code.
 - Score analysis now includes timing-drift diagnostics. Overall drift is fine, but
   inter-voice spread should stay musically plausible across the piece; keep the
   warning thresholds and artifact details documented under `docs/`.
+- WAV export logging now reports peak, true-peak, and integrated LUFS at write
+  time, and warns when an exported master lands suspiciously far below the
+  expected ceiling.
 - When using or extending synth engines, read `docs/synth_api.md` first for the
   current engine names, presets, and parameter surface.
 - Prefer absolute imports and typed, readable Python.

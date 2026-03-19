@@ -56,7 +56,7 @@ def build_ji_chorale_score() -> Score:
     A5 = A4 * 2  # 880.00  — tonic, next octave
 
     master_effects: list[EffectSpec] = [
-        EffectSpec("saturation", {"preset": "neve_gentle", "mix": 0.22, "drive": 1.16}),
+        EffectSpec("saturation", {"preset": "neve_gentle", "mix": 0.18, "drive": 0.85}),
     ]
     if synth.has_external_plugin("lsp_compressor_stereo"):
         master_effects.append(
@@ -87,7 +87,6 @@ def build_ji_chorale_score() -> Score:
                 "chow_tape",
                 {"drive": 0.15, "saturation": 0.18, "bias": 0.5, "mix": 50.0},
             ),
-            EffectSpec("delay", {"delay_seconds": 0.28, "feedback": 0.16, "mix": 0.10}),
             EffectSpec("bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.30}),
         ]
     )
@@ -100,6 +99,7 @@ def build_ji_chorale_score() -> Score:
 
     score.add_voice(
         "bass",
+        normalize_lufs=-29.0,
         synth_defaults={
             "engine": "filtered_stack",
             "waveform": "square",
@@ -136,6 +136,7 @@ def build_ji_chorale_score() -> Score:
     }
     score.add_voice(
         "tenor",
+        normalize_lufs=-29.0,
         synth_defaults=dict(chord_defaults),
         pan=-0.16,
         velocity_group="harmony",
@@ -148,6 +149,7 @@ def build_ji_chorale_score() -> Score:
     )
     score.add_voice(
         "alto",
+        normalize_lufs=-29.0,
         synth_defaults=dict(chord_defaults),
         pan=0.14,
         velocity_group="harmony",
@@ -163,23 +165,24 @@ def build_ji_chorale_score() -> Score:
         synth_defaults={
             "engine": "filtered_stack",
             "preset": "reed_lead",
-            "cutoff_hz": 2_400.0,
+            "cutoff_hz": 1_500.0,
             "keytrack": 0.1,
             "resonance": 0.10,
-            "filter_env_amount": 0.95,
+            "filter_env_amount": 0.35,
             "attack": 0.03,
             "decay": 0.12,
             "sustain_level": 0.52,
             "release": 0.30,
         },
-        pan=0.08,
+        normalize_lufs=-28.0,
+        pan=-0.25,
         velocity_group="melody",
         envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog"),
         velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
         velocity_db_per_unit=10.0,
         velocity_to_params={
-            "cutoff_hz": VelocityParamMap(min_value=1_800.0, max_value=3_000.0),
-            "filter_env_amount": VelocityParamMap(min_value=0.72, max_value=1.18),
+            "cutoff_hz": VelocityParamMap(min_value=1_100.0, max_value=2_000.0),
+            "filter_env_amount": VelocityParamMap(min_value=0.25, max_value=0.50),
         },
     )
     score.add_voice(
@@ -187,16 +190,16 @@ def build_ji_chorale_score() -> Score:
         synth_defaults={
             "engine": "polyblep",
             "waveform": "triangle",
-            "cutoff_hz": 2_200.0,
+            "cutoff_hz": 4_000.0,
             "keytrack": 0.06,
             "resonance": 0.07,
             "filter_env_amount": 0.18,
             "filter_env_decay": 1.0,
-            "filter_drive": 0.12,
+            "filter_drive": 0.03,
             "attack": 0.085,
             "decay": 1.25,
             "sustain_level": 0.48,
-            "release": 0.32,
+            "release": 0.18,
         },
         effects=[
             EffectSpec(
@@ -204,17 +207,15 @@ def build_ji_chorale_score() -> Score:
                 {"mix": 0.22, "chorus_1": True, "chorus_2": False},
             ),
             EffectSpec(
-                "dragonfly",
+                "bricasti",
                 {
-                    "variant": "plate",
-                    "wet_level": 16.0,
-                    "decay_s": 0.55,
-                    "low_cut_hz": 180.0,
-                    "high_cut_hz": 14000.0,
-                    "predelay_ms": 8.0,
+                    "ir_name": "2 Plates 06 Vocal Plate",
+                    "wet": 0.18,
+                    "highpass_hz": 320.0,
                 },
             ),
         ],
+        normalize_lufs=-27.0,
         pan=0.20,
         velocity_group="melody",
         envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog"),
@@ -685,25 +686,25 @@ def build_ji_chorale_score() -> Score:
     _add_lead_phrase(
         start=8.0,
         notes=lead_prologue_and_a,
-        synth_start={"cutoff_hz": 1_900.0, "release": 0.30},
-        synth_end={"cutoff_hz": 2_200.0, "release": 0.28},
-        amp_db=-18.0,
+        synth_start={"cutoff_hz": 3_600.0, "release": 0.30},
+        synth_end={"cutoff_hz": 4_000.0, "release": 0.28},
+        amp_db=-16.0,
         velocities=prologue_a_velocities,
     )
     _add_lead_phrase(
         start=54.0,
         notes=lead_b_and_development,
-        synth_start={"cutoff_hz": 2_200.0, "release": 0.26},
-        synth_end={"cutoff_hz": 2_400.0, "release": 0.24},
-        amp_db=-17.5,
+        synth_start={"cutoff_hz": 4_000.0, "release": 0.26},
+        synth_end={"cutoff_hz": 4_300.0, "release": 0.24},
+        amp_db=-15.5,
         velocities=b_dev_velocities,
     )
     _add_lead_phrase(
         start=99.0,
         notes=lead_reprise_and_ending,
-        synth_start={"cutoff_hz": 2_100.0, "release": 0.26},
-        synth_end={"cutoff_hz": 1_750.0, "release": 0.34},
-        amp_db=-18.0,
+        synth_start={"cutoff_hz": 3_800.0, "release": 0.26},
+        synth_end={"cutoff_hz": 3_200.0, "release": 0.34},
+        amp_db=-16.0,
         velocities=reprise_ending_velocities,
     )
 

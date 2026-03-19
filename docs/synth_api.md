@@ -474,6 +474,61 @@ score.add_voice(
 )
 ```
 
+### `bricasti`
+
+Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+
+Stereo convolution reverb wrapper around the local Bricasti impulse responses.
+This is the repo's main IR reverb path for more realistic rooms/halls than the
+built-in algorithmic reverb.
+
+Parameters:
+
+- `ir_name: str`
+  Bricasti impulse-response name. The wrapper looks for matching `44K L/R.wav`
+  files under the configured IR directory.
+- `wet: float`
+  Dry/wet blend from `0` to `1`. Default `0.35`.
+- `highpass_hz: float`
+  Optional post-convolution high-pass on the wet return. Useful for clearing mud
+  in the low mids and subs. Default `0.0` (disabled).
+- `lowpass_hz: float`
+  Optional post-convolution low-pass on the wet return. Useful for darker, less
+  splashy tails. Default `0.0` (disabled).
+- `tilt_db: float`
+  Optional tilt-EQ amount on the wet return. Positive values brighten the tail;
+  negative values darken it. Default `0.0`.
+- `tilt_pivot_hz: float`
+  Pivot frequency for the tilt EQ. Default `1500.0`.
+
+Notes:
+
+- uses a fully wet convolution internally, then applies the dry/wet blend in the
+  wrapper so the tone controls only affect the reverb tail
+- `highpass_hz` and `lowpass_hz` can be combined, but `highpass_hz` must stay
+  below `lowpass_hz`
+- a common starting point for cleaner halls is `highpass_hz=180` to `350`
+
+Example:
+
+```python
+score.add_voice(
+    "pad",
+    effects=[
+        EffectSpec(
+            "bricasti",
+            {
+                "ir_name": "1 Halls 07 Large & Dark",
+                "wet": 0.30,
+                "highpass_hz": 220.0,
+                "lowpass_hz": 8_500.0,
+                "tilt_db": -1.5,
+            },
+        )
+    ],
+)
+```
+
 Presets:
 
 - `bell` - bright struck FM bell with a decaying modulation index.
@@ -701,6 +756,12 @@ Parameters:
   Time constant in seconds for the cutoff envelope to decay back toward the base cutoff.
 - `pulse_width: float`
   Pulse width used when `waveform="pulse"`.
+- `filter_mode: str`
+  Filter response mode. Supported values: `lowpass`, `bandpass`, `highpass`, `notch`.
+  Default `lowpass`.
+- `filter_drive: float`
+  Analog-inspired drive amount inside the ZDF filter path. `0.0` is clean; higher values
+  thicken and soften the response. Default `0.0`.
 
 Validation:
 

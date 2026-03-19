@@ -6,6 +6,8 @@ from typing import Any
 
 import numpy as np
 
+from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_zdf_svf
+
 _NYQUIST_FADE_START = 0.85
 
 
@@ -18,7 +20,7 @@ def render(
     params: dict[str, Any],
     freq_trajectory: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Render a harmonic-rich source shaped by low-pass style spectral weighting."""
+    """Render a harmonic-rich source shaped by a ZDF state-variable filter."""
     if duration <= 0:
         raise ValueError("duration must be positive")
     if sample_rate <= 0:
@@ -33,6 +35,8 @@ def render(
     filter_env_amount = float(params.get("filter_env_amount", 0.0))
     filter_env_decay = float(params.get("filter_env_decay", 0.18))
     pulse_width = float(params.get("pulse_width", 0.5))
+    filter_mode = str(params.get("filter_mode", "lowpass")).lower()
+    filter_drive = float(params.get("filter_drive", 0.0))
 
     if n_harmonics < 1:
         raise ValueError("n_harmonics must be at least 1")
@@ -44,6 +48,13 @@ def render(
         raise ValueError("filter_env_decay must be positive")
     if not 0.0 < pulse_width < 1.0:
         raise ValueError("pulse_width must be between 0 and 1")
+    if filter_mode not in _SUPPORTED_FILTER_MODES:
+        raise ValueError(
+            f"Unsupported filter_mode: {filter_mode!r}. "
+            "Use 'lowpass', 'bandpass', 'highpass', or 'notch'."
+        )
+    if filter_drive < 0:
+        raise ValueError("filter_drive must be non-negative")
 
     n_samples = int(sample_rate * duration)
     if n_samples == 0:
@@ -60,15 +71,9 @@ def render(
     else:
         freq_profile = np.full(n_samples, freq, dtype=np.float64)
 
+    # Build the raw additive signal (unfiltered sum of harmonics).
     signal = np.zeros(n_samples, dtype=np.float64)
     power_estimate = 0.0
-
-    cutoff_envelope = 1.0 + filter_env_amount * np.exp(-t / filter_env_decay)
-    cutoff_envelope = np.maximum(cutoff_envelope, 0.05)
-    keytracked_cutoff_hz = cutoff_hz * np.power(
-        freq_profile / reference_freq_hz, keytrack
-    )
-    cutoff_hz_profile = keytracked_cutoff_hz * cutoff_envelope
     nyquist_hz = sample_rate / 2.0
 
     for harmonic_index in range(1, n_harmonics + 1):
@@ -79,21 +84,6 @@ def render(
         harmonic_weight = _waveform_weight(waveform, harmonic_index, pulse_width)
         if harmonic_weight == 0.0:
             continue
-
-        lowpass_weight = 1.0 / (
-            1.0
-            + np.power(partial_freq_profile / np.maximum(cutoff_hz_profile, 1e-9), 8.0)
-        )
-
-        if resonance != 0.0:
-            resonance_width = np.maximum(cutoff_hz_profile * 0.18, 1.0)
-            resonance_bump = np.exp(
-                -0.5
-                * np.square(
-                    (partial_freq_profile - cutoff_hz_profile) / resonance_width
-                )
-            )
-            lowpass_weight = lowpass_weight + resonance * resonance_bump
 
         anti_alias_weight = _nyquist_fade(partial_freq_profile, nyquist_hz)
         if np.max(anti_alias_weight) <= 0.0:
@@ -107,13 +97,37 @@ def render(
                 ]
             )
         )
-        partial_weight = harmonic_weight * lowpass_weight * anti_alias_weight
+        partial_weight = harmonic_weight * anti_alias_weight
         signal += partial_weight * np.sin(phase)
         power_estimate += 0.5 * float(np.mean(np.square(partial_weight)))
 
+    # RMS-normalize the additive stack before filtering.
     if power_estimate > 0.0:
         signal = signal / np.sqrt(power_estimate)
-    return amp * signal
+
+    # Build per-sample cutoff profile with keytracking and filter envelope.
+    cutoff_envelope = 1.0 + filter_env_amount * np.exp(-t / filter_env_decay)
+    cutoff_envelope = np.maximum(cutoff_envelope, 0.05)
+    keytracked_cutoff = cutoff_hz * np.power(freq_profile / reference_freq_hz, keytrack)
+    cutoff_profile = np.clip(
+        keytracked_cutoff * cutoff_envelope, 20.0, nyquist_hz * 0.98
+    )
+
+    filtered = apply_zdf_svf(
+        signal,
+        cutoff_profile=cutoff_profile,
+        resonance=resonance,
+        sample_rate=sample_rate,
+        filter_mode=filter_mode,
+        filter_drive=filter_drive,
+    )
+
+    # Peak-normalize after filtering (filter sweep causes uneven amplitude).
+    peak = np.max(np.abs(filtered))
+    if peak > 1e-9:
+        filtered /= peak
+
+    return amp * filtered
 
 
 def _waveform_weight(waveform: str, harmonic_index: int, pulse_width: float) -> float:

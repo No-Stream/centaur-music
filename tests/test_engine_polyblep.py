@@ -66,10 +66,15 @@ class TestPolyBLEPSpectral:
 
         spectrum_low = np.abs(np.fft.rfft(low_cut))
         spectrum_high = np.abs(np.fft.rfft(high_cut))
-        mid = len(spectrum_low) // 2
-        low_upper_energy = np.sum(spectrum_low[mid:] ** 2)
-        high_upper_energy = np.sum(spectrum_high[mid:] ** 2)
-        assert high_upper_energy > low_upper_energy
+        # Measure energy between the two cutoffs (600–3000 Hz), where the filter
+        # difference is meaningful.  Bin resolution = sr / n_samples = 2 Hz/bin.
+        n_samples = int(dur * sr)
+        hz_per_bin = sr / n_samples
+        bin_600 = int(600 / hz_per_bin)
+        bin_3000 = int(3000 / hz_per_bin)
+        low_mid_energy = np.sum(spectrum_low[bin_600:bin_3000] ** 2)
+        high_mid_energy = np.sum(spectrum_high[bin_600:bin_3000] ** 2)
+        assert high_mid_energy > low_mid_energy
 
     def test_filter_modes_materially_change_the_sound(self) -> None:
         base_params = {

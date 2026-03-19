@@ -252,6 +252,7 @@ Practical interpretation:
 - `velocity_group` links multiple voices into a shared velocity-drift family
 - `velocity_to_params` makes louder/softer notes timbrally different
 - `normalize_lufs` applies an integrated-LUFS stem gain trim before pan, voice effects, and the final mix
+- because stem normalization is on by default, mix balance should usually be authored intentionally with `amp_db`, note levels, and effect balances rather than by relying on a synth engine's raw output level
 - `pan` places the rendered voice in stereo
 - `automation` adds explicit score-time parameter lanes beyond humanization
 
@@ -290,6 +291,7 @@ Important behavior:
 - `velocity_humanize=None` in the method call currently means "use the default subtle humanizer", not "disable velocity humanization"
 - if you want to disable velocity humanization after a voice exists, set `voice.velocity_humanize = None`
 - `normalize_lufs=None` disables the default per-voice auto-normalization if you want raw stem gain instead
+- with the default `normalize_lufs=-24.0`, it is normal and recommended to use authored level controls aggressively for mix balance on top of the automatic stem normalization
 
 That second point is easy to miss and worth being explicit about.
 

@@ -134,6 +134,7 @@ Current analysis outputs for score-backed renders include:
 - score-density PNG
 - analysis manifest JSON
 - timeline JSON
+- export-time log lines with peak, true-peak, and integrated LUFS diagnostics
 - drift summary and drift-window stats inside the score analysis payload
 
 ## Documentation Split

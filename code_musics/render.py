@@ -64,7 +64,7 @@ def render_piece(
         raise ValueError(f"Unknown piece: {piece_name}")
 
     definition = PIECES[piece_name]
-    output_path = Path(output_dir) / definition.output_name
+    output_path = Path(output_dir) / f"{definition.output_name}.wav"
     version_timestamp = _build_version_timestamp()
     version_output_path = _build_version_audio_path(
         piece_name=piece_name,

@@ -1,11 +1,13 @@
-# code-musics
+# centaur musical workstation
 
-Exploring musical collaboration with generative AI.
+Exploring musical collaboration with agentic AI.
 
 This project focuses on alternative tuning systems, especially just intonation and
-other xenharmonic ideas that are awkward to explore in traditional tools. The goal
-is not just to make sketches or tuning demos, but to make complete pieces that feel
-musical.
+other xenharmonic ideas that are awkward to explore in traditional tools. What can we make together? Can agentic collaboration create new, weird, unique, fresh ideas and let us work in alternate tunings more easily?
+
+Naturally, the synths are custom, to support alternate tunings. The effects are a mix of internal and vst-based (supports Linux VST3s).
+
+This repo contains both the tooling and the pieces; not pruned at all, so most of them will sound aggressively unpleasant and unfinished!
 
 ## Current shape
 
@@ -27,8 +29,6 @@ The current musical center of gravity is:
   music rather than only like an experiment
 - a wide expressive range, from simple and gentle to strange and chaotic
 
-Some touchstones for the aesthetic are Bach, plus both the tender and the unruly
-sides of Aphex Twin.
 
 ## Usage
 

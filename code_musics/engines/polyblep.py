@@ -17,7 +17,7 @@ from typing import Any
 
 import numpy as np
 
-_SUPPORTED_FILTER_MODES = {"lowpass", "bandpass", "highpass", "notch"}
+from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_zdf_svf
 
 
 def _polyblep_triangle(
@@ -132,7 +132,7 @@ def render(
     keytracked_cutoff = cutoff_hz * np.power(freq_profile / reference_freq_hz, keytrack)
     cutoff_profile = np.clip(keytracked_cutoff * cutoff_envelope, 20.0, nyquist * 0.98)
 
-    filtered = _apply_zdf_svf(
+    filtered = apply_zdf_svf(
         raw_signal,
         cutoff_profile=cutoff_profile,
         resonance=resonance,
@@ -179,61 +179,6 @@ def _polyblep_square(
     square = (saw1 - saw2) / 2.0
     square -= square.mean()  # remove DC from pulse_width asymmetry (no-op at pw=0.5)
     return square
-
-
-def _apply_zdf_svf(
-    signal: np.ndarray,
-    *,
-    cutoff_profile: np.ndarray,
-    resonance: float,
-    sample_rate: int,
-    filter_mode: str,
-    filter_drive: float,
-) -> np.ndarray:
-    """Apply a per-sample ZDF/TPT state-variable filter."""
-    filtered = np.empty_like(signal, dtype=np.float64)
-    low_state = 0.0
-    band_state = 0.0
-
-    drive_gain = 1.0 + (4.0 * filter_drive)
-    resonance_clamped = float(np.clip(resonance, 0.0, 1.2))
-    q = 0.707 + (11.293 * resonance_clamped)
-    damping = 1.0 / q
-
-    for index, sample in enumerate(signal):
-        cutoff = float(cutoff_profile[index])
-        g = np.tan(np.pi * cutoff / sample_rate)
-
-        driven_input = _soft_clip(sample * drive_gain)
-        feedback = _soft_clip(
-            (low_state + (damping * band_state)) * (1.0 + filter_drive)
-        )
-
-        high = (driven_input - feedback) / (1.0 + (damping * g) + (g * g))
-        band = (g * high) + band_state
-        low = (g * band) + low_state
-
-        band_state = (g * high) + band
-        low_state = (g * band) + low
-
-        if filter_mode == "lowpass":
-            output = low
-        elif filter_mode == "bandpass":
-            output = band
-        elif filter_mode == "highpass":
-            output = high
-        else:
-            output = low + high
-
-        filtered[index] = _soft_clip(output * (1.0 + (0.35 * filter_drive)))
-
-    compensation = 1.0 / (1.0 + (0.6 * filter_drive))
-    return filtered * compensation
-
-
-def _soft_clip(value: float) -> float:
-    """Return a stable soft-clipped sample."""
-    return float(np.tanh(value))
 
 
 def render_polyblep(

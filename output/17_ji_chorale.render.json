@@ -5,8 +5,8 @@
       "audio_path": "output/17_ji_chorale.wav"
     },
     "versioned": {
-      "analysis_manifest_path": "output/versions/ji_chorale/17_ji_chorale__20260319-015134.analysis.json",
-      "audio_path": "output/versions/ji_chorale/17_ji_chorale__20260319-015134.wav"
+      "analysis_manifest_path": "output/versions/ji_chorale/17_ji_chorale__20260319-033510.analysis.json",
+      "audio_path": "output/versions/ji_chorale/17_ji_chorale__20260319-033510.wav"
     }
   },
   "metadata_path": "output/17_ji_chorale.render.json",
@@ -15,13 +15,13 @@
   "provenance": {
     "callable_kind": "build_score",
     "callable_name": "build_ji_chorale_score",
-    "git_commit": "b6312482cb94625c1210cfe0906fa95d9c49d1af",
+    "git_commit": "17855b60f283e768d5cd9b82b444bbf889b1d6fb",
     "git_is_dirty": true,
     "module": "code_musics.pieces.ji.chorale",
     "source_file": "/home/jan/workspace/code-musics/code_musics/pieces/ji/chorale.py",
-    "source_sha256": "f482bfec187dd3ca282867ca0bdb5a993856f4a67bae76cf92f85f07285d8df2"
+    "source_sha256": "e80e3df816d7ebd5ff86d8f740ee870b8722cae91e0b030c420d156521a379c0"
   },
-  "rendered_at_utc": "20260319-015134",
+  "rendered_at_utc": "20260319-033510",
   "request": {
     "export_target_lufs": -18.0,
     "export_true_peak_ceiling_dbfs": -0.5,
@@ -36,8 +36,8 @@
       {
         "kind": "saturation",
         "params": {
-          "drive": 1.16,
-          "mix": 0.22,
+          "drive": 0.85,
+          "mix": 0.18,
           "preset": "neve_gentle"
         }
       },
@@ -1337,10 +1337,10 @@
             "velocity": 0.85
           }
         ],
-        "pan": 0.08,
+        "pan": -0.25,
         "synth_defaults": {
           "attack": 0.03,
-          "cutoff_hz": 2400.0,
+          "cutoff_hz": 1500.0,
           "decay": 0.12,
           "engine": "filtered_stack",
           "filter_env_amount": 0.95,
@@ -1371,9 +1371,9 @@
         },
         "velocity_to_params": {
           "cutoff_hz": {
-            "max_value": 3000.0,
+            "max_value": 2000.0,
             "max_velocity": 1.25,
-            "min_value": 1800.0,
+            "min_value": 1100.0,
             "min_velocity": 0.75
           },
           "filter_env_amount": {
@@ -1396,14 +1396,11 @@
             }
           },
           {
-            "kind": "dragonfly",
+            "kind": "bricasti",
             "params": {
-              "decay_s": 0.55,
-              "high_cut_hz": 14000.0,
-              "low_cut_hz": 180.0,
-              "predelay_ms": 8.0,
-              "variant": "plate",
-              "wet_level": 16.0
+              "highpass_hz": 320.0,
+              "ir_name": "2 Plates 06 Vocal Plate",
+              "wet": 0.18
             }
           }
         ],
@@ -1425,7 +1422,7 @@
         "normalize_lufs": -24.0,
         "notes": [
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -1435,13 +1432,13 @@
             "pitch_motion": null,
             "start": 8.0,
             "synth": {
-              "cutoff_hz": 2800.0,
+              "cutoff_hz": 3600.0,
               "release": 0.3
             },
             "velocity": 0.85
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -1451,13 +1448,13 @@
             "pitch_motion": null,
             "start": 9.0,
             "synth": {
-              "cutoff_hz": 2807.1428571428573,
+              "cutoff_hz": 3609.5238095238096,
               "release": 0.2995238095238095
             },
             "velocity": 1.12
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -1467,13 +1464,13 @@
             "pitch_motion": null,
             "start": 10.0,
             "synth": {
-              "cutoff_hz": 2814.285714285714,
+              "cutoff_hz": 3619.0476190476193,
               "release": 0.29904761904761906
             },
             "velocity": 1.0
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -1483,13 +1480,13 @@
             "pitch_motion": null,
             "start": 11.0,
             "synth": {
-              "cutoff_hz": 2821.4285714285716,
+              "cutoff_hz": 3628.5714285714284,
               "release": 0.29857142857142854
             },
             "velocity": 0.88
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -1499,13 +1496,13 @@
             "pitch_motion": null,
             "start": 12.0,
             "synth": {
-              "cutoff_hz": 2828.5714285714284,
+              "cutoff_hz": 3638.095238095238,
               "release": 0.2980952380952381
             },
             "velocity": 1.22
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -1515,13 +1512,13 @@
             "pitch_motion": null,
             "start": 14.0,
             "synth": {
-              "cutoff_hz": 2835.714285714286,
+              "cutoff_hz": 3647.6190476190477,
               "release": 0.2976190476190476
             },
             "velocity": 1.02
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -1531,13 +1528,13 @@
             "pitch_motion": null,
             "start": 15.0,
             "synth": {
-              "cutoff_hz": 2842.8571428571427,
+              "cutoff_hz": 3657.1428571428573,
               "release": 0.29714285714285715
             },
             "velocity": 0.95
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -1547,13 +1544,13 @@
             "pitch_motion": null,
             "start": 17.0,
             "synth": {
-              "cutoff_hz": 2850.0,
+              "cutoff_hz": 3666.6666666666665,
               "release": 0.29666666666666663
             },
             "velocity": 0.82
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -1563,13 +1560,13 @@
             "pitch_motion": null,
             "start": 18.0,
             "synth": {
-              "cutoff_hz": 2857.1428571428573,
+              "cutoff_hz": 3676.190476190476,
               "release": 0.29619047619047617
             },
             "velocity": 1.05
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -1579,13 +1576,13 @@
             "pitch_motion": null,
             "start": 19.5,
             "synth": {
-              "cutoff_hz": 2864.285714285714,
+              "cutoff_hz": 3685.714285714286,
               "release": 0.2957142857142857
             },
             "velocity": 1.15
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -1595,13 +1592,13 @@
             "pitch_motion": null,
             "start": 21.5,
             "synth": {
-              "cutoff_hz": 2871.4285714285716,
+              "cutoff_hz": 3695.2380952380954,
               "release": 0.29523809523809524
             },
             "velocity": 1.02
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.5,
@@ -1611,13 +1608,13 @@
             "pitch_motion": null,
             "start": 23.0,
             "synth": {
-              "cutoff_hz": 2878.5714285714284,
+              "cutoff_hz": 3704.7619047619046,
               "release": 0.2947619047619048
             },
             "velocity": 0.88
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.5,
@@ -1627,13 +1624,13 @@
             "pitch_motion": null,
             "start": 23.5,
             "synth": {
-              "cutoff_hz": 2885.714285714286,
+              "cutoff_hz": 3714.285714285714,
               "release": 0.29428571428571426
             },
             "velocity": 0.85
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -1643,13 +1640,13 @@
             "pitch_motion": null,
             "start": 24.0,
             "synth": {
-              "cutoff_hz": 2892.8571428571427,
+              "cutoff_hz": 3723.809523809524,
               "release": 0.2938095238095238
             },
             "velocity": 1.02
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -1659,13 +1656,13 @@
             "pitch_motion": null,
             "start": 25.0,
             "synth": {
-              "cutoff_hz": 2900.0,
+              "cutoff_hz": 3733.3333333333335,
               "release": 0.29333333333333333
             },
             "velocity": 1.25
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -1675,13 +1672,13 @@
             "pitch_motion": null,
             "start": 27.0,
             "synth": {
-              "cutoff_hz": 2907.1428571428573,
+              "cutoff_hz": 3742.8571428571427,
               "release": 0.29285714285714287
             },
             "velocity": 1.05
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -1691,13 +1688,13 @@
             "pitch_motion": null,
             "start": 28.0,
             "synth": {
-              "cutoff_hz": 2914.285714285714,
+              "cutoff_hz": 3752.3809523809523,
               "release": 0.2923809523809524
             },
             "velocity": 0.95
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.5,
@@ -1707,13 +1704,13 @@
             "pitch_motion": null,
             "start": 29.5,
             "synth": {
-              "cutoff_hz": 2921.4285714285716,
+              "cutoff_hz": 3761.904761904762,
               "release": 0.2919047619047619
             },
             "velocity": 0.85
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -1723,13 +1720,13 @@
             "pitch_motion": null,
             "start": 30.0,
             "synth": {
-              "cutoff_hz": 2928.5714285714284,
+              "cutoff_hz": 3771.4285714285716,
               "release": 0.2914285714285714
             },
             "velocity": 1.05
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -1739,13 +1736,13 @@
             "pitch_motion": null,
             "start": 31.0,
             "synth": {
-              "cutoff_hz": 2935.714285714286,
+              "cutoff_hz": 3780.9523809523807,
               "release": 0.29095238095238096
             },
             "velocity": 1.12
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -1755,13 +1752,13 @@
             "pitch_motion": null,
             "start": 32.5,
             "synth": {
-              "cutoff_hz": 2942.8571428571427,
+              "cutoff_hz": 3790.4761904761904,
               "release": 0.2904761904761905
             },
             "velocity": 1.0
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -1771,13 +1768,13 @@
             "pitch_motion": null,
             "start": 33.5,
             "synth": {
-              "cutoff_hz": 2950.0,
+              "cutoff_hz": 3800.0,
               "release": 0.29000000000000004
             },
             "velocity": 0.9
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -1787,13 +1784,13 @@
             "pitch_motion": null,
             "start": 35.0,
             "synth": {
-              "cutoff_hz": 2957.1428571428573,
+              "cutoff_hz": 3809.5238095238096,
               "release": 0.2895238095238095
             },
             "velocity": 0.85
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.5,
@@ -1803,13 +1800,13 @@
             "pitch_motion": null,
             "start": 36.0,
             "synth": {
-              "cutoff_hz": 2964.285714285714,
+              "cutoff_hz": 3819.0476190476193,
               "release": 0.28904761904761905
             },
             "velocity": 1.0
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.75,
@@ -1819,13 +1816,13 @@
             "pitch_motion": null,
             "start": 36.5,
             "synth": {
-              "cutoff_hz": 2971.4285714285716,
+              "cutoff_hz": 3828.5714285714284,
               "release": 0.2885714285714286
             },
             "velocity": 1.1
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.5,
@@ -1835,13 +1832,13 @@
             "pitch_motion": null,
             "start": 37.25,
             "synth": {
-              "cutoff_hz": 2978.5714285714284,
+              "cutoff_hz": 3838.095238095238,
               "release": 0.2880952380952381
             },
             "velocity": 1.02
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.75,
@@ -1851,13 +1848,13 @@
             "pitch_motion": null,
             "start": 37.75,
             "synth": {
-              "cutoff_hz": 2985.714285714286,
+              "cutoff_hz": 3847.6190476190477,
               "release": 0.2876190476190476
             },
             "velocity": 1.15
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.5,
@@ -1867,13 +1864,13 @@
             "pitch_motion": null,
             "start": 38.5,
             "synth": {
-              "cutoff_hz": 2992.8571428571427,
+              "cutoff_hz": 3857.1428571428573,
               "release": 0.28714285714285714
             },
             "velocity": 1.05
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.5,
@@ -1883,13 +1880,13 @@
             "pitch_motion": null,
             "start": 39.0,
             "synth": {
-              "cutoff_hz": 3000.0,
+              "cutoff_hz": 3866.6666666666665,
               "release": 0.2866666666666667
             },
             "velocity": 1.0
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.5,
@@ -1899,13 +1896,13 @@
             "pitch_motion": null,
             "start": 39.5,
             "synth": {
-              "cutoff_hz": 3007.1428571428573,
+              "cutoff_hz": 3876.190476190476,
               "release": 0.2861904761904762
             },
             "velocity": 0.95
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.5,
@@ -1915,13 +1912,13 @@
             "pitch_motion": null,
             "start": 40.0,
             "synth": {
-              "cutoff_hz": 3014.285714285714,
+              "cutoff_hz": 3885.714285714286,
               "release": 0.28571428571428575
             },
             "velocity": 1.05
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.75,
@@ -1931,13 +1928,13 @@
             "pitch_motion": null,
             "start": 40.5,
             "synth": {
-              "cutoff_hz": 3021.4285714285716,
+              "cutoff_hz": 3895.2380952380954,
               "release": 0.28523809523809524
             },
             "velocity": 1.2
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.375,
@@ -1947,13 +1944,13 @@
             "pitch_motion": null,
             "start": 41.25,
             "synth": {
-              "cutoff_hz": 3028.5714285714284,
+              "cutoff_hz": 3904.7619047619046,
               "release": 0.28476190476190477
             },
             "velocity": 1.32
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.375,
@@ -1963,13 +1960,13 @@
             "pitch_motion": null,
             "start": 41.625,
             "synth": {
-              "cutoff_hz": 3035.714285714286,
+              "cutoff_hz": 3914.285714285714,
               "release": 0.2842857142857143
             },
             "velocity": 1.42
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -1979,13 +1976,13 @@
             "pitch_motion": null,
             "start": 42.0,
             "synth": {
-              "cutoff_hz": 3042.8571428571427,
+              "cutoff_hz": 3923.809523809524,
               "release": 0.28380952380952384
             },
             "velocity": 1.08
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -1995,13 +1992,13 @@
             "pitch_motion": null,
             "start": 43.5,
             "synth": {
-              "cutoff_hz": 3050.0,
+              "cutoff_hz": 3933.3333333333335,
               "release": 0.2833333333333333
             },
             "velocity": 0.95
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2011,13 +2008,13 @@
             "pitch_motion": null,
             "start": 44.5,
             "synth": {
-              "cutoff_hz": 3057.142857142857,
+              "cutoff_hz": 3942.8571428571427,
               "release": 0.28285714285714286
             },
             "velocity": 0.9
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2027,13 +2024,13 @@
             "pitch_motion": null,
             "start": 46.0,
             "synth": {
-              "cutoff_hz": 3064.285714285714,
+              "cutoff_hz": 3952.3809523809523,
               "release": 0.2823809523809524
             },
             "velocity": 0.85
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.5,
@@ -2043,13 +2040,13 @@
             "pitch_motion": null,
             "start": 47.5,
             "synth": {
-              "cutoff_hz": 3071.4285714285716,
+              "cutoff_hz": 3961.904761904762,
               "release": 0.28190476190476194
             },
             "velocity": 0.8
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.5,
@@ -2059,13 +2056,13 @@
             "pitch_motion": null,
             "start": 48.0,
             "synth": {
-              "cutoff_hz": 3078.5714285714284,
+              "cutoff_hz": 3971.4285714285716,
               "release": 0.2814285714285715
             },
             "velocity": 1.02
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2075,13 +2072,13 @@
             "pitch_motion": null,
             "start": 50.5,
             "synth": {
-              "cutoff_hz": 3085.714285714286,
+              "cutoff_hz": 3980.9523809523807,
               "release": 0.28095238095238095
             },
             "velocity": 0.92
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2091,13 +2088,13 @@
             "pitch_motion": null,
             "start": 52.0,
             "synth": {
-              "cutoff_hz": 3092.8571428571427,
+              "cutoff_hz": 3990.4761904761904,
               "release": 0.2804761904761905
             },
             "velocity": 0.85
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.5,
@@ -2107,13 +2104,13 @@
             "pitch_motion": null,
             "start": 53.5,
             "synth": {
-              "cutoff_hz": 3100.0,
+              "cutoff_hz": 4000.0,
               "release": 0.28
             },
             "velocity": 0.75
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2123,13 +2120,13 @@
             "pitch_motion": null,
             "start": 54.0,
             "synth": {
-              "cutoff_hz": 3150.0,
+              "cutoff_hz": 4000.0,
               "release": 0.26
             },
             "velocity": 0.98
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2139,13 +2136,13 @@
             "pitch_motion": null,
             "start": 55.5,
             "synth": {
-              "cutoff_hz": 3156.25,
+              "cutoff_hz": 4012.5,
               "release": 0.25916666666666666
             },
             "velocity": 1.25
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2155,13 +2152,13 @@
             "pitch_motion": null,
             "start": 57.0,
             "synth": {
-              "cutoff_hz": 3162.5,
+              "cutoff_hz": 4025.0,
               "release": 0.25833333333333336
             },
             "velocity": 1.02
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2171,13 +2168,13 @@
             "pitch_motion": null,
             "start": 59.0,
             "synth": {
-              "cutoff_hz": 3168.75,
+              "cutoff_hz": 4037.5,
               "release": 0.2575
             },
             "velocity": 0.88
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2187,13 +2184,13 @@
             "pitch_motion": null,
             "start": 61.0,
             "synth": {
-              "cutoff_hz": 3175.0,
+              "cutoff_hz": 4050.0,
               "release": 0.25666666666666665
             },
             "velocity": 1.15
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2203,13 +2200,13 @@
             "pitch_motion": null,
             "start": 63.0,
             "synth": {
-              "cutoff_hz": 3181.25,
+              "cutoff_hz": 4062.5,
               "release": 0.25583333333333336
             },
             "velocity": 1.05
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2219,13 +2216,13 @@
             "pitch_motion": null,
             "start": 64.5,
             "synth": {
-              "cutoff_hz": 3187.5,
+              "cutoff_hz": 4075.0,
               "release": 0.255
             },
             "velocity": 0.95
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2235,13 +2232,13 @@
             "pitch_motion": null,
             "start": 66.0,
             "synth": {
-              "cutoff_hz": 3193.75,
+              "cutoff_hz": 4087.5,
               "release": 0.25416666666666665
             },
             "velocity": 0.85
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 2.5,
@@ -2251,13 +2248,13 @@
             "pitch_motion": null,
             "start": 68.0,
             "synth": {
-              "cutoff_hz": 3200.0,
+              "cutoff_hz": 4100.0,
               "release": 0.25333333333333335
             },
             "velocity": 1.12
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2267,13 +2264,13 @@
             "pitch_motion": null,
             "start": 70.5,
             "synth": {
-              "cutoff_hz": 3206.25,
+              "cutoff_hz": 4112.5,
               "release": 0.2525
             },
             "velocity": 0.97
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 2.5,
@@ -2283,13 +2280,13 @@
             "pitch_motion": null,
             "start": 72.5,
             "synth": {
-              "cutoff_hz": 3212.5,
+              "cutoff_hz": 4125.0,
               "release": 0.25166666666666665
             },
             "velocity": 0.82
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2299,13 +2296,13 @@
             "pitch_motion": null,
             "start": 75.0,
             "synth": {
-              "cutoff_hz": 3218.75,
+              "cutoff_hz": 4137.5,
               "release": 0.25083333333333335
             },
             "velocity": 1.0
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2315,13 +2312,13 @@
             "pitch_motion": null,
             "start": 76.5,
             "synth": {
-              "cutoff_hz": 3225.0,
+              "cutoff_hz": 4150.0,
               "release": 0.25
             },
             "velocity": 0.92
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2331,13 +2328,13 @@
             "pitch_motion": null,
             "start": 78.0,
             "synth": {
-              "cutoff_hz": 3231.25,
+              "cutoff_hz": 4162.5,
               "release": 0.24916666666666668
             },
             "velocity": 1.12
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2347,13 +2344,13 @@
             "pitch_motion": null,
             "start": 79.5,
             "synth": {
-              "cutoff_hz": 3237.5,
+              "cutoff_hz": 4175.0,
               "release": 0.24833333333333332
             },
             "velocity": 0.92
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2363,13 +2360,13 @@
             "pitch_motion": null,
             "start": 81.0,
             "synth": {
-              "cutoff_hz": 3243.75,
+              "cutoff_hz": 4187.5,
               "release": 0.2475
             },
             "velocity": 0.98
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -2379,13 +2376,13 @@
             "pitch_motion": null,
             "start": 83.0,
             "synth": {
-              "cutoff_hz": 3250.0,
+              "cutoff_hz": 4200.0,
               "release": 0.24666666666666667
             },
             "velocity": 0.88
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2395,13 +2392,13 @@
             "pitch_motion": null,
             "start": 84.0,
             "synth": {
-              "cutoff_hz": 3256.25,
+              "cutoff_hz": 4212.5,
               "release": 0.24583333333333332
             },
             "velocity": 1.0
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2411,13 +2408,13 @@
             "pitch_motion": null,
             "start": 85.5,
             "synth": {
-              "cutoff_hz": 3262.5,
+              "cutoff_hz": 4225.0,
               "release": 0.245
             },
             "velocity": 1.1
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2427,13 +2424,13 @@
             "pitch_motion": null,
             "start": 87.5,
             "synth": {
-              "cutoff_hz": 3268.75,
+              "cutoff_hz": 4237.5,
               "release": 0.24416666666666667
             },
             "velocity": 1.22
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2443,13 +2440,13 @@
             "pitch_motion": null,
             "start": 89.0,
             "synth": {
-              "cutoff_hz": 3275.0,
+              "cutoff_hz": 4250.0,
               "release": 0.24333333333333332
             },
             "velocity": 1.02
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2459,13 +2456,13 @@
             "pitch_motion": null,
             "start": 91.0,
             "synth": {
-              "cutoff_hz": 3281.25,
+              "cutoff_hz": 4262.5,
               "release": 0.2425
             },
             "velocity": 1.12
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2475,13 +2472,13 @@
             "pitch_motion": null,
             "start": 93.0,
             "synth": {
-              "cutoff_hz": 3287.5,
+              "cutoff_hz": 4275.0,
               "release": 0.24166666666666667
             },
             "velocity": 1.2
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2491,13 +2488,13 @@
             "pitch_motion": null,
             "start": 95.0,
             "synth": {
-              "cutoff_hz": 3293.75,
+              "cutoff_hz": 4287.5,
               "release": 0.24083333333333332
             },
             "velocity": 1.02
           },
           {
-            "amp": 0.1333521432163324,
+            "amp": 0.16788040181225602,
             "amp_db": null,
             "automation": null,
             "duration": 2.5,
@@ -2507,13 +2504,13 @@
             "pitch_motion": null,
             "start": 96.5,
             "synth": {
-              "cutoff_hz": 3300.0,
+              "cutoff_hz": 4300.0,
               "release": 0.24
             },
             "velocity": 0.85
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2523,13 +2520,13 @@
             "pitch_motion": null,
             "start": 99.0,
             "synth": {
-              "cutoff_hz": 3000.0,
+              "cutoff_hz": 3800.0,
               "release": 0.26
             },
             "velocity": 1.15
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2539,13 +2536,13 @@
             "pitch_motion": null,
             "start": 101.0,
             "synth": {
-              "cutoff_hz": 2988.3333333333335,
+              "cutoff_hz": 3780.0,
               "release": 0.26266666666666666
             },
             "velocity": 1.0
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2555,13 +2552,13 @@
             "pitch_motion": null,
             "start": 102.5,
             "synth": {
-              "cutoff_hz": 2976.6666666666665,
+              "cutoff_hz": 3760.0,
               "release": 0.26533333333333337
             },
             "velocity": 0.9
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.5,
@@ -2571,13 +2568,13 @@
             "pitch_motion": null,
             "start": 104.5,
             "synth": {
-              "cutoff_hz": 2965.0,
+              "cutoff_hz": 3740.0,
               "release": 0.268
             },
             "velocity": 0.75
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2587,13 +2584,13 @@
             "pitch_motion": null,
             "start": 105.0,
             "synth": {
-              "cutoff_hz": 2953.3333333333335,
+              "cutoff_hz": 3720.0,
               "release": 0.27066666666666667
             },
             "velocity": 0.95
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2603,13 +2600,13 @@
             "pitch_motion": null,
             "start": 106.5,
             "synth": {
-              "cutoff_hz": 2941.6666666666665,
+              "cutoff_hz": 3700.0,
               "release": 0.2733333333333333
             },
             "velocity": 1.1
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.5,
@@ -2619,13 +2616,13 @@
             "pitch_motion": null,
             "start": 108.5,
             "synth": {
-              "cutoff_hz": 2930.0,
+              "cutoff_hz": 3680.0,
               "release": 0.276
             },
             "velocity": 0.85
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2635,13 +2632,13 @@
             "pitch_motion": null,
             "start": 111.0,
             "synth": {
-              "cutoff_hz": 2918.3333333333335,
+              "cutoff_hz": 3660.0,
               "release": 0.2786666666666667
             },
             "velocity": 1.05
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2651,13 +2648,13 @@
             "pitch_motion": null,
             "start": 112.5,
             "synth": {
-              "cutoff_hz": 2906.6666666666665,
+              "cutoff_hz": 3640.0,
               "release": 0.2813333333333333
             },
             "velocity": 1.18
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2667,13 +2664,13 @@
             "pitch_motion": null,
             "start": 114.0,
             "synth": {
-              "cutoff_hz": 2895.0,
+              "cutoff_hz": 3620.0,
               "release": 0.28400000000000003
             },
             "velocity": 1.05
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2683,13 +2680,13 @@
             "pitch_motion": null,
             "start": 115.5,
             "synth": {
-              "cutoff_hz": 2883.3333333333335,
+              "cutoff_hz": 3600.0,
               "release": 0.2866666666666667
             },
             "velocity": 0.9
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.5,
@@ -2699,13 +2696,13 @@
             "pitch_motion": null,
             "start": 117.0,
             "synth": {
-              "cutoff_hz": 2871.6666666666665,
+              "cutoff_hz": 3580.0,
               "release": 0.28933333333333333
             },
             "velocity": 1.12
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2715,13 +2712,13 @@
             "pitch_motion": null,
             "start": 119.5,
             "synth": {
-              "cutoff_hz": 2860.0,
+              "cutoff_hz": 3560.0,
               "release": 0.29200000000000004
             },
             "velocity": 0.98
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2731,13 +2728,13 @@
             "pitch_motion": null,
             "start": 121.5,
             "synth": {
-              "cutoff_hz": 2848.3333333333335,
+              "cutoff_hz": 3540.0,
               "release": 0.2946666666666667
             },
             "velocity": 0.85
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.5,
@@ -2747,13 +2744,13 @@
             "pitch_motion": null,
             "start": 123.0,
             "synth": {
-              "cutoff_hz": 2836.6666666666665,
+              "cutoff_hz": 3520.0,
               "release": 0.29733333333333334
             },
             "velocity": 1.22
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -2763,13 +2760,13 @@
             "pitch_motion": null,
             "start": 125.5,
             "synth": {
-              "cutoff_hz": 2825.0,
+              "cutoff_hz": 3500.0,
               "release": 0.30000000000000004
             },
             "velocity": 1.02
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -2779,13 +2776,13 @@
             "pitch_motion": null,
             "start": 126.5,
             "synth": {
-              "cutoff_hz": 2813.3333333333335,
+              "cutoff_hz": 3480.0,
               "release": 0.3026666666666667
             },
             "velocity": 0.92
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 0.5,
@@ -2795,13 +2792,13 @@
             "pitch_motion": null,
             "start": 127.5,
             "synth": {
-              "cutoff_hz": 2801.6666666666665,
+              "cutoff_hz": 3460.0,
               "release": 0.30533333333333335
             },
             "velocity": 0.8
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -2811,13 +2808,13 @@
             "pitch_motion": null,
             "start": 128.0,
             "synth": {
-              "cutoff_hz": 2790.0,
+              "cutoff_hz": 3440.0,
               "release": 0.308
             },
             "velocity": 0.85
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2827,13 +2824,13 @@
             "pitch_motion": null,
             "start": 129.0,
             "synth": {
-              "cutoff_hz": 2778.3333333333335,
+              "cutoff_hz": 3420.0,
               "release": 0.3106666666666667
             },
             "velocity": 0.98
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2843,13 +2840,13 @@
             "pitch_motion": null,
             "start": 131.0,
             "synth": {
-              "cutoff_hz": 2766.6666666666665,
+              "cutoff_hz": 3400.0,
               "release": 0.31333333333333335
             },
             "velocity": 1.05
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -2859,13 +2856,13 @@
             "pitch_motion": null,
             "start": 132.5,
             "synth": {
-              "cutoff_hz": 2755.0,
+              "cutoff_hz": 3380.0,
               "release": 0.316
             },
             "velocity": 1.12
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2875,13 +2872,13 @@
             "pitch_motion": null,
             "start": 133.5,
             "synth": {
-              "cutoff_hz": 2743.3333333333335,
+              "cutoff_hz": 3360.0,
               "release": 0.31866666666666665
             },
             "velocity": 1.22
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -2891,13 +2888,13 @@
             "pitch_motion": null,
             "start": 135.5,
             "synth": {
-              "cutoff_hz": 2731.6666666666665,
+              "cutoff_hz": 3340.0,
               "release": 0.32133333333333336
             },
             "velocity": 1.05
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2907,13 +2904,13 @@
             "pitch_motion": null,
             "start": 136.5,
             "synth": {
-              "cutoff_hz": 2720.0,
+              "cutoff_hz": 3320.0,
               "release": 0.324
             },
             "velocity": 1.0
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.0,
@@ -2923,13 +2920,13 @@
             "pitch_motion": null,
             "start": 138.0,
             "synth": {
-              "cutoff_hz": 2708.3333333333335,
+              "cutoff_hz": 3300.0,
               "release": 0.32666666666666666
             },
             "velocity": 0.9
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.0,
@@ -2939,13 +2936,13 @@
             "pitch_motion": null,
             "start": 139.0,
             "synth": {
-              "cutoff_hz": 2696.6666666666665,
+              "cutoff_hz": 3280.0,
               "release": 0.32933333333333337
             },
             "velocity": 1.0
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2955,13 +2952,13 @@
             "pitch_motion": null,
             "start": 141.0,
             "synth": {
-              "cutoff_hz": 2685.0,
+              "cutoff_hz": 3260.0,
               "release": 0.332
             },
             "velocity": 0.95
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 2.5,
@@ -2971,13 +2968,13 @@
             "pitch_motion": null,
             "start": 142.5,
             "synth": {
-              "cutoff_hz": 2673.3333333333335,
+              "cutoff_hz": 3240.0,
               "release": 0.33466666666666667
             },
             "velocity": 1.08
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 1.5,
@@ -2987,13 +2984,13 @@
             "pitch_motion": null,
             "start": 145.0,
             "synth": {
-              "cutoff_hz": 2661.6666666666665,
+              "cutoff_hz": 3220.0,
               "release": 0.3373333333333334
             },
             "velocity": 0.9
           },
           {
-            "amp": 0.12589254117941673,
+            "amp": 0.15848931924611134,
             "amp_db": null,
             "automation": null,
             "duration": 3.5,
@@ -3003,7 +3000,7 @@
             "pitch_motion": null,
             "start": 146.5,
             "synth": {
-              "cutoff_hz": 2650.0,
+              "cutoff_hz": 3200.0,
               "release": 0.34
             },
             "velocity": 0.78
@@ -3012,11 +3009,17 @@
         "pan": 0.2,
         "synth_defaults": {
           "attack": 0.085,
+          "cutoff_hz": 4000.0,
           "decay": 1.25,
           "engine": "polyblep",
-          "preset": "warm_lead",
+          "filter_drive": 0.03,
+          "filter_env_amount": 0.18,
+          "filter_env_decay": 1.0,
+          "keytrack": 0.06,
           "release": 0.32,
-          "sustain_level": 0.48
+          "resonance": 0.07,
+          "sustain_level": 0.48,
+          "waveform": "triangle"
         },
         "velocity_db_per_unit": 12.0,
         "velocity_group": "melody",
@@ -3459,8 +3462,8 @@
       {
         "kind": "saturation",
         "params": {
-          "drive": 1.16,
-          "mix": 0.22,
+          "drive": 0.85,
+          "mix": 0.18,
           "preset": "neve_gentle"
         }
       },
@@ -3572,11 +3575,11 @@
         ],
         "labels": [],
         "note_count": 37,
-        "pan": 0.08,
+        "pan": -0.25,
         "partial_range": null,
         "synth_defaults": {
           "attack": 0.03,
-          "cutoff_hz": 2400.0,
+          "cutoff_hz": 1500.0,
           "decay": 0.12,
           "engine": "filtered_stack",
           "filter_env_amount": 0.95,
@@ -3598,14 +3601,11 @@
             }
           },
           {
-            "kind": "dragonfly",
+            "kind": "bricasti",
             "params": {
-              "decay_s": 0.55,
-              "high_cut_hz": 14000.0,
-              "low_cut_hz": 180.0,
-              "predelay_ms": 8.0,
-              "variant": "plate",
-              "wet_level": 16.0
+              "highpass_hz": 320.0,
+              "ir_name": "2 Plates 06 Vocal Plate",
+              "wet": 0.18
             }
           }
         ],
@@ -3619,11 +3619,17 @@
         "partial_range": null,
         "synth_defaults": {
           "attack": 0.085,
+          "cutoff_hz": 4000.0,
           "decay": 1.25,
           "engine": "polyblep",
-          "preset": "warm_lead",
+          "filter_drive": 0.03,
+          "filter_env_amount": 0.18,
+          "filter_env_decay": 1.0,
+          "keytrack": 0.06,
           "release": 0.32,
-          "sustain_level": 0.48
+          "resonance": 0.07,
+          "sustain_level": 0.48,
+          "waveform": "triangle"
         }
       },
       "tenor": {
@@ -3650,5 +3656,5 @@
       }
     }
   },
-  "version_metadata_path": "output/versions/ji_chorale/17_ji_chorale__20260319-015134.render.json"
+  "version_metadata_path": "output/versions/ji_chorale/17_ji_chorale__20260319-033510.render.json"
 }

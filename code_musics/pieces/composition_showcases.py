@@ -10,9 +10,16 @@ from code_musics.composition import (
     canon,
     line,
     progression,
+    ratio_line,
     recontextualize_phrase,
     sequence,
     voiced_ratio_chord,
+    with_synth_ramp,
+)
+from code_musics.humanize import (
+    EnvelopeHumanizeSpec,
+    TimingHumanizeSpec,
+    VelocityHumanizeSpec,
 )
 from code_musics.pieces._shared import SOFT_REVERB_EFFECT, WARM_SATURATION_EFFECT
 from code_musics.pieces.registry import PieceDefinition
@@ -356,6 +363,221 @@ def build_composition_tools_consonant_score() -> Score:
     return score
 
 
+def build_septimal_imitation_score() -> Score:
+    """Short 3-voice imitation in 7-limit JI (~54 s).
+
+    Demonstrates: ratio_line, recontextualize_phrase, build_context_sections,
+    sequence with harmonic sections, with_synth_ramp, voiced_ratio_chord.
+
+    Structure:
+      Exposition (0–18 s):   3-voice canon — subject at D, answer at A, subject at D.
+      Development (18–42 s): subject moves through V (A) and IV (G) via sequence.
+      Return (42–54 s):      all voices reconverge on the tonic (D).
+
+    Subject: 7-limit pentachord — D → F♮(sept.) → G → A → C(sept.)
+    Ratios:  1 · 7/6 · 4/3 · 3/2 · 7/4
+
+    Design note: ideally the development passes would re-use a shorter rhythmic
+    cell cycled over a longer tone row, but line() currently requires len(tones)
+    == len(spans). Rhythm cycling would help here.
+    """
+    base_tonic = 146.67  # D3 (≈ 4/3 × 110 Hz)
+
+    score = Score(
+        f0=base_tonic,
+        timing_humanize=TimingHumanizeSpec(preset="chamber", chord_spread_ms=12.0),
+        master_effects=[SOFT_REVERB_EFFECT],
+    )
+
+    score.add_voice(
+        "soprano",
+        synth_defaults={
+            "engine": "fm",
+            "preset": "glass_lead",
+            "attack": 0.035,
+            "release": 0.55,
+        },
+        pan=0.16,
+        velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
+        velocity_group="upper",
+    )
+    score.add_voice(
+        "alto",
+        synth_defaults={
+            "engine": "additive",
+            "preset": "soft_pad",
+            "attack": 0.06,
+            "release": 0.85,
+        },
+        pan=-0.10,
+        velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
+        velocity_group="upper",
+    )
+    score.add_voice(
+        "tenor",
+        synth_defaults={
+            "engine": "additive",
+            "preset": "soft_pad",
+            "n_harmonics": 6,
+            "harmonic_rolloff": 0.70,
+            "attack": 0.09,
+            "release": 1.1,
+        },
+        pan=0.06,
+        velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
+        velocity_group="upper",
+    )
+    score.add_voice(
+        "bass",
+        synth_defaults={
+            "engine": "filtered_stack",
+            "preset": "round_bass",
+            "attack": 0.18,
+            "release": 2.0,
+            "drive": 0.0,
+        },
+        pan=-0.12,
+        envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
+    )
+    score.add_voice(
+        "bells",
+        synth_defaults={
+            "engine": "additive",
+            "preset": "bright_pluck",
+            "attack": 0.008,
+            "release": 0.9,
+        },
+        pan=0.22,
+    )
+
+    # --- Harmonic sections --------------------------------------------------
+    sections = build_context_sections(
+        base_tonic=base_tonic,
+        specs=(
+            ContextSectionSpec(name="I", duration=18.0),
+            ContextSectionSpec(name="V", duration=12.0, tonic_ratio=3 / 2),
+            ContextSectionSpec(name="IV", duration=12.0, tonic_ratio=4 / 3),
+            ContextSectionSpec(name="I_return", duration=12.0),
+        ),
+    )
+
+    # --- Subject: 7-limit pentachord ----------------------------------------
+    # D → F♮(sept.) → G → A → C(sept.)   ratios: 1, 7/6, 4/3, 3/2, 7/4
+    subject = ratio_line(
+        tones=[1, 7 / 6, 4 / 3, 3 / 2, 7 / 4],
+        rhythm=RhythmCell(spans=(1.0, 0.85, 1.15, 1.5, 2.5)),
+        context=sections[0].context,
+        amp_db=-16.5,
+        articulation=ArticulationSpec(
+            gate=(0.82, 0.70, 0.88, 1.04, 0.82),
+            accent_pattern=(1.12, 0.90, 1.02, 1.08, 0.86),
+            tail_breath=0.18,
+        ),
+    )
+
+    # Answer: intervals preserved, transposed to the dominant (A = D × 3/2).
+    # source_tonic is required — without it Hz values would be treated as
+    # ratios from 1.0 Hz and the recontextualization would produce garbage.
+    answer = recontextualize_phrase(
+        subject,
+        target_context=sections[1].context,
+        source_tonic=base_tonic,
+    )
+
+    # --- Exposition: direct placement ---------------------------------------
+    # We don't use canon(..., sections=...) here because section.start gets
+    # added to each entry's time, which would push alto/tenor into the
+    # development block instead of overlapping in the exposition.
+    score.add_phrase("soprano", subject, start=0.5)
+    score.add_phrase("alto", answer, start=5.5, amp_scale=0.88)
+    score.add_phrase("tenor", subject, start=11.0, amp_scale=0.82)
+
+    # --- Development: sequence through V and IV -----------------------------
+    # Soprano: FM mod_index ramps down → cleaner/more sine-like in foreign keys,
+    # a sense of thinning out as it moves further from the tonic.
+    soprano_thinning = with_synth_ramp(
+        subject,
+        start={"mod_index": 3.0},
+        end={"mod_index": 1.2},
+    )
+    sequence(
+        score,
+        "soprano",
+        soprano_thinning,
+        starts=(1.5, 1.5),
+        amp_scales=(0.90, 0.84),
+        sections=(sections[1], sections[2]),
+        source_tonic=base_tonic,
+    )
+
+    # Tenor: IV then home, offset within each section so it doesn't align
+    # vertically with soprano (stagger preserves the imitative feel).
+    sequence(
+        score,
+        "tenor",
+        subject,
+        starts=(4.5, 3.5),
+        amp_scales=(0.80, 0.92),
+        sections=(sections[2], sections[3]),
+        source_tonic=base_tonic,
+    )
+
+    # Alto: additive harmonics ramp from bright to dark across IV and return.
+    alto_darkening = with_synth_ramp(
+        subject,
+        start={"harmonic_rolloff": 0.45, "brightness_tilt": 0.05},
+        end={"harmonic_rolloff": 0.72, "brightness_tilt": -0.25},
+    )
+    sequence(
+        score,
+        "alto",
+        alto_darkening,
+        starts=(2.5, 2.0),
+        amp_scales=(0.78, 0.86),
+        sections=(sections[2], sections[3]),
+        source_tonic=base_tonic,
+    )
+
+    # --- Bass pedal: tonic + fifth, one sustained note per section ----------
+    for section in sections:
+        pedal_freqs = voiced_ratio_chord(
+            [1, 3 / 2],
+            context=section.context,
+            voicing="close",
+            low_hz=55.0,
+            high_hz=180.0,
+        )
+        for idx, freq in enumerate(pedal_freqs):
+            score.add_note(
+                "bass",
+                start=section.start + 0.4,
+                duration=section.duration - 1.2,
+                freq=freq,
+                amp=0.12 if idx == 0 else 0.07,
+            )
+
+    # --- Bell chord at each section boundary (V, IV, I_return) -------------
+    # Staggered ascending arpeggio; voiced_ratio_chord handles register clamp.
+    for section in sections[1:]:
+        bell_freqs = voiced_ratio_chord(
+            [1, 5 / 4, 3 / 2],
+            context=section.context,
+            voicing="open",
+            low_hz=280.0,
+            high_hz=700.0,
+        )
+        for idx, freq in enumerate(bell_freqs):
+            score.add_note(
+                "bells",
+                start=section.start + idx * 0.14,
+                duration=0.85 - idx * 0.12,
+                freq=freq,
+                amp=0.028 - idx * 0.004,
+            )
+
+    return score
+
+
 PIECES: dict[str, PieceDefinition] = {
     "sketch_articulation_study": PieceDefinition(
         name="sketch_articulation_study",
@@ -371,5 +593,10 @@ PIECES: dict[str, PieceDefinition] = {
         name="composition_tools_consonant",
         output_name="22_composition_tools_consonant.wav",
         build_score=build_composition_tools_consonant_score,
+    ),
+    "septimal_imitation": PieceDefinition(
+        name="septimal_imitation",
+        output_name="23_septimal_imitation.wav",
+        build_score=build_septimal_imitation_score,
     ),
 }

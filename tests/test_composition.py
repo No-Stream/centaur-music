@@ -11,8 +11,11 @@ from code_musics.composition import (
     RhythmCell,
     build_context_sections,
     canon,
+    concat,
+    echo,
     legato,
     line,
+    overlay,
     place_ratio_chord,
     place_ratio_line,
     progression,
@@ -227,6 +230,21 @@ def test_rhythm_cell_gates_and_articulation_gate_compose_multiplicatively() -> N
     assert [event.duration for event in phrase.events] == pytest.approx([0.25, 2.0])
 
 
+def test_line_cycles_shorter_rhythm_cells_across_longer_tone_sequences() -> None:
+    phrase = line(
+        tones=[4.0, 5.0, 6.0, 7.0, 8.0],
+        rhythm=RhythmCell(spans=(0.5, 0.75), gates=(0.8, 1.2)),
+        amp=0.25,
+    )
+
+    assert [event.start for event in phrase.events] == pytest.approx(
+        [0.0, 0.5, 1.25, 1.75, 2.5]
+    )
+    assert [event.duration for event in phrase.events] == pytest.approx(
+        [0.4, 0.9, 0.4, 0.9, 0.4]
+    )
+
+
 def test_staccato_and_legato_leave_starts_unchanged() -> None:
     phrase = line(tones=[4.0, 5.0], rhythm=(1.0, 1.0))
 
@@ -249,6 +267,58 @@ def test_phrase_transforms_do_not_mutate_composition_helpers() -> None:
     assert breathed.events[-1].duration == pytest.approx(
         accented.events[-1].duration - 0.2
     )
+
+
+def test_echo_rejects_partial_shift_for_freq_phrases_and_supports_freq_scale() -> None:
+    phrase = ratio_line(
+        tones=[1.0, 5 / 4],
+        rhythm=(0.5, 0.5),
+        context=HarmonicContext(tonic=220.0),
+        amp=0.2,
+    )
+
+    with pytest.raises(ValueError, match="partial_shift has no effect"):
+        echo(phrase, delay=0.25, partial_shift=1.0)
+
+    echoed = echo(phrase, delay=0.25, amp_scale=0.5, freq_scale=3 / 2)
+    assert [event.start for event in echoed.events] == pytest.approx([0.25, 0.75])
+    assert [event.freq for event in echoed.events] == pytest.approx([330.0, 412.5])
+    assert [event.amp for event in echoed.events] == pytest.approx([0.1, 0.1])
+
+
+def test_echo_rejects_mixed_phrase_when_both_pitch_shift_modes_are_used() -> None:
+    mixed_phrase = overlay(
+        line(tones=[4.0], rhythm=(0.5,), amp=0.2),
+        ratio_line(
+            tones=[1.0],
+            rhythm=(0.5,),
+            context=HarmonicContext(tonic=220.0),
+            amp=0.2,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        echo(
+            mixed_phrase,
+            delay=0.25,
+            partial_shift=1.0,
+            freq_scale=3 / 2,
+        )
+
+
+def test_concat_and_overlay_build_composite_phrases_before_score_placement() -> None:
+    first = line(tones=[4.0, 5.0], rhythm=(0.5, 0.5), amp=0.2)
+    second = line(tones=[6.0], rhythm=(0.75,), amp=0.25)
+
+    concatenated = concat(first, second)
+    layered = overlay(first, second, offset=0.25)
+
+    assert concatenated.duration == pytest.approx(1.75)
+    assert [event.start for event in concatenated.events] == pytest.approx(
+        [0.0, 0.5, 1.0]
+    )
+    assert [event.start for event in layered.events] == pytest.approx([0.0, 0.25, 0.5])
+    assert layered.duration == pytest.approx(1.0)
 
 
 def test_with_synth_ramp_interpolates_per_event_params() -> None:
@@ -422,13 +492,14 @@ def test_canon_places_delayed_entries_across_voices() -> None:
         partial_shifts=(0.0, 1.0),
     )
 
-    assert [note.start for note in placed["lead"]] == pytest.approx([0.0, 0.5])
-    assert [note.start for note in placed["answer"]] == pytest.approx([0.75, 1.25])
-    assert [note.partial for note in placed["answer"]] == pytest.approx([5.0, 6.0])
-    assert placed["answer"][0].amp == pytest.approx(0.12)
+    assert len(placed["lead"]) == 1
+    assert [note.start for note in placed["lead"][0]] == pytest.approx([0.0, 0.5])
+    assert [note.start for note in placed["answer"][0]] == pytest.approx([0.75, 1.25])
+    assert [note.partial for note in placed["answer"][0]] == pytest.approx([5.0, 6.0])
+    assert placed["answer"][0][0].amp == pytest.approx(0.12)
 
 
-def test_canon_supports_scalar_delay_and_rejects_invalid_inputs() -> None:
+def test_canon_supports_repeats_and_scalar_delay_and_rejects_invalid_inputs() -> None:
     score = Score(f0=55.0)
     phrase = line(tones=[4.0], rhythm=(0.5,), amp=0.2)
 
@@ -438,15 +509,37 @@ def test_canon_supports_scalar_delay_and_rejects_invalid_inputs() -> None:
         phrase=phrase,
         start=0.5,
         delays=1.0,
+        repeats=2,
+        repeat_gap=0.25,
     )
 
-    assert [placed["a"][0].start, placed["b"][0].start, placed["c"][0].start] == (
-        pytest.approx([0.5, 1.5, 2.5])
-    )
+    assert [
+        placed["a"][0][0].start,
+        placed["b"][0][0].start,
+        placed["c"][0][0].start,
+    ] == (pytest.approx([0.5, 1.5, 2.5]))
+    assert [
+        placed["a"][1][0].start,
+        placed["b"][1][0].start,
+        placed["c"][1][0].start,
+    ] == (pytest.approx([1.25, 2.25, 3.25]))
     with pytest.raises(ValueError, match="voice_names must not be empty"):
         canon(score, voice_names=(), phrase=phrase, start=0.0, delays=1.0)
     with pytest.raises(ValueError, match="start must be non-negative"):
         canon(score, voice_names=("a",), phrase=phrase, start=-0.1, delays=1.0)
+    with pytest.raises(ValueError, match="repeats must be positive"):
+        canon(
+            score, voice_names=("a",), phrase=phrase, start=0.0, delays=1.0, repeats=0
+        )
+    with pytest.raises(ValueError, match="repeat_gap must be non-negative"):
+        canon(
+            score,
+            voice_names=("a",),
+            phrase=phrase,
+            start=0.0,
+            delays=1.0,
+            repeat_gap=-0.1,
+        )
     with pytest.raises(ValueError, match="delays must have length"):
         canon(
             score,
@@ -513,6 +606,22 @@ def test_voiced_ratio_chord_supports_spread_and_validation() -> None:
         )
 
 
+def test_voiced_ratio_chord_supports_drop_voicings() -> None:
+    drop2 = voiced_ratio_chord(
+        [1.0, 5 / 4, 3 / 2, 7 / 4],
+        context=HarmonicContext(tonic=100.0),
+        voicing="drop2",
+    )
+    drop3 = voiced_ratio_chord(
+        [1.0, 5 / 4, 3 / 2, 7 / 4],
+        context=HarmonicContext(tonic=100.0),
+        voicing="drop3",
+    )
+
+    assert drop2 == pytest.approx([75.0, 100.0, 125.0, 175.0])
+    assert drop3 == pytest.approx([62.5, 100.0, 150.0, 175.0])
+
+
 def test_progression_places_block_and_arpeggio_patterns() -> None:
     score = Score(f0=55.0)
     sections = build_context_sections(
@@ -546,6 +655,48 @@ def test_progression_places_block_and_arpeggio_patterns() -> None:
     assert [round(note.duration, 4) for note in arp_notes] == pytest.approx(
         [round(1 / 3, 4), round(1 / 3, 4), round(1 / 3, 4)]
     )
+
+
+def test_progression_supports_custom_arpeggio_orders() -> None:
+    score = Score(f0=55.0)
+    sections = build_context_sections(
+        base_tonic=110.0,
+        specs=(ContextSectionSpec(name="I", duration=1.0),),
+    )
+
+    descending = progression(
+        score,
+        "arp_desc",
+        sections=sections,
+        chords=([1.0, 5 / 4, 3 / 2, 7 / 4],),
+        pattern="arpeggio",
+        arpeggio_order="descending",
+    )
+    inside_out = progression(
+        score,
+        "arp_inside",
+        sections=sections,
+        chords=([1.0, 5 / 4, 3 / 2, 7 / 4],),
+        pattern="arpeggio",
+        arpeggio_order="inside_out",
+    )
+
+    assert [note.freq for note in descending] == pytest.approx(
+        [192.5, 165.0, 137.5, 110.0]
+    )
+    assert [note.freq for note in inside_out] == pytest.approx(
+        [165.0, 137.5, 192.5, 110.0]
+    )
+
+    with pytest.raises(ValueError, match="custom arpeggio_order length must match"):
+        progression(
+            score,
+            "arp_bad",
+            sections=sections,
+            chords=([1.0, 5 / 4, 3 / 2],),
+            pattern="arpeggio",
+            arpeggio_order=(0, 2),
+        )
 
 
 def test_progression_supports_pedal_upper_pattern_and_validation() -> None:
@@ -620,8 +771,8 @@ def test_composition_tools_consonant_piece_builds_and_renders() -> None:
 
 
 def test_line_rejects_length_mismatch_and_non_positive_values() -> None:
-    with pytest.raises(ValueError, match="same length"):
-        line(tones=[4.0, 5.0], rhythm=(1.0,))
+    with pytest.raises(ValueError, match="same length or a shorter rhythm"):
+        line(tones=[4.0, 5.0], rhythm=(1.0, 1.0, 1.0))
 
     with pytest.raises(ValueError, match="positive"):
         RhythmCell(spans=(1.0, 0.0))
