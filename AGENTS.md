@@ -41,6 +41,9 @@
 - `Score` also supports shared named send buses so multiple voices can feed the
   same reverb, delay, or other return-style effect chain without duplicating
   insert effects per voice.
+- When using shared send buses, usually leave the bus `return_db` at `0.0` and
+  balance audibility with the voice fader plus per-voice `send_db`; treat
+  `return_db` as a rare global-return trim rather than the main wet-level knob.
 - `Score` owns the timeline, derives `total_dur`, renders audio, and can save a
   piano-roll plot.
 - `Score.timing_humanize` applies render-time ensemble timing drift across the whole

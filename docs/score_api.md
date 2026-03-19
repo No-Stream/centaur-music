@@ -279,6 +279,7 @@ Behavior:
 - `send_db` must be finite
 - sends are post-fader in v1, so they follow the voice's `mix_db`
 - sends tap the voice after normalization, `pre_fx_gain_db`, pan, and `effects`
+- in normal mixing, treat `send_db` plus the voice's post-fader level as the main reverb/delay balance controls
 
 ## `SendBusSpec`
 
@@ -297,6 +298,9 @@ Behavior:
 - `return_db` must be finite
 - `pan` must be in `[-1.0, 1.0]`
 - buses are meant for shared return-style processing such as reverb, delay, or chorus
+- prefer leaving `return_db` at `0.0` in normal use so the wet level is determined by the post-fader source and each voice's `send_db`
+- treat `return_db` as an uncommon escape hatch for global aux-return trim, not the primary way to balance how audible a send effect is
+- if you heavily attenuate both `send_db` and `return_db`, the shared return can become effectively inaudible and harder to reason about
 
 ## `Score`
 
@@ -390,6 +394,8 @@ Parameters:
 
 Use shared send buses when several voices should feed the same reverb, delay,
 or modulation return instead of duplicating similar insert chains per voice.
+In normal authoring, prefer balancing the effect with voice `mix_db` and per-voice
+`send_db`, leaving `return_db=0.0` unless you explicitly want a global return trim.
 
 ### `Score.get_voice(name)`
 

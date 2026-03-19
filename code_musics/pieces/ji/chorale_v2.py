@@ -41,7 +41,7 @@ from code_musics.humanize import (
 )
 from code_musics.meter import E, H, Q, S, Timeline, W, dotted
 from code_musics.pieces.registry import PieceDefinition, PieceSection
-from code_musics.score import EffectSpec, Score, VelocityParamMap
+from code_musics.score import EffectSpec, Score, VelocityParamMap, VoiceSend
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ def build_ji_chorale_v2_score() -> Score:
         [
             EffectSpec(
                 "chow_tape",
-                {"drive": 0.50, "saturation": 0.50, "bias": 0.5, "mix": 50.0},
+                {"drive": 0.35, "saturation": 0.35, "bias": 0.5, "mix": 35.0},
             ),
         ]
     )
@@ -127,6 +127,22 @@ def build_ji_chorale_v2_score() -> Score:
         f0=f0,
         timing_humanize=TimingHumanizeSpec(preset="chamber", chord_spread_ms=7.0),
         master_effects=master_effects,
+    )
+    score.add_send_bus(
+        "dark_hall",
+        effects=[
+            EffectSpec(
+                "bricasti",
+                {
+                    "ir_name": "1 Halls 07 Large & Dark",
+                    "wet": 1.0,
+                    "highpass_hz": 300.0,
+                    "lowpass_hz": 6_200.0,
+                    "tilt_db": -3.0,
+                    "tilt_pivot_hz": 1_800.0,
+                },
+            )
+        ],
     )
 
     bass_automation = [
@@ -298,6 +314,7 @@ def build_ji_chorale_v2_score() -> Score:
             "cutoff_hz": VelocityParamMap(min_value=680.0, max_value=1100.0)
         },
         automation=bass_automation,
+        sends=[VoiceSend("dark_hall", send_db=-19.0)],
     )
     chord_defaults: dict = {
         "engine": "filtered_stack",
@@ -353,6 +370,7 @@ def build_ji_chorale_v2_score() -> Score:
             "cutoff_hz": VelocityParamMap(min_value=750.0, max_value=1_300.0)
         },
         automation=tenor_automation,
+        sends=[VoiceSend("dark_hall", send_db=-11.5)],
     )
     score.add_voice(
         "alto",
@@ -377,6 +395,7 @@ def build_ji_chorale_v2_score() -> Score:
             "brightness_tilt": VelocityParamMap(min_value=-0.02, max_value=0.06)
         },
         automation=alto_automation,
+        sends=[VoiceSend("dark_hall", send_db=-9.0)],
     )
     score.add_voice(
         "counter",
@@ -413,6 +432,7 @@ def build_ji_chorale_v2_score() -> Score:
             "filter_env_amount": VelocityParamMap(min_value=0.72, max_value=1.18),
         },
         automation=counter_automation,
+        sends=[VoiceSend("dark_hall", send_db=-10.5)],
     )
     score.add_voice(
         "lead",
@@ -449,16 +469,6 @@ def build_ji_chorale_v2_score() -> Score:
                     "wet_lowpass_hz": 4_800.0,
                 },
             ),
-            EffectSpec(
-                "bricasti",
-                {
-                    "ir_name": "2 Plates 06 Vocal Plate",
-                    "wet": 0.16,
-                    "highpass_hz": 320.0,
-                    "lowpass_hz": 8_500.0,
-                    "tilt_db": -1.5,
-                },
-            ),
         ],
         mix_db=-4.0,
         pan=0.20,
@@ -469,6 +479,7 @@ def build_ji_chorale_v2_score() -> Score:
             "filter_env_amount": VelocityParamMap(min_value=0.30, max_value=0.75),
             "resonance": VelocityParamMap(min_value=0.04, max_value=0.12),
         },
+        sends=[VoiceSend("dark_hall", send_db=-8.5)],
     )
 
     # ── convenience values ────────────────────────────────────────────────
