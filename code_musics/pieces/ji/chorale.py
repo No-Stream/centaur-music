@@ -127,8 +127,8 @@ def build_ji_chorale_score() -> Score:
         "harmonic_rolloff": 0.38,
         "n_harmonics": 8,
         "brightness_tilt": 0.06,
-        "unison_voices": 1,
-        "detune_cents": 0.0,
+        "unison_voices": 2,
+        "detune_cents": 5,
         "attack": 0.22,
         "decay": 0.18,
         "sustain_level": 0.56,
@@ -186,12 +186,13 @@ def build_ji_chorale_score() -> Score:
         "lead",
         synth_defaults={
             "engine": "polyblep",
-            "waveform": "saw",
-            "cutoff_hz": 3_000.0,
-            "keytrack": 0.05,
-            "resonance": 0.10,
-            "filter_env_amount": 0.55,
-            "filter_env_decay": 0.90,
+            "waveform": "triangle",
+            "cutoff_hz": 2_200.0,
+            "keytrack": 0.06,
+            "resonance": 0.07,
+            "filter_env_amount": 0.18,
+            "filter_env_decay": 1.0,
+            "filter_drive": 0.12,
             "attack": 0.085,
             "decay": 1.25,
             "sustain_level": 0.48,
@@ -387,6 +388,9 @@ def build_ji_chorale_score() -> Score:
             velocity=velocity,
         )
 
+    # Reprise: brief Gs4 in alto on the final I chord — seeds the Amaj7 that blooms at 139s
+    score.add_note("alto", start=117.0, duration=3.5, freq=Gs4, amp=0.09, velocity=0.72)
+
     score.add_note("bass", start=123.0, duration=8.4, freq=Fs2, amp=0.27, velocity=1.05)
     score.add_note("tenor", start=123.0, duration=8.4, freq=A3, amp=0.20, velocity=1.05)
     score.add_note("alto", start=123.0, duration=8.4, freq=Cs5, amp=0.21, velocity=1.05)
@@ -426,6 +430,9 @@ def build_ji_chorale_score() -> Score:
     _add_counter(42.0, [(D4, 2.0, 0.92), (E4, 2.5, 1.00), (F4, 1.5, 1.08)])
     _add_counter(48.0, [(Cs4, 2.0, 1.02), (E4, 2.5, 1.05), (D4, 1.5, 0.90)])
 
+    # B section: embryonic E→G# hint — same Gs4 that blooms fully at the Ending
+    _add_counter(61.0, [(E4, 2.0, 0.90), (Gs4, 3.5, 0.85)])
+
     _add_counter(75.0, [(E4, 3.0, 1.05), (Cs4, 2.5, 0.92), (E4, 2.5, 1.00)])
     _add_counter(83.0, [(Fs4, 3.0, 1.10), (E4, 2.5, 1.00), (D4, 2.5, 0.90)])
     _add_counter(91.0, [(Gs4, 3.0, 1.18), (Fs4, 2.0, 1.02), (E4, 3.0, 0.88)])
@@ -451,7 +458,6 @@ def build_ji_chorale_score() -> Score:
             rhythm=[duration for _, duration in notes],
             pitch_kind="freq",
             amp_db=amp_db,
-            synth_defaults={"engine": "filtered_stack", "waveform": "saw"},
         )
         phrase = with_synth_ramp(phrase, start=synth_start, end=synth_end)
         phrase = replace(
@@ -679,24 +685,24 @@ def build_ji_chorale_score() -> Score:
     _add_lead_phrase(
         start=8.0,
         notes=lead_prologue_and_a,
-        synth_start={"cutoff_hz": 2_800.0, "release": 0.30},
-        synth_end={"cutoff_hz": 3_100.0, "release": 0.28},
+        synth_start={"cutoff_hz": 1_900.0, "release": 0.30},
+        synth_end={"cutoff_hz": 2_200.0, "release": 0.28},
         amp_db=-18.0,
         velocities=prologue_a_velocities,
     )
     _add_lead_phrase(
         start=54.0,
         notes=lead_b_and_development,
-        synth_start={"cutoff_hz": 3_150.0, "release": 0.26},
-        synth_end={"cutoff_hz": 3_300.0, "release": 0.24},
+        synth_start={"cutoff_hz": 2_200.0, "release": 0.26},
+        synth_end={"cutoff_hz": 2_400.0, "release": 0.24},
         amp_db=-17.5,
         velocities=b_dev_velocities,
     )
     _add_lead_phrase(
         start=99.0,
         notes=lead_reprise_and_ending,
-        synth_start={"cutoff_hz": 3_000.0, "release": 0.26},
-        synth_end={"cutoff_hz": 2_650.0, "release": 0.34},
+        synth_start={"cutoff_hz": 2_100.0, "release": 0.26},
+        synth_end={"cutoff_hz": 1_750.0, "release": 0.34},
         amp_db=-18.0,
         velocities=reprise_ending_velocities,
     )

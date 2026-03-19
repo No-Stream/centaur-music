@@ -2,14 +2,16 @@
   "artifacts": {
     "latest": {
       "analysis_manifest_path": "output/17_ji_chorale.analysis.json",
-      "audio_path": "output/17_ji_chorale.wav"
+      "audio_path": "output/17_ji_chorale.wav",
+      "plot_path": "output/17_ji_chorale.png"
     },
     "versioned": {
-      "analysis_manifest_path": "output/versions/ji_chorale/17_ji_chorale__20260319-015134.analysis.json",
-      "audio_path": "output/versions/ji_chorale/17_ji_chorale__20260319-015134.wav"
+      "analysis_manifest_path": "output/versions/ji_chorale/17_ji_chorale__20260319-013817.analysis.json",
+      "audio_path": "output/versions/ji_chorale/17_ji_chorale__20260319-013817.wav",
+      "plot_path": "output/versions/ji_chorale/17_ji_chorale__20260319-013817.png"
     }
   },
-  "metadata_path": "output/17_ji_chorale.render.json",
+  "metadata_path": "output/versions/ji_chorale/17_ji_chorale__20260319-013817.render.json",
   "output_name": "17_ji_chorale.wav",
   "piece_name": "ji_chorale",
   "provenance": {
@@ -19,15 +21,15 @@
     "git_is_dirty": true,
     "module": "code_musics.pieces.ji.chorale",
     "source_file": "/home/jan/workspace/code-musics/code_musics/pieces/ji/chorale.py",
-    "source_sha256": "f482bfec187dd3ca282867ca0bdb5a993856f4a67bae76cf92f85f07285d8df2"
+    "source_sha256": "ba406b44e0be9a99e0e1f0e4466e270d7da8b0731a74b5fc59a0e6aa55ae9fe1"
   },
-  "rendered_at_utc": "20260319-015134",
+  "rendered_at_utc": "20260319-013817",
   "request": {
     "export_target_lufs": -18.0,
     "export_true_peak_ceiling_dbfs": -0.5,
     "output_dir": "output",
     "save_analysis": true,
-    "save_plot": false
+    "save_plot": true
   },
   "schema_version": 1,
   "score_snapshot": {
@@ -424,12 +426,12 @@
           "attack": 0.22,
           "brightness_tilt": 0.06,
           "decay": 0.18,
-          "detune_cents": 5,
+          "detune_cents": 0.0,
           "harmonic_rolloff": 0.38,
           "n_harmonics": 8,
           "release": 0.7,
           "sustain_level": 0.56,
-          "unison_voices": 2
+          "unison_voices": 1
         },
         "velocity_db_per_unit": 8.0,
         "velocity_group": "harmony",
@@ -1436,7 +1438,9 @@
             "start": 8.0,
             "synth": {
               "cutoff_hz": 2800.0,
-              "release": 0.3
+              "engine": "filtered_stack",
+              "release": 0.3,
+              "waveform": "saw"
             },
             "velocity": 0.85
           },
@@ -1452,7 +1456,9 @@
             "start": 9.0,
             "synth": {
               "cutoff_hz": 2807.1428571428573,
-              "release": 0.2995238095238095
+              "engine": "filtered_stack",
+              "release": 0.2995238095238095,
+              "waveform": "saw"
             },
             "velocity": 1.12
           },
@@ -1468,7 +1474,9 @@
             "start": 10.0,
             "synth": {
               "cutoff_hz": 2814.285714285714,
-              "release": 0.29904761904761906
+              "engine": "filtered_stack",
+              "release": 0.29904761904761906,
+              "waveform": "saw"
             },
             "velocity": 1.0
           },
@@ -1484,7 +1492,9 @@
             "start": 11.0,
             "synth": {
               "cutoff_hz": 2821.4285714285716,
-              "release": 0.29857142857142854
+              "engine": "filtered_stack",
+              "release": 0.29857142857142854,
+              "waveform": "saw"
             },
             "velocity": 0.88
           },
@@ -1500,7 +1510,9 @@
             "start": 12.0,
             "synth": {
               "cutoff_hz": 2828.5714285714284,
-              "release": 0.2980952380952381
+              "engine": "filtered_stack",
+              "release": 0.2980952380952381,
+              "waveform": "saw"
             },
             "velocity": 1.22
           },
@@ -1516,7 +1528,9 @@
             "start": 14.0,
             "synth": {
               "cutoff_hz": 2835.714285714286,
-              "release": 0.2976190476190476
+              "engine": "filtered_stack",
+              "release": 0.2976190476190476,
+              "waveform": "saw"
             },
             "velocity": 1.02
           },
@@ -1532,7 +1546,9 @@
             "start": 15.0,
             "synth": {
               "cutoff_hz": 2842.8571428571427,
-              "release": 0.29714285714285715
+              "engine": "filtered_stack",
+              "release": 0.29714285714285715,
+              "waveform": "saw"
             },
             "velocity": 0.95
           },
@@ -1548,7 +1564,9 @@
             "start": 17.0,
             "synth": {
               "cutoff_hz": 2850.0,
-              "release": 0.29666666666666663
+              "engine": "filtered_stack",
+              "release": 0.29666666666666663,
+              "waveform": "saw"
             },
             "velocity": 0.82
           },
@@ -1564,7 +1582,9 @@
             "start": 18.0,
             "synth": {
               "cutoff_hz": 2857.1428571428573,
-              "release": 0.29619047619047617
+              "engine": "filtered_stack",
+              "release": 0.29619047619047617,
+              "waveform": "saw"
             },
             "velocity": 1.05
           },
@@ -1580,7 +1600,9 @@
             "start": 19.5,
             "synth": {
               "cutoff_hz": 2864.285714285714,
-              "release": 0.2957142857142857
+              "engine": "filtered_stack",
+              "release": 0.2957142857142857,
+              "waveform": "saw"
             },
             "velocity": 1.15
           },
@@ -1596,7 +1618,9 @@
             "start": 21.5,
             "synth": {
               "cutoff_hz": 2871.4285714285716,
-              "release": 0.29523809523809524
+              "engine": "filtered_stack",
+              "release": 0.29523809523809524,
+              "waveform": "saw"
             },
             "velocity": 1.02
           },
@@ -1612,7 +1636,9 @@
             "start": 23.0,
             "synth": {
               "cutoff_hz": 2878.5714285714284,
-              "release": 0.2947619047619048
+              "engine": "filtered_stack",
+              "release": 0.2947619047619048,
+              "waveform": "saw"
             },
             "velocity": 0.88
           },
@@ -1628,7 +1654,9 @@
             "start": 23.5,
             "synth": {
               "cutoff_hz": 2885.714285714286,
-              "release": 0.29428571428571426
+              "engine": "filtered_stack",
+              "release": 0.29428571428571426,
+              "waveform": "saw"
             },
             "velocity": 0.85
           },
@@ -1644,7 +1672,9 @@
             "start": 24.0,
             "synth": {
               "cutoff_hz": 2892.8571428571427,
-              "release": 0.2938095238095238
+              "engine": "filtered_stack",
+              "release": 0.2938095238095238,
+              "waveform": "saw"
             },
             "velocity": 1.02
           },
@@ -1660,7 +1690,9 @@
             "start": 25.0,
             "synth": {
               "cutoff_hz": 2900.0,
-              "release": 0.29333333333333333
+              "engine": "filtered_stack",
+              "release": 0.29333333333333333,
+              "waveform": "saw"
             },
             "velocity": 1.25
           },
@@ -1676,7 +1708,9 @@
             "start": 27.0,
             "synth": {
               "cutoff_hz": 2907.1428571428573,
-              "release": 0.29285714285714287
+              "engine": "filtered_stack",
+              "release": 0.29285714285714287,
+              "waveform": "saw"
             },
             "velocity": 1.05
           },
@@ -1692,7 +1726,9 @@
             "start": 28.0,
             "synth": {
               "cutoff_hz": 2914.285714285714,
-              "release": 0.2923809523809524
+              "engine": "filtered_stack",
+              "release": 0.2923809523809524,
+              "waveform": "saw"
             },
             "velocity": 0.95
           },
@@ -1708,7 +1744,9 @@
             "start": 29.5,
             "synth": {
               "cutoff_hz": 2921.4285714285716,
-              "release": 0.2919047619047619
+              "engine": "filtered_stack",
+              "release": 0.2919047619047619,
+              "waveform": "saw"
             },
             "velocity": 0.85
           },
@@ -1724,7 +1762,9 @@
             "start": 30.0,
             "synth": {
               "cutoff_hz": 2928.5714285714284,
-              "release": 0.2914285714285714
+              "engine": "filtered_stack",
+              "release": 0.2914285714285714,
+              "waveform": "saw"
             },
             "velocity": 1.05
           },
@@ -1740,7 +1780,9 @@
             "start": 31.0,
             "synth": {
               "cutoff_hz": 2935.714285714286,
-              "release": 0.29095238095238096
+              "engine": "filtered_stack",
+              "release": 0.29095238095238096,
+              "waveform": "saw"
             },
             "velocity": 1.12
           },
@@ -1756,7 +1798,9 @@
             "start": 32.5,
             "synth": {
               "cutoff_hz": 2942.8571428571427,
-              "release": 0.2904761904761905
+              "engine": "filtered_stack",
+              "release": 0.2904761904761905,
+              "waveform": "saw"
             },
             "velocity": 1.0
           },
@@ -1772,7 +1816,9 @@
             "start": 33.5,
             "synth": {
               "cutoff_hz": 2950.0,
-              "release": 0.29000000000000004
+              "engine": "filtered_stack",
+              "release": 0.29000000000000004,
+              "waveform": "saw"
             },
             "velocity": 0.9
           },
@@ -1788,7 +1834,9 @@
             "start": 35.0,
             "synth": {
               "cutoff_hz": 2957.1428571428573,
-              "release": 0.2895238095238095
+              "engine": "filtered_stack",
+              "release": 0.2895238095238095,
+              "waveform": "saw"
             },
             "velocity": 0.85
           },
@@ -1804,7 +1852,9 @@
             "start": 36.0,
             "synth": {
               "cutoff_hz": 2964.285714285714,
-              "release": 0.28904761904761905
+              "engine": "filtered_stack",
+              "release": 0.28904761904761905,
+              "waveform": "saw"
             },
             "velocity": 1.0
           },
@@ -1820,7 +1870,9 @@
             "start": 36.5,
             "synth": {
               "cutoff_hz": 2971.4285714285716,
-              "release": 0.2885714285714286
+              "engine": "filtered_stack",
+              "release": 0.2885714285714286,
+              "waveform": "saw"
             },
             "velocity": 1.1
           },
@@ -1836,7 +1888,9 @@
             "start": 37.25,
             "synth": {
               "cutoff_hz": 2978.5714285714284,
-              "release": 0.2880952380952381
+              "engine": "filtered_stack",
+              "release": 0.2880952380952381,
+              "waveform": "saw"
             },
             "velocity": 1.02
           },
@@ -1852,7 +1906,9 @@
             "start": 37.75,
             "synth": {
               "cutoff_hz": 2985.714285714286,
-              "release": 0.2876190476190476
+              "engine": "filtered_stack",
+              "release": 0.2876190476190476,
+              "waveform": "saw"
             },
             "velocity": 1.15
           },
@@ -1868,7 +1924,9 @@
             "start": 38.5,
             "synth": {
               "cutoff_hz": 2992.8571428571427,
-              "release": 0.28714285714285714
+              "engine": "filtered_stack",
+              "release": 0.28714285714285714,
+              "waveform": "saw"
             },
             "velocity": 1.05
           },
@@ -1884,7 +1942,9 @@
             "start": 39.0,
             "synth": {
               "cutoff_hz": 3000.0,
-              "release": 0.2866666666666667
+              "engine": "filtered_stack",
+              "release": 0.2866666666666667,
+              "waveform": "saw"
             },
             "velocity": 1.0
           },
@@ -1900,7 +1960,9 @@
             "start": 39.5,
             "synth": {
               "cutoff_hz": 3007.1428571428573,
-              "release": 0.2861904761904762
+              "engine": "filtered_stack",
+              "release": 0.2861904761904762,
+              "waveform": "saw"
             },
             "velocity": 0.95
           },
@@ -1916,7 +1978,9 @@
             "start": 40.0,
             "synth": {
               "cutoff_hz": 3014.285714285714,
-              "release": 0.28571428571428575
+              "engine": "filtered_stack",
+              "release": 0.28571428571428575,
+              "waveform": "saw"
             },
             "velocity": 1.05
           },
@@ -1932,7 +1996,9 @@
             "start": 40.5,
             "synth": {
               "cutoff_hz": 3021.4285714285716,
-              "release": 0.28523809523809524
+              "engine": "filtered_stack",
+              "release": 0.28523809523809524,
+              "waveform": "saw"
             },
             "velocity": 1.2
           },
@@ -1948,7 +2014,9 @@
             "start": 41.25,
             "synth": {
               "cutoff_hz": 3028.5714285714284,
-              "release": 0.28476190476190477
+              "engine": "filtered_stack",
+              "release": 0.28476190476190477,
+              "waveform": "saw"
             },
             "velocity": 1.32
           },
@@ -1964,7 +2032,9 @@
             "start": 41.625,
             "synth": {
               "cutoff_hz": 3035.714285714286,
-              "release": 0.2842857142857143
+              "engine": "filtered_stack",
+              "release": 0.2842857142857143,
+              "waveform": "saw"
             },
             "velocity": 1.42
           },
@@ -1980,7 +2050,9 @@
             "start": 42.0,
             "synth": {
               "cutoff_hz": 3042.8571428571427,
-              "release": 0.28380952380952384
+              "engine": "filtered_stack",
+              "release": 0.28380952380952384,
+              "waveform": "saw"
             },
             "velocity": 1.08
           },
@@ -1996,7 +2068,9 @@
             "start": 43.5,
             "synth": {
               "cutoff_hz": 3050.0,
-              "release": 0.2833333333333333
+              "engine": "filtered_stack",
+              "release": 0.2833333333333333,
+              "waveform": "saw"
             },
             "velocity": 0.95
           },
@@ -2012,7 +2086,9 @@
             "start": 44.5,
             "synth": {
               "cutoff_hz": 3057.142857142857,
-              "release": 0.28285714285714286
+              "engine": "filtered_stack",
+              "release": 0.28285714285714286,
+              "waveform": "saw"
             },
             "velocity": 0.9
           },
@@ -2028,7 +2104,9 @@
             "start": 46.0,
             "synth": {
               "cutoff_hz": 3064.285714285714,
-              "release": 0.2823809523809524
+              "engine": "filtered_stack",
+              "release": 0.2823809523809524,
+              "waveform": "saw"
             },
             "velocity": 0.85
           },
@@ -2044,7 +2122,9 @@
             "start": 47.5,
             "synth": {
               "cutoff_hz": 3071.4285714285716,
-              "release": 0.28190476190476194
+              "engine": "filtered_stack",
+              "release": 0.28190476190476194,
+              "waveform": "saw"
             },
             "velocity": 0.8
           },
@@ -2060,7 +2140,9 @@
             "start": 48.0,
             "synth": {
               "cutoff_hz": 3078.5714285714284,
-              "release": 0.2814285714285715
+              "engine": "filtered_stack",
+              "release": 0.2814285714285715,
+              "waveform": "saw"
             },
             "velocity": 1.02
           },
@@ -2076,7 +2158,9 @@
             "start": 50.5,
             "synth": {
               "cutoff_hz": 3085.714285714286,
-              "release": 0.28095238095238095
+              "engine": "filtered_stack",
+              "release": 0.28095238095238095,
+              "waveform": "saw"
             },
             "velocity": 0.92
           },
@@ -2092,7 +2176,9 @@
             "start": 52.0,
             "synth": {
               "cutoff_hz": 3092.8571428571427,
-              "release": 0.2804761904761905
+              "engine": "filtered_stack",
+              "release": 0.2804761904761905,
+              "waveform": "saw"
             },
             "velocity": 0.85
           },
@@ -2108,7 +2194,9 @@
             "start": 53.5,
             "synth": {
               "cutoff_hz": 3100.0,
-              "release": 0.28
+              "engine": "filtered_stack",
+              "release": 0.28,
+              "waveform": "saw"
             },
             "velocity": 0.75
           },
@@ -2124,7 +2212,9 @@
             "start": 54.0,
             "synth": {
               "cutoff_hz": 3150.0,
-              "release": 0.26
+              "engine": "filtered_stack",
+              "release": 0.26,
+              "waveform": "saw"
             },
             "velocity": 0.98
           },
@@ -2140,7 +2230,9 @@
             "start": 55.5,
             "synth": {
               "cutoff_hz": 3156.25,
-              "release": 0.25916666666666666
+              "engine": "filtered_stack",
+              "release": 0.25916666666666666,
+              "waveform": "saw"
             },
             "velocity": 1.25
           },
@@ -2156,7 +2248,9 @@
             "start": 57.0,
             "synth": {
               "cutoff_hz": 3162.5,
-              "release": 0.25833333333333336
+              "engine": "filtered_stack",
+              "release": 0.25833333333333336,
+              "waveform": "saw"
             },
             "velocity": 1.02
           },
@@ -2172,7 +2266,9 @@
             "start": 59.0,
             "synth": {
               "cutoff_hz": 3168.75,
-              "release": 0.2575
+              "engine": "filtered_stack",
+              "release": 0.2575,
+              "waveform": "saw"
             },
             "velocity": 0.88
           },
@@ -2188,7 +2284,9 @@
             "start": 61.0,
             "synth": {
               "cutoff_hz": 3175.0,
-              "release": 0.25666666666666665
+              "engine": "filtered_stack",
+              "release": 0.25666666666666665,
+              "waveform": "saw"
             },
             "velocity": 1.15
           },
@@ -2204,7 +2302,9 @@
             "start": 63.0,
             "synth": {
               "cutoff_hz": 3181.25,
-              "release": 0.25583333333333336
+              "engine": "filtered_stack",
+              "release": 0.25583333333333336,
+              "waveform": "saw"
             },
             "velocity": 1.05
           },
@@ -2220,7 +2320,9 @@
             "start": 64.5,
             "synth": {
               "cutoff_hz": 3187.5,
-              "release": 0.255
+              "engine": "filtered_stack",
+              "release": 0.255,
+              "waveform": "saw"
             },
             "velocity": 0.95
           },
@@ -2236,7 +2338,9 @@
             "start": 66.0,
             "synth": {
               "cutoff_hz": 3193.75,
-              "release": 0.25416666666666665
+              "engine": "filtered_stack",
+              "release": 0.25416666666666665,
+              "waveform": "saw"
             },
             "velocity": 0.85
           },
@@ -2252,7 +2356,9 @@
             "start": 68.0,
             "synth": {
               "cutoff_hz": 3200.0,
-              "release": 0.25333333333333335
+              "engine": "filtered_stack",
+              "release": 0.25333333333333335,
+              "waveform": "saw"
             },
             "velocity": 1.12
           },
@@ -2268,7 +2374,9 @@
             "start": 70.5,
             "synth": {
               "cutoff_hz": 3206.25,
-              "release": 0.2525
+              "engine": "filtered_stack",
+              "release": 0.2525,
+              "waveform": "saw"
             },
             "velocity": 0.97
           },
@@ -2284,7 +2392,9 @@
             "start": 72.5,
             "synth": {
               "cutoff_hz": 3212.5,
-              "release": 0.25166666666666665
+              "engine": "filtered_stack",
+              "release": 0.25166666666666665,
+              "waveform": "saw"
             },
             "velocity": 0.82
           },
@@ -2300,7 +2410,9 @@
             "start": 75.0,
             "synth": {
               "cutoff_hz": 3218.75,
-              "release": 0.25083333333333335
+              "engine": "filtered_stack",
+              "release": 0.25083333333333335,
+              "waveform": "saw"
             },
             "velocity": 1.0
           },
@@ -2316,7 +2428,9 @@
             "start": 76.5,
             "synth": {
               "cutoff_hz": 3225.0,
-              "release": 0.25
+              "engine": "filtered_stack",
+              "release": 0.25,
+              "waveform": "saw"
             },
             "velocity": 0.92
           },
@@ -2332,7 +2446,9 @@
             "start": 78.0,
             "synth": {
               "cutoff_hz": 3231.25,
-              "release": 0.24916666666666668
+              "engine": "filtered_stack",
+              "release": 0.24916666666666668,
+              "waveform": "saw"
             },
             "velocity": 1.12
           },
@@ -2348,7 +2464,9 @@
             "start": 79.5,
             "synth": {
               "cutoff_hz": 3237.5,
-              "release": 0.24833333333333332
+              "engine": "filtered_stack",
+              "release": 0.24833333333333332,
+              "waveform": "saw"
             },
             "velocity": 0.92
           },
@@ -2364,7 +2482,9 @@
             "start": 81.0,
             "synth": {
               "cutoff_hz": 3243.75,
-              "release": 0.2475
+              "engine": "filtered_stack",
+              "release": 0.2475,
+              "waveform": "saw"
             },
             "velocity": 0.98
           },
@@ -2380,7 +2500,9 @@
             "start": 83.0,
             "synth": {
               "cutoff_hz": 3250.0,
-              "release": 0.24666666666666667
+              "engine": "filtered_stack",
+              "release": 0.24666666666666667,
+              "waveform": "saw"
             },
             "velocity": 0.88
           },
@@ -2396,7 +2518,9 @@
             "start": 84.0,
             "synth": {
               "cutoff_hz": 3256.25,
-              "release": 0.24583333333333332
+              "engine": "filtered_stack",
+              "release": 0.24583333333333332,
+              "waveform": "saw"
             },
             "velocity": 1.0
           },
@@ -2412,7 +2536,9 @@
             "start": 85.5,
             "synth": {
               "cutoff_hz": 3262.5,
-              "release": 0.245
+              "engine": "filtered_stack",
+              "release": 0.245,
+              "waveform": "saw"
             },
             "velocity": 1.1
           },
@@ -2428,7 +2554,9 @@
             "start": 87.5,
             "synth": {
               "cutoff_hz": 3268.75,
-              "release": 0.24416666666666667
+              "engine": "filtered_stack",
+              "release": 0.24416666666666667,
+              "waveform": "saw"
             },
             "velocity": 1.22
           },
@@ -2444,7 +2572,9 @@
             "start": 89.0,
             "synth": {
               "cutoff_hz": 3275.0,
-              "release": 0.24333333333333332
+              "engine": "filtered_stack",
+              "release": 0.24333333333333332,
+              "waveform": "saw"
             },
             "velocity": 1.02
           },
@@ -2460,7 +2590,9 @@
             "start": 91.0,
             "synth": {
               "cutoff_hz": 3281.25,
-              "release": 0.2425
+              "engine": "filtered_stack",
+              "release": 0.2425,
+              "waveform": "saw"
             },
             "velocity": 1.12
           },
@@ -2476,7 +2608,9 @@
             "start": 93.0,
             "synth": {
               "cutoff_hz": 3287.5,
-              "release": 0.24166666666666667
+              "engine": "filtered_stack",
+              "release": 0.24166666666666667,
+              "waveform": "saw"
             },
             "velocity": 1.2
           },
@@ -2492,7 +2626,9 @@
             "start": 95.0,
             "synth": {
               "cutoff_hz": 3293.75,
-              "release": 0.24083333333333332
+              "engine": "filtered_stack",
+              "release": 0.24083333333333332,
+              "waveform": "saw"
             },
             "velocity": 1.02
           },
@@ -2508,7 +2644,9 @@
             "start": 96.5,
             "synth": {
               "cutoff_hz": 3300.0,
-              "release": 0.24
+              "engine": "filtered_stack",
+              "release": 0.24,
+              "waveform": "saw"
             },
             "velocity": 0.85
           },
@@ -2524,7 +2662,9 @@
             "start": 99.0,
             "synth": {
               "cutoff_hz": 3000.0,
-              "release": 0.26
+              "engine": "filtered_stack",
+              "release": 0.26,
+              "waveform": "saw"
             },
             "velocity": 1.15
           },
@@ -2540,7 +2680,9 @@
             "start": 101.0,
             "synth": {
               "cutoff_hz": 2988.3333333333335,
-              "release": 0.26266666666666666
+              "engine": "filtered_stack",
+              "release": 0.26266666666666666,
+              "waveform": "saw"
             },
             "velocity": 1.0
           },
@@ -2556,7 +2698,9 @@
             "start": 102.5,
             "synth": {
               "cutoff_hz": 2976.6666666666665,
-              "release": 0.26533333333333337
+              "engine": "filtered_stack",
+              "release": 0.26533333333333337,
+              "waveform": "saw"
             },
             "velocity": 0.9
           },
@@ -2572,7 +2716,9 @@
             "start": 104.5,
             "synth": {
               "cutoff_hz": 2965.0,
-              "release": 0.268
+              "engine": "filtered_stack",
+              "release": 0.268,
+              "waveform": "saw"
             },
             "velocity": 0.75
           },
@@ -2588,7 +2734,9 @@
             "start": 105.0,
             "synth": {
               "cutoff_hz": 2953.3333333333335,
-              "release": 0.27066666666666667
+              "engine": "filtered_stack",
+              "release": 0.27066666666666667,
+              "waveform": "saw"
             },
             "velocity": 0.95
           },
@@ -2604,7 +2752,9 @@
             "start": 106.5,
             "synth": {
               "cutoff_hz": 2941.6666666666665,
-              "release": 0.2733333333333333
+              "engine": "filtered_stack",
+              "release": 0.2733333333333333,
+              "waveform": "saw"
             },
             "velocity": 1.1
           },
@@ -2620,7 +2770,9 @@
             "start": 108.5,
             "synth": {
               "cutoff_hz": 2930.0,
-              "release": 0.276
+              "engine": "filtered_stack",
+              "release": 0.276,
+              "waveform": "saw"
             },
             "velocity": 0.85
           },
@@ -2636,7 +2788,9 @@
             "start": 111.0,
             "synth": {
               "cutoff_hz": 2918.3333333333335,
-              "release": 0.2786666666666667
+              "engine": "filtered_stack",
+              "release": 0.2786666666666667,
+              "waveform": "saw"
             },
             "velocity": 1.05
           },
@@ -2652,7 +2806,9 @@
             "start": 112.5,
             "synth": {
               "cutoff_hz": 2906.6666666666665,
-              "release": 0.2813333333333333
+              "engine": "filtered_stack",
+              "release": 0.2813333333333333,
+              "waveform": "saw"
             },
             "velocity": 1.18
           },
@@ -2668,7 +2824,9 @@
             "start": 114.0,
             "synth": {
               "cutoff_hz": 2895.0,
-              "release": 0.28400000000000003
+              "engine": "filtered_stack",
+              "release": 0.28400000000000003,
+              "waveform": "saw"
             },
             "velocity": 1.05
           },
@@ -2684,7 +2842,9 @@
             "start": 115.5,
             "synth": {
               "cutoff_hz": 2883.3333333333335,
-              "release": 0.2866666666666667
+              "engine": "filtered_stack",
+              "release": 0.2866666666666667,
+              "waveform": "saw"
             },
             "velocity": 0.9
           },
@@ -2700,7 +2860,9 @@
             "start": 117.0,
             "synth": {
               "cutoff_hz": 2871.6666666666665,
-              "release": 0.28933333333333333
+              "engine": "filtered_stack",
+              "release": 0.28933333333333333,
+              "waveform": "saw"
             },
             "velocity": 1.12
           },
@@ -2716,7 +2878,9 @@
             "start": 119.5,
             "synth": {
               "cutoff_hz": 2860.0,
-              "release": 0.29200000000000004
+              "engine": "filtered_stack",
+              "release": 0.29200000000000004,
+              "waveform": "saw"
             },
             "velocity": 0.98
           },
@@ -2732,7 +2896,9 @@
             "start": 121.5,
             "synth": {
               "cutoff_hz": 2848.3333333333335,
-              "release": 0.2946666666666667
+              "engine": "filtered_stack",
+              "release": 0.2946666666666667,
+              "waveform": "saw"
             },
             "velocity": 0.85
           },
@@ -2748,7 +2914,9 @@
             "start": 123.0,
             "synth": {
               "cutoff_hz": 2836.6666666666665,
-              "release": 0.29733333333333334
+              "engine": "filtered_stack",
+              "release": 0.29733333333333334,
+              "waveform": "saw"
             },
             "velocity": 1.22
           },
@@ -2764,7 +2932,9 @@
             "start": 125.5,
             "synth": {
               "cutoff_hz": 2825.0,
-              "release": 0.30000000000000004
+              "engine": "filtered_stack",
+              "release": 0.30000000000000004,
+              "waveform": "saw"
             },
             "velocity": 1.02
           },
@@ -2780,7 +2950,9 @@
             "start": 126.5,
             "synth": {
               "cutoff_hz": 2813.3333333333335,
-              "release": 0.3026666666666667
+              "engine": "filtered_stack",
+              "release": 0.3026666666666667,
+              "waveform": "saw"
             },
             "velocity": 0.92
           },
@@ -2796,7 +2968,9 @@
             "start": 127.5,
             "synth": {
               "cutoff_hz": 2801.6666666666665,
-              "release": 0.30533333333333335
+              "engine": "filtered_stack",
+              "release": 0.30533333333333335,
+              "waveform": "saw"
             },
             "velocity": 0.8
           },
@@ -2812,7 +2986,9 @@
             "start": 128.0,
             "synth": {
               "cutoff_hz": 2790.0,
-              "release": 0.308
+              "engine": "filtered_stack",
+              "release": 0.308,
+              "waveform": "saw"
             },
             "velocity": 0.85
           },
@@ -2828,7 +3004,9 @@
             "start": 129.0,
             "synth": {
               "cutoff_hz": 2778.3333333333335,
-              "release": 0.3106666666666667
+              "engine": "filtered_stack",
+              "release": 0.3106666666666667,
+              "waveform": "saw"
             },
             "velocity": 0.98
           },
@@ -2844,7 +3022,9 @@
             "start": 131.0,
             "synth": {
               "cutoff_hz": 2766.6666666666665,
-              "release": 0.31333333333333335
+              "engine": "filtered_stack",
+              "release": 0.31333333333333335,
+              "waveform": "saw"
             },
             "velocity": 1.05
           },
@@ -2860,7 +3040,9 @@
             "start": 132.5,
             "synth": {
               "cutoff_hz": 2755.0,
-              "release": 0.316
+              "engine": "filtered_stack",
+              "release": 0.316,
+              "waveform": "saw"
             },
             "velocity": 1.12
           },
@@ -2876,7 +3058,9 @@
             "start": 133.5,
             "synth": {
               "cutoff_hz": 2743.3333333333335,
-              "release": 0.31866666666666665
+              "engine": "filtered_stack",
+              "release": 0.31866666666666665,
+              "waveform": "saw"
             },
             "velocity": 1.22
           },
@@ -2892,7 +3076,9 @@
             "start": 135.5,
             "synth": {
               "cutoff_hz": 2731.6666666666665,
-              "release": 0.32133333333333336
+              "engine": "filtered_stack",
+              "release": 0.32133333333333336,
+              "waveform": "saw"
             },
             "velocity": 1.05
           },
@@ -2908,7 +3094,9 @@
             "start": 136.5,
             "synth": {
               "cutoff_hz": 2720.0,
-              "release": 0.324
+              "engine": "filtered_stack",
+              "release": 0.324,
+              "waveform": "saw"
             },
             "velocity": 1.0
           },
@@ -2924,7 +3112,9 @@
             "start": 138.0,
             "synth": {
               "cutoff_hz": 2708.3333333333335,
-              "release": 0.32666666666666666
+              "engine": "filtered_stack",
+              "release": 0.32666666666666666,
+              "waveform": "saw"
             },
             "velocity": 0.9
           },
@@ -2940,7 +3130,9 @@
             "start": 139.0,
             "synth": {
               "cutoff_hz": 2696.6666666666665,
-              "release": 0.32933333333333337
+              "engine": "filtered_stack",
+              "release": 0.32933333333333337,
+              "waveform": "saw"
             },
             "velocity": 1.0
           },
@@ -2956,7 +3148,9 @@
             "start": 141.0,
             "synth": {
               "cutoff_hz": 2685.0,
-              "release": 0.332
+              "engine": "filtered_stack",
+              "release": 0.332,
+              "waveform": "saw"
             },
             "velocity": 0.95
           },
@@ -2972,7 +3166,9 @@
             "start": 142.5,
             "synth": {
               "cutoff_hz": 2673.3333333333335,
-              "release": 0.33466666666666667
+              "engine": "filtered_stack",
+              "release": 0.33466666666666667,
+              "waveform": "saw"
             },
             "velocity": 1.08
           },
@@ -2988,7 +3184,9 @@
             "start": 145.0,
             "synth": {
               "cutoff_hz": 2661.6666666666665,
-              "release": 0.3373333333333334
+              "engine": "filtered_stack",
+              "release": 0.3373333333333334,
+              "waveform": "saw"
             },
             "velocity": 0.9
           },
@@ -3004,7 +3202,9 @@
             "start": 146.5,
             "synth": {
               "cutoff_hz": 2650.0,
-              "release": 0.34
+              "engine": "filtered_stack",
+              "release": 0.34,
+              "waveform": "saw"
             },
             "velocity": 0.78
           }
@@ -3012,11 +3212,16 @@
         "pan": 0.2,
         "synth_defaults": {
           "attack": 0.085,
+          "cutoff_hz": 3000.0,
           "decay": 1.25,
           "engine": "polyblep",
-          "preset": "warm_lead",
+          "filter_env_amount": 0.55,
+          "filter_env_decay": 0.9,
+          "keytrack": 0.05,
           "release": 0.32,
-          "sustain_level": 0.48
+          "resonance": 0.1,
+          "sustain_level": 0.48,
+          "waveform": "saw"
         },
         "velocity_db_per_unit": 12.0,
         "velocity_group": "melody",
@@ -3416,12 +3621,12 @@
           "attack": 0.22,
           "brightness_tilt": 0.06,
           "decay": 0.18,
-          "detune_cents": 5,
+          "detune_cents": 0.0,
           "harmonic_rolloff": 0.38,
           "n_harmonics": 8,
           "release": 0.7,
           "sustain_level": 0.56,
-          "unison_voices": 2
+          "unison_voices": 1
         },
         "velocity_db_per_unit": 8.0,
         "velocity_group": "harmony",
@@ -3531,12 +3736,12 @@
           "attack": 0.22,
           "brightness_tilt": 0.06,
           "decay": 0.18,
-          "detune_cents": 5,
+          "detune_cents": 0.0,
           "harmonic_rolloff": 0.38,
           "n_harmonics": 8,
           "release": 0.7,
           "sustain_level": 0.56,
-          "unison_voices": 2
+          "unison_voices": 1
         }
       },
       "bass": {
@@ -3619,11 +3824,16 @@
         "partial_range": null,
         "synth_defaults": {
           "attack": 0.085,
+          "cutoff_hz": 3000.0,
           "decay": 1.25,
           "engine": "polyblep",
-          "preset": "warm_lead",
+          "filter_env_amount": 0.55,
+          "filter_env_decay": 0.9,
+          "keytrack": 0.05,
           "release": 0.32,
-          "sustain_level": 0.48
+          "resonance": 0.1,
+          "sustain_level": 0.48,
+          "waveform": "saw"
         }
       },
       "tenor": {
@@ -3640,15 +3850,15 @@
           "attack": 0.22,
           "brightness_tilt": 0.06,
           "decay": 0.18,
-          "detune_cents": 5,
+          "detune_cents": 0.0,
           "harmonic_rolloff": 0.38,
           "n_harmonics": 8,
           "release": 0.7,
           "sustain_level": 0.56,
-          "unison_voices": 2
+          "unison_voices": 1
         }
       }
     }
   },
-  "version_metadata_path": "output/versions/ji_chorale/17_ji_chorale__20260319-015134.render.json"
+  "version_metadata_path": "output/versions/ji_chorale/17_ji_chorale__20260319-013817.render.json"
 }

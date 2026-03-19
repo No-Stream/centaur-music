@@ -39,6 +39,50 @@ def test_resolve_synth_params_applies_preset_before_explicit_overrides() -> None
     assert "preset" not in resolved
 
 
+@pytest.mark.parametrize(
+    ("engine_name", "preset_name"),
+    [
+        ("additive", "organ"),
+        ("fm", "dx_piano"),
+        ("fm", "lately_bass"),
+        ("fm", "fm_clav"),
+        ("fm", "fm_mallet"),
+        ("fm", "chorused_ep"),
+        ("filtered_stack", "saw_pad"),
+        ("filtered_stack", "string_pad"),
+        ("polyblep", "synth_pluck"),
+        ("polyblep", "analog_brass"),
+        ("polyblep", "square_lead"),
+        ("polyblep", "hoover"),
+        ("polyblep", "moog_bass"),
+        ("polyblep", "sync_lead"),
+        ("polyblep", "acid_bass"),
+        ("polyblep", "sub_bass"),
+        ("polyblep", "resonant_sweep"),
+        ("polyblep", "soft_square_pad"),
+    ],
+)
+def test_new_presets_resolve_and_render(
+    engine_name: str,
+    preset_name: str,
+) -> None:
+    resolved = resolve_synth_params({"engine": engine_name, "preset": preset_name})
+
+    assert resolved["engine"] == engine_name
+    assert "preset" not in resolved
+
+    signal = render_note_signal(
+        freq=220.0,
+        duration=0.35,
+        amp=0.3,
+        sample_rate=44100,
+        params={"engine": engine_name, "preset": preset_name},
+    )
+
+    assert np.all(np.isfinite(signal))
+    assert np.max(np.abs(signal)) > 0.0
+
+
 def test_voice_level_engine_and_note_override_both_render() -> None:
     score = Score(f0=110.0)
     score.add_voice(

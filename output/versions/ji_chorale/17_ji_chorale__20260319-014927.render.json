@@ -5,11 +5,11 @@
       "audio_path": "output/17_ji_chorale.wav"
     },
     "versioned": {
-      "analysis_manifest_path": "output/versions/ji_chorale/17_ji_chorale__20260319-015134.analysis.json",
-      "audio_path": "output/versions/ji_chorale/17_ji_chorale__20260319-015134.wav"
+      "analysis_manifest_path": "output/versions/ji_chorale/17_ji_chorale__20260319-014927.analysis.json",
+      "audio_path": "output/versions/ji_chorale/17_ji_chorale__20260319-014927.wav"
     }
   },
-  "metadata_path": "output/17_ji_chorale.render.json",
+  "metadata_path": "output/versions/ji_chorale/17_ji_chorale__20260319-014927.render.json",
   "output_name": "17_ji_chorale.wav",
   "piece_name": "ji_chorale",
   "provenance": {
@@ -21,7 +21,7 @@
     "source_file": "/home/jan/workspace/code-musics/code_musics/pieces/ji/chorale.py",
     "source_sha256": "f482bfec187dd3ca282867ca0bdb5a993856f4a67bae76cf92f85f07285d8df2"
   },
-  "rendered_at_utc": "20260319-015134",
+  "rendered_at_utc": "20260319-014927",
   "request": {
     "export_target_lufs": -18.0,
     "export_true_peak_ceiling_dbfs": -0.5,
@@ -3013,8 +3013,8 @@
         "synth_defaults": {
           "attack": 0.085,
           "decay": 1.25,
-          "engine": "polyblep",
-          "preset": "warm_lead",
+          "engine": "fm",
+          "preset": "glass_lead",
           "release": 0.32,
           "sustain_level": 0.48
         },
@@ -3620,8 +3620,8 @@
         "synth_defaults": {
           "attack": 0.085,
           "decay": 1.25,
-          "engine": "polyblep",
-          "preset": "warm_lead",
+          "engine": "fm",
+          "preset": "glass_lead",
           "release": 0.32,
           "sustain_level": 0.48
         }
@@ -3650,5 +3650,5 @@
       }
     }
   },
-  "version_metadata_path": "output/versions/ji_chorale/17_ji_chorale__20260319-015134.render.json"
+  "version_metadata_path": "output/versions/ji_chorale/17_ji_chorale__20260319-014927.render.json"
 }

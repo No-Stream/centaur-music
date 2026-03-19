@@ -3,6 +3,12 @@
 Generates waveforms in the time domain with polynomial bandlimiting corrections
 at discontinuities. Produces smooth analog character with correct 1/n harmonic
 spectrum and no Gibbs phenomenon, unlike additive-truncated engines.
+
+Supported waveforms:
+- ``saw``    — bandlimited sawtooth via direct PolyBLEP correction
+- ``square`` — bandlimited square/pulse as the difference of two saws
+- ``triangle`` — bandlimited triangle obtained by integrating the square wave
+  (BLAMP approach); ``pulse_width`` is ignored for triangle
 """
 
 from __future__ import annotations
@@ -12,6 +18,38 @@ from typing import Any
 import numpy as np
 
 _SUPPORTED_FILTER_MODES = {"lowpass", "bandpass", "highpass", "notch"}
+
+
+def _polyblep_triangle(
+    phase: np.ndarray,
+    phase_inc: np.ndarray,
+    cumphase: np.ndarray,
+    sample_rate: int,
+) -> np.ndarray:
+    """Generate a bandlimited triangle wave by integrating the polyblep square.
+
+    The integral of a bandlimited square wave is a bandlimited triangle (BLAMP),
+    so this gives alias-free triangle essentially for free.  ``pulse_width`` is
+    not meaningful for a symmetric triangle and is always fixed at 0.5.
+    """
+    square = _polyblep_square(phase, phase_inc, cumphase, pulse_width=0.5)
+
+    # Integrate via cumulative sum, scaled so that the integral of a unit square
+    # at frequency f has peak amplitude ~1/(2f) in samples → we want unit amplitude.
+    # Dividing by sample_rate converts from sample-domain to seconds-domain;
+    # the resulting triangle has amplitude proportional to 1/freq, so we
+    # normalize afterward.
+    triangle = np.cumsum(square) / sample_rate
+
+    # DC-block: remove any accumulated offset from the running sum
+    triangle -= triangle.mean()
+
+    # Peak-normalize to match saw/square amplitude range (~1.0)
+    peak = np.max(np.abs(triangle))
+    if peak > 1e-9:
+        triangle /= peak
+
+    return triangle
 
 
 def render(
@@ -48,8 +86,10 @@ def render(
         raise ValueError("filter_env_decay must be positive")
     if not 0.0 < pulse_width < 1.0:
         raise ValueError("pulse_width must be between 0 and 1")
-    if waveform not in {"saw", "square"}:
-        raise ValueError(f"Unsupported waveform: {waveform!r}. Use 'saw' or 'square'.")
+    if waveform not in {"saw", "square", "triangle"}:
+        raise ValueError(
+            f"Unsupported waveform: {waveform!r}. Use 'saw', 'square', or 'triangle'."
+        )
     if filter_mode not in _SUPPORTED_FILTER_MODES:
         raise ValueError(
             f"Unsupported filter_mode: {filter_mode!r}. "
@@ -79,8 +119,10 @@ def render(
 
     if waveform == "saw":
         raw_signal = _polyblep_saw(phase, phase_inc)
-    else:
+    elif waveform == "square":
         raw_signal = _polyblep_square(phase, phase_inc, cumphase, pulse_width)
+    else:
+        raw_signal = _polyblep_triangle(phase, phase_inc, cumphase, sample_rate)
 
     # Cutoff envelope (identical pattern to filtered_stack)
     t = np.linspace(0.0, duration, n_samples, endpoint=False)
@@ -192,3 +234,25 @@ def _apply_zdf_svf(
 def _soft_clip(value: float) -> float:
     """Return a stable soft-clipped sample."""
     return float(np.tanh(value))
+
+
+def render_polyblep(
+    freq: float,
+    duration: float,
+    sample_rate: int,
+    params: dict[str, Any],
+    freq_trajectory: np.ndarray | None = None,
+) -> np.ndarray:
+    """Convenience wrapper around :func:`render` with positional arguments.
+
+    Renders at unit amplitude (``amp=1.0``); use the returned array directly or
+    scale afterward.
+    """
+    return render(
+        freq=freq,
+        duration=duration,
+        amp=1.0,
+        sample_rate=sample_rate,
+        params=params,
+        freq_trajectory=freq_trajectory,
+    )
