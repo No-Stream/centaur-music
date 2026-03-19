@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from code_musics.pieces.registry import PieceSection
 from code_musics.score import Score
 
 _EPSILON = 1e-12
+logger = logging.getLogger(__name__)
 _DEFAULT_BANDS: tuple[tuple[str, float, float], ...] = (
     ("sub", 20.0, 60.0),
     ("bass", 60.0, 250.0),
@@ -24,6 +26,31 @@ _DEFAULT_BANDS: tuple[tuple[str, float, float], ...] = (
     ("high", 2_000.0, 8_000.0),
     ("air", 8_000.0, 20_000.0),
 )
+
+
+@dataclass(frozen=True)
+class ArtifactRiskWarning:
+    """Structured warning for suspicious rendered audio or parameter surfaces."""
+
+    severity: str
+    code: str
+    message: str
+    source: str
+    metrics: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ArtifactRiskReport:
+    """Aggregated artifact-risk summary for a render."""
+
+    mix: list[ArtifactRiskWarning]
+    voices: dict[str, list[ArtifactRiskWarning]]
+    parameter_surfaces: dict[str, list[ArtifactRiskWarning]]
+    summary: dict[str, int]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to a JSON-serializable dictionary."""
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -45,11 +72,14 @@ class AudioAnalysis:
     spectral_centroid_hz: float
     dominant_frequency_hz: float
     low_high_balance_db: float
+    high_band_emphasis_db: float
     spectral_tilt_db_per_octave: float
     reference_tilt_db_per_octave: float
     tilt_error_db_per_octave: float
+    amplitude_modulation_depth_db: float
     band_energy_db: dict[str, float]
     warnings: list[str]
+    artifact_risks: list[ArtifactRiskWarning]
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a JSON-serializable dictionary."""
@@ -105,11 +135,14 @@ def analyze_audio(
             spectral_centroid_hz=0.0,
             dominant_frequency_hz=0.0,
             low_high_balance_db=0.0,
+            high_band_emphasis_db=0.0,
             spectral_tilt_db_per_octave=0.0,
             reference_tilt_db_per_octave=reference_tilt_db_per_octave,
             tilt_error_db_per_octave=-reference_tilt_db_per_octave,
+            amplitude_modulation_depth_db=0.0,
             band_energy_db={name: float("-inf") for name, _, _ in _DEFAULT_BANDS},
             warnings=["empty render"],
+            artifact_risks=[],
         )
 
     freqs, magnitude_db = _average_spectrum(mono_signal, sample_rate=sample_rate)
@@ -131,6 +164,7 @@ def analyze_audio(
         freqs=freqs,
         magnitude_db=magnitude_db,
     )
+    high_band_emphasis_db = _compute_high_band_emphasis_db(band_energy_db)
     low_high_balance_db = _band_mean(
         magnitude_db,
         freqs=freqs,
@@ -146,6 +180,10 @@ def analyze_audio(
     spectral_centroid_hz = _spectral_centroid(freqs=freqs, magnitude_db=magnitude_db)
     dominant_frequency_hz = float(freqs[np.argmax(magnitude_db)])
     spectral_tilt = _fit_spectral_tilt(freqs=freqs, magnitude_db=magnitude_db)
+    amplitude_modulation_depth_db = _amplitude_modulation_depth_db(
+        mono_signal,
+        sample_rate=sample_rate,
+    )
     warnings = _build_audio_warnings(
         peak_dbfs=peak_dbfs,
         true_peak_dbfs=true_peak_dbfs,
@@ -155,6 +193,18 @@ def analyze_audio(
         low_high_balance_db=low_high_balance_db,
         tilt_error_db_per_octave=spectral_tilt - reference_tilt_db_per_octave,
         spectral_centroid_hz=spectral_centroid_hz,
+    )
+    artifact_risks = _build_audio_artifact_risks(
+        peak_dbfs=peak_dbfs,
+        true_peak_dbfs=true_peak_dbfs,
+        clipped_sample_count=clipped_sample_count,
+        integrated_lufs=integrated_lufs,
+        crest_factor_db=max(0.0, peak_dbfs - _amplitude_to_db(rms_amplitude)),
+        spectral_centroid_hz=spectral_centroid_hz,
+        low_high_balance_db=low_high_balance_db,
+        high_band_emphasis_db=high_band_emphasis_db,
+        tilt_error_db_per_octave=spectral_tilt - reference_tilt_db_per_octave,
+        amplitude_modulation_depth_db=amplitude_modulation_depth_db,
     )
 
     return AudioAnalysis(
@@ -173,11 +223,14 @@ def analyze_audio(
         spectral_centroid_hz=spectral_centroid_hz,
         dominant_frequency_hz=dominant_frequency_hz,
         low_high_balance_db=low_high_balance_db,
+        high_band_emphasis_db=high_band_emphasis_db,
         spectral_tilt_db_per_octave=spectral_tilt,
         reference_tilt_db_per_octave=reference_tilt_db_per_octave,
         tilt_error_db_per_octave=spectral_tilt - reference_tilt_db_per_octave,
+        amplitude_modulation_depth_db=amplitude_modulation_depth_db,
         band_energy_db=band_energy_db,
         warnings=warnings,
+        artifact_risks=artifact_risks,
     )
 
 
@@ -332,6 +385,7 @@ def save_analysis_artifacts(
         sample_rate=sample_rate,
         reference_tilt_db_per_octave=reference_tilt_db_per_octave,
     )
+    pre_export_analysis: AudioAnalysis | None = None
     manifest: dict[str, Any] = {
         "reference_tilt_db_per_octave": reference_tilt_db_per_octave,
         "mix": {
@@ -341,11 +395,12 @@ def save_analysis_artifacts(
         "voices": {},
     }
     if pre_export_mix_signal is not None:
-        manifest["mix"]["pre_export_summary"] = analyze_audio(
+        pre_export_analysis = analyze_audio(
             pre_export_mix_signal,
             sample_rate=sample_rate,
             reference_tilt_db_per_octave=reference_tilt_db_per_octave,
-        ).to_dict()
+        )
+        manifest["mix"]["pre_export_summary"] = pre_export_analysis.to_dict()
 
     mix_spectrum_path = prefix_path.with_name(f"{prefix_path.name}.mix_spectrum.png")
     _save_spectrum_plot(
@@ -399,12 +454,14 @@ def save_analysis_artifacts(
             },
         }
 
+    voice_analyses: dict[str, AudioAnalysis] = {}
     for voice_name, stem_signal in (stems or {}).items():
         voice_analysis = analyze_audio(
             stem_signal,
             sample_rate=sample_rate,
             reference_tilt_db_per_octave=reference_tilt_db_per_octave,
         )
+        voice_analyses[voice_name] = voice_analysis
         safe_voice_name = _sanitize_name(voice_name)
         voice_spectrum_path = prefix_path.with_name(
             f"{prefix_path.name}.voice_{safe_voice_name}_spectrum.png"
@@ -422,6 +479,15 @@ def save_analysis_artifacts(
                 "spectrum": str(voice_spectrum_path),
             },
         }
+
+    artifact_risk_report = _build_artifact_risk_report(
+        mix_analysis=mix_analysis,
+        voice_analyses=voice_analyses,
+        score=score,
+        pre_export_mix_analysis=pre_export_analysis,
+    )
+    manifest["artifact_risk"] = artifact_risk_report.to_dict()
+    _log_artifact_risk_report(artifact_risk_report)
 
     manifest_path = prefix_path.with_name(f"{prefix_path.name}.analysis.json")
     manifest["manifest_path"] = str(manifest_path)
@@ -917,6 +983,542 @@ def _build_audio_warnings(
     elif spectral_centroid_hz > 4_000.0:
         warnings.append("very bright spectral centroid")
     return warnings
+
+
+def _build_audio_artifact_risks(
+    *,
+    peak_dbfs: float,
+    true_peak_dbfs: float,
+    clipped_sample_count: int,
+    integrated_lufs: float,
+    crest_factor_db: float,
+    spectral_centroid_hz: float,
+    low_high_balance_db: float,
+    high_band_emphasis_db: float,
+    tilt_error_db_per_octave: float,
+    amplitude_modulation_depth_db: float,
+) -> list[ArtifactRiskWarning]:
+    risks: list[ArtifactRiskWarning] = []
+    if clipped_sample_count > 0 or true_peak_dbfs > 0.0:
+        risks.append(
+            _artifact_risk(
+                severity="severe",
+                code="clipping_risk",
+                source="audio_analysis",
+                message="render is clipping or at inter-sample clipping risk",
+                true_peak_dbfs=round(true_peak_dbfs, 2),
+                clipped_sample_count=clipped_sample_count,
+            )
+        )
+    if crest_factor_db <= 3.5 and integrated_lufs >= -16.0:
+        risks.append(
+            _artifact_risk(
+                severity="severe",
+                code="extreme_compression",
+                source="audio_analysis",
+                message="render dynamics are extremely squashed and may indicate over-compression or clipping-like saturation",
+                crest_factor_db=round(crest_factor_db, 2),
+                integrated_lufs=round(integrated_lufs, 2),
+                peak_dbfs=round(peak_dbfs, 2),
+            )
+        )
+    elif crest_factor_db <= 5.0 and integrated_lufs >= -18.0:
+        risks.append(
+            _artifact_risk(
+                severity="warning",
+                code="extreme_compression",
+                source="audio_analysis",
+                message="render dynamics are unusually constrained and may be over-compressed",
+                crest_factor_db=round(crest_factor_db, 2),
+                integrated_lufs=round(integrated_lufs, 2),
+                peak_dbfs=round(peak_dbfs, 2),
+            )
+        )
+    if spectral_centroid_hz >= 5_500.0:
+        risks.append(
+            _artifact_risk(
+                severity="severe",
+                code="bright_spectral_centroid",
+                source="audio_analysis",
+                message="render is extremely bright and may read as harsh or brittle",
+                spectral_centroid_hz=round(spectral_centroid_hz, 1),
+            )
+        )
+    elif spectral_centroid_hz >= 4_000.0:
+        risks.append(
+            _artifact_risk(
+                severity="warning",
+                code="bright_spectral_centroid",
+                source="audio_analysis",
+                message="render is very bright and may exaggerate filter artifacts",
+                spectral_centroid_hz=round(spectral_centroid_hz, 1),
+            )
+        )
+    if high_band_emphasis_db >= 12.0 or low_high_balance_db <= -16.0:
+        risks.append(
+            _artifact_risk(
+                severity="severe",
+                code="high_band_dominance",
+                source="audio_analysis",
+                message="upper bands dominate strongly and may sound clipped or piercing",
+                high_band_emphasis_db=round(high_band_emphasis_db, 2),
+                low_high_balance_db=round(low_high_balance_db, 2),
+            )
+        )
+    elif high_band_emphasis_db >= 7.0 or low_high_balance_db <= -10.0:
+        risks.append(
+            _artifact_risk(
+                severity="warning",
+                code="high_band_dominance",
+                source="audio_analysis",
+                message="upper-band energy is elevated relative to the body of the mix",
+                high_band_emphasis_db=round(high_band_emphasis_db, 2),
+                low_high_balance_db=round(low_high_balance_db, 2),
+            )
+        )
+    if tilt_error_db_per_octave >= 8.0:
+        risks.append(
+            _artifact_risk(
+                severity="severe",
+                code="flat_or_bright_tilt",
+                source="audio_analysis",
+                message="spectral tilt is unusually flat or bright for this render path",
+                tilt_error_db_per_octave=round(tilt_error_db_per_octave, 2),
+            )
+        )
+    elif tilt_error_db_per_octave >= 5.0:
+        risks.append(
+            _artifact_risk(
+                severity="warning",
+                code="flat_or_bright_tilt",
+                source="audio_analysis",
+                message="spectral tilt is brighter than the reference balance",
+                tilt_error_db_per_octave=round(tilt_error_db_per_octave, 2),
+            )
+        )
+    if amplitude_modulation_depth_db >= 18.0:
+        risks.append(
+            _artifact_risk(
+                severity="severe",
+                code="strong_amplitude_modulation",
+                source="audio_analysis",
+                message="strong amplitude modulation may read as unintended tremolo",
+                amplitude_modulation_depth_db=round(
+                    amplitude_modulation_depth_db,
+                    2,
+                ),
+            )
+        )
+    elif amplitude_modulation_depth_db >= 12.0:
+        risks.append(
+            _artifact_risk(
+                severity="warning",
+                code="strong_amplitude_modulation",
+                source="audio_analysis",
+                message="render shows pronounced amplitude modulation",
+                amplitude_modulation_depth_db=round(
+                    amplitude_modulation_depth_db,
+                    2,
+                ),
+            )
+        )
+    if integrated_lufs >= -11.0 and peak_dbfs <= -0.8:
+        risks.append(
+            _artifact_risk(
+                severity="warning",
+                code="dense_loudness_profile",
+                source="audio_analysis",
+                message="render is loud relative to its remaining sample-peak headroom",
+                integrated_lufs=round(integrated_lufs, 2),
+                peak_dbfs=round(peak_dbfs, 2),
+            )
+        )
+    return risks
+
+
+def _build_artifact_risk_report(
+    *,
+    mix_analysis: AudioAnalysis,
+    voice_analyses: dict[str, AudioAnalysis],
+    score: Score | None,
+    pre_export_mix_analysis: AudioAnalysis | None,
+) -> ArtifactRiskReport:
+    mix_risks = list(mix_analysis.artifact_risks)
+    if pre_export_mix_analysis is not None:
+        loudness_delta_lufs = (
+            mix_analysis.integrated_lufs - pre_export_mix_analysis.integrated_lufs
+        )
+        centroid_delta_hz = (
+            mix_analysis.spectral_centroid_hz
+            - pre_export_mix_analysis.spectral_centroid_hz
+        )
+        if loudness_delta_lufs >= 8.0:
+            mix_risks.append(
+                _artifact_risk(
+                    severity="severe",
+                    code="export_loudness_jump",
+                    source="mastering_analysis",
+                    message="export mastering changed loudness far more than expected",
+                    loudness_delta_lufs=round(loudness_delta_lufs, 2),
+                    pre_export_lufs=round(
+                        pre_export_mix_analysis.integrated_lufs,
+                        2,
+                    ),
+                    export_lufs=round(mix_analysis.integrated_lufs, 2),
+                )
+            )
+        elif loudness_delta_lufs >= 4.5:
+            mix_risks.append(
+                _artifact_risk(
+                    severity="warning",
+                    code="heavy_export_compression",
+                    source="mastering_analysis",
+                    message="export mastering increased loudness enough to suggest heavy compression or limiting",
+                    loudness_delta_lufs=round(loudness_delta_lufs, 2),
+                    pre_export_lufs=round(
+                        pre_export_mix_analysis.integrated_lufs,
+                        2,
+                    ),
+                    export_lufs=round(mix_analysis.integrated_lufs, 2),
+                )
+            )
+        if centroid_delta_hz >= 1_500.0:
+            mix_risks.append(
+                _artifact_risk(
+                    severity="warning",
+                    code="export_brightness_jump",
+                    source="mastering_analysis",
+                    message="export mastering made the mix substantially brighter",
+                    centroid_delta_hz=round(centroid_delta_hz, 1),
+                    pre_export_centroid_hz=round(
+                        pre_export_mix_analysis.spectral_centroid_hz,
+                        1,
+                    ),
+                    export_centroid_hz=round(mix_analysis.spectral_centroid_hz, 1),
+                )
+            )
+        crest_delta_db = (
+            pre_export_mix_analysis.crest_factor_db - mix_analysis.crest_factor_db
+        )
+        if crest_delta_db >= 8.0:
+            mix_risks.append(
+                _artifact_risk(
+                    severity="severe",
+                    code="heavy_export_compression",
+                    source="mastering_analysis",
+                    message="export mastering collapsed crest factor dramatically",
+                    crest_factor_delta_db=round(crest_delta_db, 2),
+                    pre_export_crest_factor_db=round(
+                        pre_export_mix_analysis.crest_factor_db,
+                        2,
+                    ),
+                    export_crest_factor_db=round(mix_analysis.crest_factor_db, 2),
+                )
+            )
+        elif crest_delta_db >= 5.0:
+            mix_risks.append(
+                _artifact_risk(
+                    severity="warning",
+                    code="heavy_export_compression",
+                    source="mastering_analysis",
+                    message="export mastering reduced crest factor noticeably",
+                    crest_factor_delta_db=round(crest_delta_db, 2),
+                    pre_export_crest_factor_db=round(
+                        pre_export_mix_analysis.crest_factor_db,
+                        2,
+                    ),
+                    export_crest_factor_db=round(mix_analysis.crest_factor_db, 2),
+                )
+            )
+
+    parameter_surface_risks = (
+        _analyze_parameter_surface_risks(score) if score is not None else {}
+    )
+    summary = _summarize_artifact_risks(
+        mix_risks=mix_risks,
+        voice_risks={name: analysis.artifact_risks for name, analysis in voice_analyses.items()},
+        parameter_surface_risks=parameter_surface_risks,
+    )
+    return ArtifactRiskReport(
+        mix=_sort_risks(mix_risks),
+        voices={
+            voice_name: _sort_risks(analysis.artifact_risks)
+            for voice_name, analysis in voice_analyses.items()
+            if analysis.artifact_risks
+        },
+        parameter_surfaces={
+            voice_name: _sort_risks(risks)
+            for voice_name, risks in parameter_surface_risks.items()
+            if risks
+        },
+        summary=summary,
+    )
+
+
+def _analyze_parameter_surface_risks(
+    score: Score,
+) -> dict[str, list[ArtifactRiskWarning]]:
+    risks_by_voice: dict[str, list[ArtifactRiskWarning]] = {}
+    for voice_name, voice in score.voices.items():
+        risks: list[ArtifactRiskWarning] = []
+        authored_params = _collect_voice_param_values(score=score, voice_name=voice_name)
+
+        cutoff_values = authored_params.get("cutoff_hz", [])
+        filter_env_values = authored_params.get("filter_env_amount", [])
+        resonance_values = authored_params.get("resonance", [])
+        drive_values = authored_params.get("filter_drive", [])
+        note_amp_db_values = authored_params.get("note_amp_db", [])
+
+        cutoff_min = min(cutoff_values) if cutoff_values else 0.0
+        cutoff_max = max(cutoff_values) if cutoff_values else 0.0
+        cutoff_span = cutoff_max - cutoff_min
+        filter_env_max = max(filter_env_values) if filter_env_values else 0.0
+        resonance_max = max(resonance_values) if resonance_values else 0.0
+        drive_max = max(drive_values) if drive_values else 0.0
+        hottest_note_amp_db = max(note_amp_db_values) if note_amp_db_values else -120.0
+
+        cutoff_velocity_map = voice.velocity_to_params.get("cutoff_hz")
+        velocity_cutoff_span = (
+            cutoff_velocity_map.max_value - cutoff_velocity_map.min_value
+            if cutoff_velocity_map is not None
+            else 0.0
+        )
+        filter_env_velocity_map = voice.velocity_to_params.get("filter_env_amount")
+        velocity_filter_env_span = (
+            filter_env_velocity_map.max_value - filter_env_velocity_map.min_value
+            if filter_env_velocity_map is not None
+            else 0.0
+        )
+
+        if (
+            cutoff_span >= 1_500.0
+            and filter_env_max >= 0.75
+            and velocity_cutoff_span >= 700.0
+        ):
+            severity = (
+                "severe"
+                if cutoff_span >= 2_000.0 or drive_max >= 0.08 or resonance_max >= 0.12
+                else "warning"
+            )
+            risks.append(
+                _artifact_risk(
+                    severity=severity,
+                    code="aggressive_filter_motion",
+                    source="parameter_surface",
+                    message=(
+                        "large cutoff motion plus strong filter modulation may create "
+                        "wah, divebomb, or tremolo-like artifacts"
+                    ),
+                    cutoff_span_hz=round(cutoff_span, 1),
+                    filter_env_amount_max=round(filter_env_max, 2),
+                    velocity_cutoff_span_hz=round(velocity_cutoff_span, 1),
+                    filter_drive_max=round(drive_max, 2),
+                    resonance_max=round(resonance_max, 2),
+                )
+            )
+
+        if cutoff_max >= 3_200.0 and hottest_note_amp_db >= -16.0:
+            risks.append(
+                _artifact_risk(
+                    severity="warning",
+                    code="bright_hot_authoring",
+                    source="parameter_surface",
+                    message=(
+                        "bright cutoff settings combined with relatively hot note levels "
+                        "may make harshness much more obvious"
+                    ),
+                    cutoff_hz_max=round(cutoff_max, 1),
+                    hottest_note_amp_db=round(hottest_note_amp_db, 2),
+                )
+            )
+
+        if drive_max >= 0.08 and filter_env_max >= 0.8 and resonance_max >= 0.1:
+            risks.append(
+                _artifact_risk(
+                    severity="warning",
+                    code="drive_resonance_interaction",
+                    source="parameter_surface",
+                    message=(
+                        "filter drive, resonance, and envelope depth are all elevated; "
+                        "this combination is easy to push into brittle artifacts"
+                    ),
+                    filter_drive_max=round(drive_max, 2),
+                    resonance_max=round(resonance_max, 2),
+                    filter_env_amount_max=round(filter_env_max, 2),
+                )
+            )
+
+        if velocity_filter_env_span >= 0.4 and filter_env_max >= 0.9:
+            risks.append(
+                _artifact_risk(
+                    severity="warning",
+                    code="wide_velocity_filter_env",
+                    source="parameter_surface",
+                    message=(
+                        "velocity is driving a wide filter-envelope range, which can make "
+                        "similar phrases feel unstable across accents"
+                    ),
+                    velocity_filter_env_span=round(velocity_filter_env_span, 2),
+                    filter_env_amount_max=round(filter_env_max, 2),
+                )
+            )
+
+        if risks:
+            risks_by_voice[voice_name] = risks
+    return risks_by_voice
+
+
+def _collect_voice_param_values(
+    *,
+    score: Score,
+    voice_name: str,
+) -> dict[str, list[float]]:
+    voice = score.voices[voice_name]
+    param_values: dict[str, list[float]] = {}
+    for param_name, param_value in voice.synth_defaults.items():
+        if isinstance(param_value, (int, float)) and not isinstance(param_value, bool):
+            param_values.setdefault(param_name, []).append(float(param_value))
+    for note in voice.notes:
+        merged_params = dict(voice.synth_defaults)
+        if note.synth is not None:
+            merged_params.update(note.synth)
+        for param_name, param_value in merged_params.items():
+            if isinstance(param_value, (int, float)) and not isinstance(param_value, bool):
+                param_values.setdefault(param_name, []).append(float(param_value))
+        param_values.setdefault("note_amp_db", []).append(
+            float(
+                note.amp_db
+                if note.amp_db is not None
+                else synth.amp_to_db(float(note.amp or 1.0))
+            )
+        )
+    return param_values
+
+
+def _summarize_artifact_risks(
+    *,
+    mix_risks: list[ArtifactRiskWarning],
+    voice_risks: dict[str, list[ArtifactRiskWarning]],
+    parameter_surface_risks: dict[str, list[ArtifactRiskWarning]],
+) -> dict[str, int]:
+    all_risks = list(mix_risks)
+    for warnings in voice_risks.values():
+        all_risks.extend(warnings)
+    for warnings in parameter_surface_risks.values():
+        all_risks.extend(warnings)
+    severity_counts = {"info": 0, "warning": 0, "severe": 0}
+    for risk in all_risks:
+        severity_counts[risk.severity] = severity_counts.get(risk.severity, 0) + 1
+    return {
+        "total_warning_count": len(all_risks),
+        "info_count": severity_counts.get("info", 0),
+        "warning_count": severity_counts.get("warning", 0),
+        "severe_count": severity_counts.get("severe", 0),
+        "voice_count_with_risks": sum(
+            1 for warnings in voice_risks.values() if warnings
+        ),
+        "voice_count_with_parameter_risks": sum(
+            1 for warnings in parameter_surface_risks.values() if warnings
+        ),
+    }
+
+
+def _artifact_risk(
+    *,
+    severity: str,
+    code: str,
+    message: str,
+    source: str,
+    **metrics: Any,
+) -> ArtifactRiskWarning:
+    return ArtifactRiskWarning(
+        severity=severity,
+        code=code,
+        message=message,
+        source=source,
+        metrics=metrics,
+    )
+
+
+def _sort_risks(
+    risks: list[ArtifactRiskWarning],
+) -> list[ArtifactRiskWarning]:
+    severity_order = {"severe": 0, "warning": 1, "info": 2}
+    return sorted(
+        risks,
+        key=lambda risk: (severity_order.get(risk.severity, 99), risk.code, risk.message),
+    )
+
+
+def _log_artifact_risk_report(report: ArtifactRiskReport) -> None:
+    for risk in report.mix:
+        _log_artifact_risk(scope="mix", risk=risk)
+    for voice_name, risks in report.voices.items():
+        for risk in risks:
+            _log_artifact_risk(scope=f"voice:{voice_name}", risk=risk)
+    for voice_name, risks in report.parameter_surfaces.items():
+        for risk in risks:
+            _log_artifact_risk(scope=f"params:{voice_name}", risk=risk)
+
+
+def _log_artifact_risk(*, scope: str, risk: ArtifactRiskWarning) -> None:
+    metric_items = ", ".join(
+        f"{key}={value}" for key, value in sorted(risk.metrics.items())
+    )
+    logger.warning(
+        "Artifact risk [%s] %s/%s: %s%s",
+        scope,
+        risk.severity,
+        risk.code,
+        risk.message,
+        f" ({metric_items})" if metric_items else "",
+    )
+
+
+def _compute_high_band_emphasis_db(band_energy_db: dict[str, float]) -> float:
+    high_values = [band_energy_db.get("high", float("-inf")), band_energy_db.get("air", float("-inf"))]
+    body_values = [band_energy_db.get("low_mid", float("-inf")), band_energy_db.get("mid", float("-inf"))]
+    return _finite_mean(high_values) - _finite_mean(body_values)
+
+
+def _finite_mean(values: list[float]) -> float:
+    finite_values = [value for value in values if np.isfinite(value)]
+    if not finite_values:
+        return float("-inf")
+    return float(np.mean(finite_values))
+
+
+def _amplitude_modulation_depth_db(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    window_seconds: float = 0.05,
+    hop_seconds: float = 0.01,
+    gate_dbfs: float = -50.0,
+) -> float:
+    if signal.size == 0:
+        return 0.0
+
+    window_samples = max(1, int(round(window_seconds * sample_rate)))
+    hop_samples = max(1, int(round(hop_seconds * sample_rate)))
+    frame_dbfs_values: list[float] = []
+    for start in range(0, signal.size, hop_samples):
+        frame = signal[start : start + window_samples]
+        if frame.size == 0:
+            continue
+        frame_rms = float(np.sqrt(np.mean(np.square(frame))))
+        frame_dbfs = _amplitude_to_db(frame_rms)
+        if frame_dbfs > gate_dbfs:
+            frame_dbfs_values.append(frame_dbfs)
+
+    if len(frame_dbfs_values) < 4:
+        return 0.0
+
+    frame_dbfs_array = np.asarray(frame_dbfs_values, dtype=np.float64)
+    return float(
+        np.percentile(frame_dbfs_array, 95.0)
+        - np.percentile(frame_dbfs_array, 5.0)
+    )
 
 
 def _save_spectrum_plot(

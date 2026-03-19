@@ -384,6 +384,8 @@ Behavior:
 - applies `master_effects` after the voices are mixed
 - does not perform export mastering itself; the named-piece render workflow applies
   final LUFS/true-peak mastering when writing the final WAV
+- export mastering first drives the mix toward the render LUFS target with the
+  limiter, then uses any remaining true-peak headroom up to the export ceiling
 
 ### `Score.render_stems()`
 
@@ -466,6 +468,36 @@ That ordering matters because it explains why:
 
 - timing humanization changes placement but not note duration
 - velocity can affect both loudness and timbre
+- render analysis now also emits artifact-risk warnings for suspicious rendered
+  outcomes and risky parameter surfaces, so bright/unstable settings are easier
+  to catch before they become mystery listening bugs
+
+## Artifact-Risk Guidance
+
+The render workflow now emits warning-only artifact-risk diagnostics into the
+analysis manifest and render logs. Treat these as guardrails, not hard errors.
+
+High-value risky surfaces:
+
+- `velocity_to_params["cutoff_hz"]`
+  Safe: compact expressive spans, often a few hundred Hz to around 800 Hz.
+  Risky: large spans above ~1000 Hz, especially on already-bright leads.
+- `velocity_to_params["filter_env_amount"]`
+  Safe: subtle variation around an already-moderate envelope.
+  Risky: very wide spans that make accents sound like different presets.
+- authored note `amp_db`
+  Safe: conservative note levels when also sweeping cutoff upward.
+  Risky: combining hotter note levels with bright cutoff ramps and aggressive
+  filter motion.
+- note-level `synth` overrides that sweep `cutoff_hz`
+  Safe: gradual, moderate movement.
+  Risky: large section-long sweeps stacked with velocity-driven cutoff motion.
+
+Common failure mode:
+
+- large cutoff sweep + strong `filter_env_amount` + wide velocity-driven cutoff
+  mapping + elevated drive/resonance can produce divebomb, wah, tremolo-like,
+  or brittle artifacts even when each parameter looks individually plausible
 - envelope humanization operates on the post-merge ADSR values
 - master effects do not affect the individual stem renders
 

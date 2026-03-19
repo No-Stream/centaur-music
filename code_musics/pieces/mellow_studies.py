@@ -670,7 +670,8 @@ def build_ether() -> Score:
     score.add_note("melody", start=87.6, duration=0.88, partial=14.0, amp_db=-10.5)  # alien gateway
     score.add_note("melody", start=88.6, duration=0.80, partial=15.0, amp_db=-10.0)  # leading tone
     score.add_note("melody", start=89.6, duration=5.50, partial=16.0, amp_db=-9.5,   # PEAK — A5
-                   pitch_motion=PitchMotionSpec.vibrato(depth_ratio=0.008, rate_hz=4.2))
+                   pitch_motion=PitchMotionSpec.vibrato(depth_ratio=0.003, rate_hz=4.2))
+    score.add_note("melody", start=89.6, duration=4.80, partial=14.0, amp_db=-13.5) # G♭75 — spice
 
     # ---------------------------------------------------------------------------
     # Post-climax descent — integrating the whole terrain

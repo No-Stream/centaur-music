@@ -137,6 +137,20 @@ def test_write_wav_logs_peak_and_loudness_diagnostics(
     assert "unexpectedly low" in caplog.text
 
 
+def test_apply_plugin_processor_resets_cached_plugin_state() -> None:
+    fake_plugin = MagicMock()
+    fake_plugin.return_value = np.zeros((2, 8), dtype=np.float32)
+
+    with patch("code_musics.synth._load_external_plugin", return_value=fake_plugin):
+        synth._apply_plugin_processor(
+            np.zeros(8, dtype=np.float64),
+            plugin_name="tal_chorus_lx",
+            params={"dry_wet": 2.2},
+        )
+
+    fake_plugin.reset.assert_called_once_with()
+
+
 def test_apply_bricasti_blends_filtered_wet_only() -> None:
     input_signal = np.vstack(
         [

@@ -40,6 +40,9 @@ Most valuable next helpers:
 
 _todo: update, think we added some of this_
 
+### Section-wise rendering
+- for fast iteration, just render segments
+
 ### Sound design and synthesis direction
 
 The current engine palette is a solid base, but there is room to broaden it
@@ -54,6 +57,27 @@ Likely useful directions:
 - more explicit role presets for bed, lead, counterpoint, bass, and accent layers
 
 ## Medium priority
+
+### Plugin/VST reliability follow-up
+
+The recent `ji_chorale` artifact debugging surfaced two real plugin-path issues:
+stateful cached plugin instances and suspicious behavior from TAL-Chorus-LX in
+one real piece. This deserves a more deliberate follow-up rather than staying a
+one-off workaround.
+
+Most valuable next steps:
+
+- reproduce the `ji_chorale` TAL-Chorus-LX tremolo / divebomb artifact in a
+  minimal fixture
+- define a reliable test strategy for VST / plugin integrations so modulation,
+  reset behavior, repeated renders, and on/off toggles are much more
+  bulletproof
+- separate "host bug", "plugin bug", and "our parameter mapping bug" cases with
+  tighter diagnostic helpers
+- stress-test repeated renders and plugin reset semantics for stateful effects
+  such as chorus, compressor, and reverb
+- decide where native in-repo effects should be preferred over external plugins
+  when stability matters more than exact flavor
 
 ### Repo structure follow-up
 

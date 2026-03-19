@@ -202,6 +202,10 @@ See `FUTURE.md` for way more ideas.
 - WAV export logging now reports peak, true-peak, and integrated LUFS at write
   time, and warns when an exported master lands suspiciously far below the
   expected ceiling.
+- Render analysis now also emits artifact-risk warnings for suspicious
+  brightness, modulation, compression/clipping, and risky filter-motion
+  parameter combos; when touching those surfaces, update docs and tests in the
+  same pass.
 - When using or extending synth engines, read `docs/synth_api.md` first for the
   current engine names, presets, and parameter surface.
 - Prefer absolute imports and typed, readable Python.

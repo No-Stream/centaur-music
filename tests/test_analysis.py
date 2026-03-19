@@ -16,7 +16,7 @@ from code_musics.analysis import (
 )
 from code_musics.humanize import TimingHumanizeSpec
 from code_musics.pieces.registry import PieceSection
-from code_musics.score import Score
+from code_musics.score import Score, VelocityParamMap
 
 
 def test_analyze_audio_reports_expected_band_bias() -> None:
@@ -55,6 +55,35 @@ def test_analyze_audio_warns_for_clipping_and_low_active_level() -> None:
 
     assert quiet_analysis.active_window_fraction > 0.0
     assert "active passages are very quiet overall" in quiet_analysis.warnings
+
+
+def test_analyze_audio_reports_bright_modulated_artifact_risks() -> None:
+    sample_rate = 44_100
+    duration = 2.0
+    time = np.arange(int(sample_rate * duration), dtype=np.float64) / sample_rate
+    modulation = 0.52 + 0.46 * np.sin(2.0 * np.pi * 8.0 * time)
+    signal = modulation * np.sin(2.0 * np.pi * 5_200.0 * time)
+
+    analysis = analyze_audio(signal, sample_rate=sample_rate)
+    risk_codes = {risk.code for risk in analysis.artifact_risks}
+
+    assert "bright_spectral_centroid" in risk_codes
+    assert "strong_amplitude_modulation" in risk_codes
+    assert analysis.amplitude_modulation_depth_db >= 12.0
+
+
+def test_analyze_audio_reports_extreme_compression_artifact_risk() -> None:
+    sample_rate = 44_100
+    duration = 1.5
+    time = np.arange(int(sample_rate * duration), dtype=np.float64) / sample_rate
+    signal = 0.88 * np.sign(np.sin(2.0 * np.pi * 220.0 * time))
+
+    analysis = analyze_audio(signal, sample_rate=sample_rate)
+
+    assert any(
+        risk.code == "extreme_compression" for risk in analysis.artifact_risks
+    )
+    assert analysis.crest_factor_db <= 5.0
 
 
 def test_analyze_score_reports_density_and_ranges() -> None:
@@ -161,6 +190,93 @@ def test_save_analysis_artifacts_records_pre_export_mix_summary(tmp_path: Path) 
         manifest["mix"]["pre_export_summary"]["peak_dbfs"]
         > manifest["mix"]["summary"]["peak_dbfs"]
     )
+
+
+def test_save_analysis_artifacts_records_artifact_risk_report(tmp_path: Path) -> None:
+    risky_score = Score(f0=55.0)
+    risky_score.add_voice(
+        "lead",
+        synth_defaults={
+            "engine": "polyblep",
+            "waveform": "triangle",
+            "cutoff_hz": 3_600.0,
+            "resonance": 0.12,
+            "filter_env_amount": 0.95,
+            "filter_drive": 0.09,
+            "attack": 0.05,
+            "decay": 0.15,
+            "sustain_level": 0.45,
+            "release": 0.25,
+        },
+        velocity_to_params={
+            "cutoff_hz": VelocityParamMap(min_value=1_200.0, max_value=2_600.0),
+            "filter_env_amount": VelocityParamMap(min_value=0.65, max_value=1.2),
+        },
+    )
+    for index, cutoff_hz in enumerate((2_400.0, 3_400.0, 4_100.0, 4_300.0)):
+        risky_score.add_note(
+            "lead",
+            start=index * 0.6,
+            duration=0.5,
+            partial=8.0,
+            amp_db=-15.0,
+            velocity=1.15,
+            synth={"cutoff_hz": cutoff_hz},
+        )
+
+    risky_manifest = save_analysis_artifacts(
+        output_prefix=tmp_path / "risky_piece",
+        mix_signal=risky_score.render(),
+        sample_rate=risky_score.sample_rate,
+        stems=risky_score.render_stems(),
+        score=risky_score,
+    )
+
+    parameter_risks = risky_manifest["artifact_risk"]["parameter_surfaces"]["lead"]
+    parameter_codes = {risk["code"] for risk in parameter_risks}
+    assert "aggressive_filter_motion" in parameter_codes
+    assert "bright_hot_authoring" in parameter_codes
+    assert risky_manifest["artifact_risk"]["summary"]["voice_count_with_parameter_risks"] == 1
+
+    safe_score = Score(f0=55.0)
+    safe_score.add_voice(
+        "lead",
+        synth_defaults={
+            "engine": "polyblep",
+            "waveform": "triangle",
+            "cutoff_hz": 2_200.0,
+            "resonance": 0.07,
+            "filter_env_amount": 0.18,
+            "filter_drive": 0.04,
+            "attack": 0.05,
+            "decay": 0.15,
+            "sustain_level": 0.45,
+            "release": 0.25,
+        },
+        velocity_to_params={
+            "cutoff_hz": VelocityParamMap(min_value=1_900.0, max_value=2_400.0),
+        },
+    )
+    for index, cutoff_hz in enumerate((1_900.0, 2_050.0, 2_200.0, 2_350.0)):
+        safe_score.add_note(
+            "lead",
+            start=index * 0.6,
+            duration=0.5,
+            partial=8.0,
+            amp_db=-18.0,
+            velocity=1.0,
+            synth={"cutoff_hz": cutoff_hz},
+        )
+
+    safe_manifest = save_analysis_artifacts(
+        output_prefix=tmp_path / "safe_piece",
+        mix_signal=safe_score.render(),
+        sample_rate=safe_score.sample_rate,
+        stems=safe_score.render_stems(),
+        score=safe_score,
+    )
+
+    assert safe_manifest["artifact_risk"]["parameter_surfaces"] == {}
 
 
 def test_compare_analysis_manifests_reports_mix_and_score_deltas(

@@ -899,6 +899,32 @@ Notes:
   behavior of the `fm` engine.
 - Supports `freq_trajectory` for pitch motion.
 
+Artifact-risk guidance:
+
+- `cutoff_hz`
+  Safe: roughly low-mid hundreds up through the low-to-mid 2000s for most
+  mellow voices.
+  Risky: sustained settings above ~3200 Hz when the patch is already hot or
+  resonance-heavy.
+- `filter_env_amount`
+  Safe: subtle to moderate motion.
+  Risky: values near or above ~0.8 when combined with broad cutoff movement.
+- `filter_drive`
+  Safe: restrained saturation, often below ~0.08 for normal authoring.
+  Risky: stronger drive layered with higher resonance and aggressive filter
+  envelopes.
+- `resonance`
+  Safe: low to moderate emphasis.
+  Risky: higher values when cutoff automation, drive, and bright source waves
+  are all active at once.
+
+Common interaction trap:
+
+- `high cutoff sweep + strong filter_env_amount + resonance + velocity-driven
+  cutoff` is the easiest way to author harsh, divebomb-like, or unstable
+  behavior by accident. If you want that sound, push it deliberately and expect
+  artifact-risk warnings in the render analysis.
+
 Presets:
 
 - `warm_lead` — saw wave with a gentle filter envelope, light resonance, and a

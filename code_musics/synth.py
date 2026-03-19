@@ -630,6 +630,8 @@ def _apply_plugin_processor(
         plugin_format=plugin_format,
         host=host,
     )
+    if hasattr(plugin, "reset"):
+        plugin.reset()
     resolved_params = dict(params or {})
     if configurer is not None:
         configurer(plugin, resolved_params)
@@ -961,7 +963,7 @@ def normalize_true_peak(
     target_peak_dbfs: float,
     oversample_factor: int = 4,
 ) -> np.ndarray:
-    """Apply attenuation when needed so the estimated true peak stays below ceiling."""
+    """Apply gain so the estimated true peak lands at or below the ceiling."""
     true_peak_amplitude = estimate_true_peak_amplitude(
         signal,
         oversample_factor=oversample_factor,
@@ -971,8 +973,6 @@ def normalize_true_peak(
 
     target_amplitude = db_to_amp(target_peak_dbfs)
     required_gain = target_amplitude / true_peak_amplitude
-    if required_gain >= 1.0:
-        return np.asarray(signal, dtype=np.float64)
     return np.asarray(signal, dtype=np.float64) * required_gain
 
 
@@ -1283,7 +1283,8 @@ def finalize_master(
     if max_iterations < 1:
         raise ValueError("max_iterations must be at least 1")
 
-    mastered = np.asarray(signal, dtype=np.float64)
+    source_signal = np.asarray(signal, dtype=np.float64)
+    mastered = source_signal
     if mastered.size == 0:
         return MasteringResult(
             signal=mastered,
@@ -1318,7 +1319,7 @@ def finalize_master(
     limiter_input_gain_db = target_lufs - current_lufs
     limiter_output_gain_db = 0.0
     mastered = apply_lsp_limiter(
-        mastered,
+        source_signal,
         threshold_db=true_peak_ceiling_dbfs,
         input_gain_db=limiter_input_gain_db,
         output_gain_db=limiter_output_gain_db,
@@ -1343,7 +1344,7 @@ def finalize_master(
 
         limiter_input_gain_db += loudness_error
         mastered = apply_lsp_limiter(
-            mastered,
+            source_signal,
             threshold_db=true_peak_ceiling_dbfs,
             input_gain_db=limiter_input_gain_db,
             output_gain_db=limiter_output_gain_db,

@@ -534,12 +534,14 @@ def test_finalize_master_targets_lufs_and_true_peak_with_limiter(
     assert mastering_result.true_peak_dbfs <= -0.5 + 0.1
 
 
-def test_finalize_master_iterative_limiter_reuses_current_mastered_buffer(
+def test_finalize_master_iterative_limiter_reapplies_gain_from_original_buffer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(synth, "has_external_plugin", lambda plugin_name: True)
     limiter_inputs: list[np.ndarray] = []
-    lufs_values = iter([(-30.0, 1.0), (-25.0, 1.0), (-18.0, 1.0), (-18.0, 1.0)])
+    lufs_values = iter(
+        [(-30.0, 1.0), (-25.0, 1.0), (-18.0, 1.0), (-18.0, 1.0), (-18.0, 1.0)]
+    )
 
     def fake_integrated_lufs(
         signal: np.ndarray,
@@ -575,10 +577,10 @@ def test_finalize_master_iterative_limiter_reuses_current_mastered_buffer(
     synth.finalize_master(signal, sample_rate=synth.SAMPLE_RATE, max_iterations=4)
 
     np.testing.assert_allclose(limiter_inputs[0], signal)
-    np.testing.assert_allclose(limiter_inputs[1], np.full_like(signal, 0.75))
+    np.testing.assert_allclose(limiter_inputs[1], signal)
 
 
-def test_normalize_true_peak_does_not_boost_under_ceiling_signal() -> None:
+def test_normalize_true_peak_boosts_under_ceiling_signal() -> None:
     signal = np.array([0.0, 0.1, -0.1, 0.0], dtype=np.float64)
 
     normalized = synth.normalize_true_peak(
@@ -587,7 +589,37 @@ def test_normalize_true_peak_does_not_boost_under_ceiling_signal() -> None:
         oversample_factor=1,
     )
 
-    np.testing.assert_allclose(normalized, signal)
+    assert np.max(np.abs(normalized)) == pytest.approx(synth.db_to_amp(-0.5))
+
+
+def test_finalize_master_boosts_to_true_peak_ceiling_when_headroom_remains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(synth, "has_external_plugin", lambda plugin_name: True)
+    monkeypatch.setattr(
+        synth,
+        "apply_lsp_limiter",
+        lambda signal, **kwargs: np.asarray(signal, dtype=np.float64)
+        * synth.db_to_amp(kwargs["input_gain_db"] + kwargs["output_gain_db"]),
+    )
+
+    signal = 0.04 * np.sin(
+        np.linspace(0.0, 40.0 * np.pi, synth.SAMPLE_RATE * 2, endpoint=False)
+    )
+
+    mastering_result = synth.finalize_master(
+        signal,
+        sample_rate=synth.SAMPLE_RATE,
+        target_lufs=-18.0,
+        true_peak_ceiling_dbfs=-0.5,
+        max_iterations=4,
+    )
+
+    assert mastering_result.true_peak_dbfs == pytest.approx(-0.5, abs=0.15)
+    assert np.max(np.abs(mastering_result.signal)) == pytest.approx(
+        synth.db_to_amp(-0.5),
+        abs=1e-3,
+    )
 
 
 def test_voice_pan_promotes_mono_voice_to_stereo() -> None:
@@ -893,6 +925,7 @@ def test_render_piece_writes_audio_and_plot(tmp_path: Path) -> None:
     manifest = json.loads(result.analysis_manifest_path.read_text(encoding="utf-8"))
     assert Path(manifest["manifest_path"]) == result.analysis_manifest_path
     assert Path(manifest["mix"]["artifacts"]["spectrum"]).exists()
+    assert "artifact_risk" in manifest
     assert "versions/" not in str(result.analysis_manifest_path)
     assert "versions/" not in manifest["manifest_path"]
     assert "versions/" not in manifest["mix"]["artifacts"]["spectrum"]
