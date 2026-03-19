@@ -444,7 +444,7 @@ def build_ji_chorale_v2_score() -> Score:
             "resonance": 0.15,
             "filter_env_amount": 0.13,
             "filter_env_decay": 1.0,
-            "filter_drive": 0.01,
+            "filter_drive": 0.00,
             "attack": 0.085,
             "decay": 1.25,
             "sustain_level": 0.60,
@@ -956,6 +956,10 @@ def build_ji_chorale_v2_score() -> Score:
         47, 0.0, [(F4, 4.0, 1.08), (E4, 4.0, 0.95), (D4, 4.0, 0.85), (C4, 4.0, 0.75)]
     )
     _add_counter(51, 0.0, [(E4, 4.0, 0.95), (Gs4, 4.0, 1.05), (E4, 4.0, 0.82)])
+    # Bar 54: quiet callback of the Development dun-dun motif (Fs4→E4→Cs4),
+    # the top 3 notes of the bar-30 line, compressed into the 4-beat gap before
+    # the tail.  Soft and diminuendo — a memory, not a statement.
+    _add_counter(54, 0.0, [(Fs4, 1.5, 0.78), (E4, 1.5, 0.70), (Cs4, 1.0, 0.62)])
 
     # ══════════════════════════════════════════════════════════════════════
     # LEAD MELODY

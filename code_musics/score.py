@@ -531,7 +531,7 @@ class Score:
         shifted_voices: dict[str, Voice] = {}
         for voice_name, voice in self.voices.items():
             kept_notes = [
-                replace(note, start=max(0.0, note.start - start_seconds))
+                replace(note, start=max(0.0, note.start - start_seconds), amp_db=None)
                 for note in voice.notes
                 if (note.start + note.duration) > start_seconds
                 and note.start < end_seconds
