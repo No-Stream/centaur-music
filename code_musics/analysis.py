@@ -380,6 +380,7 @@ def save_analysis_artifacts(
     sample_rate: int,
     pre_export_mix_signal: np.ndarray | None = None,
     stems: dict[str, np.ndarray] | None = None,
+    effect_analysis: dict[str, Any] | None = None,
     score: Score | None = None,
     piece_sections: tuple[PieceSection, ...] = (),
     reference_tilt_db_per_octave: float = -3.0,
@@ -401,6 +402,9 @@ def save_analysis_artifacts(
             "artifacts": {},
         },
         "voices": {},
+        "effect_analysis": effect_analysis
+        if effect_analysis is not None
+        else {"mix_effects": [], "voice_effects": {}},
     }
     if pre_export_mix_signal is not None:
         pre_export_analysis = analyze_audio(
@@ -496,6 +500,7 @@ def save_analysis_artifacts(
     )
     manifest["artifact_risk"] = artifact_risk_report.to_dict()
     _log_artifact_risk_report(artifact_risk_report)
+    _log_effect_analysis_warnings(manifest["effect_analysis"])
 
     manifest_path = prefix_path.with_name(f"{prefix_path.name}.analysis.json")
     manifest["manifest_path"] = str(manifest_path)
@@ -1536,6 +1541,36 @@ def _log_artifact_risk(*, scope: str, risk: ArtifactRiskWarning) -> None:
         risk.message,
         f" ({metric_items})" if metric_items else "",
     )
+
+
+def _log_effect_analysis_warnings(effect_analysis: dict[str, Any]) -> None:
+    for entry in effect_analysis.get("mix_effects", []):
+        _log_effect_entry_warnings(scope="mix_fx", entry=entry)
+    for voice_name, entries in effect_analysis.get("voice_effects", {}).items():
+        for entry in entries:
+            _log_effect_entry_warnings(scope=f"voice_fx:{voice_name}", entry=entry)
+
+
+def _log_effect_entry_warnings(*, scope: str, entry: dict[str, Any]) -> None:
+    warnings = entry.get("warnings", [])
+    for warning in warnings:
+        metric_items = ", ".join(
+            f"{key}={value}"
+            for key, value in sorted(warning.get("metrics", {}).items())
+        )
+        log_message = "Effect analysis [%s] %s/%s (%s): %s%s"
+        log_args = (
+            scope,
+            warning.get("severity", "warning"),
+            warning.get("code", "unknown"),
+            entry.get("display_name", entry.get("kind", "effect")),
+            warning.get("message", ""),
+            f" ({metric_items})" if metric_items else "",
+        )
+        if warning.get("severity") == "severe":
+            logger.error(log_message, *log_args)
+        else:
+            logger.warning(log_message, *log_args)
 
 
 def _compute_high_band_emphasis_db(band_energy_db: dict[str, float]) -> float:

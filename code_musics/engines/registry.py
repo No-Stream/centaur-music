@@ -1,4 +1,4 @@
-"""Engine registry and preset resolution."""
+"""Engine registry, synth-spec normalization, and preset resolution."""
 
 from __future__ import annotations
 
@@ -17,6 +17,55 @@ _ENGINES: dict[str, EngineRenderer] = {
     "filtered_stack": filtered_stack.render,
     "noise_perc": noise_perc.render,
     "polyblep": polyblep.render,
+}
+
+_ENV_ALIAS_TO_CANONICAL: dict[str, str] = {
+    "attack_ms": "attack",
+    "attack": "attack",
+    "decay_ms": "decay",
+    "decay": "decay",
+    "sustain_ratio": "sustain_level",
+    "sustain_level": "sustain_level",
+    "release_ms": "release",
+    "release": "release",
+    "attack_scale": "attack_scale",
+    "release_scale": "release_scale",
+}
+
+_SECONDS_FROM_MS_KEYS = {
+    "attack_ms",
+    "decay_ms",
+    "release_ms",
+}
+
+_PARAM_ALIAS_TO_CANONICAL: dict[str, str] = {
+    "filter_env_depth_ratio": "filter_env_amount",
+    "filter_env_amount": "filter_env_amount",
+    "filter_env_decay_ms": "filter_env_decay",
+    "filter_env_decay": "filter_env_decay",
+    "index_decay_ms": "index_decay",
+    "index_decay": "index_decay",
+    "index_sustain_ratio": "index_sustain",
+    "index_sustain": "index_sustain",
+    "pitch_decay_ms": "pitch_decay",
+    "pitch_decay": "pitch_decay",
+    "tone_decay_ms": "tone_decay",
+    "tone_decay": "tone_decay",
+    "noise_mix_ratio": "noise_mix",
+    "noise_mix": "noise_mix",
+    "feedback_ratio": "feedback",
+    "feedback": "feedback",
+    "resonance_ratio": "resonance",
+    "resonance": "resonance",
+    "filter_drive_ratio": "filter_drive",
+    "filter_drive": "filter_drive",
+}
+
+_SECONDS_FROM_MS_PARAM_KEYS = {
+    "filter_env_decay_ms",
+    "index_decay_ms",
+    "pitch_decay_ms",
+    "tone_decay_ms",
 }
 
 _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
@@ -400,9 +449,51 @@ def register_presets(engine_name: str, presets: dict[str, dict[str, Any]]) -> No
     engine_presets.update(presets)
 
 
+def normalize_synth_spec(params: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize structured/unit-bearing synth params into the flat legacy form."""
+    if params is None:
+        return {}
+
+    normalized = dict(params)
+    env = normalized.pop("env", None)
+    engine_params = normalized.pop("params", None)
+
+    if env is not None:
+        if not isinstance(env, dict):
+            raise ValueError("synth env must be a dict when provided")
+        _merge_alias_group(
+            destination=normalized,
+            source=env,
+            alias_map=_ENV_ALIAS_TO_CANONICAL,
+            ms_keys=_SECONDS_FROM_MS_KEYS,
+        )
+
+    if engine_params is not None:
+        if not isinstance(engine_params, dict):
+            raise ValueError("synth params must be a dict when provided")
+        _merge_alias_group(
+            destination=normalized,
+            source=engine_params,
+            alias_map=_PARAM_ALIAS_TO_CANONICAL,
+            ms_keys=_SECONDS_FROM_MS_PARAM_KEYS,
+        )
+
+    _rewrite_aliases_in_place(
+        destination=normalized,
+        alias_map=_ENV_ALIAS_TO_CANONICAL,
+        ms_keys=_SECONDS_FROM_MS_KEYS,
+    )
+    _rewrite_aliases_in_place(
+        destination=normalized,
+        alias_map=_PARAM_ALIAS_TO_CANONICAL,
+        ms_keys=_SECONDS_FROM_MS_PARAM_KEYS,
+    )
+    return normalized
+
+
 def resolve_synth_params(params: dict[str, Any]) -> dict[str, Any]:
     """Resolve preset-backed synth params into a single parameter dictionary."""
-    resolved = dict(params)
+    resolved = normalize_synth_spec(params)
     engine_name = str(resolved.get("engine", "additive"))
     preset_name = resolved.pop("preset", None)
     if preset_name is None:
@@ -417,6 +508,44 @@ def resolve_synth_params(params: dict[str, Any]) -> dict[str, Any]:
     merged.update(resolved)
     merged["engine"] = engine_name
     return merged
+
+
+def _merge_alias_group(
+    *,
+    destination: dict[str, Any],
+    source: dict[str, Any],
+    alias_map: dict[str, str],
+    ms_keys: set[str],
+) -> None:
+    rewritten = dict(source)
+    _rewrite_aliases_in_place(
+        destination=rewritten,
+        alias_map=alias_map,
+        ms_keys=ms_keys,
+    )
+    destination.update(rewritten)
+
+
+def _rewrite_aliases_in_place(
+    *,
+    destination: dict[str, Any],
+    alias_map: dict[str, str],
+    ms_keys: set[str],
+) -> None:
+    resolved_canonical_keys: set[str] = set()
+    for alias_name, canonical_name in alias_map.items():
+        if alias_name not in destination:
+            continue
+        if canonical_name in resolved_canonical_keys:
+            if alias_name != canonical_name:
+                destination.pop(alias_name)
+            continue
+        raw_value = destination.pop(alias_name)
+        if alias_name in ms_keys:
+            destination[canonical_name] = float(raw_value) / 1000.0
+        else:
+            destination[canonical_name] = raw_value
+        resolved_canonical_keys.add(canonical_name)
 
 
 def render_note_signal(

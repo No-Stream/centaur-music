@@ -51,9 +51,10 @@
   `voiced_ratio_chord(...)` / `progression(...)` for harmonic writing. The optional
   high-level timing layer adds `Timeline`, rhythmic values like `Q` / `E`, optional
   `SwingSpec` feel control for eighth- or sixteenth-note swing, and grid-style
-  helpers such as `grid_line(...)`, `grid_sequence(...)`, `grid_canon(...)`, and
-  `metered_sections(...)` that compile back down to the existing seconds-based
-  score model. Full API details live in
+  helpers such as `grid_line(...)`, `grid_sequence(...)`, `grid_canon(...)`,
+  `metered_sections(...)`, and `bar_automation(...)` for bar-aware voice timbre
+  arcs that compile back down to the existing seconds-based score model. Full API
+  details live in
   `docs/composition_api.md`.
 - For detailed score-surface semantics, parameter meanings, and render-order
   behavior, read `docs/score_api.md`.
@@ -74,6 +75,9 @@
 - `master_input_gain_db` trims the summed mix into `Score.master_effects`. Leave it
   at `0.0` by default; reach for it only when you intentionally want to change
   how hard the master bus glue/tone chain is being driven.
+- `Score` now auto-stages the summed post-fader mix into the master bus by
+  default, so voice `mix_db` is mainly for balance rather than manual premaster
+  loudness management.
 - Use note-level `velocity` for accents and phrasing. By default it affects loudness
   through `velocity_db_per_unit`, and it can also drive synth params through
   `VelocityParamMap`.
@@ -228,6 +232,9 @@ See `FUTURE.md` for way more ideas.
 - Score analysis now includes timing-drift diagnostics. Overall drift is fine, but
   inter-voice spread should stay musically plausible across the piece; keep the
   warning thresholds and artifact details documented under `docs/`.
+- Render analysis now also records effect-chain diagnostics for compressors,
+  saturation, and plugin stages so agents can see gain reduction, clipping-like
+  density, and "mostly inactive" vs aggressive behavior in the analysis manifest.
 - WAV export logging now reports peak, true-peak, and integrated LUFS at write
   time, and warns when an exported master lands suspiciously far below the
   expected ceiling.

@@ -16,7 +16,7 @@ from code_musics.analysis import (
 )
 from code_musics.humanize import TimingHumanizeSpec
 from code_musics.pieces.registry import PieceSection
-from code_musics.score import Score, VelocityParamMap
+from code_musics.score import EffectSpec, Score, VelocityParamMap
 
 
 def test_analyze_audio_reports_expected_band_bias() -> None:
@@ -166,16 +166,23 @@ def test_build_score_timeline_includes_sections_and_resolved_notes() -> None:
 
 def test_save_analysis_artifacts_writes_manifest_and_plots(tmp_path: Path) -> None:
     score = Score(f0=55.0)
+    score.master_effects = [
+        EffectSpec("compressor", {"threshold_db": -30.0, "ratio": 3.0})
+    ]
     score.add_note("bass", start=0.0, duration=1.0, partial=2.0, amp=0.2)
     score.add_note("lead", start=0.25, duration=0.75, partial=6.0, amp=0.2)
 
     stems = score.render_stems()
     mix = score.render()
+    _mix_with_effects, _stems_with_effects, effect_analysis = (
+        score.render_with_effect_analysis()
+    )
     manifest = save_analysis_artifacts(
         output_prefix=tmp_path / "example_piece",
         mix_signal=mix,
         sample_rate=score.sample_rate,
         stems=stems,
+        effect_analysis=effect_analysis,
         score=score,
         piece_sections=(
             PieceSection(label="Intro", start_seconds=0.0, end_seconds=1.0),
@@ -193,6 +200,8 @@ def test_save_analysis_artifacts_writes_manifest_and_plots(tmp_path: Path) -> No
     assert Path(saved_manifest["score"]["artifacts"]["density"]).exists()
     assert Path(saved_manifest["score"]["artifacts"]["timeline"]).exists()
     assert Path(saved_manifest["voices"]["bass"]["artifacts"]["spectrum"]).exists()
+    assert saved_manifest["effect_analysis"] == effect_analysis
+    assert saved_manifest["effect_analysis"]["mix_effects"]
 
 
 def test_save_analysis_artifacts_records_pre_export_mix_summary(tmp_path: Path) -> None:

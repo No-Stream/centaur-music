@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import pytest
 
+from code_musics.automation import AutomationSegment
 from code_musics.composition import (
     ArticulationSpec,
     ContextSectionSpec,
     HarmonicContext,
     MeteredSectionSpec,
     RhythmCell,
+    bar_automation,
     build_context_sections,
     canon,
     concat,
@@ -166,6 +168,48 @@ def test_metered_sections_build_context_windows_from_bars() -> None:
     assert [section.context.tonic for section in sections] == pytest.approx(
         [220.0, 330.0]
     )
+
+
+def test_bar_automation_builds_linear_segments_from_bar_points() -> None:
+    timeline = Timeline(bpm=120.0, meter=(4, 4))
+
+    automation = bar_automation(
+        target="cutoff_hz",
+        timeline=timeline,
+        points=((1, 0.0, 600.0), (3, 0.0, 1200.0), (4, 2.0, 900.0)),
+        clamp_min=400.0,
+    )
+
+    assert automation.default_value == pytest.approx(600.0)
+    assert automation.clamp_min == pytest.approx(400.0)
+    assert automation.target.name == "cutoff_hz"
+    assert automation.segments == (
+        AutomationSegment(
+            start=0.0,
+            end=4.0,
+            shape="linear",
+            start_value=600.0,
+            end_value=1200.0,
+        ),
+        AutomationSegment(
+            start=4.0,
+            end=7.0,
+            shape="linear",
+            start_value=1200.0,
+            end_value=900.0,
+        ),
+    )
+
+
+def test_bar_automation_rejects_non_increasing_points() -> None:
+    timeline = Timeline(bpm=120.0, meter=(4, 4))
+
+    with pytest.raises(ValueError, match="strictly increasing"):
+        bar_automation(
+            target="cutoff_hz",
+            timeline=timeline,
+            points=((2, 0.0, 600.0), (2, 0.0, 900.0)),
+        )
 
 
 def test_ratio_line_resolves_local_context_into_frequency_phrase() -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,7 +16,11 @@ from code_musics.automation import (
     build_pitch_ratio_trajectory,
     has_pitch_ratio_automation,
 )
-from code_musics.engines import render_note_signal, resolve_synth_params
+from code_musics.engines import (
+    normalize_synth_spec,
+    render_note_signal,
+    resolve_synth_params,
+)
 from code_musics.humanize import (
     EnvelopeHumanizeSpec,
     TimingHumanizeSpec,
@@ -257,6 +261,9 @@ class Score:
     f0: float
     sample_rate: int = synth.SAMPLE_RATE
     timing_humanize: TimingHumanizeSpec | None = None
+    auto_master_gain_stage: bool = True
+    master_bus_target_lufs: float = -24.0
+    master_bus_max_true_peak_dbfs: float = -6.0
     master_input_gain_db: float = 0.0
     master_effects: list[EffectSpec] = field(default_factory=list)
     voices: dict[str, Voice] = field(default_factory=dict)
@@ -264,6 +271,10 @@ class Score:
     time_reference_total_dur: float | None = None
 
     def __post_init__(self) -> None:
+        if not np.isfinite(self.master_bus_target_lufs):
+            raise ValueError("master_bus_target_lufs must be finite")
+        if not np.isfinite(self.master_bus_max_true_peak_dbfs):
+            raise ValueError("master_bus_max_true_peak_dbfs must be finite")
         if not np.isfinite(self.master_input_gain_db):
             raise ValueError("master_input_gain_db must be finite")
 
@@ -391,26 +402,39 @@ class Score:
 
     def render(self) -> np.ndarray:
         """Render the score to mono or stereo audio."""
-        rendered_voices = list(self.render_stems().values())
-
-        if not rendered_voices:
+        stems = self.render_stems()
+        if not stems:
             return np.zeros(0)
+        mix = self._stack_signals(list(stems.values()))
+        return self._apply_master_bus_processing(mix)
 
-        mix = self._stack_signals(rendered_voices)
-        if self.master_input_gain_db != 0.0:
-            mix = mix * synth.db_to_amp(self.master_input_gain_db)
-        if self.master_effects:
-            mix = synth.apply_effect_chain(mix, self.master_effects)
+    def render_with_effect_analysis(
+        self,
+    ) -> tuple[np.ndarray, dict[str, np.ndarray], dict[str, Any]]:
+        """Render the score plus per-effect diagnostics for agents and analysis."""
+        stems, voice_effects = self._render_stems_internal(collect_effect_analysis=True)
+        if not stems:
+            return np.zeros(0), {}, {"mix_effects": [], "voice_effects": {}}
 
-        # Transparent output ceiling: only reduces gain if the signal exceeds
-        # -0.5 dBFS (~0.944), so normal mixes are untouched but accidental
-        # overloads cannot hard-clip the final output.
-        ceiling = 0.944
-        peak = float(np.max(np.abs(mix))) if mix.size > 0 else 0.0
-        if peak > ceiling:
-            mix = mix * (ceiling / peak)
+        mix = self._stack_signals(list(stems.values()))
+        mix_effects: list[synth.EffectAnalysisEntry] = []
+        mix = self._apply_master_bus_processing(
+            mix,
+            collect_effect_analysis=True,
+            mix_effects=mix_effects,
+        )
 
-        return mix
+        return (
+            mix,
+            stems,
+            {
+                "mix_effects": [entry.to_dict() for entry in mix_effects],
+                "voice_effects": {
+                    voice_name: [entry.to_dict() for entry in entries]
+                    for voice_name, entries in voice_effects.items()
+                },
+            },
+        )
 
     def extract_window(
         self,
@@ -445,6 +469,9 @@ class Score:
             f0=self.f0,
             sample_rate=self.sample_rate,
             timing_humanize=self.timing_humanize,
+            auto_master_gain_stage=self.auto_master_gain_stage,
+            master_bus_target_lufs=self.master_bus_target_lufs,
+            master_bus_max_true_peak_dbfs=self.master_bus_max_true_peak_dbfs,
             master_input_gain_db=self.master_input_gain_db,
             master_effects=list(self.master_effects),
             voices=shifted_voices,
@@ -454,19 +481,44 @@ class Score:
 
     def render_stems(self) -> dict[str, np.ndarray]:
         """Render each voice independently before master-bus effects."""
+        rendered_stems, _ = self._render_stems_internal(collect_effect_analysis=False)
+        return rendered_stems
+
+    def render_stems_with_effect_analysis(
+        self,
+    ) -> tuple[dict[str, np.ndarray], dict[str, list[dict[str, Any]]]]:
+        """Render stems plus voice-level effect diagnostics."""
+        rendered_stems, voice_effects = self._render_stems_internal(
+            collect_effect_analysis=True
+        )
+        return rendered_stems, {
+            voice_name: [entry.to_dict() for entry in entries]
+            for voice_name, entries in voice_effects.items()
+        }
+
+    def _render_stems_internal(
+        self,
+        *,
+        collect_effect_analysis: bool,
+    ) -> tuple[dict[str, np.ndarray], dict[str, list[synth.EffectAnalysisEntry]]]:
+        """Render stems and optionally capture effect-chain diagnostics."""
         rendered_stems: dict[str, np.ndarray] = {}
+        voice_effects: dict[str, list[synth.EffectAnalysisEntry]] = {}
         timing_offsets = self.resolve_timing_offsets()
         velocity_multipliers = self._build_velocity_multiplier_map()
         for voice_name, voice in self.voices.items():
-            rendered_voice = self._render_voice(
+            rendered_voice, rendered_effect_analysis = self._render_voice(
                 voice_name=voice_name,
                 voice=voice,
                 timing_offsets=timing_offsets,
                 velocity_multipliers=velocity_multipliers,
+                collect_effect_analysis=collect_effect_analysis,
             )
             if rendered_voice.size > 0:
                 rendered_stems[voice_name] = rendered_voice
-        return rendered_stems
+            if rendered_effect_analysis:
+                voice_effects[voice_name] = rendered_effect_analysis
+        return rendered_stems, voice_effects
 
     def resolve_timing_offsets(self) -> dict[tuple[str, int], float]:
         """Return the deterministic render-time timing offset for each note."""
@@ -548,12 +600,13 @@ class Score:
         voice: Voice,
         timing_offsets: dict[tuple[str, int], float],
         velocity_multipliers: dict[tuple[str, int], float],
-    ) -> np.ndarray:
+        collect_effect_analysis: bool,
+    ) -> tuple[np.ndarray, list[synth.EffectAnalysisEntry]]:
         voice_signals: list[np.ndarray] = []
         for note_index, note in enumerate(voice.notes):
-            synth_params = dict(voice.synth_defaults)
+            synth_params = normalize_synth_spec(voice.synth_defaults)
             if note.synth is not None:
-                synth_params.update(note.synth)
+                synth_params.update(normalize_synth_spec(note.synth))
             synth_params = resolve_synth_params(synth_params)
             resolved_velocity = float(
                 np.clip(
@@ -663,7 +716,7 @@ class Score:
             )
 
         if not voice_signals:
-            return np.zeros(0)
+            return np.zeros(0), []
 
         voice_mix = self._stack_signals(voice_signals)
         if voice.normalize_lufs is not None:
@@ -676,11 +729,27 @@ class Score:
             voice_mix = voice_mix * synth.db_to_amp(voice.pre_fx_gain_db)
         if voice.pan != 0.0:
             voice_mix = synth.apply_pan(voice_mix, pan=voice.pan)
+        effect_analysis: list[synth.EffectAnalysisEntry] = []
         if voice.effects:
-            voice_mix = synth.apply_effect_chain(voice_mix, voice.effects)
+            if collect_effect_analysis:
+                rendered_voice_mix, rendered_effect_analysis = cast(
+                    tuple[np.ndarray, list[synth.EffectAnalysisEntry]],
+                    synth.apply_effect_chain(
+                        voice_mix,
+                        voice.effects,
+                        return_analysis=True,
+                    ),
+                )
+                voice_mix = rendered_voice_mix
+                effect_analysis = rendered_effect_analysis
+            else:
+                voice_mix = cast(
+                    np.ndarray,
+                    synth.apply_effect_chain(voice_mix, voice.effects),
+                )
         if voice.mix_db != 0.0:
             voice_mix = voice_mix * synth.db_to_amp(voice.mix_db)
-        return voice_mix
+        return voice_mix, effect_analysis
 
     def _timing_targets(self) -> list[TimingTarget]:
         targets: list[TimingTarget] = []
@@ -719,6 +788,54 @@ class Score:
         if self.time_reference_total_dur is not None:
             return self.time_reference_total_dur
         return self.time_origin_seconds + self.total_dur
+
+    def _apply_master_bus_processing(
+        self,
+        mix: np.ndarray,
+        *,
+        collect_effect_analysis: bool = False,
+        mix_effects: list[synth.EffectAnalysisEntry] | None = None,
+    ) -> np.ndarray:
+        processed_mix = np.asarray(mix, dtype=np.float64)
+        if self.auto_master_gain_stage:
+            processed_mix = synth.gain_stage_for_master_bus(
+                processed_mix,
+                sample_rate=self.sample_rate,
+                target_lufs=self.master_bus_target_lufs,
+                max_true_peak_dbfs=self.master_bus_max_true_peak_dbfs,
+            )
+        if self.master_input_gain_db != 0.0:
+            processed_mix = processed_mix * synth.db_to_amp(self.master_input_gain_db)
+        if self.master_effects:
+            if collect_effect_analysis:
+                mastered_mix, effect_entries = cast(
+                    tuple[np.ndarray, list[synth.EffectAnalysisEntry]],
+                    synth.apply_effect_chain(
+                        processed_mix,
+                        self.master_effects,
+                        return_analysis=True,
+                    ),
+                )
+                processed_mix = mastered_mix
+                if mix_effects is not None:
+                    mix_effects.extend(effect_entries)
+            else:
+                processed_mix = cast(
+                    np.ndarray,
+                    synth.apply_effect_chain(
+                        processed_mix,
+                        self.master_effects,
+                    ),
+                )
+
+        # Transparent output ceiling: only reduces gain if the signal exceeds
+        # -0.5 dBFS (~0.944), so normal mixes are untouched but accidental
+        # overloads cannot hard-clip the final output.
+        ceiling = 0.944
+        peak = float(np.max(np.abs(processed_mix))) if processed_mix.size > 0 else 0.0
+        if peak > ceiling:
+            processed_mix = processed_mix * (ceiling / peak)
+        return processed_mix
 
     def _resolve_freq(self, note: NoteEvent) -> float:
         if note.freq is not None:

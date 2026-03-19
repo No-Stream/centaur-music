@@ -3,6 +3,10 @@
 This document describes the synth-facing API used by `Voice.synth_defaults` and
 per-note `synth={...}` overrides.
 
+The recommended authoring style is now a structured synth spec with explicit
+units in parameter names. The legacy flat dict interface still works and remains
+fully supported for backward compatibility.
+
 The rendering path is frequency-first:
 
 - `NoteEvent.partial` resolves against `Score.f0`
@@ -21,6 +25,39 @@ The rendering path is frequency-first:
 - [code_musics/engines/filtered_stack.py](/home/jan/workspace/code-musics/code_musics/engines/filtered_stack.py)
 - [code_musics/engines/noise_perc.py](/home/jan/workspace/code-musics/code_musics/engines/noise_perc.py)
 
+## Canonical Authoring Shape
+
+Preferred shape:
+
+```python
+synth_defaults = {
+    "engine": "polyblep",
+    "preset": "warm_lead",
+    "env": {
+        "attack_ms": 30.0,
+        "decay_ms": 180.0,
+        "sustain_ratio": 0.62,
+        "release_ms": 280.0,
+    },
+    "params": {
+        "cutoff_hz": 2200.0,
+        "resonance_ratio": 0.12,
+        "filter_env_depth_ratio": 0.7,
+        "filter_env_decay_ms": 240.0,
+        "filter_drive_ratio": 0.18,
+    },
+}
+```
+
+Compatibility notes:
+
+- flat legacy keys like `attack`, `release`, `sustain_level`, and
+  `filter_env_decay` still work
+- flat unit-bearing aliases like `attack_ms` and `release_ms` also work
+- if both legacy and new names are present, the explicit unit-bearing / new names win
+- nested `env={...}` and `params={...}` are normalized before voice defaults and
+  note overrides are merged, so note-level partial overrides compose cleanly
+
 ## Parameter Resolution
 
 Synth params are resolved in this order:
@@ -33,15 +70,15 @@ Explicit params always override preset values.
 
 If `engine` is omitted, it defaults to `additive`.
 
-## Shared Parameters
+## Shared Envelope Parameters
 
 These are consumed by the score renderer after the engine returns a raw mono signal:
 
 - `amp_db: float`
-- `attack: float`
-- `decay: float`
-- `sustain_level: float`
-- `release: float`
+- `env.attack_ms: float`
+- `env.decay_ms: float`
+- `env.sustain_ratio: float`
+- `env.release_ms: float`
 
 `amp_db` is the recommended authoring control for note loudness; it is converted
 to the renderer's linear `amp` internally. Linear `amp` is still supported, but
@@ -49,9 +86,20 @@ it is less intuitive for balancing voices.
 
 These control the ADSR envelope applied in [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py).
 
+Canonical meanings:
+
+- `attack_ms`, `decay_ms`, and `release_ms` are durations in milliseconds
+- `sustain_ratio` is a normalized sustain level in the range `0..1`
+
 The composition helper layer may also attach note-level `attack_scale` and
 `release_scale` values inside `NoteEvent.synth`; the score renderer applies them
 after merging voice defaults and note overrides.
+
+Legacy compatibility:
+
+- `attack`, `decay`, and `release` are still accepted in seconds
+- `sustain_level` is still accepted as the legacy name for `sustain_ratio`
+- top-level flat aliases like `attack_ms=30.0` are accepted if you prefer a flat style
 
 ## Velocity and Expression Resolution
 
@@ -113,7 +161,10 @@ from code_musics.score import VelocityParamMap
 
 score.add_voice(
     "bass",
-    synth_defaults={"engine": "filtered_stack", "preset": "round_bass"},
+    synth_defaults={
+        "engine": "filtered_stack",
+        "preset": "round_bass",
+    },
     velocity_humanize=None,
     velocity_to_params={
         "cutoff_hz": VelocityParamMap(
@@ -299,6 +350,20 @@ Native stereo-linked compressor for glue, stem control, and master-bus shaping.
 It supports both feedforward and feedback topologies and can EQ the
 detector/listener path without EQing the audible signal itself.
 
+Render analysis records native compressor metering in the analysis manifest.
+Current effect-analysis metrics include:
+
+- `avg_gain_reduction_db`
+- `max_gain_reduction_db`
+- `p95_gain_reduction_db`
+- `active_gain_reduction_fraction`
+- `avg_gain_reduction_when_active_db`
+- `below_1db_fraction`
+- `longest_run_above_1db_seconds`
+
+Those diagnostics are used to warn when a compressor appears mostly inactive or
+unusually aggressive.
+
 Parameters:
 
 - `threshold_db: float`
@@ -372,6 +437,14 @@ Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musi
 
 Generic external-plugin effect. Use this when you want to host a plugin directly
 instead of adding a dedicated wrapper kind.
+
+Render analysis cannot usually read a hosted plugin's internal meter state
+directly, so plugin stages currently use before/after diagnostics in the
+analysis manifest. Current metrics include peak and true-peak deltas,
+crest-factor change, clipping and near-full-scale occupancy deltas, and
+spectral-centroid movement. That is the current agent-facing legibility layer
+for plugin-driven compression, distortion, warmth, and related dynamic/color
+stages.
 
 Parameters:
 
@@ -461,7 +534,11 @@ Example:
 ```python
 score.add_voice(
     "pad",
-    synth_defaults={"engine": "filtered_stack", "preset": "warm_pad"},
+    synth_defaults={
+        "engine": "filtered_stack",
+        "preset": "warm_pad",
+        "env": {"attack_ms": 400.0, "release_ms": 1400.0},
+    },
     effects=[EffectSpec("chorus", {"preset": "juno_subtle", "mix": 0.28})],
 )
 ```
@@ -488,6 +565,11 @@ Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musi
 
 Subtle analog-style warming stage intended for tube/iron/preamp color rather
 than obvious distortion.
+
+Render analysis records saturation-stage diagnostics in the analysis manifest.
+Current metrics include the shared before/after density/clipping proxies plus a
+native `shaper_hot_fraction` metric that estimates how often the internal shaper
+is being driven into a clearly nonlinear region.
 
 Parameters:
 
@@ -805,13 +887,14 @@ score.add_voice(
     "pad",
     synth_defaults={
         "engine": "additive",
-        "n_harmonics": 10,
-        "harmonic_rolloff": 0.55,
-        "brightness_tilt": -0.1,
-        "unison_voices": 3,
-        "detune_cents": 5.0,
-        "attack": 0.4,
-        "release": 1.2,
+        "env": {"attack_ms": 400.0, "release_ms": 1200.0},
+        "params": {
+            "n_harmonics": 10,
+            "harmonic_rolloff": 0.55,
+            "brightness_tilt": -0.1,
+            "unison_voices": 3,
+            "detune_cents": 5.0,
+        },
     },
 )
 ```
@@ -835,6 +918,11 @@ Parameters:
 - `index_sustain: float`
   Post-decay multiplier applied to `mod_index`.
 
+Recommended authoring aliases:
+
+- `params.index_decay_ms`
+- `params.index_sustain_ratio`
+
 Validation:
 
 - `carrier_ratio > 0`
@@ -849,13 +937,14 @@ score.add_voice(
     "lead",
     synth_defaults={
         "engine": "fm",
-        "carrier_ratio": 1.0,
-        "mod_ratio": 7 / 4,
-        "mod_index": 2.8,
-        "index_decay": 0.1,
-        "index_sustain": 0.45,
-        "attack": 0.02,
-        "release": 0.35,
+        "env": {"attack_ms": 20.0, "release_ms": 350.0},
+        "params": {
+            "carrier_ratio": 1.0,
+            "mod_ratio": 7 / 4,
+            "mod_index": 2.8,
+            "index_decay_ms": 100.0,
+            "index_sustain_ratio": 0.45,
+        },
     },
 )
 ```
@@ -891,6 +980,13 @@ Parameters:
   Analog-inspired drive amount inside the ZDF filter path. `0.0` is clean; higher values
   thicken and soften the response. Default `0.0`.
 
+Recommended authoring aliases:
+
+- `params.resonance_ratio`
+- `params.filter_env_depth_ratio`
+- `params.filter_env_decay_ms`
+- `params.filter_drive_ratio`
+
 Validation:
 
 - `n_harmonics >= 1`
@@ -906,15 +1002,16 @@ score.add_voice(
     "bass",
     synth_defaults={
         "engine": "filtered_stack",
-        "waveform": "square",
-        "n_harmonics": 12,
-        "cutoff_hz": 550.0,
-        "keytrack": 0.15,
-        "resonance": 0.15,
-        "filter_env_amount": 0.8,
-        "filter_env_decay": 0.18,
-        "attack": 0.01,
-        "release": 0.3,
+        "env": {"attack_ms": 10.0, "release_ms": 300.0},
+        "params": {
+            "waveform": "square",
+            "n_harmonics": 12,
+            "cutoff_hz": 550.0,
+            "keytrack": 0.15,
+            "resonance_ratio": 0.15,
+            "filter_env_depth_ratio": 0.8,
+            "filter_env_decay_ms": 180.0,
+        },
     },
 )
 ```
@@ -936,6 +1033,12 @@ Parameters:
 - `click_amount: float`
   Level of the short transient click layer.
 
+Recommended authoring aliases:
+
+- `params.noise_mix_ratio`
+- `params.pitch_decay_ms`
+- `params.tone_decay_ms`
+
 Validation:
 
 - `0 <= noise_mix <= 1`
@@ -955,11 +1058,13 @@ score.add_voice(
     "perc",
     synth_defaults={
         "engine": "noise_perc",
-        "noise_mix": 0.7,
-        "pitch_decay": 0.04,
-        "tone_decay": 0.12,
-        "bandpass_ratio": 1.5,
-        "click_amount": 0.1,
+        "params": {
+            "noise_mix_ratio": 0.7,
+            "pitch_decay_ms": 40.0,
+            "tone_decay_ms": 120.0,
+            "bandpass_ratio": 1.5,
+            "click_amount": 0.1,
+        },
     },
 )
 ```
@@ -1075,16 +1180,17 @@ score.add_voice(
     "lead",
     synth_defaults={
         "engine": "polyblep",
-        "waveform": "saw",
-        "cutoff_hz": 2500.0,
-        "filter_mode": "lowpass",
-        "keytrack": 0.08,
-        "resonance": 0.12,
-        "filter_drive": 0.18,
-        "filter_env_amount": 0.6,
-        "filter_env_decay": 0.5,
-        "attack": 0.01,
-        "release": 0.3,
+        "env": {"attack_ms": 10.0, "release_ms": 300.0},
+        "params": {
+            "waveform": "saw",
+            "cutoff_hz": 2500.0,
+            "filter_mode": "lowpass",
+            "keytrack": 0.08,
+            "resonance_ratio": 0.12,
+            "filter_drive_ratio": 0.18,
+            "filter_env_depth_ratio": 0.6,
+            "filter_env_decay_ms": 500.0,
+        },
     },
 )
 ```

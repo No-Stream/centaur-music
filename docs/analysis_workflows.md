@@ -157,6 +157,34 @@ Current analysis outputs for score-backed renders include:
 - timeline JSON
 - export-time log lines with peak, true-peak, and integrated LUFS diagnostics
 - drift summary and drift-window stats inside the score analysis payload
+- effect-chain diagnostics for mix and voice effects, including native
+  compressor gain-reduction stats plus before/after density/clipping proxies for
+  saturation and plugin stages
+
+## Effect Analysis
+
+The analysis manifest now includes an `effect_analysis` section with:
+
+- `mix_effects`: ordered diagnostics for `Score.master_effects`
+- `voice_effects`: ordered diagnostics for each `Voice.effects` chain
+
+Current effect metrics are intentionally pragmatic:
+
+- native `compressor` stages report exact average, max, and p95 gain reduction,
+  plus active/recovery fractions and the longest stretch above 1 dB of GR
+- native `saturation` stages report internal shaper-drive activity, alongside
+  the same observable before/after density metrics used for other effect stages
+- external `plugin` stages fall back to before/after analysis such as crest
+  factor change, clipping and near-full-scale occupancy deltas, and spectral
+  centroid movement
+
+Warnings are emitted at both extremes:
+
+- when a stage appears mostly inactive
+- when a stage is unusually aggressive
+
+Keep these diagnostics agent-legible rather than pretending we can always infer
+plugin intent from raw parameter values alone.
 
 ## Documentation Split
 

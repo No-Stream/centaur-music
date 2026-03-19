@@ -8,6 +8,12 @@ from itertools import cycle, islice
 from typing import TYPE_CHECKING, Any
 
 from code_musics import synth
+from code_musics.automation import (
+    AutomationMode,
+    AutomationSegment,
+    AutomationSpec,
+    AutomationTarget,
+)
 from code_musics.meter import (
     B,
     BeatSpan,
@@ -32,6 +38,7 @@ __all__ = [
     "PitchMotionSpec",
     "RhythmCell",
     "build_context_sections",
+    "bar_automation",
     "canon",
     "concat",
     "echo",
@@ -610,6 +617,61 @@ def with_synth_ramp(
             note_synth[key] = start_value + ((end_value - start_value) * fraction)
         events.append(replace(event, synth=note_synth))
     return Phrase(events=tuple(events))
+
+
+def bar_automation(
+    *,
+    target: str,
+    timeline: Timeline,
+    points: Sequence[tuple[int, float, float]],
+    mode: AutomationMode = "replace",
+    clamp_min: float | None = None,
+    clamp_max: float | None = None,
+) -> AutomationSpec:
+    """Build a linear synth automation lane from bar/beat anchor points.
+
+    The returned lane uses the first anchor value as its default value before the
+    first segment starts. To keep the last value alive through a piece tail,
+    include a final anchor at the desired endpoint with the same value.
+    """
+    if len(points) < 2:
+        raise ValueError(
+            "bar_automation requires at least two (bar, beat, value) points"
+        )
+
+    previous_time: float | None = None
+    previous_value: float | None = None
+    segments: list[AutomationSegment] = []
+
+    for bar, beat, value in points:
+        if bar < 1:
+            raise ValueError("bar_automation bar numbers must be >= 1")
+        time_seconds = timeline.at(bar=bar, beat=beat)
+        if previous_time is not None and time_seconds <= previous_time:
+            raise ValueError(
+                "bar_automation points must be strictly increasing in time"
+            )
+        if previous_time is not None and previous_value is not None:
+            segments.append(
+                AutomationSegment(
+                    start=previous_time,
+                    end=time_seconds,
+                    shape="linear",
+                    start_value=previous_value,
+                    end_value=float(value),
+                )
+            )
+        previous_time = time_seconds
+        previous_value = float(value)
+
+    return AutomationSpec(
+        target=AutomationTarget(kind="synth", name=target),
+        segments=tuple(segments),
+        default_value=float(points[0][2]),
+        clamp_min=clamp_min,
+        clamp_max=clamp_max,
+        mode=mode,
+    )
 
 
 def staccato(phrase: Phrase, gate: float = 0.45) -> Phrase:

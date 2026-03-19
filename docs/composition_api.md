@@ -36,6 +36,7 @@ Nearby topics that matter when using the composition helpers:
 - voice-level envelope humanization
 - voice-level velocity humanization and `velocity_group`
 - velocity-driven synth parameter mapping
+- bar-aware automation helpers for voice timbre arcs
 
 ### `RhythmCell`
 
@@ -139,6 +140,49 @@ inputs:
 They are additive APIs, not replacements. Use the original seconds-based
 helpers when direct control is clearer.
 
+### `bar_automation(...)`
+
+Builds a voice-automation lane from musical bar/beat anchor points.
+
+Parameters:
+
+- `target`
+- `timeline`
+- `points`
+- `mode="replace"`
+- `clamp_min=None`
+- `clamp_max=None`
+
+`points` is a sequence of `(bar, beat, value)` tuples. Consecutive anchors are
+connected with linear automation segments in score time.
+
+Example:
+
+```python
+from code_musics.composition import bar_automation
+from code_musics.meter import Timeline
+
+timeline = Timeline(bpm=88, meter=(4, 4))
+
+cutoff_lane = bar_automation(
+    target="cutoff_hz",
+    timeline=timeline,
+    points=(
+        (1, 0.0, 700.0),
+        (19, 0.0, 1600.0),
+        (27, 0.0, 1100.0),
+        (36, 0.0, 1900.0),
+    ),
+)
+```
+
+Practical notes:
+
+- the first point's value becomes the lane's `default_value`
+- to keep the last value alive through a tail, add a final anchor with the same
+  value at the desired endpoint
+- this is a good fit for section-level opening/closing arcs on `Voice.automation`
+
 ### `ArticulationSpec`
 
 Phrase-level articulation controls:
@@ -232,7 +276,11 @@ from code_musics.score import VelocityParamMap
 
 score.add_voice(
     "lead",
-    synth_defaults={"engine": "filtered_stack", "preset": "round_bass"},
+    synth_defaults={
+        "engine": "filtered_stack",
+        "preset": "round_bass",
+        "env": {"attack_ms": 10.0, "release_ms": 300.0},
+    },
     velocity_to_params={
         "cutoff_hz": VelocityParamMap(
             min_value=250.0,

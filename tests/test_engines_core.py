@@ -6,7 +6,11 @@ import numpy as np
 import pytest
 
 from code_musics.automation import AutomationSegment, AutomationSpec, AutomationTarget
-from code_musics.engines.registry import render_note_signal, resolve_synth_params
+from code_musics.engines.registry import (
+    normalize_synth_spec,
+    render_note_signal,
+    resolve_synth_params,
+)
 from code_musics.humanize import VelocityHumanizeSpec
 from code_musics.pitch_motion import PitchMotionSpec
 from code_musics.score import Score, VelocityParamMap
@@ -37,6 +41,55 @@ def test_resolve_synth_params_applies_preset_before_explicit_overrides() -> None
     assert resolved["attack"] == 0.2
     assert resolved["n_harmonics"] == 11
     assert "preset" not in resolved
+
+
+def test_normalize_synth_spec_supports_structured_env_and_params_aliases() -> None:
+    normalized = normalize_synth_spec(
+        {
+            "engine": "polyblep",
+            "env": {
+                "attack_ms": 30.0,
+                "decay_ms": 180.0,
+                "sustain_ratio": 0.62,
+                "release_ms": 280.0,
+            },
+            "params": {
+                "cutoff_hz": 2200.0,
+                "resonance_ratio": 0.12,
+                "filter_env_depth_ratio": 0.7,
+                "filter_env_decay_ms": 240.0,
+                "filter_drive_ratio": 0.18,
+            },
+        }
+    )
+
+    assert normalized["engine"] == "polyblep"
+    assert normalized["attack"] == pytest.approx(0.03)
+    assert normalized["decay"] == pytest.approx(0.18)
+    assert normalized["sustain_level"] == pytest.approx(0.62)
+    assert normalized["release"] == pytest.approx(0.28)
+    assert normalized["cutoff_hz"] == pytest.approx(2200.0)
+    assert normalized["resonance"] == pytest.approx(0.12)
+    assert normalized["filter_env_amount"] == pytest.approx(0.7)
+    assert normalized["filter_env_decay"] == pytest.approx(0.24)
+    assert normalized["filter_drive"] == pytest.approx(0.18)
+
+
+def test_new_unit_bearing_aliases_override_legacy_flat_names() -> None:
+    normalized = normalize_synth_spec(
+        {
+            "attack": 0.4,
+            "attack_ms": 25.0,
+            "sustain_level": 0.9,
+            "sustain_ratio": 0.55,
+            "filter_env_decay": 0.8,
+            "filter_env_decay_ms": 120.0,
+        }
+    )
+
+    assert normalized["attack"] == pytest.approx(0.025)
+    assert normalized["sustain_level"] == pytest.approx(0.55)
+    assert normalized["filter_env_decay"] == pytest.approx(0.12)
 
 
 @pytest.mark.parametrize(
@@ -110,6 +163,36 @@ def test_voice_level_engine_and_note_override_both_render() -> None:
     assert np.all(np.isfinite(audio))
     assert len(audio) == int(1.6 * score.sample_rate)
     assert np.max(np.abs(audio)) > 0
+
+
+def test_structured_synth_spec_merges_voice_defaults_with_note_overrides() -> None:
+    score = Score(f0=110.0)
+    score.add_voice(
+        "lead",
+        synth_defaults={
+            "engine": "polyblep",
+            "preset": "warm_lead",
+            "env": {"attack_ms": 80.0, "release_ms": 500.0},
+            "params": {"cutoff_hz": 900.0, "filter_env_decay_ms": 400.0},
+        },
+    )
+    score.add_note(
+        "lead",
+        start=0.0,
+        duration=0.35,
+        partial=2.0,
+        amp=0.25,
+        synth={
+            "env": {"release_ms": 120.0},
+            "params": {"cutoff_hz": 1800.0},
+        },
+    )
+
+    audio = score.render()
+
+    assert audio.ndim == 1
+    assert np.all(np.isfinite(audio))
+    assert np.max(np.abs(audio)) > 0.0
 
 
 def test_score_can_mix_multiple_engine_types() -> None:
@@ -464,8 +547,8 @@ def test_attack_and_release_scales_change_rendered_envelope() -> None:
 
 
 def test_velocity_changes_rendered_loudness_on_db_scale() -> None:
-    soft = Score(f0=110.0)
-    loud = Score(f0=110.0)
+    soft = Score(f0=110.0, auto_master_gain_stage=False)
+    loud = Score(f0=110.0, auto_master_gain_stage=False)
     for score in (soft, loud):
         score.add_voice(
             "lead",

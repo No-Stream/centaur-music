@@ -270,6 +270,9 @@ Fields:
 - `f0: float`
 - `sample_rate: int = synth.SAMPLE_RATE`
 - `timing_humanize: TimingHumanizeSpec | None = None`
+- `auto_master_gain_stage: bool = True`
+- `master_bus_target_lufs: float = -24.0`
+- `master_bus_max_true_peak_dbfs: float = -6.0`
 - `master_input_gain_db: float = 0.0`
 - `master_effects: list[EffectSpec] = []`
 - `voices: dict[str, Voice] = {}`
@@ -313,7 +316,11 @@ from code_musics.score import Score, VelocityParamMap
 
 score.add_voice(
     "lead",
-    synth_defaults={"engine": "filtered_stack", "preset": "reed_lead"},
+    synth_defaults={
+        "engine": "filtered_stack",
+        "preset": "reed_lead",
+        "env": {"attack_ms": 30.0, "release_ms": 280.0},
+    },
     envelope_humanize=EnvelopeHumanizeSpec(preset="loose_pluck", seed=9),
     velocity_humanize=VelocityHumanizeSpec(preset="subtle_living", seed=9),
     velocity_to_params={
@@ -393,6 +400,9 @@ Behavior:
 
 - returns an empty mono array if the score has no rendered voices
 - may return mono or stereo depending on pan and effects
+- when `auto_master_gain_stage=True`, raises or lowers the summed post-fader mix
+  toward `master_bus_target_lufs` before the master bus while keeping premaster
+  true peak under `master_bus_max_true_peak_dbfs`
 - applies `master_input_gain_db` to the summed mix before `master_effects`
 - applies `master_effects` after the voices are mixed
 - does not perform export mastering itself; the named-piece render workflow applies
@@ -402,6 +412,10 @@ Behavior:
 
 Practical interpretation:
 
+- leave `auto_master_gain_stage=True` in normal work so voice faders behave like
+  balance controls rather than ad hoc premaster loudness controls
+- use `master_bus_target_lufs` and `master_bus_max_true_peak_dbfs` only when you
+  intentionally want a different premaster operating level for the score
 - leave `master_input_gain_db` at `0.0` in normal work; the default gain staging
   should usually be musically reasonable without touching it
 - use `master_input_gain_db` only when you intentionally want to hit the master
@@ -506,8 +520,9 @@ The practical render path for one note is:
 14. apply pan and voice effects
 15. apply `mix_db`
 16. mix voices together
-17. apply `master_input_gain_db`
-18. apply master effects
+17. if enabled, auto-stage the premaster mix for the master bus
+18. apply `master_input_gain_db`
+19. apply master effects
 
 That ordering matters because it explains why:
 

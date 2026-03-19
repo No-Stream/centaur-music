@@ -120,6 +120,8 @@ def render_piece(
     version_analysis_artifacts: dict[str, Any] | None = None
     score: Score | None = None
     render_score: Score | None = None
+    rendered_stems: dict[str, np.ndarray] | None = None
+    effect_analysis: dict[str, Any] | None = None
 
     if definition.build_score is not None:
         score = definition.build_score()
@@ -129,7 +131,9 @@ def render_piece(
                 start_seconds=render_window.render_start_seconds,
                 end_seconds=render_window.render_end_seconds,
             )
-        audio = render_score.render()
+        audio, rendered_stems, effect_analysis = (
+            render_score.render_with_effect_analysis()
+        )
         if render_window is not None:
             audio = _trim_rendered_audio(
                 audio=audio,
@@ -169,7 +173,8 @@ def render_piece(
             sample_rate=render_score.sample_rate
             if render_score is not None
             else SAMPLE_RATE,
-            stems=render_score.render_stems() if render_score is not None else None,
+            stems=rendered_stems,
+            effect_analysis=effect_analysis,
             score=render_score,
             piece_sections=definition.sections,
         )

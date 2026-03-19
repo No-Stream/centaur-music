@@ -375,6 +375,37 @@ def test_compressor_effect_runs_through_apply_effect_chain() -> None:
     assert np.isfinite(processed).all()
 
 
+def test_compressor_effect_analysis_reports_gain_reduction_metrics() -> None:
+    signal = 1.1 * np.sin(
+        np.linspace(0.0, 12.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
+    )
+
+    processed, effect_analysis = synth.apply_effect_chain(
+        signal,
+        [
+            EffectSpec(
+                "compressor",
+                {
+                    "threshold_db": -24.0,
+                    "ratio": 4.0,
+                    "attack_ms": 4.0,
+                    "release_ms": 120.0,
+                },
+            )
+        ],
+        return_analysis=True,
+    )
+
+    assert processed.shape == signal.shape
+    compressor_metrics = effect_analysis[0].metrics
+    assert compressor_metrics["avg_gain_reduction_db"] > 0.5
+    assert (
+        compressor_metrics["max_gain_reduction_db"]
+        >= (compressor_metrics["avg_gain_reduction_db"])
+    )
+    assert "longest_run_above_1db_seconds" in compressor_metrics
+
+
 def test_plugin_effect_sets_named_plugin_parameters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -389,7 +420,9 @@ def test_plugin_effect_sets_named_plugin_parameters(
 
     fake_plugin = FakePlugin()
     monkeypatch.setattr(synth, "_load_external_plugin", lambda **_: fake_plugin)
-    signal = np.sin(np.linspace(0.0, 2.0 * np.pi, synth.SAMPLE_RATE, endpoint=False))
+    signal = 0.5 * np.sin(
+        np.linspace(0.0, 2.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
+    )
 
     processed = synth.apply_effect_chain(
         signal,
@@ -407,6 +440,40 @@ def test_plugin_effect_sets_named_plugin_parameters(
     assert processed.shape == signal.shape
     assert fake_plugin.drive == pytest.approx(0.42)
     assert fake_plugin.mix == pytest.approx(0.18)
+
+
+def test_plugin_effect_analysis_reports_inactive_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePlugin:
+        def __init__(self) -> None:
+            self.drive = 0.0
+
+        def __call__(self, signal: np.ndarray, sample_rate: int) -> np.ndarray:
+            assert sample_rate == synth.SAMPLE_RATE
+            return signal
+
+    monkeypatch.setattr(synth, "_load_external_plugin", lambda **_: FakePlugin())
+    signal = 0.5 * np.sin(
+        np.linspace(0.0, 2.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
+    )
+
+    _processed, effect_analysis = synth.apply_effect_chain(
+        signal,
+        [
+            EffectSpec(
+                "plugin",
+                {
+                    "plugin_name": "my_bus_plugin",
+                    "params": {"drive": 0.42},
+                },
+            )
+        ],
+        return_analysis=True,
+    )
+
+    warning_codes = {warning.code for warning in effect_analysis[0].warnings}
+    assert "effect_mostly_inactive" in warning_codes
 
 
 def test_plugin_effect_rejects_unknown_parameter(
@@ -612,12 +679,56 @@ def test_add_voice_rejects_non_finite_gain_controls() -> None:
         score.add_voice("lead", mix_db=float("nan"))
 
 
+def test_score_auto_master_gain_stage_raises_balanced_mix_toward_target() -> None:
+    unstaged_score = Score(
+        f0=55.0,
+        auto_master_gain_stage=False,
+    )
+    unstaged_score.add_voice("lead", mix_db=-18.0)
+    unstaged_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
+
+    staged_score = Score(f0=55.0)
+    staged_score.add_voice("lead", mix_db=-18.0)
+    staged_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
+
+    unstaged_lufs, _ = synth.integrated_lufs(
+        unstaged_score.render(),
+        sample_rate=unstaged_score.sample_rate,
+    )
+    staged_lufs, _ = synth.integrated_lufs(
+        staged_score.render(),
+        sample_rate=staged_score.sample_rate,
+    )
+
+    assert staged_lufs > unstaged_lufs
+    assert np.isclose(staged_lufs, -24.0, atol=1.5)
+
+
+def test_score_auto_master_gain_stage_respects_peak_safety_ceiling() -> None:
+    score = Score(
+        f0=55.0,
+        master_bus_target_lufs=-12.0,
+        master_bus_max_true_peak_dbfs=-10.0,
+    )
+    score.add_voice("lead", normalize_lufs=None, mix_db=-30.0)
+    score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.5)
+
+    rendered = score.render()
+    peak_dbfs = synth.amp_to_db(float(np.max(np.abs(rendered))))
+
+    assert peak_dbfs <= -10.0 + 0.6
+
+
 def test_score_master_input_gain_db_scales_mix_before_master_effects() -> None:
-    dry_score = Score(f0=55.0, master_input_gain_db=0.0)
+    dry_score = Score(f0=55.0, auto_master_gain_stage=False, master_input_gain_db=0.0)
     dry_score.add_voice("lead", normalize_lufs=None)
     dry_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.1)
 
-    boosted_score = Score(f0=55.0, master_input_gain_db=6.0)
+    boosted_score = Score(
+        f0=55.0,
+        auto_master_gain_stage=False,
+        master_input_gain_db=6.0,
+    )
     boosted_score.add_voice("lead", normalize_lufs=None)
     boosted_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.1)
 
@@ -631,14 +742,32 @@ def test_score_rejects_non_finite_master_input_gain_db() -> None:
     with pytest.raises(ValueError, match="master_input_gain_db must be finite"):
         Score(f0=55.0, master_input_gain_db=float("inf"))
 
+    with pytest.raises(ValueError, match="master_bus_target_lufs must be finite"):
+        Score(f0=55.0, master_bus_target_lufs=float("nan"))
+
+    with pytest.raises(
+        ValueError,
+        match="master_bus_max_true_peak_dbfs must be finite",
+    ):
+        Score(f0=55.0, master_bus_max_true_peak_dbfs=float("inf"))
+
 
 def test_extract_window_preserves_master_input_gain_db() -> None:
-    score = Score(f0=55.0, master_input_gain_db=3.0)
+    score = Score(
+        f0=55.0,
+        auto_master_gain_stage=False,
+        master_bus_target_lufs=-22.0,
+        master_bus_max_true_peak_dbfs=-8.0,
+        master_input_gain_db=3.0,
+    )
     score.add_voice("lead", normalize_lufs=None)
     score.add_note("lead", start=1.0, duration=1.0, partial=4.0, amp=0.1)
 
     window = score.extract_window(start_seconds=0.5, end_seconds=2.5)
 
+    assert window.auto_master_gain_stage is False
+    assert window.master_bus_target_lufs == pytest.approx(-22.0)
+    assert window.master_bus_max_true_peak_dbfs == pytest.approx(-8.0)
     assert window.master_input_gain_db == pytest.approx(3.0)
 
 
@@ -1066,6 +1195,22 @@ def test_saturation_gain_compensation_keeps_level_reasonable() -> None:
     output_peak = np.max(np.abs(processed))
     assert output_peak > 0
     assert np.isclose(output_peak, input_peak, rtol=0.25)
+
+
+def test_saturation_effect_analysis_reports_shaper_activity() -> None:
+    signal = 0.7 * np.sin(
+        np.linspace(0.0, 10.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
+    )
+
+    _processed, effect_analysis = synth.apply_effect_chain(
+        signal,
+        [EffectSpec("saturation", {"drive": 4.0, "mix": 0.9, "bias": 0.2})],
+        return_analysis=True,
+    )
+
+    saturation_metrics = effect_analysis[0].metrics
+    assert saturation_metrics["shaper_hot_fraction"] > 0.0
+    assert "crest_factor_delta_db" in saturation_metrics
 
 
 def test_plot_piano_roll_writes_file(tmp_path: Path) -> None:

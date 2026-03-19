@@ -6,9 +6,9 @@ import ctypes
 import logging
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pedalboard
@@ -59,7 +59,44 @@ class SignalLevelDiagnostics:
     active_window_fraction: float
 
 
+@dataclass(frozen=True)
+class EffectAnalysisWarning:
+    """Structured warning for an effect stage that looks inactive or aggressive."""
+
+    severity: str
+    code: str
+    message: str
+    metrics: dict[str, float | int | str]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to a JSON-serializable dictionary."""
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class EffectAnalysisEntry:
+    """Machine-readable diagnostics for one effect in a chain."""
+
+    index: int
+    kind: str
+    display_name: str
+    metrics: dict[str, float | int | str]
+    warnings: list[EffectAnalysisWarning]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to a JSON-serializable dictionary."""
+        return {
+            "index": self.index,
+            "kind": self.kind,
+            "display_name": self.display_name,
+            "metrics": dict(self.metrics),
+            "warnings": [warning.to_dict() for warning in self.warnings],
+        }
+
+
 _LOW_EXPORT_PEAK_WARNING_DBFS = -3.0
+_NEAR_FULL_SCALE_THRESHOLD = 0.98
+_EFFECT_ANALYSIS_EPSILON = 1e-12
 
 
 def db_to_amp(db: float) -> float:
@@ -158,6 +195,120 @@ def measure_signal_levels(
         integrated_lufs=integrated_loudness_lufs,
         active_window_fraction=active_window_fraction,
     )
+
+
+def _safe_amp_to_db(amp: float) -> float:
+    return amp_to_db(max(float(amp), _EFFECT_ANALYSIS_EPSILON))
+
+
+def _signal_peak_dbfs(signal: np.ndarray) -> float:
+    if signal.size == 0:
+        return float("-inf")
+    return _safe_amp_to_db(float(np.max(np.abs(signal))))
+
+
+def _signal_rms_dbfs(signal: np.ndarray) -> float:
+    mono_signal = to_mono_reference(signal)
+    if mono_signal.size == 0:
+        return float("-inf")
+    return _safe_amp_to_db(float(np.sqrt(np.mean(np.square(mono_signal)))))
+
+
+def _signal_crest_factor_db(signal: np.ndarray) -> float:
+    peak_dbfs = _signal_peak_dbfs(signal)
+    rms_dbfs = _signal_rms_dbfs(signal)
+    if not np.isfinite(peak_dbfs) or not np.isfinite(rms_dbfs):
+        return 0.0
+    return max(0.0, peak_dbfs - rms_dbfs)
+
+
+def _clipped_sample_fraction(signal: np.ndarray) -> float:
+    mono_signal = to_mono_reference(signal)
+    if mono_signal.size == 0:
+        return 0.0
+    return float(np.count_nonzero(np.abs(mono_signal) >= 1.0) / mono_signal.size)
+
+
+def _near_full_scale_fraction(
+    signal: np.ndarray,
+    *,
+    threshold: float = _NEAR_FULL_SCALE_THRESHOLD,
+) -> float:
+    mono_signal = to_mono_reference(signal)
+    if mono_signal.size == 0:
+        return 0.0
+    return float(np.count_nonzero(np.abs(mono_signal) >= threshold) / mono_signal.size)
+
+
+def _average_spectrum_db(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    mono_signal = to_mono_reference(signal)
+    if mono_signal.size == 0:
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+    n_fft = min(
+        8192,
+        max(2048, int(2 ** np.ceil(np.log2(max(mono_signal.size, 2_048))))),
+    )
+    window = np.hanning(n_fft)
+    if mono_signal.size < n_fft:
+        padded = np.zeros(n_fft, dtype=np.float64)
+        padded[: mono_signal.size] = mono_signal
+        spectrum = np.abs(np.fft.rfft(padded * window))
+    else:
+        step = max(n_fft // 2, 1)
+        magnitudes: list[np.ndarray] = []
+        for start in range(0, mono_signal.size - n_fft + 1, step):
+            frame = mono_signal[start : start + n_fft] * window
+            magnitudes.append(np.abs(np.fft.rfft(frame)))
+        spectrum = np.mean(magnitudes, axis=0)
+
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / sample_rate)
+    magnitude_db = 20.0 * np.log10(
+        np.maximum(np.asarray(spectrum, dtype=np.float64), _EFFECT_ANALYSIS_EPSILON)
+    )
+    valid = freqs > 0
+    return freqs[valid], magnitude_db[valid]
+
+
+def _mean_band_energy_db(
+    magnitude_db: np.ndarray,
+    *,
+    freqs: np.ndarray,
+    low_hz: float,
+    high_hz: float,
+) -> float:
+    mask = (freqs >= low_hz) & (freqs < high_hz)
+    if not np.any(mask):
+        return float("-inf")
+    return float(np.mean(magnitude_db[mask]))
+
+
+def _spectral_centroid_hz(signal: np.ndarray, *, sample_rate: int) -> float:
+    freqs, magnitude_db = _average_spectrum_db(signal, sample_rate=sample_rate)
+    if freqs.size == 0:
+        return 0.0
+    magnitudes = np.power(10.0, magnitude_db / 20.0)
+    magnitude_sum = np.sum(magnitudes)
+    if magnitude_sum <= 0:
+        return 0.0
+    return float(np.sum(freqs * magnitudes) / magnitude_sum)
+
+
+def _seconds_for_mask(mask: np.ndarray, *, sample_rate: int) -> float:
+    if mask.size == 0:
+        return 0.0
+    longest_run = 0
+    run_length = 0
+    for value in mask:
+        if bool(value):
+            run_length += 1
+            longest_run = max(longest_run, run_length)
+        else:
+            run_length = 0
+    return float(longest_run / sample_rate)
 
 
 def gated_rms_dbfs(
@@ -286,6 +437,47 @@ def normalize_to_lufs(
         np.clip(target_lufs - current_lufs, -max_gain_db, max_gain_db)
     )
     return np.asarray(signal, dtype=np.float64) * db_to_amp(required_gain_db)
+
+
+def gain_stage_for_master_bus(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    target_lufs: float = -24.0,
+    max_true_peak_dbfs: float = -6.0,
+    max_boost_db: float = 18.0,
+    oversample_factor: int = 4,
+) -> np.ndarray:
+    """Apply one gain step so the premaster mix hits the master bus sensibly.
+
+    This is intentionally not export mastering. It preserves the authored
+    balance, raises or lowers the summed post-fader mix toward a reasonable
+    working LUFS, and caps any upward move so the premaster true peak stays
+    under a safety ceiling before master effects.
+    """
+    staged = np.asarray(signal, dtype=np.float64)
+    if staged.size == 0:
+        return staged
+
+    current_lufs, active_window_fraction = integrated_lufs(
+        staged,
+        sample_rate=sample_rate,
+    )
+    if not np.isfinite(current_lufs) or active_window_fraction <= 0.0:
+        return staged
+
+    target_gain_db = float(target_lufs - current_lufs)
+    target_gain_db = min(target_gain_db, max_boost_db)
+
+    true_peak_amplitude = estimate_true_peak_amplitude(
+        staged,
+        oversample_factor=oversample_factor,
+    )
+    peak_limit_gain_db = float(
+        max_true_peak_dbfs - amp_to_db(max(true_peak_amplitude, 1e-12))
+    )
+    applied_gain_db = min(target_gain_db, peak_limit_gain_db)
+    return staged * db_to_amp(applied_gain_db)
 
 
 def _amplitude_to_db_array(amplitudes: np.ndarray) -> np.ndarray:
@@ -1116,6 +1308,255 @@ def _resolve_compressor_release_times(
     return float(release_ms), float(release_tail_ms)
 
 
+def _build_effect_warning(
+    *,
+    severity: str,
+    code: str,
+    message: str,
+    **metrics: float | int | str,
+) -> EffectAnalysisWarning:
+    return EffectAnalysisWarning(
+        severity=severity,
+        code=code,
+        message=message,
+        metrics=metrics,
+    )
+
+
+def _build_effect_analysis_entry(
+    *,
+    index: int,
+    kind: str,
+    display_name: str,
+    input_signal: np.ndarray,
+    output_signal: np.ndarray,
+    sample_rate: int,
+    native_metrics: dict[str, float | int | str] | None = None,
+) -> EffectAnalysisEntry:
+    input_peak_dbfs = _signal_peak_dbfs(input_signal)
+    output_peak_dbfs = _signal_peak_dbfs(output_signal)
+    input_true_peak_dbfs = _safe_amp_to_db(estimate_true_peak_amplitude(input_signal))
+    output_true_peak_dbfs = _safe_amp_to_db(estimate_true_peak_amplitude(output_signal))
+    input_crest_factor_db = _signal_crest_factor_db(input_signal)
+    output_crest_factor_db = _signal_crest_factor_db(output_signal)
+    input_clipped_fraction = _clipped_sample_fraction(input_signal)
+    output_clipped_fraction = _clipped_sample_fraction(output_signal)
+    input_near_full_scale_fraction = _near_full_scale_fraction(input_signal)
+    output_near_full_scale_fraction = _near_full_scale_fraction(output_signal)
+    input_freqs, input_magnitude_db = _average_spectrum_db(
+        input_signal,
+        sample_rate=sample_rate,
+    )
+    output_freqs, output_magnitude_db = _average_spectrum_db(
+        output_signal,
+        sample_rate=sample_rate,
+    )
+    input_high_band_db = _mean_band_energy_db(
+        input_magnitude_db,
+        freqs=input_freqs,
+        low_hz=2_000.0,
+        high_hz=8_000.0,
+    )
+    output_high_band_db = _mean_band_energy_db(
+        output_magnitude_db,
+        freqs=output_freqs,
+        low_hz=2_000.0,
+        high_hz=8_000.0,
+    )
+    spectral_centroid_delta_hz = _spectral_centroid_hz(
+        output_signal,
+        sample_rate=sample_rate,
+    ) - _spectral_centroid_hz(
+        input_signal,
+        sample_rate=sample_rate,
+    )
+    metrics: dict[str, float | int | str] = {
+        "input_peak_dbfs": round(input_peak_dbfs, 2),
+        "output_peak_dbfs": round(output_peak_dbfs, 2),
+        "peak_delta_db": round(output_peak_dbfs - input_peak_dbfs, 2),
+        "input_true_peak_dbfs": round(input_true_peak_dbfs, 2),
+        "output_true_peak_dbfs": round(output_true_peak_dbfs, 2),
+        "true_peak_delta_db": round(output_true_peak_dbfs - input_true_peak_dbfs, 2),
+        "input_crest_factor_db": round(input_crest_factor_db, 2),
+        "output_crest_factor_db": round(output_crest_factor_db, 2),
+        "crest_factor_delta_db": round(
+            output_crest_factor_db - input_crest_factor_db,
+            2,
+        ),
+        "input_clipped_sample_fraction": round(input_clipped_fraction, 6),
+        "output_clipped_sample_fraction": round(output_clipped_fraction, 6),
+        "clipped_sample_fraction_delta": round(
+            output_clipped_fraction - input_clipped_fraction,
+            6,
+        ),
+        "input_near_full_scale_fraction": round(input_near_full_scale_fraction, 6),
+        "output_near_full_scale_fraction": round(output_near_full_scale_fraction, 6),
+        "near_full_scale_fraction_delta": round(
+            output_near_full_scale_fraction - input_near_full_scale_fraction,
+            6,
+        ),
+        "high_band_delta_db": round(output_high_band_db - input_high_band_db, 2),
+        "spectral_centroid_delta_hz": round(spectral_centroid_delta_hz, 1),
+    }
+    if native_metrics is not None:
+        metrics.update(native_metrics)
+
+    warnings = _build_effect_analysis_warnings(
+        kind=kind,
+        metrics=metrics,
+        signal_duration_seconds=(output_signal.shape[-1] / sample_rate)
+        if output_signal.size > 0
+        else 0.0,
+    )
+    return EffectAnalysisEntry(
+        index=index,
+        kind=kind,
+        display_name=display_name,
+        metrics=metrics,
+        warnings=warnings,
+    )
+
+
+def _build_effect_analysis_warnings(
+    *,
+    kind: str,
+    metrics: dict[str, float | int | str],
+    signal_duration_seconds: float,
+) -> list[EffectAnalysisWarning]:
+    warnings: list[EffectAnalysisWarning] = []
+    if kind == "compressor":
+        avg_gain_reduction_db = float(metrics.get("avg_gain_reduction_db", 0.0))
+        max_gain_reduction_db = float(metrics.get("max_gain_reduction_db", 0.0))
+        p95_gain_reduction_db = float(metrics.get("p95_gain_reduction_db", 0.0))
+        longest_run_above_1db_seconds = float(
+            metrics.get("longest_run_above_1db_seconds", 0.0)
+        )
+        if avg_gain_reduction_db < 0.5 and max_gain_reduction_db < 1.5:
+            warnings.append(
+                _build_effect_warning(
+                    severity="warning",
+                    code="effect_mostly_inactive",
+                    message="compressor appears mostly inactive",
+                    avg_gain_reduction_db=round(avg_gain_reduction_db, 2),
+                    max_gain_reduction_db=round(max_gain_reduction_db, 2),
+                )
+            )
+        if avg_gain_reduction_db >= 8.0 or max_gain_reduction_db >= 14.0:
+            warnings.append(
+                _build_effect_warning(
+                    severity="severe",
+                    code="aggressive_compression",
+                    message="compressor gain reduction is very aggressive",
+                    avg_gain_reduction_db=round(avg_gain_reduction_db, 2),
+                    max_gain_reduction_db=round(max_gain_reduction_db, 2),
+                    p95_gain_reduction_db=round(p95_gain_reduction_db, 2),
+                )
+            )
+        elif avg_gain_reduction_db >= 6.0 or max_gain_reduction_db >= 10.0:
+            warnings.append(
+                _build_effect_warning(
+                    severity="warning",
+                    code="aggressive_compression",
+                    message="compressor is clamping down fairly hard",
+                    avg_gain_reduction_db=round(avg_gain_reduction_db, 2),
+                    max_gain_reduction_db=round(max_gain_reduction_db, 2),
+                    p95_gain_reduction_db=round(p95_gain_reduction_db, 2),
+                )
+            )
+        if signal_duration_seconds >= 15.0 and longest_run_above_1db_seconds >= 20.0:
+            warnings.append(
+                _build_effect_warning(
+                    severity="severe",
+                    code="continuous_gain_reduction",
+                    message="compressor stays above 1 dB of gain reduction for unusually long stretches",
+                    longest_run_above_1db_seconds=round(
+                        longest_run_above_1db_seconds,
+                        2,
+                    ),
+                )
+            )
+        elif signal_duration_seconds >= 10.0 and longest_run_above_1db_seconds >= 10.0:
+            warnings.append(
+                _build_effect_warning(
+                    severity="warning",
+                    code="continuous_gain_reduction",
+                    message="compressor rarely relaxes below 1 dB of gain reduction",
+                    longest_run_above_1db_seconds=round(
+                        longest_run_above_1db_seconds,
+                        2,
+                    ),
+                )
+            )
+        return warnings
+
+    crest_factor_delta_db = float(metrics.get("crest_factor_delta_db", 0.0))
+    clipped_sample_fraction_delta = float(
+        metrics.get("clipped_sample_fraction_delta", 0.0)
+    )
+    near_full_scale_fraction_delta = float(
+        metrics.get("near_full_scale_fraction_delta", 0.0)
+    )
+    spectral_centroid_delta_hz = float(metrics.get("spectral_centroid_delta_hz", 0.0))
+    peak_delta_db = float(metrics.get("peak_delta_db", 0.0))
+    if (
+        abs(crest_factor_delta_db) < 0.3
+        and abs(spectral_centroid_delta_hz) < 50.0
+        and abs(peak_delta_db) < 0.2
+        and near_full_scale_fraction_delta < 0.001
+        and clipped_sample_fraction_delta <= 0.0
+    ):
+        warnings.append(
+            _build_effect_warning(
+                severity="warning",
+                code="effect_mostly_inactive",
+                message="effect appears to be doing very little",
+                crest_factor_delta_db=round(crest_factor_delta_db, 2),
+                spectral_centroid_delta_hz=round(spectral_centroid_delta_hz, 1),
+                peak_delta_db=round(peak_delta_db, 2),
+            )
+        )
+
+    if clipped_sample_fraction_delta >= 0.001 or near_full_scale_fraction_delta >= 0.05:
+        warnings.append(
+            _build_effect_warning(
+                severity="severe",
+                code="aggressive_drive",
+                message="effect is introducing obvious clipping-like output density",
+                clipped_sample_fraction_delta=round(
+                    clipped_sample_fraction_delta,
+                    6,
+                ),
+                near_full_scale_fraction_delta=round(
+                    near_full_scale_fraction_delta,
+                    6,
+                ),
+                crest_factor_delta_db=round(crest_factor_delta_db, 2),
+            )
+        )
+    elif (
+        clipped_sample_fraction_delta > 0.0
+        or near_full_scale_fraction_delta >= 0.01
+        or crest_factor_delta_db <= -4.0
+    ):
+        warnings.append(
+            _build_effect_warning(
+                severity="warning",
+                code="aggressive_drive",
+                message="effect is adding substantial density or clipping-like behavior",
+                clipped_sample_fraction_delta=round(
+                    clipped_sample_fraction_delta,
+                    6,
+                ),
+                near_full_scale_fraction_delta=round(
+                    near_full_scale_fraction_delta,
+                    6,
+                ),
+                crest_factor_delta_db=round(crest_factor_delta_db, 2),
+            )
+        )
+    return warnings
+
+
 def apply_compressor(
     signal: np.ndarray,
     *,
@@ -1131,7 +1572,8 @@ def apply_compressor(
     detector_mode: str = "rms",
     detector_bands: list[dict[str, Any]] | None = None,
     sample_rate: int = SAMPLE_RATE,
-) -> np.ndarray:
+    return_analysis: bool = False,
+) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
     """Apply a native stereo-linked compressor with optional detector EQ."""
     if ratio < 1.0:
         raise ValueError("ratio must be at least 1")
@@ -1185,6 +1627,7 @@ def apply_compressor(
     detector_state = 0.0
     smoothed_gain_db = 0.0
     output_detector_state = 0.0
+    gain_reduction_trace_db = np.zeros(sample_count, dtype=np.float64)
 
     for sample_index in range(sample_count):
         if normalized_topology == "feedforward":
@@ -1228,6 +1671,7 @@ def apply_compressor(
         smoothed_gain_db = (gain_coeff * smoothed_gain_db) + (
             (1.0 - gain_coeff) * target_gain_db
         )
+        gain_reduction_trace_db[sample_index] = max(0.0, -smoothed_gain_db)
 
         gain = db_to_amp(smoothed_gain_db) * makeup_gain
         if input_signal.ndim == 1:
@@ -1245,7 +1689,39 @@ def apply_compressor(
                 np.max(np.abs(output_signal[:, sample_index]))
             )
 
-    return np.asarray(output_signal, dtype=np.float64)
+    processed_signal = np.asarray(output_signal, dtype=np.float64)
+    if not return_analysis:
+        return processed_signal
+
+    active_mask = gain_reduction_trace_db >= 1.0
+    below_1db_mask = gain_reduction_trace_db < 1.0
+    analysis: dict[str, float | int | str] = {
+        "avg_gain_reduction_db": round(float(np.mean(gain_reduction_trace_db)), 2),
+        "max_gain_reduction_db": round(float(np.max(gain_reduction_trace_db)), 2),
+        "p95_gain_reduction_db": round(
+            float(np.percentile(gain_reduction_trace_db, 95.0)),
+            2,
+        ),
+        "active_gain_reduction_fraction": round(
+            float(np.count_nonzero(active_mask) / max(sample_count, 1)),
+            4,
+        ),
+        "avg_gain_reduction_when_active_db": round(
+            float(np.mean(gain_reduction_trace_db[active_mask]))
+            if np.any(active_mask)
+            else 0.0,
+            2,
+        ),
+        "below_1db_fraction": round(
+            float(np.count_nonzero(below_1db_mask) / max(sample_count, 1)),
+            4,
+        ),
+        "longest_run_above_1db_seconds": round(
+            _seconds_for_mask(active_mask, sample_rate=sample_rate),
+            2,
+        ),
+    }
+    return processed_signal, analysis
 
 
 def _is_stereo(signal: np.ndarray) -> bool:
@@ -1939,7 +2415,8 @@ def apply_saturation(
     tone_tilt: float = 0.10,
     output_lowpass_hz: float = 13_500.0,
     compensation: bool = True,
-) -> np.ndarray:
+    return_analysis: bool = False,
+) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
     """Apply subtle analog-style saturation to mono or stereo signal."""
     if not 0.0 <= mix <= 1.0:
         raise ValueError("mix must be between 0 and 1")
@@ -1950,8 +2427,11 @@ def apply_saturation(
 
     input_signal = np.asarray(signal, dtype=np.float64)
     input_peak = np.max(np.abs(input_signal))
+    shaper_hot_sample_count = 0
+    total_wet_sample_count = 0
 
     def _process_channel(channel: np.ndarray) -> np.ndarray:
+        nonlocal shaper_hot_sample_count, total_wet_sample_count
         conditioned = highpass(
             channel, cutoff_hz=highpass_hz, sample_rate=SAMPLE_RATE, order=2
         )
@@ -1964,11 +2444,20 @@ def apply_saturation(
         if oversample_factor > 1:
             conditioned = resample_poly(conditioned, oversample_factor, 1)
 
-        shaped = np.tanh(drive * (conditioned + bias))
-        anti_symmetric = np.tanh(drive * conditioned)
+        biased_drive_signal = drive * (conditioned + bias)
+        symmetric_drive_signal = drive * conditioned
+        shaped = np.tanh(biased_drive_signal)
+        anti_symmetric = np.tanh(symmetric_drive_signal)
         wet_channel = ((1.0 - even_harmonics) * anti_symmetric) + (
             even_harmonics * shaped
         )
+        shaper_hot_sample_count += int(
+            np.count_nonzero(
+                (np.abs(biased_drive_signal) >= 1.0)
+                | (np.abs(symmetric_drive_signal) >= 1.0)
+            )
+        )
+        total_wet_sample_count += int(wet_channel.size)
 
         if oversample_factor > 1:
             wet_channel = resample_poly(wet_channel, 1, oversample_factor)
@@ -1989,19 +2478,38 @@ def apply_saturation(
         if output_peak > 0 and input_peak > 0:
             blended = blended * (input_peak / output_peak)
 
-    return blended.astype(np.float64)
+    processed_signal = blended.astype(np.float64)
+    if not return_analysis:
+        return processed_signal
+
+    analysis: dict[str, float | int | str] = {
+        "drive": round(float(drive), 2),
+        "mix": round(float(mix), 2),
+        "even_harmonics": round(float(even_harmonics), 2),
+        "shaper_hot_fraction": round(
+            float(shaper_hot_sample_count / max(total_wet_sample_count, 1)),
+            4,
+        ),
+        "compensation_enabled": str(bool(compensation)).lower(),
+    }
+    return processed_signal, analysis
 
 
 def apply_effect_chain(
     signal: np.ndarray,
     effects: list[Any],
-) -> np.ndarray:
+    *,
+    return_analysis: bool = False,
+) -> np.ndarray | tuple[np.ndarray, list[EffectAnalysisEntry]]:
     """Apply a declarative effect chain to mono or stereo audio."""
     processed = _coerce_signal_layout(signal)
-    for effect in effects:
+    effect_analysis: list[EffectAnalysisEntry] = []
+    for effect_index, effect in enumerate(effects):
+        effect_input = np.asarray(processed, dtype=np.float64)
         params = dict(effect.params)
         if effect.kind in {"chorus", "saturation"}:
             params = _resolve_effect_params(effect.kind, params)
+        native_metrics: dict[str, float | int | str] | None = None
         if effect.kind == "delay":
             processed = apply_delay(processed, **params)
         elif effect.kind == "reverb":
@@ -2013,11 +2521,35 @@ def apply_effect_chain(
         elif effect.kind == "chorus":
             processed = apply_chorus(processed, **params)
         elif effect.kind == "saturation":
-            processed = apply_saturation(processed, **params)
+            if return_analysis:
+                processed_signal, saturation_metrics = cast(
+                    tuple[np.ndarray, dict[str, float | int | str]],
+                    apply_saturation(
+                        processed,
+                        **params,
+                        return_analysis=True,
+                    ),
+                )
+                processed = processed_signal
+                native_metrics = saturation_metrics
+            else:
+                processed = cast(np.ndarray, apply_saturation(processed, **params))
         elif effect.kind == "eq":
             processed = apply_eq(processed, **params)
         elif effect.kind == "compressor":
-            processed = apply_compressor(processed, **params)
+            if return_analysis:
+                processed_signal, compressor_metrics = cast(
+                    tuple[np.ndarray, dict[str, float | int | str]],
+                    apply_compressor(
+                        processed,
+                        **params,
+                        return_analysis=True,
+                    ),
+                )
+                processed = processed_signal
+                native_metrics = compressor_metrics
+            else:
+                processed = cast(np.ndarray, apply_compressor(processed, **params))
         elif effect.kind == "tal_chorus_lx":
             processed = apply_tal_chorus_lx(processed, **params)
         elif effect.kind == "tal_reverb2":
@@ -2028,6 +2560,27 @@ def apply_effect_chain(
             processed = apply_plugin(processed, **params)
         else:
             raise ValueError(f"Unsupported effect kind: {effect.kind}")
+        if return_analysis:
+            display_name = effect.kind
+            if effect.kind == "plugin":
+                display_name = str(
+                    params.get("plugin_name")
+                    or params.get("plugin_path")
+                    or effect.kind
+                )
+            effect_analysis.append(
+                _build_effect_analysis_entry(
+                    index=effect_index,
+                    kind=effect.kind,
+                    display_name=display_name,
+                    input_signal=effect_input,
+                    output_signal=processed,
+                    sample_rate=SAMPLE_RATE,
+                    native_metrics=native_metrics,
+                )
+            )
+    if return_analysis:
+        return processed, effect_analysis
     return processed
 
 
