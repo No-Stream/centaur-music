@@ -387,6 +387,25 @@ Behavior:
 - export mastering first drives the mix toward the render LUFS target with the
   limiter, then uses any remaining true-peak headroom up to the export ceiling
 
+### `Score.extract_window(...)`
+
+Builds a score containing only notes that can sound within a requested time
+window.
+
+Parameters:
+
+- `start_seconds`
+- `end_seconds`
+
+Behavior:
+
+- keeps notes whose authored time range overlaps the requested window
+- shifts kept notes so the extracted window starts at local time `0`, clamping
+  any earlier overlap to local time zero
+- preserves the original global time context for timing humanization, envelope
+  humanization, and voice automation
+- is the score-domain helper used by snippet rendering
+
 ### `Score.render_stems()`
 
 Renders each voice independently before master-bus effects.

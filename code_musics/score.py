@@ -238,6 +238,8 @@ class Score:
     timing_humanize: TimingHumanizeSpec | None = None
     master_effects: list[EffectSpec] = field(default_factory=list)
     voices: dict[str, Voice] = field(default_factory=dict)
+    time_origin_seconds: float = 0.0
+    time_reference_total_dur: float | None = None
 
     def add_voice(
         self,
@@ -374,6 +376,45 @@ class Score:
 
         return mix
 
+    def extract_window(
+        self,
+        *,
+        start_seconds: float,
+        end_seconds: float,
+    ) -> Score:
+        """Return a score containing only notes audible within a time window."""
+        if start_seconds < 0:
+            raise ValueError("start_seconds must be non-negative")
+        if end_seconds <= start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
+
+        shifted_voices: dict[str, Voice] = {}
+        for voice_name, voice in self.voices.items():
+            kept_notes = [
+                replace(note, start=max(0.0, note.start - start_seconds))
+                for note in voice.notes
+                if (note.start + note.duration) > start_seconds
+                and note.start < end_seconds
+            ]
+            if not kept_notes:
+                continue
+            shifted_voices[voice_name] = replace(voice, notes=kept_notes)
+
+        reference_total_dur = (
+            self.time_reference_total_dur
+            if self.time_reference_total_dur is not None
+            else self.total_dur
+        )
+        return Score(
+            f0=self.f0,
+            sample_rate=self.sample_rate,
+            timing_humanize=self.timing_humanize,
+            master_effects=list(self.master_effects),
+            voices=shifted_voices,
+            time_origin_seconds=self.time_origin_seconds + start_seconds,
+            time_reference_total_dur=reference_total_dur,
+        )
+
     def render_stems(self) -> dict[str, np.ndarray]:
         """Render each voice independently before master-bus effects."""
         rendered_stems: dict[str, np.ndarray] = {}
@@ -395,7 +436,7 @@ class Score:
         return build_timing_offsets(
             targets=self._timing_targets(),
             humanize=self.timing_humanize,
-            total_dur=self.total_dur,
+            total_dur=self._time_reference_total_dur(),
         )
 
     def resolved_timing_notes(self) -> list[ResolvedTimingNote]:
@@ -413,11 +454,13 @@ class Score:
                         key=(voice_name, note_index),
                         voice_name=voice_name,
                         note_index=note_index,
-                        authored_start=note.start,
-                        resolved_start=resolved_start,
+                        authored_start=self._absolute_note_start(note.start),
+                        resolved_start=self._absolute_note_start(resolved_start),
                         timing_offset_seconds=resolved_start - note.start,
                         duration=note.duration,
-                        resolved_end=resolved_start + note.duration,
+                        resolved_end=self._absolute_note_start(
+                            resolved_start + note.duration
+                        ),
                         freq_hz=self._resolve_freq(note),
                         partial=note.partial,
                         label=note.label,
@@ -490,11 +533,12 @@ class Score:
                 }
             )
             note_automation = list(note.automation or [])
+            absolute_note_start = self._absolute_note_start(note.start)
             synth_params = apply_synth_automation(
                 params=synth_params,
                 voice_automation=voice.automation,
                 note_automation=note_automation,
-                note_start=note.start,
+                note_start=absolute_note_start,
             )
             attack_scale = float(synth_params.pop("attack_scale", 1.0))
             release_scale = float(synth_params.pop("release_scale", 1.0))
@@ -508,9 +552,9 @@ class Score:
                 base_decay=float(synth_params.get("decay", 0.1)),
                 base_sustain_level=float(synth_params.get("sustain_level", 0.75)),
                 base_release=float(synth_params.get("release", 0.3)) * release_scale,
-                note_start=note.start,
+                note_start=absolute_note_start,
                 humanize=voice.envelope_humanize,
-                total_dur=self.total_dur,
+                total_dur=self._time_reference_total_dur(),
                 voice_name=voice_name,
             )
             held_samples = int(note.duration * self.sample_rate)
@@ -544,7 +588,7 @@ class Score:
                     sample_rate=self.sample_rate,
                     voice_automation=voice.automation,
                     note_automation=note_automation,
-                    note_start=note.start,
+                    note_start=absolute_note_start,
                 )
                 if held_trajectory is not None:
                     release_samples = max(0, total_samples - held_samples)
@@ -605,7 +649,7 @@ class Score:
                     TimingTarget(
                         key=(voice_name, note_index),
                         voice_name=voice_name,
-                        start=note.start,
+                        start=self._absolute_note_start(note.start),
                     )
                 )
         return targets
@@ -622,10 +666,18 @@ class Score:
                         key=(voice_name, note_index),
                         voice_name=voice_name,
                         group_name=group_name,
-                        start=note.start,
+                        start=self._absolute_note_start(note.start),
                     )
                 )
         return targets
+
+    def _absolute_note_start(self, note_start: float) -> float:
+        return self.time_origin_seconds + note_start
+
+    def _time_reference_total_dur(self) -> float:
+        if self.time_reference_total_dur is not None:
+            return self.time_reference_total_dur
+        return self.time_origin_seconds + self.total_dur
 
     def _resolve_freq(self, note: NoteEvent) -> float:
         if note.freq is not None:
@@ -641,7 +693,7 @@ class Score:
                 build_velocity_multipliers(
                     targets=targets,
                     humanize=humanize,
-                    total_dur=self.total_dur,
+                    total_dur=self._time_reference_total_dur(),
                 )
             )
         return velocity_multipliers

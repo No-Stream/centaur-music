@@ -7,9 +7,9 @@ PIECE ?=
 PLOT ?= 1
 AT ?=
 WINDOW ?= 8
+START ?=
+DUR ?=
 TESTS ?= tests
-PYTEST_N ?= 4
-PYTEST_FLAGS = -n $(PYTEST_N)
 
 ifeq ($(PLOT),1)
 RENDER_PLOT_FLAG = --plot
@@ -50,11 +50,11 @@ typecheck:
 
 .PHONY: test
 test:
-	$(UV_RUN) pytest $(PYTEST_FLAGS) $(TESTS)
+	$(UV_RUN) pytest $(TESTS)
 
 .PHONY: test-selected
 test-selected:
-	$(UV_RUN) pytest $(PYTEST_FLAGS) $(TESTS)
+	$(UV_RUN) pytest $(TESTS)
 
 .PHONY: render
 render:
@@ -72,6 +72,29 @@ ifndef AT
 	$(error AT is required, for example `make inspect PIECE=ji_chorale AT=2:10`)
 endif
 	$(UV_RUN) python main.py $(PIECE) --inspect-at "$(AT)" --inspect-window $(WINDOW)
+
+.PHONY: snippet
+snippet:
+ifndef PIECE
+	$(error PIECE is required, for example `make snippet PIECE=ji_chorale AT=2:10 WINDOW=12`)
+endif
+ifndef AT
+	$(error AT is required, for example `make snippet PIECE=ji_chorale AT=2:10 WINDOW=12`)
+endif
+	$(UV_RUN) python main.py $(PIECE) --snippet-at "$(AT)" --snippet-window $(WINDOW) $(RENDER_PLOT_FLAG)
+
+.PHONY: render-window
+render-window:
+ifndef PIECE
+	$(error PIECE is required, for example `make render-window PIECE=ji_chorale START=130 DUR=12`)
+endif
+ifndef START
+	$(error START is required, for example `make render-window PIECE=ji_chorale START=130 DUR=12`)
+endif
+ifndef DUR
+	$(error DUR is required, for example `make render-window PIECE=ji_chorale START=130 DUR=12`)
+endif
+	$(UV_RUN) python main.py $(PIECE) --window-start "$(START)" --window-dur $(DUR) $(RENDER_PLOT_FLAG)
 
 .PHONY: render-sketches
 render-sketches:

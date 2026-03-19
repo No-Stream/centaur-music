@@ -47,6 +47,42 @@ class RenderResult:
         yield self.plot_path
 
 
+@dataclass(frozen=True)
+class RenderWindow:
+    """Requested snippet window and hidden render margins."""
+
+    start_seconds: float
+    duration_seconds: float
+    pre_margin_seconds: float = 0.5
+    post_margin_seconds: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.start_seconds < 0:
+            raise ValueError("start_seconds must be non-negative")
+        if self.duration_seconds <= 0:
+            raise ValueError("duration_seconds must be positive")
+        if self.pre_margin_seconds < 0:
+            raise ValueError("pre_margin_seconds must be non-negative")
+        if self.post_margin_seconds < 0:
+            raise ValueError("post_margin_seconds must be non-negative")
+
+    @property
+    def end_seconds(self) -> float:
+        return self.start_seconds + self.duration_seconds
+
+    @property
+    def render_start_seconds(self) -> float:
+        return max(0.0, self.start_seconds - self.pre_margin_seconds)
+
+    @property
+    def render_end_seconds(self) -> float:
+        return self.end_seconds + self.post_margin_seconds
+
+    @property
+    def trim_start_seconds(self) -> float:
+        return self.start_seconds - self.render_start_seconds
+
+
 def list_pieces() -> list[str]:
     """Return the registered piece names."""
     return sorted(PIECES)
@@ -58,13 +94,18 @@ def render_piece(
     output_dir: str | Path = "output",
     save_plot: bool = False,
     save_analysis: bool = True,
+    render_window: RenderWindow | None = None,
 ) -> RenderResult:
     """Render a registered piece by name."""
     if piece_name not in PIECES:
         raise ValueError(f"Unknown piece: {piece_name}")
 
     definition = PIECES[piece_name]
-    output_path = Path(output_dir) / f"{definition.output_name}.wav"
+    output_path = _build_output_path(
+        output_dir=output_dir,
+        output_name=definition.output_name,
+        render_window=render_window,
+    )
     version_timestamp = _build_version_timestamp()
     version_output_path = _build_version_audio_path(
         piece_name=piece_name,
@@ -78,34 +119,43 @@ def render_piece(
     version_analysis_manifest_path: Path | None = None
     version_analysis_artifacts: dict[str, Any] | None = None
     score: Score | None = None
+    render_score: Score | None = None
 
     if definition.build_score is not None:
         score = definition.build_score()
-        audio = score.render()
+        render_score = score
+        if render_window is not None:
+            render_score = score.extract_window(
+                start_seconds=render_window.render_start_seconds,
+                end_seconds=render_window.render_end_seconds,
+            )
+        audio = render_score.render()
+        if render_window is not None:
+            audio = _trim_rendered_audio(
+                audio=audio,
+                sample_rate=render_score.sample_rate,
+                start_seconds=render_window.trim_start_seconds,
+                duration_seconds=render_window.duration_seconds,
+            )
         if save_plot:
             version_plot_path = version_output_path.with_suffix(".png")
-            figure, _ = score.plot_piano_roll(version_plot_path)
+            figure, _ = render_score.plot_piano_roll(version_plot_path)
             plt.close(figure)
-        if save_analysis:
-            version_analysis_artifacts = save_analysis_artifacts(
-                output_prefix=version_output_path.with_suffix(""),
-                mix_signal=audio,
-                sample_rate=score.sample_rate,
-                stems=score.render_stems(),
-                score=score,
-                piece_sections=definition.sections,
-            )
-            version_analysis_manifest_path = Path(
-                str(version_analysis_artifacts["manifest_path"])
-            )
     elif definition.render_audio is not None:
+        if render_window is not None:
+            raise ValueError(
+                f"Piece {piece_name} does not support snippet rendering because it "
+                "uses render_audio instead of build_score"
+            )
         audio = definition.render_audio()
     else:
         raise ValueError(f"Piece {piece_name} has no render path configured")
 
     mastering_result = finalize_master(
         audio,
-        sample_rate=score.sample_rate if score is not None else SAMPLE_RATE,
+        sample_rate=render_score.sample_rate
+        if render_score is not None
+        else SAMPLE_RATE,
         target_lufs=_EXPORT_TARGET_LUFS,
         true_peak_ceiling_dbfs=_EXPORT_TRUE_PEAK_CEILING_DBFS,
     )
@@ -116,9 +166,11 @@ def render_piece(
             output_prefix=version_output_path.with_suffix(""),
             mix_signal=export_audio,
             pre_export_mix_signal=audio,
-            sample_rate=score.sample_rate if score is not None else SAMPLE_RATE,
-            stems=score.render_stems() if score is not None else None,
-            score=score,
+            sample_rate=render_score.sample_rate
+            if render_score is not None
+            else SAMPLE_RATE,
+            stems=render_score.render_stems() if render_score is not None else None,
+            score=render_score,
             piece_sections=definition.sections,
         )
         version_analysis_manifest_path = Path(
@@ -160,7 +212,8 @@ def render_piece(
         version_timestamp=version_timestamp,
         save_plot=save_plot,
         save_analysis=save_analysis,
-        score=score,
+        score=render_score,
+        render_window=render_window,
         latest_artifacts=latest_artifacts,
         versioned_artifacts=versioned_artifacts,
     )
@@ -211,6 +264,56 @@ def _build_version_audio_path(
     version_dir = output_path.parent / "versions" / piece_name
     version_stem = f"{output_path.stem}__{version_timestamp}"
     return version_dir / f"{version_stem}{output_path.suffix}"
+
+
+def _build_output_path(
+    *,
+    output_dir: str | Path,
+    output_name: str,
+    render_window: RenderWindow | None,
+) -> Path:
+    """Return the stable output path for the render request."""
+    base_output_path = Path(output_dir) / f"{output_name}.wav"
+    if render_window is None:
+        return base_output_path
+    snippet_suffix = (
+        "__snippet_"
+        f"{_format_filename_seconds(render_window.start_seconds)}_"
+        f"{_format_filename_seconds(render_window.duration_seconds)}"
+    )
+    return base_output_path.with_name(
+        f"{base_output_path.stem}{snippet_suffix}{base_output_path.suffix}"
+    )
+
+
+def _format_filename_seconds(value_seconds: float) -> str:
+    """Return a short filesystem-friendly second marker."""
+    normalized = f"{value_seconds:.3f}".rstrip("0").rstrip(".")
+    return normalized.replace(".", "p")
+
+
+def _trim_rendered_audio(
+    *,
+    audio: np.ndarray,
+    sample_rate: int,
+    start_seconds: float,
+    duration_seconds: float,
+) -> np.ndarray:
+    """Trim rendered audio to the exact requested snippet bounds."""
+    start_sample = max(0, int(round(start_seconds * sample_rate)))
+    duration_samples = max(0, int(round(duration_seconds * sample_rate)))
+    end_sample = start_sample + duration_samples
+    if audio.ndim == 1:
+        trimmed = audio[start_sample:end_sample]
+    else:
+        trimmed = audio[:, start_sample:end_sample]
+    if trimmed.shape[-1] >= duration_samples:
+        return trimmed
+
+    pad_width = duration_samples - trimmed.shape[-1]
+    if audio.ndim == 1:
+        return np.pad(trimmed, (0, pad_width))
+    return np.pad(trimmed, ((0, 0), (0, pad_width)))
 
 
 def _copy_analysis_artifacts_to_latest(
@@ -328,6 +431,7 @@ def _build_render_metadata(
     save_plot: bool,
     save_analysis: bool,
     score: Score | None,
+    render_window: RenderWindow | None,
     latest_artifacts: dict[str, str],
     versioned_artifacts: dict[str, str],
 ) -> dict[str, Any]:
@@ -345,6 +449,7 @@ def _build_render_metadata(
             "save_analysis": save_analysis,
             "export_target_lufs": _EXPORT_TARGET_LUFS,
             "export_true_peak_ceiling_dbfs": _EXPORT_TRUE_PEAK_CEILING_DBFS,
+            "render_window": _serialize_render_window(render_window),
         },
         "artifacts": {
             "latest": latest_artifacts,
@@ -356,6 +461,24 @@ def _build_render_metadata(
         metadata["score_summary"] = _build_score_summary(score)
         metadata["score_snapshot"] = _serialize_value(score)
     return metadata
+
+
+def _serialize_render_window(
+    render_window: RenderWindow | None,
+) -> dict[str, Any] | None:
+    """Convert a render window into JSON-friendly metadata."""
+    if render_window is None:
+        return None
+    return {
+        "mode": "snippet",
+        "start_seconds": render_window.start_seconds,
+        "duration_seconds": render_window.duration_seconds,
+        "end_seconds": render_window.end_seconds,
+        "pre_margin_seconds": render_window.pre_margin_seconds,
+        "post_margin_seconds": render_window.post_margin_seconds,
+        "render_start_seconds": render_window.render_start_seconds,
+        "render_end_seconds": render_window.render_end_seconds,
+    }
 
 
 def _build_provenance(definition: Any) -> dict[str, Any]:

@@ -29,6 +29,8 @@ CLI:
 
 - `make inspect PIECE=ji_chorale AT=2:10`
 - `make inspect-window PIECE=ji_chorale AT=2:10 WINDOW=8`
+- `make snippet PIECE=ji_chorale AT=2:10 WINDOW=12`
+- `make render-window PIECE=ji_chorale START=130 DUR=12`
 
 The inspector reports:
 
@@ -41,6 +43,25 @@ The inspector reports:
 - paths to relevant render artifacts when available
 
 This is the fastest path from conversational references to score context.
+
+## Snippet Rendering
+
+Use snippet rendering when you want to hear a local passage without paying the
+cost of a full score render.
+
+CLI:
+
+- `make snippet PIECE=ji_chorale AT=2:10 WINDOW=12`
+- `make render-window PIECE=ji_chorale START=130 DUR=12`
+
+Behavior:
+
+- snippet rendering is currently supported for score-backed pieces
+- the render path adds a small hidden pre/post margin so note attacks, releases,
+  and reverb feel natural at the exported boundaries
+- the exported WAV is still trimmed to the exact requested window
+- snippet renders write separate artifacts and metadata so they do not overwrite
+  the latest full-piece render
 
 ## Timeline Artifacts
 

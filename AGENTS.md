@@ -94,6 +94,8 @@ make list                          # list registered pieces
 make render PIECE=harmonic_drift   # render a piece (adds --plot by default)
 make render PIECE=harmonic_drift PLOT=0  # render without plot
 make inspect PIECE=ji_chorale AT=2:10    # inspect score context around a timestamp
+make snippet PIECE=ji_chorale AT=2:10 WINDOW=12   # render a centered snippet
+make render-window PIECE=ji_chorale START=130 DUR=12  # render an exact snippet window
 make render-all                    # render every piece
 make test                          # run the full test suite
 make test-selected TESTS=tests/test_score.py  # run a focused subset while iterating
@@ -127,6 +129,10 @@ iterating if helpful, but do not stop there.
 - `make render PIECE=<name> PLOT=0` — render without the plot.
 - `make inspect PIECE=<name> AT=<timestamp>` — inspect a score-backed piece around
   a timestamp like `130` or `2:10`.
+- `make snippet PIECE=<name> AT=<timestamp> WINDOW=<seconds>` — render a short,
+  centered score-backed snippet for faster iteration.
+- `make render-window PIECE=<name> START=<timestamp> DUR=<seconds>` — render an
+  exact score-backed snippet window when you want repeatable boundaries.
 - Pieces should expose either a `build_score()` function or a direct `render_audio()`
   function if they do not fit the score abstraction cleanly.
 
@@ -196,6 +202,9 @@ See `FUTURE.md` for way more ideas.
 - Timestamp inspection is part of the normal workflow now. Prefer the timeline
   artifacts and `make inspect` when responding to comments like "2:10 in
   ji_chorale" instead of manually hunting through score code.
+- Snippet rendering is part of the normal workflow for score-backed pieces now.
+  Prefer `make snippet` or `make render-window` when iterating on a local moment
+  instead of re-rendering the whole piece.
 - Score analysis now includes timing-drift diagnostics. Overall drift is fine, but
   inter-voice spread should stay musically plausible across the piece; keep the
   warning thresholds and artifact details documented under `docs/`.

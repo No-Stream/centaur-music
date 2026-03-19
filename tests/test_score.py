@@ -21,7 +21,7 @@ from code_musics.humanize import (
 )
 from code_musics.pieces import PIECES
 from code_musics.pitch_motion import PitchMotionSpec
-from code_musics.render import render_piece
+from code_musics.render import RenderWindow, render_piece
 from code_musics.score import EffectSpec, NoteEvent, Phrase, Score
 
 
@@ -244,6 +244,39 @@ def test_render_short_note_release_reaches_zero_in_tail() -> None:
 
     assert len(audio) == int(0.38 * score.sample_rate)
     assert np.abs(audio[-1]) < 1e-9
+
+
+def test_extract_window_keeps_overlapping_notes_and_shifts_them() -> None:
+    score = Score(f0=55.0)
+    score.add_note("lead", start=1.0, duration=1.5, partial=4.0, amp=0.2)
+    score.add_note("lead", start=3.25, duration=0.75, partial=5.0, amp=0.2)
+    score.add_note("lead", start=5.0, duration=0.5, partial=6.0, amp=0.2)
+
+    windowed_score = score.extract_window(start_seconds=2.0, end_seconds=4.0)
+
+    assert list(windowed_score.voices) == ["lead"]
+    kept_notes = windowed_score.voices["lead"].notes
+    assert len(kept_notes) == 2
+    assert kept_notes[0].start == pytest.approx(0.0)
+    assert kept_notes[0].duration == pytest.approx(1.5)
+    assert kept_notes[1].start == pytest.approx(1.25)
+    assert windowed_score.time_origin_seconds == pytest.approx(2.0)
+    assert windowed_score.time_reference_total_dur == pytest.approx(score.total_dur)
+
+
+def test_extract_window_preserves_absolute_timing_context() -> None:
+    score = Score(
+        f0=55.0,
+        time_origin_seconds=1.5,
+        time_reference_total_dur=12.0,
+    )
+    score.add_note("lead", start=4.0, duration=1.0, partial=4.0, amp=0.2)
+
+    windowed_score = score.extract_window(start_seconds=3.0, end_seconds=6.0)
+    resolved_note = windowed_score.resolved_timing_notes()[0]
+
+    assert resolved_note.authored_start == pytest.approx(5.5)
+    assert resolved_note.resolved_end == pytest.approx(6.5)
 
 
 def test_chorus_promotes_mono_to_stereo() -> None:
@@ -599,8 +632,10 @@ def test_finalize_master_boosts_to_true_peak_ceiling_when_headroom_remains(
     monkeypatch.setattr(
         synth,
         "apply_lsp_limiter",
-        lambda signal, **kwargs: np.asarray(signal, dtype=np.float64)
-        * synth.db_to_amp(kwargs["input_gain_db"] + kwargs["output_gain_db"]),
+        lambda signal, **kwargs: (
+            np.asarray(signal, dtype=np.float64)
+            * synth.db_to_amp(kwargs["input_gain_db"] + kwargs["output_gain_db"])
+        ),
     )
 
     signal = 0.04 * np.sin(
@@ -947,6 +982,49 @@ def test_render_piece_writes_audio_and_plot(tmp_path: Path) -> None:
         Path(render_metadata["artifacts"]["latest"]["analysis_manifest_path"])
         == result.analysis_manifest_path
     )
+
+
+def test_render_piece_snippet_writes_separate_artifacts_and_metadata(
+    tmp_path: Path,
+) -> None:
+    render_window = RenderWindow(start_seconds=0.5, duration_seconds=0.75)
+
+    result = render_piece(
+        "chord_4567",
+        output_dir=tmp_path,
+        save_plot=True,
+        render_window=render_window,
+    )
+
+    assert result.audio_path.exists()
+    assert "__snippet_" in result.audio_path.name
+    assert result.version_audio_path is not None
+    assert result.version_audio_path.exists()
+    assert "__snippet_" in result.version_audio_path.name
+    assert result.plot_path is not None
+    assert result.plot_path.exists()
+    assert result.analysis_manifest_path is not None
+    assert result.analysis_manifest_path.exists()
+    render_metadata = json.loads(
+        result.render_metadata_path.read_text(encoding="utf-8")
+    )
+    render_request = render_metadata["request"]["render_window"]
+    assert render_request["mode"] == "snippet"
+    assert render_request["start_seconds"] == pytest.approx(0.5)
+    assert render_request["duration_seconds"] == pytest.approx(0.75)
+    assert render_request["render_start_seconds"] == pytest.approx(0.0)
+    assert render_request["render_end_seconds"] == pytest.approx(2.25)
+    assert render_metadata["score_summary"]["note_count"] == 1
+    assert "__snippet_" in render_metadata["artifacts"]["latest"]["audio_path"]
+
+
+def test_render_piece_snippet_rejects_render_audio_piece(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="does not support snippet rendering"):
+        render_piece(
+            "interval_demo",
+            output_dir=tmp_path,
+            render_window=RenderWindow(start_seconds=0.0, duration_seconds=1.0),
+        )
 
 
 def test_render_piece_render_audio_surface_writes_audio_and_analysis(
