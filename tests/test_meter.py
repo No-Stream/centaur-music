@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from code_musics.meter import B, E, M, Q, Timeline, dotted, triplet
+from code_musics.meter import B, E, M, Q, SwingSpec, Timeline, dotted, triplet
 
 
 def test_timeline_converts_common_note_values_to_seconds() -> None:
@@ -44,3 +44,33 @@ def test_timeline_validates_bad_inputs() -> None:
         Timeline(bpm=90.0).at(bar=0)
     with pytest.raises(ValueError, match="measure must be finite and at least 1.0"):
         M(0.5)
+    with pytest.raises(ValueError, match="offbeat_position"):
+        SwingSpec.eighths(1.0)
+
+
+def test_timeline_supports_eighth_swing_positions_and_round_trip_locate() -> None:
+    timeline = Timeline(bpm=120.0, swing=SwingSpec.eighths(2.0 / 3.0))
+
+    assert timeline.position(B(0.5)) == pytest.approx(1.0 / 3.0)
+    assert timeline.position(B(1.0)) == pytest.approx(0.5)
+    assert timeline.duration(E) == pytest.approx(0.25)
+
+    offbeat_location = timeline.locate(1.0 / 3.0)
+    assert offbeat_location.absolute_beats == pytest.approx(0.5)
+    assert offbeat_location.bar == 1
+    assert offbeat_location.beat_within_bar == pytest.approx(0.5)
+
+
+def test_timeline_supports_sixteenth_swing_positions() -> None:
+    timeline = Timeline(bpm=120.0, swing=SwingSpec.sixteenths(2.0 / 3.0))
+
+    assert timeline.position(B(0.25)) == pytest.approx(1.0 / 6.0)
+    assert timeline.position(B(0.5)) == pytest.approx(0.25)
+    assert timeline.position(B(0.75)) == pytest.approx(5.0 / 12.0)
+
+
+def test_timeline_accepts_explicit_straight_swing_position() -> None:
+    timeline = Timeline(bpm=120.0, swing=SwingSpec.eighths(0.5))
+
+    assert timeline.position(B(0.5)) == pytest.approx(0.25)
+    assert timeline.locate(0.25).absolute_beats == pytest.approx(0.5)

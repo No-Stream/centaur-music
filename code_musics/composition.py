@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from code_musics import synth
 from code_musics.meter import (
+    B,
     BeatSpan,
     BeatValue,
     DurationLike,
@@ -17,7 +18,7 @@ from code_musics.meter import (
     TimePointLike,
 )
 from code_musics.pitch_motion import PitchMotionSpec
-from code_musics.score import NoteEvent, Phrase
+from code_musics.score import BeatTiming, NoteEvent, Phrase
 
 if TYPE_CHECKING:
     from code_musics.score import Score
@@ -288,9 +289,10 @@ def grid_line(
     labels: Sequence[str] | None = None,
 ) -> Phrase:
     """Build a phrase from beat-relative durations on a musical timeline."""
-    return line(
+    beat_durations = _resolve_duration_beats_sequence(durations)
+    phrase = line(
         tones=tones,
-        rhythm=_resolve_duration_sequence(durations, timeline=timeline),
+        rhythm=_resolve_grid_second_spans(beat_durations, timeline=timeline),
         pitch_kind=pitch_kind,
         amp=amp,
         amp_db=amp_db,
@@ -299,6 +301,10 @@ def grid_line(
         motions=motions,
         pitch_motion=pitch_motion,
         labels=labels,
+    )
+    return Phrase(
+        events=phrase.events,
+        beat_timings=_build_beat_timings(beat_durations),
     )
 
 
@@ -416,9 +422,10 @@ def grid_ratio_line(
     labels: Sequence[str] | None = None,
 ) -> Phrase:
     """Build a ratio-authored phrase from beat-relative durations."""
-    return ratio_line(
+    beat_durations = _resolve_duration_beats_sequence(durations)
+    phrase = ratio_line(
         tones=tones,
-        rhythm=_resolve_duration_sequence(durations, timeline=timeline),
+        rhythm=_resolve_grid_second_spans(beat_durations, timeline=timeline),
         context=context,
         amp=amp,
         amp_db=amp_db,
@@ -427,6 +434,10 @@ def grid_ratio_line(
         motions=motions,
         pitch_motion=pitch_motion,
         labels=labels,
+    )
+    return Phrase(
+        events=phrase.events,
+        beat_timings=_build_beat_timings(beat_durations),
     )
 
 
@@ -831,11 +842,15 @@ def grid_sequence(
     source_tonic: float = 1.0,
 ) -> list[list[NoteEvent]]:
     """Place repeated phrase entries using beat/bar references."""
-    return sequence(
+    start_beats = tuple(
+        _resolve_time_point_beats(value, timeline=timeline) for value in at
+    )
+    return _place_grid_sequence_entries(
         score,
         voice_name,
         phrase,
-        starts=tuple(_resolve_time_point(value, timeline=timeline) for value in at),
+        timeline=timeline,
+        start_beats=start_beats,
         time_scales=time_scales,
         partial_shifts=partial_shifts,
         amp_scales=amp_scales,
@@ -960,6 +975,25 @@ def grid_canon(
     source_tonic: float = 1.0,
 ) -> dict[str, list[list[NoteEvent]]]:
     """Place delayed imitative entries using beat/bar timing references."""
+    start_beats = _resolve_time_point_beats(start, timeline=timeline)
+    if phrase.beat_timings is not None:
+        return _place_grid_canon_entries(
+            score,
+            voice_names=voice_names,
+            phrase=phrase,
+            timeline=timeline,
+            start_beats=start_beats,
+            delays=delays,
+            repeats=repeats,
+            repeat_gap=repeat_gap,
+            amp_scales=amp_scales,
+            partial_shifts=partial_shifts,
+            time_scales=time_scales,
+            reverses=reverses,
+            sections=sections,
+            source_tonic=source_tonic,
+        )
+
     resolved_delays = (
         _resolve_duration_value(delays, timeline=timeline, allow_zero=True)
         if isinstance(delays, (int, float, BeatSpan, BeatValue))
@@ -973,7 +1007,7 @@ def grid_canon(
         score,
         voice_names=voice_names,
         phrase=phrase,
-        start=_resolve_time_point(start, timeline=timeline),
+        start=timeline.position(B(start_beats)),
         delays=resolved_delays,
         repeats=repeats,
         repeat_gap=_resolve_duration_value(
@@ -1400,6 +1434,14 @@ def _resolve_duration_sequence(
     )
 
 
+def _resolve_duration_beats_sequence(
+    durations: Sequence[DurationLike],
+) -> tuple[float, ...]:
+    if not durations:
+        raise ValueError("durations must not be empty")
+    return tuple(_coerce_duration_beats_value(duration) for duration in durations)
+
+
 def _resolve_duration_value(
     value: float | DurationLike,
     *,
@@ -1419,3 +1461,323 @@ def _resolve_time_point(
     timeline: Timeline,
 ) -> float:
     return timeline.position(value)
+
+
+def _resolve_time_point_beats(
+    value: TimePointLike,
+    *,
+    timeline: Timeline,
+) -> float:
+    return timeline.absolute_beats(value)
+
+
+def _resolve_grid_second_spans(
+    beat_durations: Sequence[float],
+    *,
+    timeline: Timeline,
+) -> tuple[float, ...]:
+    cursor_beats = 0.0
+    starts = [0.0]
+    for duration_beats in beat_durations:
+        cursor_beats += duration_beats
+        starts.append(cursor_beats)
+    resolved_seconds = tuple(timeline.position(B(start)) for start in starts)
+    return tuple(
+        end - start
+        for start, end in zip(
+            resolved_seconds,
+            resolved_seconds[1:],
+            strict=False,
+        )
+    )
+
+
+def _build_beat_timings(beat_durations: Sequence[float]) -> tuple[BeatTiming, ...]:
+    cursor_beats = 0.0
+    timings: list[BeatTiming] = []
+    for duration_beats in beat_durations:
+        timings.append(
+            BeatTiming(start_beats=cursor_beats, duration_beats=duration_beats)
+        )
+        cursor_beats += duration_beats
+    return tuple(timings)
+
+
+def _coerce_duration_beats_value(value: DurationLike) -> float:
+    beats = value.beats if isinstance(value, (BeatSpan, BeatValue)) else float(value)
+    if beats <= 0:
+        raise ValueError("duration beats must be positive")
+    return beats
+
+
+def _place_grid_sequence_entries(
+    score: Score,
+    voice_name: str,
+    phrase: Phrase,
+    *,
+    timeline: Timeline,
+    start_beats: Sequence[float],
+    time_scales: float | Sequence[float],
+    partial_shifts: float | Sequence[float],
+    amp_scales: float | Sequence[float],
+    reverses: bool | Sequence[bool],
+    sections: Sequence[ContextSection | None] | None,
+    source_tonic: float,
+) -> list[list[NoteEvent]]:
+    if phrase.beat_timings is None:
+        return sequence(
+            score,
+            voice_name,
+            phrase,
+            starts=tuple(timeline.position(B(start)) for start in start_beats),
+            time_scales=time_scales,
+            partial_shifts=partial_shifts,
+            amp_scales=amp_scales,
+            reverses=reverses,
+            sections=sections,
+            source_tonic=source_tonic,
+        )
+
+    if not start_beats:
+        raise ValueError("starts must not be empty")
+    if any(start < 0 for start in start_beats):
+        raise ValueError("starts must be non-negative")
+
+    entry_count = len(start_beats)
+    expanded_time_scales = _expand_positive_values(
+        time_scales, entry_count, "time_scales"
+    )
+    expanded_partial_shifts = _expand_scalar_values(
+        partial_shifts,
+        entry_count,
+        "partial_shifts",
+    )
+    expanded_amp_scales = _expand_positive_values(amp_scales, entry_count, "amp_scales")
+    expanded_reverses = _expand_bool_values(reverses, entry_count, "reverses")
+
+    if sections is None:
+        expanded_sections: tuple[ContextSection | None, ...] = (None,) * entry_count
+    else:
+        expanded_sections = tuple(sections)
+        if len(expanded_sections) != entry_count:
+            raise ValueError("sections length must match starts")
+
+    phrase_duration_beats = max(
+        timing.start_beats + timing.duration_beats for timing in phrase.beat_timings
+    )
+    placed_entries: list[list[NoteEvent]] = []
+
+    for start_beat, time_scale, partial_shift, amp_scale, reverse, section in zip(
+        start_beats,
+        expanded_time_scales,
+        expanded_partial_shifts,
+        expanded_amp_scales,
+        expanded_reverses,
+        expanded_sections,
+        strict=True,
+    ):
+        placed_notes: list[NoteEvent] = []
+        for event, beat_timing in zip(
+            phrase.events,
+            phrase.beat_timings,
+            strict=True,
+        ):
+            if reverse:
+                relative_start_beats = (
+                    phrase_duration_beats
+                    - beat_timing.start_beats
+                    - beat_timing.duration_beats
+                ) * time_scale
+            else:
+                relative_start_beats = beat_timing.start_beats * time_scale
+
+            absolute_start_beats = start_beat + relative_start_beats
+            scaled_duration_beats = beat_timing.duration_beats * time_scale
+            absolute_end_beats = absolute_start_beats + scaled_duration_beats
+
+            placed_event = _resolve_grid_event_pitch(
+                event=event,
+                partial_shift=partial_shift,
+                amp_scale=amp_scale,
+                section=section,
+                source_tonic=source_tonic,
+            )
+            placed_notes.append(
+                score.add_note(
+                    voice_name,
+                    start=timeline.position(B(absolute_start_beats)),
+                    duration=timeline.position(B(absolute_end_beats))
+                    - timeline.position(B(absolute_start_beats)),
+                    partial=placed_event.partial,
+                    freq=placed_event.freq,
+                    amp=placed_event.amp,
+                    velocity=placed_event.velocity,
+                    pitch_motion=placed_event.pitch_motion,
+                    synth=dict(placed_event.synth)
+                    if placed_event.synth is not None
+                    else None,
+                    label=placed_event.label,
+                    automation=list(placed_event.automation)
+                    if placed_event.automation is not None
+                    else None,
+                )
+            )
+        placed_entries.append(placed_notes)
+    return placed_entries
+
+
+def _resolve_grid_event_pitch(
+    *,
+    event: NoteEvent,
+    partial_shift: float,
+    amp_scale: float,
+    section: ContextSection | None,
+    source_tonic: float,
+) -> NoteEvent:
+    resolved_amp = _require_resolved_amp(event) * amp_scale
+
+    if section is None:
+        new_partial = None if event.partial is None else event.partial + partial_shift
+        return replace(
+            event,
+            amp=resolved_amp,
+            partial=new_partial,
+        )
+
+    source_pitch = event.freq
+    shifted_partial = event.partial
+    if shifted_partial is not None:
+        shifted_partial += partial_shift
+        source_pitch = shifted_partial
+
+    if source_pitch is None:
+        raise ValueError("event must define freq or partial")
+    ratio = float(source_pitch) / source_tonic
+    return replace(
+        event,
+        amp=resolved_amp,
+        freq=section.context.resolve_ratio(ratio),
+        partial=None,
+    )
+
+
+def _place_grid_canon_entries(
+    score: Score,
+    *,
+    voice_names: Sequence[str],
+    phrase: Phrase,
+    timeline: Timeline,
+    start_beats: float,
+    delays: DurationLike | Sequence[DurationLike],
+    repeats: int,
+    repeat_gap: float | DurationLike,
+    amp_scales: float | Sequence[float],
+    partial_shifts: float | Sequence[float],
+    time_scales: float | Sequence[float],
+    reverses: bool | Sequence[bool],
+    sections: Sequence[ContextSection | None] | None,
+    source_tonic: float,
+) -> dict[str, list[list[NoteEvent]]]:
+    if not voice_names:
+        raise ValueError("voice_names must not be empty")
+    if start_beats < 0:
+        raise ValueError("start must be non-negative")
+    if repeats <= 0:
+        raise ValueError("repeats must be positive")
+
+    entry_count = len(voice_names)
+    if isinstance(delays, (int, float, BeatSpan, BeatValue)):
+        delay_values = tuple(
+            _resolve_duration_beats_value(delays, allow_zero=True)
+            for _ in range(max(entry_count - 1, 0))
+        )
+    else:
+        delay_values = tuple(
+            _resolve_duration_beats_value(delay, allow_zero=True) for delay in delays
+        )
+        if len(delay_values) != max(entry_count - 1, 0):
+            raise ValueError("delays must have length len(voice_names) - 1")
+    if any(delay < 0 for delay in delay_values):
+        raise ValueError("delays must be non-negative")
+
+    repeat_gap_beats = _resolve_duration_beats_value(repeat_gap, allow_zero=True)
+    if repeat_gap_beats < 0:
+        raise ValueError("repeat_gap must be non-negative")
+
+    starts = [start_beats]
+    cursor = start_beats
+    for delay in delay_values:
+        cursor += delay
+        starts.append(cursor)
+
+    expanded_amp_scales = _expand_positive_values(amp_scales, entry_count, "amp_scales")
+    expanded_partial_shifts = _expand_scalar_values(
+        partial_shifts,
+        entry_count,
+        "partial_shifts",
+    )
+    expanded_time_scales = _expand_positive_values(
+        time_scales, entry_count, "time_scales"
+    )
+    expanded_reverses = _expand_bool_values(reverses, entry_count, "reverses")
+    if sections is None:
+        expanded_sections: tuple[ContextSection | None, ...] = (None,) * entry_count
+    else:
+        expanded_sections = tuple(sections)
+        if len(expanded_sections) != entry_count:
+            raise ValueError("sections length must match voice_names")
+
+    phrase_duration_beats = max(
+        timing.start_beats + timing.duration_beats
+        for timing in phrase.beat_timings or ()
+    )
+    placed: dict[str, list[list[NoteEvent]]] = {}
+    for (
+        voice_name,
+        entry_start_beats,
+        amp_scale,
+        partial_shift,
+        time_scale,
+        reverse,
+        section,
+    ) in zip(
+        voice_names,
+        starts,
+        expanded_amp_scales,
+        expanded_partial_shifts,
+        expanded_time_scales,
+        expanded_reverses,
+        expanded_sections,
+        strict=True,
+    ):
+        repeat_starts = tuple(
+            entry_start_beats
+            + (repeat_index * ((phrase_duration_beats * time_scale) + repeat_gap_beats))
+            for repeat_index in range(repeats)
+        )
+        placed[voice_name] = _place_grid_sequence_entries(
+            score,
+            voice_name,
+            phrase,
+            timeline=timeline,
+            start_beats=repeat_starts,
+            amp_scales=(amp_scale,) * repeats,
+            partial_shifts=(partial_shift,) * repeats,
+            time_scales=(time_scale,) * repeats,
+            reverses=(reverse,) * repeats,
+            sections=(section,) * repeats,
+            source_tonic=source_tonic,
+        )
+    return placed
+
+
+def _resolve_duration_beats_value(
+    value: float | DurationLike,
+    *,
+    allow_zero: bool,
+) -> float:
+    if allow_zero and isinstance(value, (int, float)) and float(value) == 0.0:
+        return 0.0
+    if allow_zero and isinstance(value, (BeatSpan, BeatValue)) and value.beats == 0.0:
+        return 0.0
+    return _coerce_duration_beats_value(value)

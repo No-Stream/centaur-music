@@ -61,17 +61,22 @@ Use `code_musics.meter` when you want musical time rather than raw seconds.
 
 Core APIs:
 
-- `Timeline(bpm=..., meter=(num, den))`
+- `Timeline(bpm=..., meter=(num, den), swing=...)`
 - rhythmic values: `W`, `H`, `Q`, `E`, `S`
+- swing helper: `SwingSpec.eighths(...)`, `SwingSpec.sixteenths(...)`
 - helpers: `B(...)`, `M(...)`, `dotted(...)`, `triplet(...)`
 
 Example:
 
 ```python
 from code_musics.composition import grid_line, grid_sequence
-from code_musics.meter import M, Q, Timeline
+from code_musics.meter import M, Q, SwingSpec, Timeline
 
-timeline = Timeline(bpm=96, meter=(4, 4))
+timeline = Timeline(
+    bpm=96,
+    meter=(4, 4),
+    swing=SwingSpec.eighths(0.62),
+)
 
 motif = grid_line(
     tones=[1.0, 5 / 4, 3 / 2, 5 / 4],
@@ -96,6 +101,8 @@ Important conventions:
 - plain numeric durations in the grid helpers are interpreted as beats
 - `B(...)` is a beat span or absolute beat offset from time zero
 - `M(...)` is a bar-position reference where `M(1)` is the first bar start
+- `SwingSpec(..., offbeat_position=0.5)` is accepted as explicit straight feel,
+  though `swing=None` is still the cleaner default
 
 ### `Timeline`
 
@@ -111,6 +118,12 @@ Useful methods:
 
 `meter` affects bar length. Beat values are expressed in quarter-note beats, so
 `Q` is always one beat and `meter=(6, 8)` gives a 3-beat bar.
+
+If `swing` is set, `Timeline.position(...)`, `Timeline.at(...)`, and
+`Timeline.locate(...)` use the swung grid. Standalone scalar durations like
+`timeline.duration(Q)` remain straight-time conversions; swing-aware note spans
+are resolved sequence-positionally inside `grid_line(...)` and
+`grid_ratio_line(...)`.
 
 ### Grid Helpers
 

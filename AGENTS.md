@@ -49,10 +49,11 @@
   creation, `concat(...)` / `overlay(...)` / `echo(...)` for phrase transforms,
   `sequence(...)` / `canon(...)` for repeated placement, and
   `voiced_ratio_chord(...)` / `progression(...)` for harmonic writing. The optional
-  high-level timing layer adds `Timeline`, rhythmic values like `Q` / `E`, and
-  grid-style helpers such as `grid_line(...)`, `grid_sequence(...)`,
-  `grid_canon(...)`, and `metered_sections(...)` that compile back down to the
-  existing seconds-based score model. Full API details live in
+  high-level timing layer adds `Timeline`, rhythmic values like `Q` / `E`, optional
+  `SwingSpec` feel control for eighth- or sixteenth-note swing, and grid-style
+  helpers such as `grid_line(...)`, `grid_sequence(...)`, `grid_canon(...)`, and
+  `metered_sections(...)` that compile back down to the existing seconds-based
+  score model. Full API details live in
   `docs/composition_api.md`.
 - For detailed score-surface semantics, parameter meanings, and render-order
   behavior, read `docs/score_api.md`.

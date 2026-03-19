@@ -35,7 +35,7 @@ from code_musics.composition import (
     with_synth_ramp,
     with_tail_breath,
 )
-from code_musics.meter import B, E, M, Q, Timeline, dotted
+from code_musics.meter import B, E, M, Q, S, SwingSpec, Timeline, dotted
 from code_musics.pieces.sketches import (
     build_composition_tools_consonant_score,
     build_composition_tools_showcase_score,
@@ -688,6 +688,93 @@ def test_grid_helpers_build_renderable_score() -> None:
 
     assert score.total_dur == pytest.approx(5.0)
     assert rendered.size > 0
+
+
+def test_grid_line_supports_eighth_swing() -> None:
+    timeline = Timeline(bpm=120.0, swing=SwingSpec.eighths(2.0 / 3.0))
+
+    phrase = grid_line(
+        tones=[4.0, 5.0, 6.0, 7.0],
+        durations=[E, E, E, E],
+        timeline=timeline,
+        amp=0.2,
+    )
+
+    assert [event.start for event in phrase.events] == pytest.approx(
+        [0.0, 1.0 / 3.0, 0.5, 5.0 / 6.0]
+    )
+    assert [event.duration for event in phrase.events] == pytest.approx(
+        [1.0 / 3.0, 1.0 / 6.0, 1.0 / 3.0, 1.0 / 6.0]
+    )
+
+
+def test_grid_line_supports_sixteenth_swing() -> None:
+    timeline = Timeline(bpm=120.0, swing=SwingSpec.sixteenths(2.0 / 3.0))
+
+    phrase = grid_line(
+        tones=[4.0, 5.0, 6.0, 7.0],
+        durations=[S, S, S, S],
+        timeline=timeline,
+        amp=0.2,
+    )
+
+    assert [event.start for event in phrase.events] == pytest.approx(
+        [0.0, 1.0 / 6.0, 0.25, 5.0 / 12.0]
+    )
+    assert [event.duration for event in phrase.events] == pytest.approx(
+        [1.0 / 6.0, 1.0 / 12.0, 1.0 / 6.0, 1.0 / 12.0]
+    )
+
+
+def test_grid_sequence_places_swung_offbeat_phrase_entries() -> None:
+    timeline = Timeline(bpm=120.0, swing=SwingSpec.eighths(2.0 / 3.0))
+    score = Score(f0=55.0)
+    phrase = grid_line(
+        tones=[4.0, 5.0],
+        durations=[E, E],
+        timeline=timeline,
+        amp=0.2,
+    )
+
+    placed = grid_sequence(
+        score,
+        "lead",
+        phrase,
+        timeline=timeline,
+        at=[B(0.5)],
+    )
+
+    assert [note.start for note in placed[0]] == pytest.approx([1.0 / 3.0, 0.5])
+    assert [note.duration for note in placed[0]] == pytest.approx(
+        [1.0 / 6.0, 1.0 / 3.0]
+    )
+
+
+def test_grid_canon_uses_swung_grid_for_delays_and_repeats() -> None:
+    timeline = Timeline(bpm=120.0, swing=SwingSpec.eighths(2.0 / 3.0))
+    score = Score(f0=55.0)
+    phrase = grid_line(
+        tones=[4.0],
+        durations=[E],
+        timeline=timeline,
+        amp=0.2,
+    )
+
+    placed = grid_canon(
+        score,
+        voice_names=("a", "b"),
+        phrase=phrase,
+        timeline=timeline,
+        start=B(0.5),
+        delays=[E],
+        repeats=2,
+        repeat_gap=E,
+    )
+
+    assert [entry[0].start for entry in placed["a"]] == pytest.approx(
+        [1.0 / 3.0, 5.0 / 6.0]
+    )
+    assert [entry[0].start for entry in placed["b"]] == pytest.approx([0.5, 1.0])
 
 
 def test_voiced_ratio_chord_supports_voicing_inversion_and_register() -> None:

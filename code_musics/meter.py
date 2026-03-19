@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Literal
 
 _VALID_METER_DENOMINATORS = {1, 2, 4, 8, 16, 32}
 
@@ -56,6 +57,36 @@ class MusicalLocation:
         return self.beat
 
 
+@dataclass(frozen=True)
+class SwingSpec:
+    """Timing warp for a swung musical grid."""
+
+    subdivision: Literal["eighth", "sixteenth"]
+    offbeat_position: float
+
+    def __post_init__(self) -> None:
+        if self.subdivision not in {"eighth", "sixteenth"}:
+            raise ValueError("subdivision must be 'eighth' or 'sixteenth'")
+        if (
+            not math.isfinite(self.offbeat_position)
+            or self.offbeat_position < 0.5
+            or self.offbeat_position >= 1.0
+        ):
+            raise ValueError(
+                "offbeat_position must be finite and in the range [0.5, 1.0)"
+            )
+
+    @classmethod
+    def eighths(cls, offbeat_position: float = 2.0 / 3.0) -> SwingSpec:
+        """Return an eighth-note swing specification."""
+        return cls(subdivision="eighth", offbeat_position=offbeat_position)
+
+    @classmethod
+    def sixteenths(cls, offbeat_position: float = 2.0 / 3.0) -> SwingSpec:
+        """Return a sixteenth-note swing specification."""
+        return cls(subdivision="sixteenth", offbeat_position=offbeat_position)
+
+
 type DurationLike = float | BeatValue | BeatSpan
 type TimePointLike = float | BeatValue | BeatSpan | MeasurePosition
 
@@ -93,6 +124,7 @@ class Timeline:
     bpm: float
     meter: tuple[int, int] = (4, 4)
     pickup_beats: float = 0.0
+    swing: SwingSpec | None = None
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.bpm) or self.bpm <= 0:
@@ -138,11 +170,11 @@ class Timeline:
         if not math.isfinite(beat) or beat < 0:
             raise ValueError("beat must be non-negative and finite")
         absolute_beats = self.pickup_beats + ((bar - 1) * self.beats_per_bar) + beat
-        return absolute_beats * self.seconds_per_beat
+        return self._beats_to_seconds(absolute_beats)
 
     def position(self, value: TimePointLike) -> float:
         """Resolve a musical position reference into seconds."""
-        return self.absolute_beats(value) * self.seconds_per_beat
+        return self._beats_to_seconds(self.absolute_beats(value))
 
     def absolute_beats(self, value: TimePointLike) -> float:
         """Resolve a position reference into absolute quarter-note beats."""
@@ -162,7 +194,7 @@ class Timeline:
         if not math.isfinite(seconds) or seconds < 0:
             raise ValueError("seconds must be non-negative and finite")
 
-        absolute_beats = seconds / self.seconds_per_beat
+        absolute_beats = self._seconds_to_beats(seconds)
         if absolute_beats < self.pickup_beats:
             return MusicalLocation(
                 bar=0,
@@ -180,6 +212,85 @@ class Timeline:
             absolute_beats=absolute_beats,
             seconds=seconds,
         )
+
+    @property
+    def swing_unit_beats(self) -> float | None:
+        """Return the beat span of one swing unit, if swing is enabled."""
+        if self.swing is None:
+            return None
+        if self.swing.subdivision == "eighth":
+            return 1.0
+        return 0.5
+
+    def _beats_to_seconds(self, absolute_beats: float) -> float:
+        if self.swing is None:
+            return absolute_beats * self.seconds_per_beat
+
+        unit_beats = self.swing_unit_beats
+        if unit_beats is None:
+            return absolute_beats * self.seconds_per_beat
+
+        warped_beats = self._warp_beats_within_units(
+            absolute_beats,
+            unit_beats=unit_beats,
+            offbeat_position=self.swing.offbeat_position,
+        )
+        return warped_beats * self.seconds_per_beat
+
+    def _seconds_to_beats(self, seconds: float) -> float:
+        warped_beats = seconds / self.seconds_per_beat
+        if self.swing is None:
+            return warped_beats
+
+        unit_beats = self.swing_unit_beats
+        if unit_beats is None:
+            return warped_beats
+
+        return self._unwarp_beats_within_units(
+            warped_beats,
+            unit_beats=unit_beats,
+            offbeat_position=self.swing.offbeat_position,
+        )
+
+    @staticmethod
+    def _warp_beats_within_units(
+        absolute_beats: float,
+        *,
+        unit_beats: float,
+        offbeat_position: float,
+    ) -> float:
+        unit_index = math.floor(absolute_beats / unit_beats)
+        phase = (absolute_beats - (unit_index * unit_beats)) / unit_beats
+
+        if phase <= 0.5:
+            warped_phase = phase * (offbeat_position / 0.5)
+        else:
+            warped_phase = offbeat_position + (
+                ((phase - 0.5) / 0.5) * (1.0 - offbeat_position)
+            )
+        return (unit_index + warped_phase) * unit_beats
+
+    @staticmethod
+    def _unwarp_beats_within_units(
+        warped_beats: float,
+        *,
+        unit_beats: float,
+        offbeat_position: float,
+    ) -> float:
+        unit_index = math.floor(warped_beats / unit_beats)
+        warped_phase = (warped_beats - (unit_index * unit_beats)) / unit_beats
+
+        if warped_phase <= offbeat_position:
+            phase = (
+                0.0
+                if offbeat_position == 0.0
+                else warped_phase * (0.5 / offbeat_position)
+            )
+        else:
+            phase = 0.5 + (
+                ((warped_phase - offbeat_position) / (1.0 - offbeat_position)) * 0.5
+            )
+        return (unit_index + phase) * unit_beats
 
 
 def _coerce_duration_beats(value: DurationLike) -> float:
@@ -202,6 +313,7 @@ __all__ = [
     "MusicalLocation",
     "Q",
     "S",
+    "SwingSpec",
     "Timeline",
     "TimePointLike",
     "W",

@@ -26,7 +26,7 @@ from code_musics.humanize import (
     TimingHumanizeSpec,
     VelocityHumanizeSpec,
 )
-from code_musics.meter import B, E, H, M, Q, S, Timeline, W, dotted, triplet
+from code_musics.meter import B, E, H, M, Q, S, SwingSpec, Timeline, W, dotted, triplet
 from code_musics.pitch_motion import PitchMotionSpec
 from code_musics.score import VelocityParamMap
 
@@ -48,6 +48,7 @@ __all__ = [
     "S",
     "Timeline",
     "TimingHumanizeSpec",
+    "SwingSpec",
     "VelocityHumanizeSpec",
     "VelocityParamMap",
     "W",

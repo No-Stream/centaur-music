@@ -79,10 +79,29 @@ class NoteEvent:
 
 
 @dataclass(frozen=True)
+class BeatTiming:
+    """Beat-domain timing metadata for grid-authored phrases."""
+
+    start_beats: float
+    duration_beats: float
+
+    def __post_init__(self) -> None:
+        if self.start_beats < 0:
+            raise ValueError("start_beats must be non-negative")
+        if self.duration_beats <= 0:
+            raise ValueError("duration_beats must be positive")
+
+
+@dataclass(frozen=True)
 class Phrase:
     """Reusable collection of relative-time note events."""
 
     events: tuple[NoteEvent, ...]
+    beat_timings: tuple[BeatTiming, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.beat_timings is not None and len(self.beat_timings) != len(self.events):
+            raise ValueError("beat_timings length must match events length")
 
     @classmethod
     def from_partials(

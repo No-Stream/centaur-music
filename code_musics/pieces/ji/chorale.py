@@ -582,8 +582,11 @@ def build_ji_chorale_score() -> Score:
         (E4, 1.5),
         (D4, 1.5),
         (E4, 0.5),
-        (Cs5, 0.75),  # ends at D-minor onset (48.75s); Cs5 over Amaj avoids tritone clash
-        (A4, 1.75),   # chord tone of D minor
+        (
+            Cs5,
+            0.75,
+        ),  # ends at D-minor onset (48.75s); Cs5 over Amaj avoids tritone clash
+        (A4, 1.75),  # chord tone of D minor
         (B4, 1.5),
         (A4, 1.5),
         (Gs4, 0.5),
