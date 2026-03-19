@@ -1269,6 +1269,10 @@ def test_render_piece_writes_audio_and_plot(tmp_path: Path) -> None:
         Path(render_metadata["artifacts"]["latest"]["analysis_manifest_path"])
         == result.analysis_manifest_path
     )
+    assert "pre_master_summary" in manifest["mix"]
+    assert "pre_export_summary" in manifest["mix"]
+    mix_risk_codes = {risk["code"] for risk in manifest["artifact_risk"]["mix"]}
+    assert "export_loudness_jump" not in mix_risk_codes
 
 
 def test_render_piece_snippet_writes_separate_artifacts_and_metadata(

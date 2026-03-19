@@ -378,6 +378,7 @@ def save_analysis_artifacts(
     output_prefix: str | Path,
     mix_signal: np.ndarray,
     sample_rate: int,
+    pre_master_mix_signal: np.ndarray | None = None,
     pre_export_mix_signal: np.ndarray | None = None,
     stems: dict[str, np.ndarray] | None = None,
     effect_analysis: dict[str, Any] | None = None,
@@ -394,6 +395,7 @@ def save_analysis_artifacts(
         sample_rate=sample_rate,
         reference_tilt_db_per_octave=reference_tilt_db_per_octave,
     )
+    pre_master_analysis: AudioAnalysis | None = None
     pre_export_analysis: AudioAnalysis | None = None
     manifest: dict[str, Any] = {
         "reference_tilt_db_per_octave": reference_tilt_db_per_octave,
@@ -406,6 +408,13 @@ def save_analysis_artifacts(
         if effect_analysis is not None
         else {"mix_effects": [], "voice_effects": {}},
     }
+    if pre_master_mix_signal is not None:
+        pre_master_analysis = analyze_audio(
+            pre_master_mix_signal,
+            sample_rate=sample_rate,
+            reference_tilt_db_per_octave=reference_tilt_db_per_octave,
+        )
+        manifest["mix"]["pre_master_summary"] = pre_master_analysis.to_dict()
     if pre_export_mix_signal is not None:
         pre_export_analysis = analyze_audio(
             pre_export_mix_signal,
@@ -496,6 +505,7 @@ def save_analysis_artifacts(
         mix_analysis=mix_analysis,
         voice_analyses=voice_analyses,
         score=score,
+        pre_master_mix_analysis=pre_master_analysis,
         pre_export_mix_analysis=pre_export_analysis,
     )
     manifest["artifact_risk"] = artifact_risk_report.to_dict()
@@ -1170,45 +1180,80 @@ def _build_artifact_risk_report(
     mix_analysis: AudioAnalysis,
     voice_analyses: dict[str, AudioAnalysis],
     score: Score | None,
+    pre_master_mix_analysis: AudioAnalysis | None,
     pre_export_mix_analysis: AudioAnalysis | None,
 ) -> ArtifactRiskReport:
     mix_risks = list(mix_analysis.artifact_risks)
-    if pre_export_mix_analysis is not None:
+    if (
+        pre_master_mix_analysis is not None
+        and pre_export_mix_analysis is not None
+    ):
         loudness_delta_lufs = (
-            mix_analysis.integrated_lufs - pre_export_mix_analysis.integrated_lufs
+            pre_export_mix_analysis.integrated_lufs
+            - pre_master_mix_analysis.integrated_lufs
         )
         centroid_delta_hz = (
-            mix_analysis.spectral_centroid_hz
-            - pre_export_mix_analysis.spectral_centroid_hz
+            pre_export_mix_analysis.spectral_centroid_hz
+            - pre_master_mix_analysis.spectral_centroid_hz
         )
-        if loudness_delta_lufs >= 8.0:
+        crest_delta_db = (
+            pre_master_mix_analysis.crest_factor_db
+            - pre_export_mix_analysis.crest_factor_db
+        )
+        export_density_increase = (
+            pre_export_mix_analysis.clipped_sample_fraction
+            > pre_master_mix_analysis.clipped_sample_fraction
+            or (
+                pre_export_mix_analysis.clipped_true_peak
+                and not pre_master_mix_analysis.clipped_true_peak
+            )
+        )
+        # Warn on large premaster -> post-master jumps only when the master bus
+        # also shows signs of added limiting or clipping density. Final export
+        # normalization is tracked separately and intentionally does not drive
+        # this warning surface.
+        if loudness_delta_lufs >= 8.0 and (
+            crest_delta_db >= 3.0 or export_density_increase
+        ):
             mix_risks.append(
                 _artifact_risk(
                     severity="severe",
                     code="export_loudness_jump",
                     source="mastering_analysis",
-                    message="export mastering changed loudness far more than expected",
+                    message="export mastering increased loudness with strong compression or clipping-like density",
                     loudness_delta_lufs=round(loudness_delta_lufs, 2),
-                    pre_export_lufs=round(
+                    crest_factor_delta_db=round(crest_delta_db, 2),
+                    pre_master_lufs=round(
+                        pre_master_mix_analysis.integrated_lufs,
+                        2,
+                    ),
+                    post_master_lufs=round(
                         pre_export_mix_analysis.integrated_lufs,
                         2,
                     ),
-                    export_lufs=round(mix_analysis.integrated_lufs, 2),
+                    master_density_increase=export_density_increase,
                 )
             )
-        elif loudness_delta_lufs >= 4.5:
+        elif loudness_delta_lufs >= 4.5 and (
+            crest_delta_db >= 1.5 or export_density_increase
+        ):
             mix_risks.append(
                 _artifact_risk(
                     severity="warning",
                     code="heavy_export_compression",
                     source="mastering_analysis",
-                    message="export mastering increased loudness enough to suggest heavy compression or limiting",
+                    message="export mastering increased loudness with noticeable compression or clipping-like density",
                     loudness_delta_lufs=round(loudness_delta_lufs, 2),
-                    pre_export_lufs=round(
+                    crest_factor_delta_db=round(crest_delta_db, 2),
+                    pre_master_lufs=round(
+                        pre_master_mix_analysis.integrated_lufs,
+                        2,
+                    ),
+                    post_master_lufs=round(
                         pre_export_mix_analysis.integrated_lufs,
                         2,
                     ),
-                    export_lufs=round(mix_analysis.integrated_lufs, 2),
+                    master_density_increase=export_density_increase,
                 )
             )
         if centroid_delta_hz >= 1_500.0:
@@ -1219,29 +1264,32 @@ def _build_artifact_risk_report(
                     source="mastering_analysis",
                     message="export mastering made the mix substantially brighter",
                     centroid_delta_hz=round(centroid_delta_hz, 1),
-                    pre_export_centroid_hz=round(
+                    pre_master_centroid_hz=round(
+                        pre_master_mix_analysis.spectral_centroid_hz,
+                        1,
+                    ),
+                    post_master_centroid_hz=round(
                         pre_export_mix_analysis.spectral_centroid_hz,
                         1,
                     ),
-                    export_centroid_hz=round(mix_analysis.spectral_centroid_hz, 1),
                 )
             )
-        crest_delta_db = (
-            pre_export_mix_analysis.crest_factor_db - mix_analysis.crest_factor_db
-        )
         if crest_delta_db >= 8.0:
             mix_risks.append(
                 _artifact_risk(
                     severity="severe",
                     code="heavy_export_compression",
                     source="mastering_analysis",
-                    message="export mastering collapsed crest factor dramatically",
+                    message="master bus processing collapsed crest factor dramatically",
                     crest_factor_delta_db=round(crest_delta_db, 2),
-                    pre_export_crest_factor_db=round(
+                    pre_master_crest_factor_db=round(
+                        pre_master_mix_analysis.crest_factor_db,
+                        2,
+                    ),
+                    post_master_crest_factor_db=round(
                         pre_export_mix_analysis.crest_factor_db,
                         2,
                     ),
-                    export_crest_factor_db=round(mix_analysis.crest_factor_db, 2),
                 )
             )
         elif crest_delta_db >= 5.0:
@@ -1250,13 +1298,16 @@ def _build_artifact_risk_report(
                     severity="warning",
                     code="heavy_export_compression",
                     source="mastering_analysis",
-                    message="export mastering reduced crest factor noticeably",
+                    message="master bus processing reduced crest factor noticeably",
                     crest_factor_delta_db=round(crest_delta_db, 2),
-                    pre_export_crest_factor_db=round(
+                    pre_master_crest_factor_db=round(
+                        pre_master_mix_analysis.crest_factor_db,
+                        2,
+                    ),
+                    post_master_crest_factor_db=round(
                         pre_export_mix_analysis.crest_factor_db,
                         2,
                     ),
-                    export_crest_factor_db=round(mix_analysis.crest_factor_db, 2),
                 )
             )
 

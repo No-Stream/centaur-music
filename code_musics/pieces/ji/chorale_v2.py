@@ -88,7 +88,7 @@ def build_ji_chorale_v2_score() -> Score:
 
     # ── master effects ────────────────────────────────────────────────────
     master_effects: list[EffectSpec] = [
-        EffectSpec("saturation", {"preset": "neve_gentle", "mix": 0.18, "drive": 0.85}),
+        EffectSpec("saturation", {"preset": "neve_gentle", "mix": 0.50, "drive": 1.15}),
     ]
     if synth.has_external_plugin("lsp_compressor_stereo"):
         master_effects.append(
@@ -97,12 +97,12 @@ def build_ji_chorale_v2_score() -> Score:
                 {
                     "plugin_name": "lsp_compressor_stereo",
                     "params": {
-                        "ratio": 2.2,
-                        "attack_threshold_db": -18.0,
+                        "ratio": 2.4,
+                        "attack_threshold_db": -24.0,
                         "attack_time_ms": 28.0,
                         "release_time_ms": 220.0,
-                        "knee_db": -10.0,
-                        "makeup_gain_db": 1.2,
+                        "knee_db": -12.0,
+                        "makeup_gain_db": 2.0,
                         "sidechain_mode": "RMS",
                         "dry_wet_balance": 100.0,
                     },
@@ -117,15 +117,7 @@ def build_ji_chorale_v2_score() -> Score:
         [
             EffectSpec(
                 "chow_tape",
-                {"drive": 0.15, "saturation": 0.18, "bias": 0.5, "mix": 50.0},
-            ),
-            EffectSpec(
-                "bricasti",
-                {
-                    "ir_name": "1 Halls 07 Large & Dark",
-                    "wet": 0.15,
-                    "highpass_hz": 150.0,
-                },
+                {"drive": 0.15, "saturation": 0.20, "bias": 0.5, "mix": 50.0},
             ),
         ]
     )

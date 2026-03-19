@@ -20,7 +20,13 @@ import numpy as np
 from code_musics.analysis import save_analysis_artifacts
 from code_musics.pieces import PIECES
 from code_musics.score import Score
-from code_musics.synth import SAMPLE_RATE, finalize_master, write_wav
+from code_musics.synth import (
+    SAMPLE_RATE,
+    db_to_amp,
+    finalize_master,
+    gain_stage_for_master_bus,
+    write_wav,
+)
 
 logger = logging.getLogger(__name__)
 _EXPORT_TARGET_LUFS = -18.0
@@ -122,6 +128,7 @@ def render_piece(
     render_score: Score | None = None
     rendered_stems: dict[str, np.ndarray] | None = None
     effect_analysis: dict[str, Any] | None = None
+    pre_master_mix: np.ndarray | None = None
 
     if definition.build_score is not None:
         score = definition.build_score()
@@ -134,6 +141,19 @@ def render_piece(
         audio, rendered_stems, effect_analysis = (
             render_score.render_with_effect_analysis()
         )
+        if rendered_stems:
+            pre_master_mix = render_score._stack_signals(list(rendered_stems.values()))
+            if render_score.auto_master_gain_stage:
+                pre_master_mix = gain_stage_for_master_bus(
+                    pre_master_mix,
+                    sample_rate=render_score.sample_rate,
+                    target_lufs=render_score.master_bus_target_lufs,
+                    max_true_peak_dbfs=render_score.master_bus_max_true_peak_dbfs,
+                )
+            if render_score.master_input_gain_db != 0.0:
+                pre_master_mix = pre_master_mix * db_to_amp(
+                    render_score.master_input_gain_db
+                )
         if render_window is not None:
             audio = _trim_rendered_audio(
                 audio=audio,
@@ -169,6 +189,7 @@ def render_piece(
         version_analysis_artifacts = save_analysis_artifacts(
             output_prefix=version_output_path.with_suffix(""),
             mix_signal=export_audio,
+            pre_master_mix_signal=pre_master_mix,
             pre_export_mix_signal=audio,
             sample_rate=render_score.sample_rate
             if render_score is not None

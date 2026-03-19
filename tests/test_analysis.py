@@ -222,6 +222,51 @@ def test_save_analysis_artifacts_records_pre_export_mix_summary(tmp_path: Path) 
     )
 
 
+def test_save_analysis_artifacts_does_not_flag_intentional_export_normalization(
+    tmp_path: Path,
+) -> None:
+    sample_rate = 44_100
+    duration_seconds = 2.0
+    time = np.arange(int(sample_rate * duration_seconds), dtype=np.float64) / sample_rate
+    pre_export_signal = 0.01 * np.sin(2.0 * np.pi * 220.0 * time)
+    export_signal = pre_export_signal * 10.0
+
+    manifest = save_analysis_artifacts(
+        output_prefix=tmp_path / "normalized_export_piece",
+        mix_signal=export_signal,
+        pre_master_mix_signal=pre_export_signal,
+        pre_export_mix_signal=pre_export_signal,
+        sample_rate=sample_rate,
+    )
+
+    mix_risk_codes = {risk["code"] for risk in manifest["artifact_risk"]["mix"]}
+
+    assert "export_loudness_jump" not in mix_risk_codes
+    assert "heavy_export_compression" not in mix_risk_codes
+
+
+def test_save_analysis_artifacts_flags_loudness_jump_with_crest_collapse(
+    tmp_path: Path,
+) -> None:
+    sample_rate = 44_100
+    duration_seconds = 2.0
+    time = np.arange(int(sample_rate * duration_seconds), dtype=np.float64) / sample_rate
+    pre_export_signal = 0.01 * np.sin(2.0 * np.pi * 220.0 * time)
+    export_signal = 0.1 * np.sign(np.sin(2.0 * np.pi * 220.0 * time))
+
+    manifest = save_analysis_artifacts(
+        output_prefix=tmp_path / "compressed_export_piece",
+        mix_signal=export_signal,
+        pre_master_mix_signal=pre_export_signal,
+        pre_export_mix_signal=export_signal,
+        sample_rate=sample_rate,
+    )
+
+    mix_risk_codes = {risk["code"] for risk in manifest["artifact_risk"]["mix"]}
+
+    assert "export_loudness_jump" in mix_risk_codes or "heavy_export_compression" in mix_risk_codes
+
+
 def test_save_analysis_artifacts_records_artifact_risk_report(tmp_path: Path) -> None:
     risky_score = Score(f0=55.0)
     risky_score.add_voice(
