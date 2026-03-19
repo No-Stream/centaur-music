@@ -457,6 +457,189 @@ def _design_low_shelf_biquad(
     return b / a[0], a / a[0]
 
 
+def _design_peaking_biquad(
+    *,
+    sample_rate: int,
+    center_hz: float,
+    q: float,
+    gain_db: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    amplitude = 10.0 ** (gain_db / 40.0)
+    omega = 2.0 * np.pi * center_hz / sample_rate
+    alpha = np.sin(omega) / (2.0 * q)
+    cosine = np.cos(omega)
+
+    b = np.array(
+        [
+            1.0 + (alpha * amplitude),
+            -2.0 * cosine,
+            1.0 - (alpha * amplitude),
+        ],
+        dtype=np.float64,
+    )
+    a = np.array(
+        [
+            1.0 + (alpha / amplitude),
+            -2.0 * cosine,
+            1.0 - (alpha / amplitude),
+        ],
+        dtype=np.float64,
+    )
+    return b / a[0], a / a[0]
+
+
+def _validate_eq_frequency(
+    *, frequency_hz: float, sample_rate: int, label: str
+) -> None:
+    nyquist = sample_rate / 2.0
+    if not 0.0 < frequency_hz < nyquist:
+        raise ValueError(f"{label} must be between 0 and Nyquist")
+
+
+def _validate_eq_q(q: float) -> None:
+    if q <= 0.0:
+        raise ValueError("q must be positive")
+
+
+def _design_eq_band_sos(
+    *,
+    band: dict[str, Any],
+    sample_rate: int,
+) -> np.ndarray:
+    band_kind = str(band.get("kind", "")).lower()
+
+    if band_kind == "highpass":
+        allowed_keys = {"kind", "cutoff_hz", "slope_db_per_oct"}
+        unknown_keys = set(band) - allowed_keys
+        if unknown_keys:
+            raise ValueError(
+                f"Unsupported parameters for highpass EQ band: {sorted(unknown_keys)}"
+            )
+        cutoff_hz = float(band["cutoff_hz"])
+        slope_db_per_oct = int(band["slope_db_per_oct"])
+        _validate_eq_frequency(
+            frequency_hz=cutoff_hz,
+            sample_rate=sample_rate,
+            label="cutoff_hz",
+        )
+        if slope_db_per_oct not in {12, 24}:
+            raise ValueError("slope_db_per_oct must be 12 or 24")
+        order = slope_db_per_oct // 6
+        return np.asarray(
+            butter(
+                order,
+                cutoff_hz / (sample_rate / 2.0),
+                btype="highpass",
+                output="sos",
+            ),
+            dtype=np.float64,
+        )
+
+    if band_kind == "lowpass":
+        allowed_keys = {"kind", "cutoff_hz", "slope_db_per_oct"}
+        unknown_keys = set(band) - allowed_keys
+        if unknown_keys:
+            raise ValueError(
+                f"Unsupported parameters for lowpass EQ band: {sorted(unknown_keys)}"
+            )
+        cutoff_hz = float(band["cutoff_hz"])
+        slope_db_per_oct = int(band["slope_db_per_oct"])
+        _validate_eq_frequency(
+            frequency_hz=cutoff_hz,
+            sample_rate=sample_rate,
+            label="cutoff_hz",
+        )
+        if slope_db_per_oct not in {12, 24}:
+            raise ValueError("slope_db_per_oct must be 12 or 24")
+        order = slope_db_per_oct // 6
+        return np.asarray(
+            butter(
+                order,
+                cutoff_hz / (sample_rate / 2.0),
+                btype="lowpass",
+                output="sos",
+            ),
+            dtype=np.float64,
+        )
+
+    if band_kind == "bell":
+        allowed_keys = {"kind", "freq_hz", "gain_db", "q"}
+        unknown_keys = set(band) - allowed_keys
+        if unknown_keys:
+            raise ValueError(
+                f"Unsupported parameters for bell EQ band: {sorted(unknown_keys)}"
+            )
+        freq_hz = float(band["freq_hz"])
+        gain_db = float(band["gain_db"])
+        q = float(band["q"])
+        _validate_eq_frequency(
+            frequency_hz=freq_hz,
+            sample_rate=sample_rate,
+            label="freq_hz",
+        )
+        _validate_eq_q(q)
+        return tf2sos(
+            *_design_peaking_biquad(
+                sample_rate=sample_rate,
+                center_hz=freq_hz,
+                q=q,
+                gain_db=gain_db,
+            )
+        )
+
+    if band_kind == "low_shelf":
+        allowed_keys = {"kind", "freq_hz", "gain_db", "q"}
+        unknown_keys = set(band) - allowed_keys
+        if unknown_keys:
+            raise ValueError(
+                f"Unsupported parameters for low_shelf EQ band: {sorted(unknown_keys)}"
+            )
+        freq_hz = float(band["freq_hz"])
+        gain_db = float(band["gain_db"])
+        q = float(band.get("q", 0.707))
+        _validate_eq_frequency(
+            frequency_hz=freq_hz,
+            sample_rate=sample_rate,
+            label="freq_hz",
+        )
+        _validate_eq_q(q)
+        return tf2sos(
+            *_design_low_shelf_biquad(
+                sample_rate=sample_rate,
+                center_hz=freq_hz,
+                q=q,
+                gain_db=gain_db,
+            )
+        )
+
+    if band_kind == "high_shelf":
+        allowed_keys = {"kind", "freq_hz", "gain_db", "q"}
+        unknown_keys = set(band) - allowed_keys
+        if unknown_keys:
+            raise ValueError(
+                f"Unsupported parameters for high_shelf EQ band: {sorted(unknown_keys)}"
+            )
+        freq_hz = float(band["freq_hz"])
+        gain_db = float(band["gain_db"])
+        q = float(band.get("q", 0.707))
+        _validate_eq_frequency(
+            frequency_hz=freq_hz,
+            sample_rate=sample_rate,
+            label="freq_hz",
+        )
+        _validate_eq_q(q)
+        return tf2sos(
+            *_design_high_shelf_biquad(
+                sample_rate=sample_rate,
+                center_hz=freq_hz,
+                q=q,
+                gain_db=gain_db,
+            )
+        )
+
+    raise ValueError(f"Unsupported EQ band kind: {band_kind!r}")
+
+
 # ---------------------------------------------------------------------------
 # Chow Tape Model VST3 (lazy-loaded singleton)
 # ---------------------------------------------------------------------------
@@ -857,6 +1040,183 @@ def _shape_reverb_return(
         return np.asarray(shaped, dtype=np.float64)
 
     return _apply_per_channel(signal, _process_channel)
+
+
+def apply_eq(
+    signal: np.ndarray,
+    *,
+    bands: list[dict[str, Any]],
+    sample_rate: int = SAMPLE_RATE,
+) -> np.ndarray:
+    """Apply an ordered minimum-phase EQ made from native IIR bands."""
+    if not bands:
+        raise ValueError("bands must be a non-empty list")
+
+    def _process_channel(channel: np.ndarray) -> np.ndarray:
+        processed = np.asarray(channel, dtype=np.float64)
+        for band in bands:
+            band_sos = _design_eq_band_sos(band=band, sample_rate=sample_rate)
+            processed = sosfilt(band_sos, processed)
+        return np.asarray(processed, dtype=np.float64)
+
+    return _apply_per_channel(signal, _process_channel)
+
+
+def _time_constant_to_coeff(time_ms: float, sample_rate: int) -> float:
+    if time_ms <= 0.0:
+        raise ValueError("time constant must be positive")
+    return float(np.exp(-1.0 / (0.001 * time_ms * sample_rate)))
+
+
+def _compressor_gain_db(
+    *,
+    level_db: float,
+    threshold_db: float,
+    ratio: float,
+    knee_db: float,
+) -> float:
+    if knee_db <= 0.0:
+        if level_db <= threshold_db:
+            return 0.0
+        compressed_db = threshold_db + ((level_db - threshold_db) / ratio)
+        return float(compressed_db - level_db)
+
+    lower_knee_db = threshold_db - (knee_db / 2.0)
+    upper_knee_db = threshold_db + (knee_db / 2.0)
+    if level_db <= lower_knee_db:
+        return 0.0
+    if level_db >= upper_knee_db:
+        compressed_db = threshold_db + ((level_db - threshold_db) / ratio)
+        return float(compressed_db - level_db)
+
+    knee_progress_db = level_db - lower_knee_db
+    return float(((1.0 / ratio) - 1.0) * (knee_progress_db**2) / (2.0 * knee_db))
+
+
+def _linked_detector_signal(signal: np.ndarray) -> np.ndarray:
+    normalized = _coerce_signal_layout(signal)
+    if normalized.ndim == 1:
+        return np.abs(normalized)
+    return np.max(np.abs(normalized), axis=0)
+
+
+def apply_compressor(
+    signal: np.ndarray,
+    *,
+    threshold_db: float = -20.0,
+    ratio: float = 3.0,
+    attack_ms: float = 15.0,
+    release_ms: float = 180.0,
+    knee_db: float = 6.0,
+    makeup_gain_db: float = 0.0,
+    mix: float = 1.0,
+    topology: str = "feedforward",
+    detector_mode: str = "rms",
+    detector_bands: list[dict[str, Any]] | None = None,
+    sample_rate: int = SAMPLE_RATE,
+) -> np.ndarray:
+    """Apply a native stereo-linked compressor with optional detector EQ."""
+    if ratio < 1.0:
+        raise ValueError("ratio must be at least 1")
+    if attack_ms <= 0.0:
+        raise ValueError("attack_ms must be positive")
+    if release_ms <= 0.0:
+        raise ValueError("release_ms must be positive")
+    if knee_db < 0.0:
+        raise ValueError("knee_db must be non-negative")
+    if not 0.0 <= mix <= 1.0:
+        raise ValueError("mix must be between 0 and 1")
+
+    normalized_topology = topology.lower()
+    if normalized_topology not in {"feedforward", "feedback"}:
+        raise ValueError("topology must be 'feedforward' or 'feedback'")
+
+    normalized_detector_mode = detector_mode.lower()
+    if normalized_detector_mode not in {"peak", "rms"}:
+        raise ValueError("detector_mode must be 'peak' or 'rms'")
+
+    input_signal = _coerce_signal_layout(signal)
+    detector_source = input_signal
+    if detector_bands is not None:
+        detector_source = apply_eq(
+            input_signal,
+            bands=detector_bands,
+            sample_rate=sample_rate,
+        )
+
+    attack_coeff = _time_constant_to_coeff(attack_ms, sample_rate)
+    release_coeff_slow = _time_constant_to_coeff(release_ms, sample_rate)
+    release_coeff_fast = _time_constant_to_coeff(
+        max(15.0, release_ms * 0.35), sample_rate
+    )
+    makeup_gain = db_to_amp(makeup_gain_db)
+
+    detector_trace = _linked_detector_signal(detector_source)
+    sample_count = input_signal.shape[-1]
+
+    output_signal = np.zeros_like(input_signal, dtype=np.float64)
+    detector_state = 0.0
+    smoothed_gain_db = 0.0
+    output_detector_state = 0.0
+
+    for sample_index in range(sample_count):
+        if normalized_topology == "feedforward":
+            detector_input = float(detector_trace[sample_index])
+        else:
+            detector_input = float(output_detector_state)
+
+        if normalized_detector_mode == "peak":
+            target_level = detector_input
+        else:
+            target_level = detector_input * detector_input
+
+        detector_coeff = (
+            attack_coeff if target_level > detector_state else release_coeff_slow
+        )
+        detector_state = (detector_coeff * detector_state) + (
+            (1.0 - detector_coeff) * target_level
+        )
+
+        if normalized_detector_mode == "peak":
+            level_amplitude = max(detector_state, 1e-12)
+        else:
+            level_amplitude = max(np.sqrt(detector_state), 1e-12)
+        level_db = amp_to_db(level_amplitude)
+
+        target_gain_db = _compressor_gain_db(
+            level_db=level_db,
+            threshold_db=threshold_db,
+            ratio=ratio,
+            knee_db=knee_db,
+        )
+        if target_gain_db < smoothed_gain_db:
+            gain_coeff = attack_coeff
+        else:
+            release_blend = float(np.clip(abs(smoothed_gain_db) / 12.0, 0.0, 1.0))
+            gain_coeff = (release_blend * release_coeff_fast) + (
+                (1.0 - release_blend) * release_coeff_slow
+            )
+        smoothed_gain_db = (gain_coeff * smoothed_gain_db) + (
+            (1.0 - gain_coeff) * target_gain_db
+        )
+
+        gain = db_to_amp(smoothed_gain_db) * makeup_gain
+        if input_signal.ndim == 1:
+            wet_sample = input_signal[sample_index] * gain
+            output_signal[sample_index] = ((1.0 - mix) * input_signal[sample_index]) + (
+                mix * wet_sample
+            )
+            output_detector_state = abs(float(output_signal[sample_index]))
+        else:
+            wet_frame = input_signal[:, sample_index] * gain
+            output_signal[:, sample_index] = (
+                (1.0 - mix) * input_signal[:, sample_index]
+            ) + (mix * wet_frame)
+            output_detector_state = float(
+                np.max(np.abs(output_signal[:, sample_index]))
+            )
+
+    return np.asarray(output_signal, dtype=np.float64)
 
 
 def _is_stereo(signal: np.ndarray) -> bool:
@@ -1625,6 +1985,10 @@ def apply_effect_chain(
             processed = apply_chorus(processed, **params)
         elif effect.kind == "saturation":
             processed = apply_saturation(processed, **params)
+        elif effect.kind == "eq":
+            processed = apply_eq(processed, **params)
+        elif effect.kind == "compressor":
+            processed = apply_compressor(processed, **params)
         elif effect.kind == "tal_chorus_lx":
             processed = apply_tal_chorus_lx(processed, **params)
         elif effect.kind == "tal_reverb2":

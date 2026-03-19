@@ -231,6 +231,8 @@ Fields:
 - `velocity_group`
 - `velocity_to_params`
 - `velocity_db_per_unit`
+- `pre_fx_gain_db`
+- `mix_db`
 - `normalize_lufs`
 - `pan`
 - `automation`
@@ -241,6 +243,7 @@ Important behavior:
 - `velocity_humanize` defaults to `VelocityHumanizeSpec()` in `Score.add_voice(...)`
 - `pan` must be between `-1.0` and `1.0`
 - `velocity_db_per_unit` must be non-negative
+- `pre_fx_gain_db` and `mix_db` must be finite when provided
 - `normalize_lufs` defaults to `-24.0` and can be set to `None` to disable stem auto-normalization
 
 Practical interpretation:
@@ -251,8 +254,10 @@ Practical interpretation:
 - `velocity_humanize` is the render-time dynamic variation layer
 - `velocity_group` links multiple voices into a shared velocity-drift family
 - `velocity_to_params` makes louder/softer notes timbrally different
-- `normalize_lufs` applies an integrated-LUFS stem gain trim before pan, voice effects, and the final mix
-- because stem normalization is on by default, mix balance should usually be authored intentionally with `amp_db`, note levels, and effect balances rather than by relying on a synth engine's raw output level
+- `pre_fx_gain_db` is the voice input trim before voice effects; use it when you want to hit chorus, saturation, compression, or reverb harder or softer without changing the note writing
+- `mix_db` is the voice fader after voice effects and before the master bus; this is the preferred "mixer volume" control for balancing voices
+- `normalize_lufs` applies an integrated-LUFS stem gain trim before `pre_fx_gain_db`, pan, voice effects, and `mix_db`
+- in normal authoring, prefer `amp_db`, `pre_fx_gain_db`, and `mix_db` for musical balance and effect drive; `normalize_lufs` is a specialist stem-standardization option that is usually best left at its default
 - `pan` places the rendered voice in stereo
 - `automation` adds explicit score-time parameter lanes beyond humanization
 
@@ -265,6 +270,7 @@ Fields:
 - `f0: float`
 - `sample_rate: int = synth.SAMPLE_RATE`
 - `timing_humanize: TimingHumanizeSpec | None = None`
+- `master_input_gain_db: float = 0.0`
 - `master_effects: list[EffectSpec] = []`
 - `voices: dict[str, Voice] = {}`
 
@@ -282,6 +288,8 @@ Parameters:
 - `velocity_group`
 - `velocity_to_params`
 - `velocity_db_per_unit`
+- `pre_fx_gain_db`
+- `mix_db`
 - `normalize_lufs`
 - `pan`
 
@@ -290,8 +298,10 @@ Important behavior:
 - calling `add_voice(...)` with an existing name replaces that voice definition
 - `velocity_humanize=None` in the method call currently means "use the default subtle humanizer", not "disable velocity humanization"
 - if you want to disable velocity humanization after a voice exists, set `voice.velocity_humanize = None`
+- `pre_fx_gain_db` defaults to `0.0` and acts like a pre-insert trim
+- `mix_db` defaults to `0.0` and acts like a post-insert voice fader
 - `normalize_lufs=None` disables the default per-voice auto-normalization if you want raw stem gain instead
-- with the default `normalize_lufs=-24.0`, it is normal and recommended to use authored level controls aggressively for mix balance on top of the automatic stem normalization
+- with the default `normalize_lufs=-24.0`, it is normal and recommended to do most balancing with authored note `amp_db`, `pre_fx_gain_db`, and `mix_db` instead of moving the LUFS target around
 
 That second point is easy to miss and worth being explicit about.
 
@@ -314,6 +324,8 @@ score.add_voice(
             max_velocity=1.2,
         )
     },
+    pre_fx_gain_db=2.0,
+    mix_db=-3.0,
     pan=-0.15,
 )
 ```
@@ -381,11 +393,21 @@ Behavior:
 
 - returns an empty mono array if the score has no rendered voices
 - may return mono or stereo depending on pan and effects
+- applies `master_input_gain_db` to the summed mix before `master_effects`
 - applies `master_effects` after the voices are mixed
 - does not perform export mastering itself; the named-piece render workflow applies
   final LUFS/true-peak mastering when writing the final WAV
 - export mastering first drives the mix toward the render LUFS target with the
   limiter, then uses any remaining true-peak headroom up to the export ceiling
+
+Practical interpretation:
+
+- leave `master_input_gain_db` at `0.0` in normal work; the default gain staging
+  should usually be musically reasonable without touching it
+- use `master_input_gain_db` only when you intentionally want to hit the master
+  bus saturation, compression, tape, or reverb a bit harder or softer
+- do not treat `master_input_gain_db` as the normal delivery loudness control;
+  export LUFS targeting handles the final file level later
 
 ### `Score.extract_window(...)`
 
@@ -480,8 +502,12 @@ The practical render path for one note is:
 10. place the note in time using `timing_humanize`
 11. mix notes into the dry voice stem
 12. if `normalize_lufs` is set, apply a uniform gain trim toward that target integrated loudness
-13. apply pan and voice effects
-14. mix voices together, then apply master effects
+13. apply `pre_fx_gain_db`
+14. apply pan and voice effects
+15. apply `mix_db`
+16. mix voices together
+17. apply `master_input_gain_db`
+18. apply master effects
 
 That ordering matters because it explains why:
 

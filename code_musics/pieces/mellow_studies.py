@@ -394,12 +394,12 @@ def build_fond() -> Score:
     score.add_note("bass", start=6.0, duration=82.0, partial=3 / 2, amp_db=-30.0)
 
     # Partial shorthands (all relative to f0=110 Hz)
-    A3 = 2.0    # 220 Hz
+    A3 = 2.0  # 220 Hz
     Cs4 = 5 / 2  # 275 Hz  — pure major third above A3
-    E4 = 3.0    # 330 Hz  — pure fifth above A3
+    E4 = 3.0  # 330 Hz  — pure fifth above A3
     Gb7 = 7 / 2  # 385 Hz  — septimal minor seventh above A3; THE note
-    A4 = 4.0    # 440 Hz
-    Cs5 = 5.0   # 550 Hz  — pure major third, upper octave; climax
+    A4 = 4.0  # 440 Hz
+    Cs5 = 5.0  # 550 Hz  — pure major third, upper octave; climax
 
     # --- Verse ---------------------------------------------------------------
     # Exhale phrase: start high, fall through the 7th, land on root.
@@ -529,8 +529,14 @@ def build_ether() -> Score:
     # the true fundamental that the whole piece has been built on.
     score.add_note("bass", start=0.0, duration=118.0, partial=2.0, amp_db=-20.0)
     score.add_note("bass", start=10.0, duration=95.0, partial=3.0, amp_db=-25.0)
-    score.add_note("bass", start=103.0, duration=15.0, partial=1.0, amp_db=-20.0,
-                   synth={"attack": 5.0, "release": 7.0})
+    score.add_note(
+        "bass",
+        start=103.0,
+        duration=15.0,
+        partial=1.0,
+        amp_db=-20.0,
+        synth={"attack": 5.0, "release": 7.0},
+    )
 
     # Pad chords — two simultaneous long tones each time.
     # A section: 8+12 = A4+E5, a pure fifth. Zero beating. This is the sound
@@ -577,7 +583,9 @@ def build_ether() -> Score:
     score.add_note("melody", start=17.5, duration=0.48, partial=8.0, amp_db=-13.0)
     score.add_note("melody", start=18.1, duration=0.58, partial=9.0, amp_db=-12.5)
     score.add_note("melody", start=18.8, duration=0.62, partial=12.0, amp_db=-12.0)
-    score.add_note("melody", start=19.6, duration=0.68, partial=15.0, amp_db=-11.5)  # G#5 peak
+    score.add_note(
+        "melody", start=19.6, duration=0.68, partial=15.0, amp_db=-11.5
+    )  # G#5 peak
     score.add_note("melody", start=20.4, duration=0.58, partial=12.0, amp_db=-12.5)
     score.add_note("melody", start=21.1, duration=0.52, partial=10.0, amp_db=-13.0)
     score.add_note("melody", start=21.8, duration=2.20, partial=8.0, amp_db=-14.5)
@@ -605,7 +613,9 @@ def build_ether() -> Score:
     # It's close enough to E5 that the listener might think they misheard.
     score.add_note("melody", start=42.0, duration=0.55, partial=8.0, amp_db=-13.0)
     score.add_note("melody", start=42.7, duration=0.62, partial=10.0, amp_db=-12.5)
-    score.add_note("melody", start=43.5, duration=1.50, partial=11.0, amp_db=-13.0)  # ← alien, quiet
+    score.add_note(
+        "melody", start=43.5, duration=1.50, partial=11.0, amp_db=-13.0
+    )  # ← alien, quiet
     score.add_note("melody", start=45.2, duration=0.58, partial=10.0, amp_db=-13.5)
     score.add_note("melody", start=46.0, duration=1.20, partial=8.0, amp_db=-16.5)
     # gap: ~46.2-50.5 s — pad (9+12) blooms alone into the silence
@@ -613,7 +623,9 @@ def build_ether() -> Score:
     # Phrase 6: the 11 again, now held longer — this time unmistakably strange
     score.add_note("melody", start=50.5, duration=0.52, partial=10.0, amp_db=-12.5)
     score.add_note("melody", start=51.2, duration=0.58, partial=12.0, amp_db=-12.0)
-    score.add_note("melody", start=52.0, duration=1.90, partial=11.0, amp_db=-11.5)  # ← lingers
+    score.add_note(
+        "melody", start=52.0, duration=1.90, partial=11.0, amp_db=-11.5
+    )  # ← lingers
     score.add_note("melody", start=54.1, duration=0.60, partial=10.0, amp_db=-13.5)
     score.add_note("melody", start=55.0, duration=1.80, partial=9.0, amp_db=-15.0)
 
@@ -628,14 +640,20 @@ def build_ether() -> Score:
     score.add_note("melody", start=61.0, duration=0.48, partial=8.0, amp_db=-12.5)
     score.add_note("melody", start=61.6, duration=0.55, partial=10.0, amp_db=-12.0)
     score.add_note("melody", start=62.3, duration=0.55, partial=12.0, amp_db=-11.5)
-    score.add_note("melody", start=63.0, duration=1.40, partial=13.0, amp_db=-11.0)  # alien peak
+    score.add_note(
+        "melody", start=63.0, duration=1.40, partial=13.0, amp_db=-11.0
+    )  # alien peak
     score.add_note("melody", start=64.6, duration=0.58, partial=12.0, amp_db=-12.5)
-    score.add_note("melody", start=65.3, duration=0.72, partial=11.0, amp_db=-13.0)  # alien descent
+    score.add_note(
+        "melody", start=65.3, duration=0.72, partial=11.0, amp_db=-13.0
+    )  # alien descent
     score.add_note("melody", start=66.2, duration=2.00, partial=10.0, amp_db=-14.5)
 
     # Phrase 8: septimal descent — 14 as the high point, falling home
     # The G♭75 (partial 14) sounds alien but, by now, almost inevitable
-    score.add_note("melody", start=69.5, duration=1.50, partial=14.0, amp_db=-11.0)  # G♭75
+    score.add_note(
+        "melody", start=69.5, duration=1.50, partial=14.0, amp_db=-11.0
+    )  # G♭75
     score.add_note("melody", start=71.2, duration=0.60, partial=12.0, amp_db=-12.0)
     score.add_note("melody", start=72.0, duration=0.60, partial=10.0, amp_db=-12.5)
     score.add_note("melody", start=72.8, duration=0.58, partial=9.0, amp_db=-13.5)
@@ -651,10 +669,14 @@ def build_ether() -> Score:
     score.add_note("melody", start=76.5, duration=0.42, partial=11.0, amp_db=-11.5)
     score.add_note("melody", start=77.1, duration=0.45, partial=10.0, amp_db=-12.0)
     score.add_note("melody", start=77.7, duration=0.48, partial=12.0, amp_db=-11.5)
-    score.add_note("melody", start=78.3, duration=0.70, partial=13.0, amp_db=-11.0)  # alien peak
+    score.add_note(
+        "melody", start=78.3, duration=0.70, partial=13.0, amp_db=-11.0
+    )  # alien peak
     score.add_note("melody", start=79.1, duration=0.48, partial=12.0, amp_db=-12.0)
     score.add_note("melody", start=79.7, duration=0.50, partial=11.0, amp_db=-12.5)
-    score.add_note("melody", start=80.4, duration=3.20, partial=14.0, amp_db=-11.0)  # G♭75 held
+    score.add_note(
+        "melody", start=80.4, duration=3.20, partial=14.0, amp_db=-11.0
+    )  # G♭75 held
 
     # ---------------------------------------------------------------------------
     # Climax — partial 16, reached through the alien
@@ -667,11 +689,23 @@ def build_ether() -> Score:
     score.add_note("melody", start=85.5, duration=0.48, partial=9.0, amp_db=-12.0)
     score.add_note("melody", start=86.1, duration=0.55, partial=10.0, amp_db=-11.5)
     score.add_note("melody", start=86.8, duration=0.62, partial=12.0, amp_db=-11.0)
-    score.add_note("melody", start=87.6, duration=0.88, partial=14.0, amp_db=-10.5)  # alien gateway
-    score.add_note("melody", start=88.6, duration=0.80, partial=15.0, amp_db=-10.0)  # leading tone
-    score.add_note("melody", start=89.6, duration=5.50, partial=16.0, amp_db=-9.5,   # PEAK — A5
-                   pitch_motion=PitchMotionSpec.vibrato(depth_ratio=0.003, rate_hz=4.2))
-    score.add_note("melody", start=89.6, duration=4.80, partial=14.0, amp_db=-13.5) # G♭75 — spice
+    score.add_note(
+        "melody", start=87.6, duration=0.88, partial=14.0, amp_db=-10.5
+    )  # alien gateway
+    score.add_note(
+        "melody", start=88.6, duration=0.80, partial=15.0, amp_db=-10.0
+    )  # leading tone
+    score.add_note(
+        "melody",
+        start=89.6,
+        duration=5.50,
+        partial=16.0,
+        amp_db=-9.5,  # PEAK — A5
+        pitch_motion=PitchMotionSpec.vibrato(depth_ratio=0.003, rate_hz=4.2),
+    )
+    score.add_note(
+        "melody", start=89.6, duration=4.80, partial=14.0, amp_db=-13.5
+    )  # G♭75 — spice
 
     # ---------------------------------------------------------------------------
     # Post-climax descent — integrating the whole terrain
@@ -682,10 +716,14 @@ def build_ether() -> Score:
     score.add_note("melody", start=97.0, duration=0.72, partial=15.0, amp_db=-11.5)
     score.add_note("melody", start=97.9, duration=1.10, partial=14.0, amp_db=-11.0)
     score.add_note("melody", start=99.2, duration=0.65, partial=12.0, amp_db=-12.0)
-    score.add_note("melody", start=100.1, duration=1.80, partial=11.0, amp_db=-12.5) # alien, accepted
+    score.add_note(
+        "melody", start=100.1, duration=1.80, partial=11.0, amp_db=-12.5
+    )  # alien, accepted
     score.add_note("melody", start=102.1, duration=0.62, partial=10.0, amp_db=-13.5)
     score.add_note("melody", start=102.9, duration=0.58, partial=9.0, amp_db=-14.0)
-    score.add_note("melody", start=103.7, duration=5.50, partial=8.0, amp_db=-14.5)  # home, long
+    score.add_note(
+        "melody", start=103.7, duration=5.50, partial=8.0, amp_db=-14.5
+    )  # home, long
 
     # The bass partial 1 (A1, 55 Hz) rises underneath the final note —
     # the true fundamental, heard for the first time, grounding everything.

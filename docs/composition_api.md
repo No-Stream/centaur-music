@@ -456,6 +456,12 @@ and mix decisions more naturally; small linear changes are often not intuitive.
 `amp` is still supported as a raw multiplier, but `amp_db` should be the default
 authoring choice for new work.
 
+For voice-level balancing, prefer `Score.add_voice(..., mix_db=...)` as the main
+"mixer fader" control, and use `pre_fx_gain_db` when you specifically want to
+change how hard a voice hits its own effect chain. `normalize_lufs` is a more
+specialized stem-standardization control and is usually not the right first tool
+for ordinary mix moves.
+
 Rough starting ranges for note-level balances:
 
 - sub bass or kick-like parts: around `-10 dB` to `-6 dB`

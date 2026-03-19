@@ -206,6 +206,8 @@ class Voice:
     velocity_group: str | None = None
     velocity_to_params: dict[str, VelocityParamMap] = field(default_factory=dict)
     velocity_db_per_unit: float = 12.0
+    pre_fx_gain_db: float = 0.0
+    mix_db: float = 0.0
     normalize_lufs: float | None = -24.0
     pan: float = 0.0
     automation: list[AutomationSpec] = field(default_factory=list)
@@ -236,10 +238,15 @@ class Score:
     f0: float
     sample_rate: int = synth.SAMPLE_RATE
     timing_humanize: TimingHumanizeSpec | None = None
+    master_input_gain_db: float = 0.0
     master_effects: list[EffectSpec] = field(default_factory=list)
     voices: dict[str, Voice] = field(default_factory=dict)
     time_origin_seconds: float = 0.0
     time_reference_total_dur: float | None = None
+
+    def __post_init__(self) -> None:
+        if not np.isfinite(self.master_input_gain_db):
+            raise ValueError("master_input_gain_db must be finite")
 
     def add_voice(
         self,
@@ -252,6 +259,8 @@ class Score:
         velocity_group: str | None = None,
         velocity_to_params: dict[str, VelocityParamMap] | None = None,
         velocity_db_per_unit: float = 12.0,
+        pre_fx_gain_db: float = 0.0,
+        mix_db: float = 0.0,
         normalize_lufs: float | None = -24.0,
         pan: float = 0.0,
         automation: list[AutomationSpec] | None = None,
@@ -261,6 +270,10 @@ class Score:
             raise ValueError("pan must be between -1 and 1")
         if velocity_db_per_unit < 0:
             raise ValueError("velocity_db_per_unit must be non-negative")
+        if not np.isfinite(pre_fx_gain_db):
+            raise ValueError("pre_fx_gain_db must be finite")
+        if not np.isfinite(mix_db):
+            raise ValueError("mix_db must be finite")
         if normalize_lufs is not None and not np.isfinite(normalize_lufs):
             raise ValueError("normalize_lufs must be finite when provided")
         voice = Voice(
@@ -276,6 +289,8 @@ class Score:
             velocity_group=velocity_group,
             velocity_to_params=dict(velocity_to_params or {}),
             velocity_db_per_unit=velocity_db_per_unit,
+            pre_fx_gain_db=pre_fx_gain_db,
+            mix_db=mix_db,
             normalize_lufs=normalize_lufs,
             pan=pan,
             automation=list(automation or []),
@@ -363,6 +378,8 @@ class Score:
             return np.zeros(0)
 
         mix = self._stack_signals(rendered_voices)
+        if self.master_input_gain_db != 0.0:
+            mix = mix * synth.db_to_amp(self.master_input_gain_db)
         if self.master_effects:
             mix = synth.apply_effect_chain(mix, self.master_effects)
 
@@ -409,6 +426,7 @@ class Score:
             f0=self.f0,
             sample_rate=self.sample_rate,
             timing_humanize=self.timing_humanize,
+            master_input_gain_db=self.master_input_gain_db,
             master_effects=list(self.master_effects),
             voices=shifted_voices,
             time_origin_seconds=self.time_origin_seconds + start_seconds,
@@ -635,10 +653,14 @@ class Score:
                 sample_rate=self.sample_rate,
                 target_lufs=voice.normalize_lufs,
             )
+        if voice.pre_fx_gain_db != 0.0:
+            voice_mix = voice_mix * synth.db_to_amp(voice.pre_fx_gain_db)
         if voice.pan != 0.0:
             voice_mix = synth.apply_pan(voice_mix, pan=voice.pan)
         if voice.effects:
             voice_mix = synth.apply_effect_chain(voice_mix, voice.effects)
+        if voice.mix_db != 0.0:
+            voice_mix = voice_mix * synth.db_to_amp(voice.mix_db)
         return voice_mix
 
     def _timing_targets(self) -> list[TimingTarget]:

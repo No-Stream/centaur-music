@@ -312,6 +312,68 @@ def test_effect_presets_allow_explicit_overrides() -> None:
     assert overridden_delta < default_delta
 
 
+def test_eq_effect_runs_through_apply_effect_chain() -> None:
+    signal = np.sin(np.linspace(0.0, 4.0 * np.pi, synth.SAMPLE_RATE, endpoint=False))
+
+    processed = synth.apply_effect_chain(
+        signal,
+        [
+            EffectSpec(
+                "eq",
+                {
+                    "bands": [
+                        {
+                            "kind": "highpass",
+                            "cutoff_hz": 120.0,
+                            "slope_db_per_oct": 12,
+                        },
+                        {
+                            "kind": "bell",
+                            "freq_hz": 1_200.0,
+                            "gain_db": 3.0,
+                            "q": 1.0,
+                        },
+                    ]
+                },
+            )
+        ],
+    )
+
+    assert processed.shape == signal.shape
+    assert np.isfinite(processed).all()
+
+
+def test_compressor_effect_runs_through_apply_effect_chain() -> None:
+    signal = 1.1 * np.sin(
+        np.linspace(0.0, 6.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
+    )
+
+    processed = synth.apply_effect_chain(
+        signal,
+        [
+            EffectSpec(
+                "compressor",
+                {
+                    "threshold_db": -20.0,
+                    "ratio": 3.0,
+                    "attack_ms": 6.0,
+                    "release_ms": 180.0,
+                    "detector_bands": [
+                        {
+                            "kind": "highpass",
+                            "cutoff_hz": 140.0,
+                            "slope_db_per_oct": 12,
+                        }
+                    ],
+                },
+            )
+        ],
+    )
+
+    assert processed.shape == signal.shape
+    assert np.isfinite(processed).all()
+
+
 def test_plugin_effect_sets_named_plugin_parameters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -498,6 +560,85 @@ def test_voice_normalize_lufs_can_be_disabled() -> None:
     )
 
     assert normalized_lufs > raw_lufs
+
+
+def test_voice_pre_fx_gain_db_increases_stem_level() -> None:
+    neutral_score = Score(f0=55.0)
+    neutral_score.add_voice("lead", normalize_lufs=None)
+    neutral_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
+
+    boosted_score = Score(f0=55.0)
+    boosted_score.add_voice("lead", normalize_lufs=None, pre_fx_gain_db=6.0)
+    boosted_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
+
+    neutral_peak = np.max(np.abs(neutral_score.render_stems()["lead"]))
+    boosted_peak = np.max(np.abs(boosted_score.render_stems()["lead"]))
+
+    assert boosted_peak == pytest.approx(neutral_peak * synth.db_to_amp(6.0), rel=5e-2)
+
+
+def test_voice_mix_db_applies_after_voice_effects() -> None:
+    base_score = Score(f0=55.0)
+    base_score.add_voice(
+        "lead",
+        normalize_lufs=None,
+        effects=[EffectSpec("chorus", {"preset": "juno_subtle"})],
+    )
+    base_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.2)
+
+    lowered_score = Score(f0=55.0)
+    lowered_score.add_voice(
+        "lead",
+        normalize_lufs=None,
+        mix_db=-6.0,
+        effects=[EffectSpec("chorus", {"preset": "juno_subtle"})],
+    )
+    lowered_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.2)
+
+    base_peak = np.max(np.abs(base_score.render_stems()["lead"]))
+    lowered_peak = np.max(np.abs(lowered_score.render_stems()["lead"]))
+
+    assert lowered_peak == pytest.approx(base_peak * synth.db_to_amp(-6.0), rel=5e-2)
+
+
+def test_add_voice_rejects_non_finite_gain_controls() -> None:
+    score = Score(f0=55.0)
+
+    with pytest.raises(ValueError, match="pre_fx_gain_db must be finite"):
+        score.add_voice("lead", pre_fx_gain_db=float("inf"))
+
+    with pytest.raises(ValueError, match="mix_db must be finite"):
+        score.add_voice("lead", mix_db=float("nan"))
+
+
+def test_score_master_input_gain_db_scales_mix_before_master_effects() -> None:
+    dry_score = Score(f0=55.0, master_input_gain_db=0.0)
+    dry_score.add_voice("lead", normalize_lufs=None)
+    dry_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.1)
+
+    boosted_score = Score(f0=55.0, master_input_gain_db=6.0)
+    boosted_score.add_voice("lead", normalize_lufs=None)
+    boosted_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.1)
+
+    dry_peak = np.max(np.abs(dry_score.render()))
+    boosted_peak = np.max(np.abs(boosted_score.render()))
+
+    assert boosted_peak == pytest.approx(dry_peak * synth.db_to_amp(6.0), rel=5e-2)
+
+
+def test_score_rejects_non_finite_master_input_gain_db() -> None:
+    with pytest.raises(ValueError, match="master_input_gain_db must be finite"):
+        Score(f0=55.0, master_input_gain_db=float("inf"))
+
+
+def test_extract_window_preserves_master_input_gain_db() -> None:
+    score = Score(f0=55.0, master_input_gain_db=3.0)
+    score.add_voice("lead", normalize_lufs=None)
+    score.add_note("lead", start=1.0, duration=1.0, partial=4.0, amp=0.1)
+
+    window = score.extract_window(start_seconds=0.5, end_seconds=2.5)
+
+    assert window.master_input_gain_db == pytest.approx(3.0)
 
 
 def test_true_peak_estimation_uses_loudest_stereo_channel() -> None:

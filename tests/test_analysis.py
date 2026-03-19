@@ -70,6 +70,29 @@ def test_analyze_audio_reports_bright_modulated_artifact_risks() -> None:
     assert "bright_spectral_centroid" in risk_codes
     assert "strong_amplitude_modulation" in risk_codes
     assert analysis.amplitude_modulation_depth_db >= 12.0
+    assert analysis.dominant_amplitude_modulation_hz >= 7.0
+    amplitude_modulation_risk = next(
+        risk
+        for risk in analysis.artifact_risks
+        if risk.code == "strong_amplitude_modulation"
+    )
+    assert "Hz" in amplitude_modulation_risk.message
+
+
+def test_analyze_audio_does_not_flag_slow_phrase_shape_as_modulation_artifact() -> None:
+    sample_rate = 44_100
+    duration = 20.0
+    time = np.arange(int(sample_rate * duration), dtype=np.float64) / sample_rate
+    modulation = 0.52 + 0.46 * np.sin(2.0 * np.pi * 0.1 * time)
+    signal = modulation * np.sin(2.0 * np.pi * 880.0 * time)
+
+    analysis = analyze_audio(signal, sample_rate=sample_rate)
+
+    assert analysis.amplitude_modulation_depth_db >= 12.0
+    assert analysis.dominant_amplitude_modulation_hz < 2.0
+    assert all(
+        risk.code != "strong_amplitude_modulation" for risk in analysis.artifact_risks
+    )
 
 
 def test_analyze_audio_reports_extreme_compression_artifact_risk() -> None:
@@ -80,9 +103,7 @@ def test_analyze_audio_reports_extreme_compression_artifact_risk() -> None:
 
     analysis = analyze_audio(signal, sample_rate=sample_rate)
 
-    assert any(
-        risk.code == "extreme_compression" for risk in analysis.artifact_risks
-    )
+    assert any(risk.code == "extreme_compression" for risk in analysis.artifact_risks)
     assert analysis.crest_factor_db <= 5.0
 
 
@@ -236,7 +257,12 @@ def test_save_analysis_artifacts_records_artifact_risk_report(tmp_path: Path) ->
     parameter_codes = {risk["code"] for risk in parameter_risks}
     assert "aggressive_filter_motion" in parameter_codes
     assert "bright_hot_authoring" in parameter_codes
-    assert risky_manifest["artifact_risk"]["summary"]["voice_count_with_parameter_risks"] == 1
+    assert "velocity_param_out_of_bounds" in parameter_codes
+    assert "wide_velocity_filter_env" not in parameter_codes
+    assert (
+        risky_manifest["artifact_risk"]["summary"]["voice_count_with_parameter_risks"]
+        == 1
+    )
 
     safe_score = Score(f0=55.0)
     safe_score.add_voice(
@@ -277,6 +303,47 @@ def test_save_analysis_artifacts_records_artifact_risk_report(tmp_path: Path) ->
     )
 
     assert safe_manifest["artifact_risk"]["parameter_surfaces"] == {}
+
+
+def test_save_analysis_artifacts_reports_implausibly_wide_velocity_filter_env_span(
+    tmp_path: Path,
+) -> None:
+    score = Score(f0=55.0)
+    score.add_voice(
+        "lead",
+        synth_defaults={
+            "engine": "polyblep",
+            "waveform": "triangle",
+            "cutoff_hz": 1_800.0,
+            "filter_env_amount": 0.92,
+            "filter_drive": 0.02,
+        },
+        velocity_to_params={
+            "filter_env_amount": VelocityParamMap(min_value=0.05, max_value=0.9),
+        },
+    )
+    for index in range(4):
+        score.add_note(
+            "lead",
+            start=index * 0.5,
+            duration=0.35,
+            partial=6.0,
+            amp_db=-20.0,
+            velocity=1.0,
+        )
+
+    manifest = save_analysis_artifacts(
+        output_prefix=tmp_path / "wide_velocity_filter_env_piece",
+        mix_signal=score.render(),
+        sample_rate=score.sample_rate,
+        stems=score.render_stems(),
+        score=score,
+    )
+
+    parameter_risks = manifest["artifact_risk"]["parameter_surfaces"]["lead"]
+    parameter_codes = {risk["code"] for risk in parameter_risks}
+    assert "wide_velocity_filter_env" in parameter_codes
+    assert "velocity_param_out_of_bounds" not in parameter_codes
 
 
 def test_compare_analysis_manifests_reports_mix_and_score_deltas(

@@ -87,7 +87,14 @@ def build_ji_chorale_score() -> Score:
                 "chow_tape",
                 {"drive": 0.15, "saturation": 0.18, "bias": 0.5, "mix": 50.0},
             ),
-            EffectSpec("bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.15}),
+            EffectSpec(
+                "bricasti",
+                {
+                    "ir_name": "1 Halls 07 Large & Dark",
+                    "wet": 0.15,
+                    "highpass_hz": 150.0,
+                },
+            ),
         ]
     )
 
@@ -113,7 +120,7 @@ def build_ji_chorale_score() -> Score:
             "sustain_level": 0.60,
             "release": 0.90,
         },
-        normalize_lufs=-26.0,
+        mix_db=-2.0,
         pan=-0.08,
         velocity_group="harmony",
         envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
@@ -128,7 +135,7 @@ def build_ji_chorale_score() -> Score:
         "n_harmonics": 8,
         "brightness_tilt": 0.06,
         "unison_voices": 2,
-        "detune_cents": 5,
+        "detune_cents": 3,
         "attack": 0.22,
         "decay": 0.18,
         "sustain_level": 0.56,
@@ -136,8 +143,19 @@ def build_ji_chorale_score() -> Score:
     }
     score.add_voice(
         "tenor",
-        synth_defaults=dict(chord_defaults),
-        normalize_lufs=-31.0,
+        synth_defaults=dict(chord_defaults)
+        | {"n_harmonics": 12, "brightness_tilt": 0.28, "harmonic_rolloff": 0.2},
+        effects=[
+            EffectSpec(
+                "eq",
+                {
+                    "bands": [
+                        {"kind": "highpass", "cutoff_hz": 100.0, "slope_db_per_oct": 24}
+                    ]
+                },
+            ),
+        ],
+        mix_db=-7.0,
         pan=-0.16,
         velocity_group="harmony",
         envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
@@ -150,7 +168,17 @@ def build_ji_chorale_score() -> Score:
     score.add_voice(
         "alto",
         synth_defaults=dict(chord_defaults),
-        normalize_lufs=-31.0,
+        effects=[
+            EffectSpec(
+                "eq",
+                {
+                    "bands": [
+                        {"kind": "highpass", "cutoff_hz": 120.0, "slope_db_per_oct": 24}
+                    ]
+                },
+            ),
+        ],
+        mix_db=-7.0,
         pan=0.14,
         velocity_group="harmony",
         envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
@@ -165,7 +193,7 @@ def build_ji_chorale_score() -> Score:
         synth_defaults={
             "engine": "filtered_stack",
             "preset": "reed_lead",
-            "cutoff_hz": 2_400.0,
+            "cutoff_hz": 1_400.0,
             "keytrack": 0.1,
             "resonance": 0.10,
             "filter_env_amount": 0.95,
@@ -174,7 +202,17 @@ def build_ji_chorale_score() -> Score:
             "sustain_level": 0.52,
             "release": 0.30,
         },
-        normalize_lufs=-31.0,
+        effects=[
+            EffectSpec(
+                "eq",
+                {
+                    "bands": [
+                        {"kind": "highpass", "cutoff_hz": 180.0, "slope_db_per_oct": 24}
+                    ]
+                },
+            ),
+        ],
+        mix_db=-10.0,
         pan=0.08,
         velocity_group="melody",
         envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog"),
@@ -203,6 +241,14 @@ def build_ji_chorale_score() -> Score:
         },
         effects=[
             EffectSpec(
+                "eq",
+                {
+                    "bands": [
+                        {"kind": "highpass", "cutoff_hz": 200.0, "slope_db_per_oct": 24}
+                    ]
+                },
+            ),
+            EffectSpec(
                 "chorus",
                 {
                     "preset": "juno_subtle",
@@ -223,7 +269,7 @@ def build_ji_chorale_score() -> Score:
                 },
             ),
         ],
-        normalize_lufs=-27.0,
+        mix_db=-6.0,
         pan=0.20,
         velocity_group="melody",
         envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog"),
@@ -411,9 +457,15 @@ def build_ji_chorale_score() -> Score:
     score.add_note("alto", start=128.0, duration=8.0, freq=C4, amp=0.16, velocity=1.00)
 
     score.add_note("bass", start=136.0, duration=10.0, freq=A2, amp=0.23, velocity=0.88)
-    score.add_note("tenor", start=136.0, duration=10.0, freq=E3, amp=0.19, velocity=0.88)
-    score.add_note("alto", start=136.0, duration=10.0, freq=Cs4, amp=0.17, velocity=0.88)
-    score.add_note("alto", start=136.0, duration=10.0, freq=Gs4, amp=0.17, velocity=0.88)
+    score.add_note(
+        "tenor", start=136.0, duration=10.0, freq=E3, amp=0.19, velocity=0.88
+    )
+    score.add_note(
+        "alto", start=136.0, duration=10.0, freq=Cs4, amp=0.17, velocity=0.88
+    )
+    score.add_note(
+        "alto", start=136.0, duration=10.0, freq=Gs4, amp=0.17, velocity=0.88
+    )
 
     def _add_counter(t_start: float, notes: list[tuple[float, float, float]]) -> None:
         t = t_start

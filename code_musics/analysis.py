@@ -77,6 +77,7 @@ class AudioAnalysis:
     reference_tilt_db_per_octave: float
     tilt_error_db_per_octave: float
     amplitude_modulation_depth_db: float
+    dominant_amplitude_modulation_hz: float
     band_energy_db: dict[str, float]
     warnings: list[str]
     artifact_risks: list[ArtifactRiskWarning]
@@ -140,6 +141,7 @@ def analyze_audio(
             reference_tilt_db_per_octave=reference_tilt_db_per_octave,
             tilt_error_db_per_octave=-reference_tilt_db_per_octave,
             amplitude_modulation_depth_db=0.0,
+            dominant_amplitude_modulation_hz=0.0,
             band_energy_db={name: float("-inf") for name, _, _ in _DEFAULT_BANDS},
             warnings=["empty render"],
             artifact_risks=[],
@@ -180,6 +182,10 @@ def analyze_audio(
     spectral_centroid_hz = _spectral_centroid(freqs=freqs, magnitude_db=magnitude_db)
     dominant_frequency_hz = float(freqs[np.argmax(magnitude_db)])
     spectral_tilt = _fit_spectral_tilt(freqs=freqs, magnitude_db=magnitude_db)
+    dominant_amplitude_modulation_hz = _dominant_amplitude_modulation_hz(
+        mono_signal,
+        sample_rate=sample_rate,
+    )
     amplitude_modulation_depth_db = _amplitude_modulation_depth_db(
         mono_signal,
         sample_rate=sample_rate,
@@ -205,6 +211,7 @@ def analyze_audio(
         high_band_emphasis_db=high_band_emphasis_db,
         tilt_error_db_per_octave=spectral_tilt - reference_tilt_db_per_octave,
         amplitude_modulation_depth_db=amplitude_modulation_depth_db,
+        dominant_amplitude_modulation_hz=dominant_amplitude_modulation_hz,
     )
 
     return AudioAnalysis(
@@ -228,6 +235,7 @@ def analyze_audio(
         reference_tilt_db_per_octave=reference_tilt_db_per_octave,
         tilt_error_db_per_octave=spectral_tilt - reference_tilt_db_per_octave,
         amplitude_modulation_depth_db=amplitude_modulation_depth_db,
+        dominant_amplitude_modulation_hz=dominant_amplitude_modulation_hz,
         band_energy_db=band_energy_db,
         warnings=warnings,
         artifact_risks=artifact_risks,
@@ -997,6 +1005,7 @@ def _build_audio_artifact_risks(
     high_band_emphasis_db: float,
     tilt_error_db_per_octave: float,
     amplitude_modulation_depth_db: float,
+    dominant_amplitude_modulation_hz: float,
 ) -> list[ArtifactRiskWarning]:
     risks: list[ArtifactRiskWarning] = []
     if clipped_sample_count > 0 or true_peak_dbfs > 0.0:
@@ -1096,28 +1105,43 @@ def _build_audio_artifact_risks(
                 tilt_error_db_per_octave=round(tilt_error_db_per_octave, 2),
             )
         )
-    if amplitude_modulation_depth_db >= 18.0:
+    modulation_is_tremolo_like = dominant_amplitude_modulation_hz >= 2.0
+    if amplitude_modulation_depth_db >= 18.0 and modulation_is_tremolo_like:
         risks.append(
             _artifact_risk(
                 severity="severe",
                 code="strong_amplitude_modulation",
                 source="audio_analysis",
-                message="strong amplitude modulation may read as unintended tremolo",
+                message=(
+                    "strong amplitude modulation may read as unintended tremolo "
+                    f"({dominant_amplitude_modulation_hz:.2f} Hz)"
+                ),
                 amplitude_modulation_depth_db=round(
                     amplitude_modulation_depth_db,
                     2,
                 ),
+                dominant_amplitude_modulation_hz=round(
+                    dominant_amplitude_modulation_hz,
+                    2,
+                ),
             )
         )
-    elif amplitude_modulation_depth_db >= 12.0:
+    elif amplitude_modulation_depth_db >= 12.0 and modulation_is_tremolo_like:
         risks.append(
             _artifact_risk(
                 severity="warning",
                 code="strong_amplitude_modulation",
                 source="audio_analysis",
-                message="render shows pronounced amplitude modulation",
+                message=(
+                    "render shows pronounced amplitude modulation "
+                    f"({dominant_amplitude_modulation_hz:.2f} Hz)"
+                ),
                 amplitude_modulation_depth_db=round(
                     amplitude_modulation_depth_db,
+                    2,
+                ),
+                dominant_amplitude_modulation_hz=round(
+                    dominant_amplitude_modulation_hz,
                     2,
                 ),
             )
@@ -1236,7 +1260,9 @@ def _build_artifact_risk_report(
     )
     summary = _summarize_artifact_risks(
         mix_risks=mix_risks,
-        voice_risks={name: analysis.artifact_risks for name, analysis in voice_analyses.items()},
+        voice_risks={
+            name: analysis.artifact_risks for name, analysis in voice_analyses.items()
+        },
         parameter_surface_risks=parameter_surface_risks,
     )
     return ArtifactRiskReport(
@@ -1259,9 +1285,14 @@ def _analyze_parameter_surface_risks(
     score: Score,
 ) -> dict[str, list[ArtifactRiskWarning]]:
     risks_by_voice: dict[str, list[ArtifactRiskWarning]] = {}
+    bounded_velocity_params = {
+        "filter_env_amount": (0.0, 1.0),
+    }
     for voice_name, voice in score.voices.items():
         risks: list[ArtifactRiskWarning] = []
-        authored_params = _collect_voice_param_values(score=score, voice_name=voice_name)
+        authored_params = _collect_voice_param_values(
+            score=score, voice_name=voice_name
+        )
 
         cutoff_values = authored_params.get("cutoff_hz", [])
         filter_env_values = authored_params.get("filter_env_amount", [])
@@ -1289,6 +1320,32 @@ def _analyze_parameter_surface_risks(
             if filter_env_velocity_map is not None
             else 0.0
         )
+
+        for param_name, (min_bound, max_bound) in bounded_velocity_params.items():
+            velocity_map = voice.velocity_to_params.get(param_name)
+            if velocity_map is None:
+                continue
+            if (
+                velocity_map.min_value >= min_bound
+                and velocity_map.max_value <= max_bound
+            ):
+                continue
+            risks.append(
+                _artifact_risk(
+                    severity="warning",
+                    code="velocity_param_out_of_bounds",
+                    source="parameter_surface",
+                    message=(
+                        f'velocity map for "{param_name}" exceeds the expected '
+                        "authored range"
+                    ),
+                    param_name=param_name,
+                    velocity_param_min=round(velocity_map.min_value, 2),
+                    velocity_param_max=round(velocity_map.max_value, 2),
+                    expected_min=round(min_bound, 2),
+                    expected_max=round(max_bound, 2),
+                )
+            )
 
         if (
             cutoff_span >= 1_500.0
@@ -1348,15 +1405,15 @@ def _analyze_parameter_surface_risks(
                 )
             )
 
-        if velocity_filter_env_span >= 0.4 and filter_env_max >= 0.9:
+        if velocity_filter_env_span > 0.8 and filter_env_max >= 0.9:
             risks.append(
                 _artifact_risk(
                     severity="warning",
                     code="wide_velocity_filter_env",
                     source="parameter_surface",
                     message=(
-                        "velocity is driving a wide filter-envelope range, which can make "
-                        "similar phrases feel unstable across accents"
+                        "velocity is driving an unusually wide filter-envelope range, "
+                        "which can make accents feel like different presets"
                     ),
                     velocity_filter_env_span=round(velocity_filter_env_span, 2),
                     filter_env_amount_max=round(filter_env_max, 2),
@@ -1383,7 +1440,9 @@ def _collect_voice_param_values(
         if note.synth is not None:
             merged_params.update(note.synth)
         for param_name, param_value in merged_params.items():
-            if isinstance(param_value, (int, float)) and not isinstance(param_value, bool):
+            if isinstance(param_value, (int, float)) and not isinstance(
+                param_value, bool
+            ):
                 param_values.setdefault(param_name, []).append(float(param_value))
         param_values.setdefault("note_amp_db", []).append(
             float(
@@ -1446,7 +1505,11 @@ def _sort_risks(
     severity_order = {"severe": 0, "warning": 1, "info": 2}
     return sorted(
         risks,
-        key=lambda risk: (severity_order.get(risk.severity, 99), risk.code, risk.message),
+        key=lambda risk: (
+            severity_order.get(risk.severity, 99),
+            risk.code,
+            risk.message,
+        ),
     )
 
 
@@ -1476,8 +1539,14 @@ def _log_artifact_risk(*, scope: str, risk: ArtifactRiskWarning) -> None:
 
 
 def _compute_high_band_emphasis_db(band_energy_db: dict[str, float]) -> float:
-    high_values = [band_energy_db.get("high", float("-inf")), band_energy_db.get("air", float("-inf"))]
-    body_values = [band_energy_db.get("low_mid", float("-inf")), band_energy_db.get("mid", float("-inf"))]
+    high_values = [
+        band_energy_db.get("high", float("-inf")),
+        band_energy_db.get("air", float("-inf")),
+    ]
+    body_values = [
+        band_energy_db.get("low_mid", float("-inf")),
+        band_energy_db.get("mid", float("-inf")),
+    ]
     return _finite_mean(high_values) - _finite_mean(body_values)
 
 
@@ -1496,8 +1565,79 @@ def _amplitude_modulation_depth_db(
     hop_seconds: float = 0.01,
     gate_dbfs: float = -50.0,
 ) -> float:
-    if signal.size == 0:
+    _, frame_dbfs_values = _frame_rms_envelope(
+        signal,
+        sample_rate=sample_rate,
+        window_seconds=window_seconds,
+        hop_seconds=hop_seconds,
+    )
+    if frame_dbfs_values.size == 0:
         return 0.0
+
+    active_frame_dbfs_values = frame_dbfs_values[frame_dbfs_values > gate_dbfs]
+    if active_frame_dbfs_values.size < 4:
+        return 0.0
+
+    return float(
+        np.percentile(active_frame_dbfs_values, 95.0)
+        - np.percentile(active_frame_dbfs_values, 5.0)
+    )
+
+
+def _dominant_amplitude_modulation_hz(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    window_seconds: float = 0.05,
+    hop_seconds: float = 0.01,
+    gate_dbfs: float = -50.0,
+    min_frequency_hz: float = 0.25,
+    max_frequency_hz: float = 12.0,
+) -> float:
+    frame_rate_hz, frame_dbfs_values = _frame_rms_envelope(
+        signal,
+        sample_rate=sample_rate,
+        window_seconds=window_seconds,
+        hop_seconds=hop_seconds,
+    )
+    if frame_dbfs_values.size < 8:
+        return 0.0
+
+    active_mask = frame_dbfs_values > gate_dbfs
+    if np.count_nonzero(active_mask) < 8:
+        return 0.0
+
+    normalized_envelope = np.maximum(0.0, frame_dbfs_values - gate_dbfs)
+    centered_envelope = normalized_envelope - float(np.mean(normalized_envelope))
+    if np.allclose(centered_envelope, 0.0):
+        return 0.0
+
+    window = np.hanning(centered_envelope.size)
+    spectrum = np.fft.rfft(centered_envelope * window)
+    frequencies_hz = np.fft.rfftfreq(centered_envelope.size, d=1.0 / frame_rate_hz)
+    candidate_mask = (frequencies_hz >= min_frequency_hz) & (
+        frequencies_hz <= max_frequency_hz
+    )
+    if not np.any(candidate_mask):
+        return 0.0
+
+    magnitudes = np.abs(spectrum[candidate_mask])
+    if np.allclose(magnitudes, 0.0):
+        return 0.0
+
+    candidate_frequencies_hz = frequencies_hz[candidate_mask]
+    return float(candidate_frequencies_hz[int(np.argmax(magnitudes))])
+
+
+def _frame_rms_envelope(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    window_seconds: float,
+    hop_seconds: float,
+) -> tuple[float, np.ndarray]:
+    if signal.size == 0:
+        return 0.0, np.asarray([], dtype=np.float64)
 
     window_samples = max(1, int(round(window_seconds * sample_rate)))
     hop_samples = max(1, int(round(hop_seconds * sample_rate)))
@@ -1507,17 +1647,11 @@ def _amplitude_modulation_depth_db(
         if frame.size == 0:
             continue
         frame_rms = float(np.sqrt(np.mean(np.square(frame))))
-        frame_dbfs = _amplitude_to_db(frame_rms)
-        if frame_dbfs > gate_dbfs:
-            frame_dbfs_values.append(frame_dbfs)
+        frame_dbfs_values.append(_amplitude_to_db(frame_rms))
 
-    if len(frame_dbfs_values) < 4:
-        return 0.0
-
-    frame_dbfs_array = np.asarray(frame_dbfs_values, dtype=np.float64)
-    return float(
-        np.percentile(frame_dbfs_array, 95.0)
-        - np.percentile(frame_dbfs_array, 5.0)
+    return sample_rate / float(hop_samples), np.asarray(
+        frame_dbfs_values,
+        dtype=np.float64,
     )
 
 

@@ -57,8 +57,16 @@
   dB is usually easier to reason about in mixes.
 - Voices are LUFS-normalized by default (`normalize_lufs=-24.0`), so do not treat a
   synth engine's raw output level as the main mix decision. Mix intentionally with
-  `amp_db`, note levels, voice defaults, and effect balances; use those "volume
-  slider" style controls aggressively to shape the arrangement.
+  `amp_db`, note levels, `mix_db`, `pre_fx_gain_db`, voice defaults, and effect
+  balances; use those "volume slider" style controls aggressively to shape the
+  arrangement.
+- Prefer `mix_db` as the normal voice-level mixer fader and `pre_fx_gain_db` when
+  you want to change how hard a voice hits its own insert effects. Treat
+  `normalize_lufs` as a specialized stem-standardization option rather than the
+  first tool for ordinary balance moves.
+- `master_input_gain_db` trims the summed mix into `Score.master_effects`. Leave it
+  at `0.0` by default; reach for it only when you intentionally want to change
+  how hard the master bus glue/tone chain is being driven.
 - Use note-level `velocity` for accents and phrasing. By default it affects loudness
   through `velocity_db_per_unit`, and it can also drive synth params through
   `VelocityParamMap`.
@@ -125,7 +133,8 @@ iterating if helpful, but do not stop there.
 ## Rendering Workflow
 
 - `make list` — see all registered pieces.
-- `make render PIECE=<name>` — render a named piece and save a piano-roll PNG.
+- `make render PIECE=<name>` — render a named piece and save a piano-roll PNG. 
+Default render path. Do not clip the output - diagnostics are useful.
 - `make render PIECE=<name> PLOT=0` — render without the plot.
 - `make inspect PIECE=<name> AT=<timestamp>` — inspect a score-backed piece around
   a timestamp like `130` or `2:10`.
@@ -180,6 +189,10 @@ See `FUTURE.md` for way more ideas.
   normal composition surface, not as obscure implementation details.
 - Keep low-level synthesis simple unless a task explicitly calls for DSP changes.
 - Treat effect chains declaratively with `EffectSpec` on voices or the master bus.
+- The native effect chain now includes a minimum-phase multi-band `eq` effect with
+  ordered highpass, lowpass, bell, and shelf bands for routine tone shaping.
+- The native effect chain also includes a stereo-linked `compressor` effect with
+  feedforward/feedback modes and detector-path EQ bands for musical glue/control.
 - The `bricasti` convolution wrapper now supports basic wet-return tone shaping
   (`highpass_hz`, `lowpass_hz`, `tilt_db`) for cleaner, darker, or brighter tails.
 - The local Linux environment now has a small plugin palette installed for

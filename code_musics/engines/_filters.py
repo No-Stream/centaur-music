@@ -29,7 +29,7 @@ def apply_zdf_svf(
     Args:
         signal: Input audio array.
         cutoff_profile: Per-sample cutoff frequency in Hz (same length as signal).
-        resonance: Resonance amount in [0.0, 1.2].
+        resonance: Non-negative resonance amount.
         sample_rate: Audio sample rate in Hz.
         filter_mode: One of ``"lowpass"``, ``"bandpass"``, ``"highpass"``, ``"notch"``.
         filter_drive: Non-negative drive amount; 0.0 means fully linear/clean.
@@ -38,8 +38,8 @@ def apply_zdf_svf(
     low_state = 0.0
     band_state = 0.0
 
-    resonance_clamped = float(np.clip(resonance, 0.0, 1.2))
-    q = 0.707 + (11.293 * resonance_clamped)
+    resonance_bounded = max(0.0, float(resonance))
+    q = 0.707 + (11.293 * resonance_bounded)
     damping = 1.0 / q
 
     if filter_drive <= 0.0:

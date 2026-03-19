@@ -238,6 +238,128 @@ Effects that support presets resolve parameters in this order:
 1. effect preset values, if `preset` is set
 2. explicit `EffectSpec.params` overrides
 
+### `eq`
+
+Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+
+Native minimum-phase EQ for routine voice and bus tone shaping.
+
+Parameters:
+
+- `bands: list[dict[str, Any]]`
+  Ordered EQ band definitions. Bands are applied in list order.
+
+Supported band kinds:
+
+- `highpass`
+  Parameters: `cutoff_hz`, `slope_db_per_oct`
+- `lowpass`
+  Parameters: `cutoff_hz`, `slope_db_per_oct`
+- `bell`
+  Parameters: `freq_hz`, `gain_db`, `q`
+- `low_shelf`
+  Parameters: `freq_hz`, `gain_db`, `q` (default `0.707`)
+- `high_shelf`
+  Parameters: `freq_hz`, `gain_db`, `q` (default `0.707`)
+
+Notes:
+
+- this EQ is causal / minimum-phase and uses native IIR filters, not linear-phase processing
+- `highpass` and `lowpass` support only `12` or `24 dB/oct`
+- `q` must be positive
+- all frequencies must be above `0` and below Nyquist
+- v1 intentionally has no presets, tilt mode, or makeup gain
+
+Example:
+
+```python
+score = Score(
+    f0=110.0,
+    master_effects=[
+        EffectSpec(
+            "eq",
+            {
+                "bands": [
+                    {"kind": "highpass", "cutoff_hz": 35.0, "slope_db_per_oct": 24},
+                    {"kind": "low_shelf", "freq_hz": 140.0, "gain_db": 1.5},
+                    {"kind": "bell", "freq_hz": 2200.0, "gain_db": -2.0, "q": 1.1},
+                    {"kind": "high_shelf", "freq_hz": 8000.0, "gain_db": -1.0},
+                ]
+            },
+        )
+    ],
+)
+```
+
+### `compressor`
+
+Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+
+Native stereo-linked compressor for glue, stem control, and master-bus shaping.
+It supports both feedforward and feedback topologies and can EQ the
+detector/listener path without EQing the audible signal itself.
+
+Parameters:
+
+- `threshold_db: float`
+  Compression threshold in dBFS. Default `-20.0`.
+- `ratio: float`
+  Compression ratio. Must be at least `1.0`. Default `3.0`.
+- `attack_ms: float`
+  Attack time in milliseconds. Default `15.0`. Intended musical range includes
+  roughly `0.5` to `50`.
+- `release_ms: float`
+  Release time in milliseconds. Default `180.0`. Intended musical range includes
+  roughly `50` to `1000+`.
+- `knee_db: float`
+  Soft-knee width in dB. Default `6.0`.
+- `makeup_gain_db: float`
+  Linear post-compression makeup gain in dB. Default `0.0`.
+- `mix: float`
+  Dry/wet blend from `0` to `1`. Default `1.0`.
+- `topology: str`
+  `feedforward` or `feedback`. Default `feedforward`.
+- `detector_mode: str`
+  `peak` or `rms`. Default `rms`.
+- `detector_bands: list[dict[str, Any]] | None`
+  Optional EQ bands applied only to the detector path. Band syntax is identical
+  to the native `eq` effect.
+
+Notes:
+
+- channels are stereo-linked so left/right image does not wander under compression
+- detector EQ is the native control-path tone-shaping surface; use it for things
+  like bass-insensitive bus compression via a detector highpass
+- this implementation intentionally does not yet expose an external sidechain input
+- the release path is mildly program-dependent rather than a single fixed release
+  coefficient all the way back to zero gain reduction
+
+Example:
+
+```python
+score = Score(
+    f0=110.0,
+    master_effects=[
+        EffectSpec(
+            "compressor",
+            {
+                "threshold_db": -22.0,
+                "ratio": 2.5,
+                "attack_ms": 12.0,
+                "release_ms": 220.0,
+                "knee_db": 6.0,
+                "topology": "feedback",
+                "detector_mode": "rms",
+                "detector_bands": [
+                    {"kind": "highpass", "cutoff_hz": 110.0, "slope_db_per_oct": 12}
+                ],
+                "makeup_gain_db": 1.5,
+            },
+        )
+    ],
+)
+```
+
 ### `plugin`
 
 Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)

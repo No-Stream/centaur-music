@@ -194,7 +194,7 @@ class TestPolyBLEPFreqTrajectory:
 
 
 class TestPolyBLEPStability:
-    def test_high_resonance_low_cutoff_remains_finite(self) -> None:
+    def test_very_high_resonance_low_cutoff_remains_finite(self) -> None:
         signal = render(
             freq=55.0,
             duration=0.75,
@@ -203,7 +203,7 @@ class TestPolyBLEPStability:
             params={
                 "waveform": "square",
                 "cutoff_hz": 140.0,
-                "resonance": 1.0,
+                "resonance": 2.0,
                 "filter_drive": 0.6,
                 "filter_mode": "lowpass",
                 "filter_env_amount": 0.2,
