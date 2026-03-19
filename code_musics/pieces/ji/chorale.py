@@ -69,7 +69,7 @@ def build_ji_chorale_score() -> Score:
                         "attack_threshold_db": -18.0,
                         "attack_time_ms": 28.0,
                         "release_time_ms": 220.0,
-                        "knee_db": -5.0,
+                        "knee_db": -10.0,
                         "makeup_gain_db": 1.2,
                         "sidechain_mode": "RMS",
                         "dry_wet_balance": 100.0,
@@ -87,7 +87,7 @@ def build_ji_chorale_score() -> Score:
                 "chow_tape",
                 {"drive": 0.15, "saturation": 0.18, "bias": 0.5, "mix": 50.0},
             ),
-            EffectSpec("bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.30}),
+            EffectSpec("bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.15}),
         ]
     )
 
@@ -99,14 +99,13 @@ def build_ji_chorale_score() -> Score:
 
     score.add_voice(
         "bass",
-        normalize_lufs=-29.0,
         synth_defaults={
             "engine": "filtered_stack",
             "waveform": "square",
             "n_harmonics": 12,
             "cutoff_hz": 900.0,
             "keytrack": 0.1,
-            "resonance": 0.10,
+            "resonance": 0.0,
             "filter_env_amount": 0.55,
             "filter_env_decay": 0.70,
             "attack": 0.22,
@@ -114,6 +113,7 @@ def build_ji_chorale_score() -> Score:
             "sustain_level": 0.60,
             "release": 0.90,
         },
+        normalize_lufs=-26.0,
         pan=-0.08,
         velocity_group="harmony",
         envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
@@ -136,8 +136,8 @@ def build_ji_chorale_score() -> Score:
     }
     score.add_voice(
         "tenor",
-        normalize_lufs=-29.0,
         synth_defaults=dict(chord_defaults),
+        normalize_lufs=-31.0,
         pan=-0.16,
         velocity_group="harmony",
         envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
@@ -149,8 +149,8 @@ def build_ji_chorale_score() -> Score:
     )
     score.add_voice(
         "alto",
-        normalize_lufs=-29.0,
         synth_defaults=dict(chord_defaults),
+        normalize_lufs=-31.0,
         pan=0.14,
         velocity_group="harmony",
         envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
@@ -174,7 +174,7 @@ def build_ji_chorale_score() -> Score:
             "sustain_level": 0.52,
             "release": 0.30,
         },
-        normalize_lufs=-28.0,
+        normalize_lufs=-31.0,
         pan=0.08,
         velocity_group="melody",
         envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog"),
@@ -191,11 +191,11 @@ def build_ji_chorale_score() -> Score:
             "engine": "polyblep",
             "waveform": "triangle",
             "cutoff_hz": 2_200.0,
-            "keytrack": 0.06,
-            "resonance": 0.07,
-            "filter_env_amount": 0.18,
+            "keytrack": 0.1,
+            "resonance": 0.05,
+            "filter_env_amount": 0.13,
             "filter_env_decay": 1.0,
-            "filter_drive": 0.12,
+            "filter_drive": 0.05,
             "attack": 0.085,
             "decay": 1.25,
             "sustain_level": 0.48,

@@ -163,10 +163,10 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
         "reed_lead": {
             "waveform": "square",
             "n_harmonics": 10,
-            "cutoff_hz": 2_200.0,
+            "cutoff_hz": 1_500.0,
             "keytrack": 0.2,
-            "resonance": 0.18,
-            "filter_env_amount": 0.5,
+            "resonance": 0.15,
+            "filter_env_amount": 0.35,
             "filter_env_decay": 0.18,
             "attack": 0.02,
             "release": 0.25,
