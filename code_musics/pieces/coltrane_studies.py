@@ -17,7 +17,7 @@ import logging
 import math
 
 from code_musics.humanize import EnvelopeHumanizeSpec, TimingHumanizeSpec
-from code_musics.pieces.septimal import PieceDefinition
+from code_musics.pieces.registry import PieceDefinition
 from code_musics.score import EffectSpec, Score
 
 logger = logging.getLogger(__name__)

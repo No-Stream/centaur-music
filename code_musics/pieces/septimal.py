@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
+from code_musics.pieces.registry import PieceDefinition
 from code_musics.score import EffectSpec, Phrase, Score
 from code_musics.synth import sequence
 from code_musics.tuning import otonal, ratio_to_cents, utonal
@@ -17,16 +16,6 @@ logger = logging.getLogger(__name__)
 
 OUTPUT_DIR = Path("output")
 ROOT = 110.0
-
-
-@dataclass(frozen=True)
-class PieceDefinition:
-    """Named renderable piece."""
-
-    name: str
-    output_name: str
-    build_score: Callable[[], Score] | None = None
-    render_audio: Callable[[], np.ndarray] | None = None
 
 
 def render_interval_demo() -> np.ndarray:

@@ -17,11 +17,9 @@
 - `code_musics/tuning.py` contains small just-intonation, harmonic-series, utonal,
   and EDO helper functions.
 - `code_musics/pieces/` contains named musical works that can be rendered by the
-  registry.
+  registry, including smaller themed study modules plus JI subpackages.
 - `code_musics/render.py` is the named-piece orchestration layer.
 - `main.py` is the main entrypoint for listing and rendering pieces.
-- `sketches/01_septimal.py` is a compatibility wrapper that renders the septimal
-  reference pieces through the registry.
 
 ## Composition Model
 

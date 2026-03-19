@@ -55,6 +55,20 @@ Likely useful directions:
 
 ## Medium priority
 
+### Repo structure follow-up
+
+The current piece-module split should make the codebase easier to navigate, but
+there are still a couple of worthwhile architecture follow-ups:
+
+- split `code_musics/render.py` into render orchestration vs artifact/version
+  metadata helpers
+- tighten the package API boundary so internal modules import concrete modules
+  directly instead of leaning on package-level compatibility surfaces
+- decide whether the repo-root `synth.py` compatibility wrapper should stay,
+  move to a more clearly legacy location, or be removed entirely
+- consider whether generated `output/` artifacts should keep living in the repo
+  root by default or move behind a clearer workspace/output boundary
+
 ### Timbre and synth automation
 
 This is now a particularly attractive next step. The engine/preset layer exists,

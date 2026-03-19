@@ -7,7 +7,7 @@ import logging
 import numpy as np
 
 from code_musics.composition import line
-from code_musics.pieces.septimal import PieceDefinition
+from code_musics.pieces.registry import PieceDefinition
 from code_musics.score import EffectSpec, Score
 from code_musics.synth import SAMPLE_RATE, normalize
 
