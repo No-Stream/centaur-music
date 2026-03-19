@@ -23,11 +23,11 @@ def build_ji_chorale_score() -> Score:
 
     Structure:
       Prologue   (0–12 s):   Fs2+A3 sparse drone; lead pickup at t=8.
-      A section  (12–54 s):  7-bar vi–iv alternation; counter enters bar 3.
+      A section  (12–54 s):  8-bar vi–iv alternation; counter enters bar 3.
       B section  (54–75 s):  I–V–I in A major; bright but grounded.
       Development(75–99 s):  F#m7 → Bm → V; exploratory, unsettled.
-      Reprise    (99–123 s): vi–I–vi–I; bittersweet into tastefully major.
-      Ending     (123–150 s):wide vi → Dm7 → Amaj7; unresolved, wide-voiced.
+      Reprise    (99–120 s): vi–I–vi–I; bittersweet into tastefully major.
+      Ending     (120–149 s):wide vi → Dm7 → Amaj7; unresolved, wide-voiced.
     """
     f0 = 110.0  # A2 = 110 Hz
 
@@ -93,7 +93,7 @@ def build_ji_chorale_score() -> Score:
 
     score = Score(
         f0=f0,
-        timing_humanize=TimingHumanizeSpec(preset="chamber", chord_spread_ms=16.0),
+        timing_humanize=TimingHumanizeSpec(preset="chamber", chord_spread_ms=7.0),
         master_effects=master_effects,
     )
 
@@ -244,17 +244,18 @@ def build_ji_chorale_score() -> Score:
     score.add_note("tenor", start=7.4, duration=0.5, freq=Cs4, amp=0.11, velocity=0.72)
     score.add_note("tenor", start=8.2, duration=3.8, freq=A3, amp=0.14, velocity=0.80)
 
-    a_note_dur = 6.9
+    a_note_dur = 5.5
     a_chords: list[tuple[float, float, float, float]] = [
-        (12.0, Fs3, A3, Cs4),
-        (18.0, D3, F3, A3),
-        (24.0, Fs3, A3, Cs4),
-        (30.0, D3, F3, A3),
-        (36.0, Fs3, A3, Cs4),
-        (42.0, D3, F3, A3),
-        (48.0, Fs3, A3, Cs4),
+        (12.00, Fs3, A3, Cs4),
+        (17.25, D3, F3, A3),
+        (22.50, Fs3, A3, Cs4),
+        (27.75, D3, F3, A3),
+        (33.00, Fs3, A3, Cs4),
+        (38.25, D3, F3, A3),
+        (43.50, Fs3, A3, Cs4),
+        (48.75, D3, F3, A3),
     ]
-    a_velocities = [0.90, 0.95, 1.02, 1.05, 1.12, 0.98, 0.90]
+    a_velocities = [0.90, 0.95, 1.02, 1.05, 1.12, 0.98, 0.90, 0.85]
     for (start, bass_freq, tenor_freq, alto_freq), velocity in zip(
         a_chords,
         a_velocities,
@@ -285,11 +286,11 @@ def build_ji_chorale_score() -> Score:
             velocity=velocity,
         )
 
-    b_note_dur = 7.2
+    b_note_dur = 5.8
     b_chords: list[tuple[float, float, float, float]] = [
         (54.0, A2, E3, Cs4),
-        (61.0, E3, Gs3, B3),
-        (68.0, A2, E3, Cs4),
+        (59.5, E3, Gs3, B3),
+        (65.0, A2, E3, Cs4),
     ]
     b_velocities = [1.05, 1.10, 0.95]
     for (start, bass_freq, tenor_freq, alto_freq), velocity in zip(
@@ -322,11 +323,11 @@ def build_ji_chorale_score() -> Score:
             velocity=velocity,
         )
 
-    dev_note_dur = 8.1
+    dev_note_dur = 6.3
     dev_chords: list[tuple[float, float, float, float]] = [
         (75.0, Fs2, A3, Cs4),
-        (83.0, B2, D3, Fs3),
-        (91.0, E3, Gs3, B3),
+        (81.0, B2, D3, Fs3),
+        (87.0, E3, Gs3, B3),
     ]
     dev_velocities = [1.02, 1.08, 1.14]
     for (start, bass_freq, tenor_freq, alto_freq), velocity in zip(
@@ -359,12 +360,12 @@ def build_ji_chorale_score() -> Score:
             velocity=velocity,
         )
 
-    rep_note_dur = 6.8
+    rep_note_dur = 5.3
     rep_chords: list[tuple[float, float, float, float]] = [
         (99.0, Fs3, A3, Cs4),
-        (105.0, A2, E3, Cs4),
-        (111.0, Fs3, A3, Cs4),
-        (117.0, A2, E3, Cs4),
+        (104.0, A2, E3, Cs4),
+        (109.0, Fs3, A3, Cs4),
+        (114.0, A2, E3, Cs4),
     ]
     rep_velocities = [1.00, 0.95, 1.00, 0.88]
     for (start, bass_freq, tenor_freq, alto_freq), velocity in zip(
@@ -397,28 +398,22 @@ def build_ji_chorale_score() -> Score:
             velocity=velocity,
         )
 
-    # Reprise: brief Gs4 in alto on the final I chord — seeds the Amaj7 that blooms at 139s
-    score.add_note("alto", start=117.0, duration=3.5, freq=Gs4, amp=0.09, velocity=0.72)
+    # Reprise: brief Gs4 in alto on the final I chord — seeds the Amaj7 that blooms at 136s
+    score.add_note("alto", start=114.0, duration=3.5, freq=Gs4, amp=0.09, velocity=0.72)
 
-    score.add_note("bass", start=123.0, duration=8.4, freq=Fs2, amp=0.27, velocity=1.05)
-    score.add_note("tenor", start=123.0, duration=8.4, freq=A3, amp=0.20, velocity=1.05)
-    score.add_note("alto", start=123.0, duration=8.4, freq=Cs5, amp=0.21, velocity=1.05)
+    score.add_note("bass", start=120.0, duration=8.0, freq=Fs2, amp=0.27, velocity=1.05)
+    score.add_note("tenor", start=120.0, duration=8.0, freq=A3, amp=0.20, velocity=1.05)
+    score.add_note("alto", start=120.0, duration=8.0, freq=Cs5, amp=0.21, velocity=1.05)
 
-    score.add_note("bass", start=131.0, duration=8.4, freq=D3, amp=0.26, velocity=1.00)
-    score.add_note("tenor", start=131.0, duration=8.4, freq=F3, amp=0.21, velocity=1.00)
-    score.add_note("alto", start=131.0, duration=8.4, freq=A3, amp=0.18, velocity=1.00)
-    score.add_note("alto", start=131.0, duration=8.4, freq=C4, amp=0.16, velocity=1.00)
+    score.add_note("bass", start=128.0, duration=8.0, freq=D3, amp=0.26, velocity=1.00)
+    score.add_note("tenor", start=128.0, duration=8.0, freq=F3, amp=0.21, velocity=1.00)
+    score.add_note("alto", start=128.0, duration=8.0, freq=A3, amp=0.18, velocity=1.00)
+    score.add_note("alto", start=128.0, duration=8.0, freq=C4, amp=0.16, velocity=1.00)
 
-    score.add_note("bass", start=139.0, duration=10.0, freq=A2, amp=0.23, velocity=0.88)
-    score.add_note(
-        "tenor", start=139.0, duration=10.0, freq=E3, amp=0.19, velocity=0.88
-    )
-    score.add_note(
-        "alto", start=139.0, duration=10.0, freq=Cs4, amp=0.17, velocity=0.88
-    )
-    score.add_note(
-        "alto", start=139.0, duration=10.0, freq=Gs4, amp=0.17, velocity=0.88
-    )
+    score.add_note("bass", start=136.0, duration=10.0, freq=A2, amp=0.23, velocity=0.88)
+    score.add_note("tenor", start=136.0, duration=10.0, freq=E3, amp=0.19, velocity=0.88)
+    score.add_note("alto", start=136.0, duration=10.0, freq=Cs4, amp=0.17, velocity=0.88)
+    score.add_note("alto", start=136.0, duration=10.0, freq=Gs4, amp=0.17, velocity=0.88)
 
     def _add_counter(t_start: float, notes: list[tuple[float, float, float]]) -> None:
         t = t_start
@@ -433,25 +428,25 @@ def build_ji_chorale_score() -> Score:
             )
             t += duration
 
-    _add_counter(24.0, [(E4, 2.5, 1.00), (D4, 2.0, 0.93), (Cs4, 1.5, 0.85)])
-    _add_counter(30.0, [(F4, 2.0, 1.05), (E4, 2.0, 0.97), (D4, 2.0, 0.88)])
-    _add_counter(36.0, [(E4, 1.5, 1.02), (Cs4, 2.0, 0.92), (E4, 2.5, 1.00)])
-    _add_counter(42.0, [(D4, 2.0, 0.92), (E4, 2.5, 1.00), (F4, 1.5, 1.08)])
-    _add_counter(48.0, [(Cs4, 2.0, 1.02), (E4, 2.5, 1.05), (D4, 1.5, 0.90)])
+    _add_counter(22.5, [(E4, 2.2, 1.00), (D4, 1.75, 0.93), (Cs4, 1.3, 0.85)])
+    _add_counter(27.75, [(F4, 1.75, 1.05), (E4, 1.75, 0.97), (D4, 1.75, 0.88)])
+    _add_counter(33.0, [(E4, 1.3, 1.02), (Cs4, 1.75, 0.92), (E4, 2.2, 1.00)])
+    _add_counter(38.25, [(D4, 1.75, 0.92), (E4, 2.2, 1.00), (F4, 1.3, 1.08)])
+    _add_counter(43.5, [(Cs4, 1.75, 1.02), (E4, 2.2, 1.05), (D4, 1.3, 0.90)])
 
     # B section: embryonic E→G# hint — same Gs4 that blooms fully at the Ending
-    _add_counter(61.0, [(E4, 2.0, 0.90), (Gs4, 3.5, 0.85)])
+    _add_counter(59.5, [(E4, 2.0, 0.90), (Gs4, 3.5, 0.85)])
 
-    _add_counter(75.0, [(E4, 3.0, 1.05), (Cs4, 2.5, 0.92), (E4, 2.5, 1.00)])
-    _add_counter(83.0, [(Fs4, 3.0, 1.10), (E4, 2.5, 1.00), (D4, 2.5, 0.90)])
-    _add_counter(91.0, [(Gs4, 3.0, 1.18), (Fs4, 2.0, 1.02), (E4, 3.0, 0.88)])
+    _add_counter(75.0, [(E4, 2.2, 1.05), (Cs4, 1.9, 0.92), (E4, 1.9, 1.00)])
+    _add_counter(81.0, [(Fs4, 2.2, 1.10), (E4, 1.9, 1.00), (D4, 1.9, 0.90)])
+    _add_counter(87.0, [(Gs4, 2.2, 1.18), (Fs4, 1.5, 1.02), (E4, 2.3, 0.88)])
 
-    _add_counter(99.0, [(E4, 3.0, 1.08), (Cs4, 3.0, 0.90)])
-    _add_counter(111.0, [(Cs4, 2.5, 0.95), (E4, 3.5, 1.05)])
+    _add_counter(99.0, [(E4, 2.5, 1.08), (Cs4, 2.5, 0.90)])
+    _add_counter(109.0, [(Cs4, 2.2, 0.95), (E4, 2.8, 1.05)])
 
-    _add_counter(123.0, [(E4, 4.0, 1.00), (Cs4, 4.0, 0.90)])
-    _add_counter(131.0, [(F4, 4.0, 1.08), (E4, 4.0, 0.95)])
-    _add_counter(139.0, [(E4, 4.0, 1.00), (Gs4, 4.0, 1.10), (E4, 3.0, 0.85)])
+    _add_counter(120.0, [(E4, 4.0, 1.00), (Cs4, 4.0, 0.90)])
+    _add_counter(128.0, [(F4, 4.0, 1.08), (E4, 4.0, 0.95)])
+    _add_counter(136.0, [(E4, 4.0, 1.00), (Gs4, 4.0, 1.10), (E4, 3.0, 0.85)])
 
     def _add_lead_phrase(
         *,
@@ -716,7 +711,7 @@ def build_ji_chorale_score() -> Score:
         velocities=reprise_ending_velocities,
     )
 
-    score.add_note("bass", start=154.0, duration=0.5, freq=A2, amp=0.001)
+    score.add_note("bass", start=149.0, duration=0.5, freq=A2, amp=0.001)
     return score
 
 
@@ -730,8 +725,8 @@ PIECES: dict[str, PieceDefinition] = {
             PieceSection(label="A", start_seconds=12.0, end_seconds=54.0),
             PieceSection(label="B", start_seconds=54.0, end_seconds=75.0),
             PieceSection(label="Development", start_seconds=75.0, end_seconds=99.0),
-            PieceSection(label="Reprise", start_seconds=99.0, end_seconds=123.0),
-            PieceSection(label="Ending", start_seconds=123.0, end_seconds=150.0),
+            PieceSection(label="Reprise", start_seconds=99.0, end_seconds=120.0),
+            PieceSection(label="Ending", start_seconds=120.0, end_seconds=149.5),
         ),
     )
 }
