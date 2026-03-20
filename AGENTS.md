@@ -150,8 +150,11 @@ iterating if helpful, but do not stop there.
 ## Rendering Workflow
 
 - `make list` — see all registered pieces.
-- `make render PIECE=<name>` — render a named piece and save a piano-roll PNG. 
-Default render path. Do not clip the output - diagnostics are useful.
+- `make render PIECE=<name>` — render a named piece and save a piano-roll PNG.
+  Default render path. Always capture the full output — do **not** pipe through
+  `tail` or truncate in any way. The render emits loudness/peak stats, artifact-risk
+  warnings (amplitude modulation, compression, brightness), and analysis manifest
+  paths that are all important for diagnosing mix and DSP issues.
 - `make render PIECE=<name> PLOT=0` — render without the plot.
 - `make inspect PIECE=<name> AT=<timestamp>` — inspect a score-backed piece around
   a timestamp like `130` or `2:10`.
