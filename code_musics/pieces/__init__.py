@@ -12,6 +12,7 @@ from code_musics.pieces.mellow_studies import PIECES as _MELLOW_PIECES
 from code_musics.pieces.registry import merge_piece_maps
 from code_musics.pieces.septimal import PIECES as _SEPTIMAL_PIECES
 from code_musics.pieces.texture_studies import PIECES as _TEXTURE_STUDY_PIECES
+from code_musics.pieces.wtc_sketches import PIECES as _WTC_PIECES
 
 PIECES = merge_piece_maps(
     _SEPTIMAL_PIECES,
@@ -23,6 +24,7 @@ PIECES = merge_piece_maps(
     _COLTRANE_PIECES,
     _EFFECTS_SHOWCASE_PIECES,
     _MELLOW_PIECES,
+    _WTC_PIECES,
 )
 
 __all__ = ["PIECES"]
