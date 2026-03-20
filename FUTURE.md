@@ -63,6 +63,12 @@ Most valuable next helpers:
 - overlap, beating, density, and register summaries that better flag when a
   texture has become too static, too crowded, or too continuously drony
 
+### Inspiration
+- oblique strategies type generator, combinations of strategies
+- musical references (obvious, but pragamatic)
+- non-musical art references (e.g. inspired by Rothko temple pieces)
+- "poetic" references - non-art things that we can attempt to draw inspiration from
+
 ### Sound design and synthesis direction
 
 The engine palette is strong enough to compose with now; the next step is
@@ -87,6 +93,11 @@ Some of this is implemented already through timing, envelope, and velocity
 humanization; what remains is the more specialized layer.
 We recently added notes (rather than just time-based) arranging.
 And we have humanization + imperfection. But we should eventually add swing.
+
+### Autoresearch, for music
+
+Automatically generate pieces and critique them, prune, develop.  
+Challenging given current-gen agents can't hear, but that's a challenge for this entire project.
 
 ### Timbre and mix automation
 
