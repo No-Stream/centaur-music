@@ -64,10 +64,30 @@ Most valuable next helpers:
   texture has become too static, too crowded, or too continuously drony
 
 ### Inspiration
-- oblique strategies type generator, combinations of strategies
+- oblique strategies type generator, combinations of strategies - see list in email of OGs
 - musical references (obvious, but pragamatic)
 - non-musical art references (e.g. inspired by Rothko temple pieces)
 - "poetic" references - non-art things that we can attempt to draw inspiration from
+
+### Additive Synthesis Specifically
+Additive lets us not assume traditional harmonic structure. 
+e.g. we can have harmonics of just intervals, not e.g. simple sawtooth harmonics
+this should unlock some interesting creative opportunities.
+for example - 
+1. Bell / mallet / metal / glass / struck-material sounds
+These are already naturally inharmonic or quasi-inharmonic, so they pair beautifully with unusual tunings. Xenharmonic music often feels more convincing when the timbre does not keep insisting on a standard harmonic ladder.
+2. Drones and spectral harmony
+If you want harmony to emerge from partial relationships rather than chord symbols, additive is almost ideal. You can sculpt consonance directly in the spectrum.
+3. Pads with “non-Western” or ambiguous tonal centers
+A subtractive pad often still sounds like “a normal synth pad but retuned.” An additive pad can sound like it came from a different musical physics.
+4. Timbre-harmony fusion
+You can make a chord whose note frequencies and internal overtone structures are both drawn from the same ratio world.
+We should consider how to do this with a clean, musical interface that encourages sane defaults and easy programming, and modularity.
+(Should include clean, higher-level API(s); could be as simple as partial_ratio:amt)
+
+### MIDI Export
+
+- see email note to self. plan around mostly scl/tun + Oddsound w/ polyphonic bend for extra synth compatibility
 
 ### Sound design and synthesis direction
 
@@ -126,6 +146,39 @@ Most interesting directions:
 - phrase-level recontextualization helpers that make comma drift and local tonic
   reinterpretation easier to write as normal music
 - voice-leading idioms that stay elegant while harmonic context shifts
+
+### Colundi-ish Scale
+  ```
+  ! colundi_ji_core.scl
+  !
+  Approximate Colundi-inspired 7-note JI scale
+  7
+  !
+  11/10
+  19/16
+  4/3
+  3/2
+  49/30
+  7/4
+  2/1
+  ```
+
+### Organs!
+  Organs sound great, are fundamentally additive ish, should be alt-tuning friendly are huge in Bach.
+  Let's try making some organ models and playing them!
+
+### Pianoteq
+  I have a Pianoteq license and the Linux package downloaded. We can try setting it up headless. 
+  (Pianoteq is famous for microtonal support but we'll need to hack around a bit to hopefully get it running without a DAW.)
+
+### Co-design scale + synth
+  - Additive synthesis + scale. works great with non-octave scales, e.g. Colundi (since we can omit octave harmonics)
+  - FM, similar story
+  - Physical modeling
+  - Granular (not necessarily _great_ for xenharmonic but doesn't have the octave bias of subtractive synths)
+
+### Combination Product Set - Harmonic Lattice (Erv Wilson)
+  - cool idea. let's try.
 
 ### Better effect integration and routing
 
