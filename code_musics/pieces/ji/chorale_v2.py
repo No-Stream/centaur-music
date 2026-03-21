@@ -444,7 +444,7 @@ def build_ji_chorale_v2_score() -> Score:
             "resonance": 0.15,
             "filter_env_amount": 0.13,
             "filter_env_decay": 1.0,
-            "filter_drive": 0.00,
+            "filter_drive": 0.10,
             "attack": 0.085,
             "decay": 1.25,
             "sustain_level": 0.60,
