@@ -978,7 +978,9 @@ Parameters:
   Default `lowpass`.
 - `filter_drive: float`
   Analog-inspired drive amount inside the ZDF filter path. `0.0` is clean; higher values
-  thicken and soften the response. Default `0.0`.
+  thicken and soften the response. The response is intentionally eased so that
+  very small settings stay subtle instead of jumping straight into obvious
+  distortion. Default `0.0`.
 
 Recommended authoring aliases:
 
@@ -1103,7 +1105,9 @@ Parameters:
   the cutoff region and make the filter feel more analog/reactive. Default `0.0`.
 - `filter_drive: float`
   Analog-inspired drive amount inside the filter path. `0` is clean; higher values
-  thicken and soften the response. Default `0.0`.
+  thicken and soften the response. The response is intentionally eased so that
+  very small settings stay subtle instead of jumping straight into obvious
+  distortion. Default `0.0`.
 - `filter_env_amount: float`
   Multiplier controlling how much the cutoff starts above the base `cutoff_hz` at
   note onset. Default `0.0`.
