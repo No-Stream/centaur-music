@@ -146,6 +146,8 @@ standard targets.
 after meaningful code changes. It runs formatting verification, Ruff, Python
 compilation, basedpyright, and the full test suite. Use narrower commands while
 iterating if helpful, but do not stop there.
+Make commands are preferred to `uv run` since they don't require human sign-off,
+making for a better experience for both agent and human.
 
 ## Rendering Workflow
 
@@ -192,14 +194,6 @@ harder and more valuable here.
 
 ## Future-Facing Ideas
 
-These are good directions to keep in mind while working, even if they are not all
-implemented yet:
-
-- expand the library of phrase-level compositional helpers
-- explore richer visual analysis beyond the current piano roll
-- push further into utonal and subharmonic writing as a structural device
-- explore FM and other timbral approaches that interact well with JI ratios
-- support fuller composition, not just studies, demos, or sketches
 See `FUTURE.md` for way more ideas.
 
 ## Implementation Notes
@@ -213,6 +207,9 @@ See `FUTURE.md` for way more ideas.
   ordered highpass, lowpass, bell, and shelf bands for routine tone shaping.
 - The native effect chain also includes a stereo-linked `compressor` effect with
   feedforward/feedback modes and detector-path EQ bands for musical glue/control.
+- There is now a dedicated `kick_tom` synth engine for 808/909-style kicks and
+  toms; the intended happy path is pairing it with the native drum-oriented
+  compressor/saturation presets documented in `docs/synth_api.md`.
 - The `bricasti` convolution wrapper now supports basic wet-return tone shaping
   (`highpass_hz`, `lowpass_hz`, `tilt_db`) for cleaner, darker, or brighter tails.
 - The local Linux environment now has a small plugin palette installed for
@@ -258,6 +255,18 @@ See `FUTURE.md` for way more ideas.
   when changing behavior.
 - If a doc in this repo describes something as future work, verify it against the code
   before repeating it. Several foundational ideas are already implemented.
+- Think carefully about interface design. Imagine you were interacting with devices with 
+  practically no context. What would be intuitive and easy to use? 
+  Prefer absolute units when possible (like msec for a compressor). For arbitrary knobs,
+  use typical, usable ranges: 0-0.25 should be quite subtle, 0.25-0.33 should be clearly audible but
+  still somewhat subtle, 0.33-0.66 should be moderate, and 0.66-0.8 should be strong. It's fine
+  to have plausibly musical but not broken very strong effects from 0.8-1.0.
+  For example, a saturation effect might offer gentle mix warmth at 0.2, harmony-compatible warmth at 0.33,
+  musical saturation at 0.5, strong but still musical saturation at 0.66, and distortion at 0.8.
+- Effects and voices should be designed considering musicality, not textbook designs.
+  Don't cut corners to save time. 
+  For example, if a distortion plugin would benefit from antialiasing, 
+  don't just implement the most naive algo.
 
 ## Test Philosophy
 - Test early and often. Ideally write tests _first_ then code (TDD).  

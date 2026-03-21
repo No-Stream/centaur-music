@@ -13,7 +13,7 @@ from code_musics.engines.registry import (
 )
 from code_musics.humanize import VelocityHumanizeSpec
 from code_musics.pitch_motion import PitchMotionSpec
-from code_musics.score import Score, VelocityParamMap
+from code_musics.score import EffectSpec, Score, VelocityParamMap
 
 
 def test_unknown_engine_raises_value_error() -> None:
@@ -103,6 +103,8 @@ def test_new_unit_bearing_aliases_override_legacy_flat_names() -> None:
         ("fm", "chorused_ep"),
         ("filtered_stack", "saw_pad"),
         ("filtered_stack", "string_pad"),
+        ("kick_tom", "909_techno"),
+        ("kick_tom", "round_tom"),
         ("polyblep", "synth_pluck"),
         ("polyblep", "analog_brass"),
         ("polyblep", "square_lead"),
@@ -205,6 +207,9 @@ def test_score_can_mix_multiple_engine_types() -> None:
     score.add_voice(
         "perc", synth_defaults={"engine": "noise_perc", "preset": "snareish"}
     )
+    score.add_voice(
+        "kick", synth_defaults={"engine": "kick_tom", "preset": "909_house"}
+    )
 
     score.add_voice(
         "lead", synth_defaults={"engine": "polyblep", "preset": "warm_lead"}
@@ -214,6 +219,7 @@ def test_score_can_mix_multiple_engine_types() -> None:
     score.add_note("bell", start=0.15, duration=0.5, partial=3.0, amp=0.2)
     score.add_note("bass", start=0.0, duration=0.6, partial=1.0, amp=0.2)
     score.add_note("perc", start=0.35, duration=0.2, freq=180.0, amp=0.2)
+    score.add_note("kick", start=0.7, duration=0.4, freq=58.0, amp=0.2)
     score.add_note("lead", start=0.1, duration=0.5, partial=2.0, amp=0.2)
 
     audio = score.render()
@@ -221,6 +227,60 @@ def test_score_can_mix_multiple_engine_types() -> None:
     assert audio.ndim == 1
     assert np.all(np.isfinite(audio))
     assert len(audio) == int(2.0 * score.sample_rate)
+    assert np.max(np.abs(audio)) > 0.0
+
+
+def test_normalize_synth_spec_supports_kick_tom_param_aliases() -> None:
+    normalized = normalize_synth_spec(
+        {
+            "engine": "kick_tom",
+            "params": {
+                "body_decay_ms": 420.0,
+                "sweep_amount_ratio": 1.8,
+                "sweep_decay_ms": 66.0,
+                "body_punch": 0.35,
+                "body_tone": 0.2,
+                "drive": 0.28,
+            },
+        }
+    )
+
+    assert normalized["body_decay_ms"] == pytest.approx(420.0)
+    assert normalized["pitch_sweep_amount_ratio"] == pytest.approx(1.8)
+    assert normalized["pitch_sweep_decay_ms"] == pytest.approx(66.0)
+    assert normalized["body_punch_ratio"] == pytest.approx(0.35)
+    assert normalized["body_tone_ratio"] == pytest.approx(0.2)
+    assert normalized["drive_ratio"] == pytest.approx(0.28)
+
+
+def test_score_can_render_kick_tom_with_finished_effect_chain() -> None:
+    score = Score(f0=110.0)
+    score.add_voice(
+        "kick",
+        synth_defaults={"engine": "kick_tom", "preset": "909_techno"},
+        velocity_humanize=None,
+        velocity_to_params={
+            "click_amount": VelocityParamMap(min_value=0.12, max_value=0.28),
+            "drive_ratio": VelocityParamMap(min_value=0.14, max_value=0.32),
+            "pitch_sweep_amount_ratio": VelocityParamMap(
+                min_value=2.3,
+                max_value=3.1,
+            ),
+        },
+        effects=[
+            EffectSpec("compressor", {"preset": "kick_punch"}),
+            EffectSpec("saturation", {"preset": "kick_weight"}),
+        ],
+    )
+    score.add_note("kick", start=0.0, duration=0.35, freq=55.0, amp=0.22, velocity=0.9)
+    score.add_note(
+        "kick", start=0.55, duration=0.35, freq=55.0, amp=0.22, velocity=1.15
+    )
+
+    audio = score.render()
+
+    assert audio.ndim == 1
+    assert np.all(np.isfinite(audio))
     assert np.max(np.abs(audio)) > 0.0
 
 

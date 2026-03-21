@@ -1405,6 +1405,46 @@ def test_saturation_effect_analysis_reports_shaper_activity() -> None:
     assert "crest_factor_delta_db" in saturation_metrics
 
 
+def test_compressor_effect_preset_matches_explicit_params() -> None:
+    signal = 0.7 * np.sin(
+        np.linspace(0.0, 14.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
+    )
+
+    preset_processed = synth.apply_effect_chain(
+        signal,
+        [EffectSpec("compressor", {"preset": "kick_punch"})],
+    )
+    explicit_processed = synth.apply_effect_chain(
+        signal,
+        [
+            EffectSpec(
+                "compressor",
+                {
+                    "threshold_db": -21.0,
+                    "ratio": 3.6,
+                    "attack_ms": 7.0,
+                    "release_ms": 82.0,
+                    "release_tail_ms": 180.0,
+                    "knee_db": 4.0,
+                    "makeup_gain_db": 0.75,
+                    "mix": 0.92,
+                    "topology": "feedforward",
+                    "detector_mode": "peak",
+                    "detector_bands": [
+                        {
+                            "kind": "highpass",
+                            "cutoff_hz": 55.0,
+                            "slope_db_per_oct": 12,
+                        }
+                    ],
+                },
+            )
+        ],
+    )
+
+    assert np.allclose(preset_processed, explicit_processed)
+
+
 def test_plot_piano_roll_writes_file(tmp_path: Path) -> None:
     score = Score(f0=55.0)
     score.add_note("a", start=0.0, duration=1.0, partial=4, amp=0.3)

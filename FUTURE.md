@@ -64,26 +64,27 @@ Most valuable next helpers:
   texture has become too static, too crowded, or too continuously drony
 
 ### Inspiration
+
 - oblique strategies type generator, combinations of strategies - see list in email of OGs
 - musical references (obvious, but pragamatic)
 - non-musical art references (e.g. inspired by Rothko temple pieces)
 - "poetic" references - non-art things that we can attempt to draw inspiration from
 
 ### Additive Synthesis Specifically
-Additive lets us not assume traditional harmonic structure. 
-e.g. we can have harmonics of just intervals, not e.g. simple sawtooth harmonics
-this should unlock some interesting creative opportunities.
-for example - 
-1. Bell / mallet / metal / glass / struck-material sounds
-These are already naturally inharmonic or quasi-inharmonic, so they pair beautifully with unusual tunings. Xenharmonic music often feels more convincing when the timbre does not keep insisting on a standard harmonic ladder.
-2. Drones and spectral harmony
-If you want harmony to emerge from partial relationships rather than chord symbols, additive is almost ideal. You can sculpt consonance directly in the spectrum.
-3. Pads with “non-Western” or ambiguous tonal centers
-A subtractive pad often still sounds like “a normal synth pad but retuned.” An additive pad can sound like it came from a different musical physics.
-4. Timbre-harmony fusion
-You can make a chord whose note frequencies and internal overtone structures are both drawn from the same ratio world.
-We should consider how to do this with a clean, musical interface that encourages sane defaults and easy programming, and modularity.
-(Should include clean, higher-level API(s); could be as simple as partial_ratio:amt)
+  Additive lets us not assume traditional harmonic structure. 
+  e.g. we can have harmonics of just intervals, not e.g. simple sawtooth harmonics
+  this should unlock some interesting creative opportunities.
+  for example - 
+  1. Bell / mallet / metal / glass / struck-material sounds
+  These are already naturally inharmonic or quasi-inharmonic, so they pair beautifully with unusual tunings. Xenharmonic music often feels more convincing when the timbre does not keep insisting on a standard harmonic ladder.
+  2. Drones and spectral harmony
+  If you want harmony to emerge from partial relationships rather than chord symbols, additive is almost ideal. You can sculpt consonance directly in the spectrum.
+  3. Pads with “non-Western” or ambiguous tonal centers
+  A subtractive pad often still sounds like “a normal synth pad but retuned.” An additive pad can sound like it came from a different musical physics.
+  4. Timbre-harmony fusion
+  You can make a chord whose note frequencies and internal overtone structures are both drawn from the same ratio world.
+  We should consider how to do this with a clean, musical interface that encourages sane defaults and easy programming, and modularity.
+  (Should include clean, higher-level API(s); could be as simple as partial_ratio:amt)
 
 ### MIDI Export
 

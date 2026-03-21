@@ -2313,6 +2313,87 @@ _SATURATION_PRESETS: dict[str, dict[str, float | int | bool]] = {
         "output_lowpass_hz": 12_500.0,
         "compensation": True,
     },
+    "kick_weight": {
+        "drive": 1.36,
+        "mix": 0.42,
+        "bias": 0.10,
+        "even_harmonics": 0.14,
+        "oversample_factor": 4,
+        "highpass_hz": 24.0,
+        "tone_tilt": 0.04,
+        "output_lowpass_hz": 10_000.0,
+        "compensation": True,
+    },
+    "kick_crunch": {
+        "drive": 1.85,
+        "mix": 0.56,
+        "bias": 0.12,
+        "even_harmonics": 0.20,
+        "oversample_factor": 4,
+        "highpass_hz": 28.0,
+        "tone_tilt": 0.12,
+        "output_lowpass_hz": 8_800.0,
+        "compensation": True,
+    },
+    "tom_thicken": {
+        "drive": 1.26,
+        "mix": 0.32,
+        "bias": 0.08,
+        "even_harmonics": 0.15,
+        "oversample_factor": 4,
+        "highpass_hz": 30.0,
+        "tone_tilt": -0.03,
+        "output_lowpass_hz": 11_500.0,
+        "compensation": True,
+    },
+}
+
+_COMPRESSOR_PRESETS: dict[str, dict[str, float | str | list[dict[str, Any]]]] = {
+    "kick_glue": {
+        "threshold_db": -18.0,
+        "ratio": 2.4,
+        "attack_ms": 12.0,
+        "release_ms": 110.0,
+        "release_tail_ms": 260.0,
+        "knee_db": 5.0,
+        "makeup_gain_db": 0.5,
+        "mix": 0.82,
+        "topology": "feedforward",
+        "detector_mode": "rms",
+        "detector_bands": [
+            {"kind": "highpass", "cutoff_hz": 45.0, "slope_db_per_oct": 12}
+        ],
+    },
+    "kick_punch": {
+        "threshold_db": -21.0,
+        "ratio": 3.6,
+        "attack_ms": 7.0,
+        "release_ms": 82.0,
+        "release_tail_ms": 180.0,
+        "knee_db": 4.0,
+        "makeup_gain_db": 0.75,
+        "mix": 0.92,
+        "topology": "feedforward",
+        "detector_mode": "peak",
+        "detector_bands": [
+            {"kind": "highpass", "cutoff_hz": 55.0, "slope_db_per_oct": 12}
+        ],
+    },
+    "tom_control": {
+        "threshold_db": -19.0,
+        "ratio": 2.2,
+        "attack_ms": 14.0,
+        "release_ms": 150.0,
+        "release_tail_ms": 320.0,
+        "knee_db": 6.0,
+        "makeup_gain_db": 0.4,
+        "mix": 0.74,
+        "topology": "feedback",
+        "detector_mode": "rms",
+        "detector_bands": [
+            {"kind": "highpass", "cutoff_hz": 60.0, "slope_db_per_oct": 12}
+        ],
+    },
 }
 
 
@@ -2331,6 +2412,8 @@ def _resolve_effect_params(
         preset_map = _CHORUS_PRESETS
     elif effect_kind == "saturation":
         preset_map = _SATURATION_PRESETS
+    elif effect_kind == "compressor":
+        preset_map = _COMPRESSOR_PRESETS
     else:
         raise ValueError(f"Unsupported preset-bearing effect kind: {effect_kind}")
 
@@ -2507,7 +2590,7 @@ def apply_effect_chain(
     for effect_index, effect in enumerate(effects):
         effect_input = np.asarray(processed, dtype=np.float64)
         params = dict(effect.params)
-        if effect.kind in {"chorus", "saturation"}:
+        if effect.kind in {"chorus", "compressor", "saturation"}:
             params = _resolve_effect_params(effect.kind, params)
         native_metrics: dict[str, float | int | str] | None = None
         if effect.kind == "delay":

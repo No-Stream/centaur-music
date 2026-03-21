@@ -23,6 +23,7 @@ The rendering path is frequency-first:
 - [code_musics/engines/additive.py](/home/jan/workspace/code-musics/code_musics/engines/additive.py)
 - [code_musics/engines/fm.py](/home/jan/workspace/code-musics/code_musics/engines/fm.py)
 - [code_musics/engines/filtered_stack.py](/home/jan/workspace/code-musics/code_musics/engines/filtered_stack.py)
+- [code_musics/engines/kick_tom.py](/home/jan/workspace/code-musics/code_musics/engines/kick_tom.py)
 - [code_musics/engines/noise_perc.py](/home/jan/workspace/code-musics/code_musics/engines/noise_perc.py)
 
 ## Canonical Authoring Shape
@@ -254,6 +255,7 @@ Available engines:
 - `additive`
 - `fm`
 - `filtered_stack`
+- `kick_tom`
 - `noise_perc`
 - `polyblep`
 
@@ -270,6 +272,7 @@ Available presets:
 - `additive`: `soft_pad`, `drone`, `bright_pluck`, `organ`
 - `fm`: `bell`, `glass_lead`, `metal_bass`, `dx_piano`, `lately_bass`, `fm_clav`, `fm_mallet`, `chorused_ep`
 - `filtered_stack`: `warm_pad`, `reed_lead`, `round_bass`, `saw_pad`, `string_pad`
+- `kick_tom`: `808_hiphop`, `808_house`, `808_tape`, `909_techno`, `909_house`, `909_crunch`, `distorted_hardkick`, `zap_kick`, `round_tom`, `floor_tom`, `electro_tom`, `ring_tom`
 - `noise_perc`: `kickish`, `snareish`, `tick`
 - `polyblep`: `warm_lead`, `synth_pluck`, `analog_brass`, `square_lead`, `hoover`, `moog_bass`, `sync_lead`, `acid_bass`, `sub_bass`, `resonant_sweep`, `soft_square_pad`
 
@@ -366,6 +369,8 @@ unusually aggressive.
 
 Parameters:
 
+- `preset: str`
+  Supported presets: `kick_glue`, `kick_punch`, `tom_control`
 - `threshold_db: float`
   Compression threshold in dBFS. Default `-20.0`.
 - `ratio: float`
@@ -396,6 +401,8 @@ Parameters:
 Notes:
 
 - channels are stereo-linked so left/right image does not wander under compression
+- `kick_punch` is the most obvious starting point for finished kick voices, while
+  `kick_glue` is gentler and `tom_control` is the safer tom preset
 - detector EQ is the native control-path tone-shaping surface; use it for things
   like bass-insensitive bus compression via a detector highpass
 - this implementation intentionally does not yet expose an external sidechain input
@@ -574,7 +581,8 @@ is being driven into a clearly nonlinear region.
 Parameters:
 
 - `preset: str`
-  Supported presets: `tube_warm`, `iron_soft`, `neve_gentle`
+  Supported presets: `tube_warm`, `iron_soft`, `neve_gentle`, `kick_weight`,
+  `kick_crunch`, `tom_thicken`
 - `drive: float`
   Amount of nonlinearity. Keep this conservative for bus sweetening.
 - `mix: float`
@@ -598,6 +606,7 @@ Notes:
 
 - default tuning is intentionally subtle enough for “always on” use
 - `tube_warm` is the safest default
+- `kick_weight` is the recommended default saturation companion for kick presets
 
 Example:
 
@@ -1068,6 +1077,84 @@ score.add_voice(
             "click_amount": 0.1,
         },
     },
+)
+```
+
+## `kick_tom`
+
+Implementation: [code_musics/engines/kick_tom.py](/home/jan/workspace/code-musics/code_musics/engines/kick_tom.py)
+
+Compact electro-drum voice aimed at 808/909-style kicks, toms, and adjacent
+experimental low-end percussion. The engine owns its internal pitch sweep, so
+standard kick behavior does not require score-level `pitch_motion`.
+
+Parameters:
+
+- `body_decay_ms: float`
+  Main body decay time in milliseconds.
+- `pitch_sweep_amount_ratio: float`
+  Starting pitch multiplier for the internal sweep. Values above `1` start
+  higher and fall toward the resolved note frequency.
+- `pitch_sweep_decay_ms: float`
+  Decay time for the internal sweep.
+- `body_wave: str`
+  `sine`, `triangle`, or `sine_clip`.
+- `body_tone_ratio: float`
+  Blend toward a brighter second-harmonic body component.
+- `body_punch_ratio: float`
+  Extra short-lived body emphasis for punchier attacks.
+- `overtone_amount: float`
+  Level of the ring/overtone component.
+- `overtone_ratio: float`
+  Frequency ratio of the overtone component relative to the swept body pitch.
+- `overtone_decay_ms: float`
+  Decay time for the overtone layer.
+- `click_amount: float`
+  Level of the short filtered transient click.
+- `click_decay_ms: float`
+  Click decay time in milliseconds.
+- `click_tone_hz: float`
+  Center frequency for the click-brightness shaping.
+- `noise_amount: float`
+  Level of the filtered noise burst.
+- `noise_decay_ms: float`
+  Decay time for the noise burst.
+- `noise_bandpass_hz: float`
+  Center frequency of the noise burst shaping band.
+- `drive_ratio: float`
+  Internal nonlinear shaping amount from `0` to `1`.
+- `post_lowpass_hz: float`
+  Final smoothing lowpass after the internal drive stage.
+
+Recommended authoring aliases:
+
+- `params.body_decay_ms`
+- `params.sweep_amount_ratio`
+- `params.sweep_decay_ms`
+- `params.body_tone`
+- `params.body_punch`
+- `params.drive`
+
+Notes:
+
+- use `freq` as the final drum pitch; the internal sweep rises above that pitch
+  and then decays back toward it
+- kick presets bias toward more sweep and sub weight
+- tom presets bias toward more overtone/ring and less sub dominance
+- this engine is intended to be paired with native effect presets such as
+  `EffectSpec("compressor", {"preset": "kick_punch"})` and
+  `EffectSpec("saturation", {"preset": "kick_weight"})`
+
+Example:
+
+```python
+score.add_voice(
+    "kick",
+    synth_defaults={"engine": "kick_tom", "preset": "909_techno"},
+    effects=[
+        EffectSpec("compressor", {"preset": "kick_punch"}),
+        EffectSpec("saturation", {"preset": "kick_weight"}),
+    ],
 )
 ```
 
