@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 _NOTE_DUR: float = 0.16
 _N_PER_BAR: int = 8
-_BAR_DUR: float = _NOTE_DUR * _N_PER_BAR   # 1.28 s
+_BAR_DUR: float = _NOTE_DUR * _N_PER_BAR  # 1.28 s
 
 _ARP4: list[int] = [0, 1, 2, 3, 1, 2, 3, 2]
 
@@ -47,7 +47,11 @@ def _arp(freqs: list[float], amp_db: float = -10.0) -> Phrase:
 
 
 def _place_bars(
-    score: Score, voice: str, bars: list[list[float]], start: float, amp_db: float = -10.0
+    score: Score,
+    voice: str,
+    bars: list[list[float]],
+    start: float,
+    amp_db: float = -10.0,
 ) -> float:
     t = start
     for b in bars:
@@ -58,16 +62,17 @@ def _place_bars(
 
 # ─── chord voicings ───────────────────────────────────────────────────────────
 
+
 def _expo_bars(t: float) -> list[list[float]]:
     return [
-        [t / 2,    t,        t * 5/4,   t * 3/2  ],   # I
-        [t * 2/3,  t * 4/3,  t * 5/3,   t * 2    ],   # IV
-        [t * 3/4,  t * 3/2,  t * 15/8,  t * 9/4  ],   # V
-        [t / 2,    t,        t * 5/4,   t * 3/2  ],   # I
-        [t * 5/6,  t * 5/3,  t * 2,     t * 5/2  ],   # vi
-        [t * 9/16, t * 9/8,  t * 4/3,   t * 5/3  ],   # ii
-        [t * 3/4,  t * 3/2,  t * 15/8,  t * 8/3  ],   # V7 (5-lim D)
-        [t / 2,    t,        t * 5/4,   t * 3/2  ],   # I
+        [t / 2, t, t * 5 / 4, t * 3 / 2],  # I
+        [t * 2 / 3, t * 4 / 3, t * 5 / 3, t * 2],  # IV
+        [t * 3 / 4, t * 3 / 2, t * 15 / 8, t * 9 / 4],  # V
+        [t / 2, t, t * 5 / 4, t * 3 / 2],  # I
+        [t * 5 / 6, t * 5 / 3, t * 2, t * 5 / 2],  # vi
+        [t * 9 / 16, t * 9 / 8, t * 4 / 3, t * 5 / 3],  # ii
+        [t * 3 / 4, t * 3 / 2, t * 15 / 8, t * 8 / 3],  # V7 (5-lim D)
+        [t / 2, t, t * 5 / 4, t * 3 / 2],  # I
     ]
 
 
@@ -77,21 +82,22 @@ def _expo_bars_pass2(t: float) -> list[list[float]]:
     registers the slight difference — a seed for the barbershop section.
     """
     bars = _expo_bars(t)
-    bars[6] = [t * 3/4, t * 3/2, t * 15/8, t * 21/8]   # 21/8 = 7-lim D
+    bars[6] = [t * 3 / 4, t * 3 / 2, t * 15 / 8, t * 21 / 8]  # 21/8 = 7-lim D
     return bars
 
 
 def _pedal_bars(t: float) -> list[list[float]]:
-    e = t * 3/4   # E2 = 165 Hz
+    e = t * 3 / 4  # E2 = 165 Hz
     return [
-        [e,  t * 3/2,  t * 15/8,  t * 9/4  ],   # V on pedal
-        [e,  t,        t * 5/4,   t * 3/2  ],   # I6 (A chord over E bass)
-        [e,  t * 3/2,  t * 15/8,  t * 9/4  ],   # V on pedal
-        [e,  t * 3/2,  t * 15/8,  t * 21/8 ],   # V7 7-lim hinge → barbershop
+        [e, t * 3 / 2, t * 15 / 8, t * 9 / 4],  # V on pedal
+        [e, t, t * 5 / 4, t * 3 / 2],  # I6 (A chord over E bass)
+        [e, t * 3 / 2, t * 15 / 8, t * 9 / 4],  # V on pedal
+        [e, t * 3 / 2, t * 15 / 8, t * 21 / 8],  # V7 7-lim hinge → barbershop
     ]
 
 
 # ─── barbershop chord helper ──────────────────────────────────────────────────
+
 
 def _add_chorale_chord(
     score: Score,
@@ -112,22 +118,29 @@ def _add_chorale_chord(
     """
     for freq in stable_freqs:
         score.add_note(
-            voice, start=t_start, duration=chord_dur,
-            freq=freq, amp_db=stable_amp_db,
+            voice,
+            start=t_start,
+            duration=chord_dur,
+            freq=freq,
+            amp_db=stable_amp_db,
         )
     if color_freq is not None:
         color_dur = max(chord_dur - color_delay + 0.5, 1.0)
         score.add_note(
-            voice, start=t_start + color_delay, duration=color_dur,
-            freq=color_freq, amp_db=color_amp_db,
+            voice,
+            start=t_start + color_delay,
+            duration=color_dur,
+            freq=color_freq,
+            amp_db=color_amp_db,
         )
     return t_start + chord_dur
 
 
 # ─── build score ──────────────────────────────────────────────────────────────
 
+
 def build_wtc_song_score() -> Score:
-    tonic = 220.0   # A3
+    tonic = 220.0  # A3
 
     score = Score(f0=tonic, master_effects=[SOFT_REVERB_EFFECT])
 
@@ -206,41 +219,53 @@ def build_wtc_song_score() -> Score:
 
     bs = t
     bs = _add_chorale_chord(
-        score, "chorale", bs,
-        stable_freqs=[tonic / 2, tonic, tonic * 5/4, tonic * 3/2],
-        color_freq=tonic * 7/4,
+        score,
+        "chorale",
+        bs,
+        stable_freqs=[tonic / 2, tonic, tonic * 5 / 4, tonic * 3 / 2],
+        color_freq=tonic * 7 / 4,
         chord_dur=6.0,
     )
     bs = _add_chorale_chord(
-        score, "chorale", bs,
-        stable_freqs=[tonic * 2/3, tonic * 4/3, tonic * 5/3, tonic * 2],
-        color_freq=tonic * 7/3,
+        score,
+        "chorale",
+        bs,
+        stable_freqs=[tonic * 2 / 3, tonic * 4 / 3, tonic * 5 / 3, tonic * 2],
+        color_freq=tonic * 7 / 3,
         chord_dur=5.5,
     )
     bs = _add_chorale_chord(
-        score, "chorale", bs,
-        stable_freqs=[tonic * 3/4, tonic * 3/2, tonic * 15/8, tonic * 9/4],
-        color_freq=tonic * 21/8,
+        score,
+        "chorale",
+        bs,
+        stable_freqs=[tonic * 3 / 4, tonic * 3 / 2, tonic * 15 / 8, tonic * 9 / 4],
+        color_freq=tonic * 21 / 8,
         chord_dur=5.5,
     )
     bs = _add_chorale_chord(
-        score, "chorale", bs,
-        stable_freqs=[tonic * 2/3, tonic * 4/3, tonic * 5/3, tonic * 2],
-        color_freq=tonic * 7/3,
+        score,
+        "chorale",
+        bs,
+        stable_freqs=[tonic * 2 / 3, tonic * 4 / 3, tonic * 5 / 3, tonic * 2],
+        color_freq=tonic * 7 / 3,
         chord_dur=4.5,
-        color_delay=1.2,   # slightly shorter colour delay on the return
+        color_delay=1.2,  # slightly shorter colour delay on the return
     )
     bs = _add_chorale_chord(
-        score, "chorale", bs,
-        stable_freqs=[tonic * 3/4, tonic * 3/2, tonic * 15/8, tonic * 9/4],
-        color_freq=tonic * 21/8,
+        score,
+        "chorale",
+        bs,
+        stable_freqs=[tonic * 3 / 4, tonic * 3 / 2, tonic * 15 / 8, tonic * 9 / 4],
+        color_freq=tonic * 21 / 8,
         chord_dur=5.5,
     )
     # Final I: pure 5-limit, no 7th — the world snaps clean after the alien notes
     i_res_dur = 7.0
     _add_chorale_chord(
-        score, "chorale", bs,
-        stable_freqs=[tonic / 2, tonic, tonic * 5/4, tonic * 3/2, tonic * 2],
+        score,
+        "chorale",
+        bs,
+        stable_freqs=[tonic / 2, tonic, tonic * 5 / 4, tonic * 3 / 2, tonic * 2],
         color_freq=None,
         chord_dur=i_res_dur,
         stable_amp_db=-8.5,
@@ -256,14 +281,14 @@ def build_wtc_song_score() -> Score:
     # Cantus: one long tone per bar, stepwise in the JI scale.
     # The jump to A4 on bar 5 is the moment of lift; the descent resolves.
     cantus_freqs = [
-        tonic * 3/2,    # bar 1  I    → E4
-        tonic * 4/3,    # bar 2  IV   → D4 (step down)
-        tonic * 3/2,    # bar 3  V    → E4
-        tonic * 3/2,    # bar 4  I    → E4 (stable)
-        tonic * 2,      # bar 5  vi   → A4 (lift)
-        tonic * 5/3,    # bar 6  ii   → F#4 (falling)
-        tonic * 4/3,    # bar 7  V7   → D4
-        tonic,          # bar 8  I    → A3 (resolution)
+        tonic * 3 / 2,  # bar 1  I    → E4
+        tonic * 4 / 3,  # bar 2  IV   → D4 (step down)
+        tonic * 3 / 2,  # bar 3  V    → E4
+        tonic * 3 / 2,  # bar 4  I    → E4 (stable)
+        tonic * 2,  # bar 5  vi   → A4 (lift)
+        tonic * 5 / 3,  # bar 6  ii   → F#4 (falling)
+        tonic * 4 / 3,  # bar 7  V7   → D4
+        tonic,  # bar 8  I    → A3 (resolution)
     ]
     for i, freq in enumerate(cantus_freqs):
         score.add_note(
@@ -275,7 +300,7 @@ def build_wtc_song_score() -> Score:
         )
 
     # ── SECTION 5: Coda ──────────────────────────────────────────────────────
-    for ratio in [0.5, 1.0, 5/4, 3/2, 2.0]:
+    for ratio in [0.5, 1.0, 5 / 4, 3 / 2, 2.0]:
         score.add_note("arp", start=t, duration=6.5, freq=tonic * ratio, amp_db=-11.0)
 
     return score

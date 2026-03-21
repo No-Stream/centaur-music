@@ -36,21 +36,19 @@ PHI: float = (1.0 + math.sqrt(5.0)) / 2.0  # ≈ 1.618
 # 8-note arch through pure 5-limit intervals:
 #   root → maj3 → 5th → octave → maj6 → 5th → maj3 → root
 # At the φ-related tempos, the phrase lasts 4.8s / 7.76s / 2.97s respectively.
-_NOTE_DUR: float = 0.60            # seconds per note at time_scale=1.0
-_PHRASE_PARTIALS: tuple[float, ...] = (
-    1.0, 5 / 4, 3 / 2, 2.0, 5 / 3, 3 / 2, 5 / 4, 1.0
-)
+_NOTE_DUR: float = 0.60  # seconds per note at time_scale=1.0
+_PHRASE_PARTIALS: tuple[float, ...] = (1.0, 5 / 4, 3 / 2, 2.0, 5 / 3, 3 / 2, 5 / 4, 1.0)
 _N_NOTES: int = len(_PHRASE_PARTIALS)
 _PHRASE_DUR_BASE: float = _NOTE_DUR * _N_NOTES  # 4.80 s at ×1.0
 
 # ── Time scales ───────────────────────────────────────────────────────────────
-_TS_SLOW: float = PHI          # ≈ 1.618 — one phrase ≈ 7.76 s
-_TS_MID:  float = 1.0          #           one phrase = 4.80 s
-_TS_FAST: float = 1.0 / PHI    # ≈ 0.618 — one phrase ≈ 2.97 s
+_TS_SLOW: float = PHI  # ≈ 1.618 — one phrase ≈ 7.76 s
+_TS_MID: float = 1.0  #           one phrase = 4.80 s
+_TS_FAST: float = 1.0 / PHI  # ≈ 0.618 — one phrase ≈ 2.97 s
 
 _PDur: dict[str, float] = {
     "slow": _PHRASE_DUR_BASE * _TS_SLOW,
-    "mid":  _PHRASE_DUR_BASE * _TS_MID,
+    "mid": _PHRASE_DUR_BASE * _TS_MID,
     "fast": _PHRASE_DUR_BASE * _TS_FAST,
 }
 
@@ -88,7 +86,9 @@ def _fill_voice(
             amp_scale = max(reps_remaining / fade_out_phrases, 0.15)
         else:
             amp_scale = 1.0
-        score.add_phrase(voice, phrase, start=t, time_scale=time_scale, amp_scale=amp_scale)
+        score.add_phrase(
+            voice, phrase, start=t, time_scale=time_scale, amp_scale=amp_scale
+        )
         t += phrase_dur
 
 
@@ -102,24 +102,30 @@ def build_crystal_canon_score() -> Score:
     # Because φ is irrational, these boundaries are rarely simultaneous across
     # voices — the phase relationships stay perpetually shifting.
 
-    T0   = 0.0
-    T1   = T0  + 4 * _PDur["slow"]   # ≈  31.1 s  — fast enters
-    T2   = T1  + 8 * _PDur["fast"]   # ≈  54.8 s  — mid enters
-    T3   = T2  + 6 * _PDur["mid"]    # ≈  83.6 s  — fast exits
-    T4   = T3  + 4 * _PDur["slow"]   # ≈ 114.7 s  — mid exits
-    T5   = T4  + 4 * _PDur["slow"]   # ≈ 145.8 s  — end / fade
+    T0 = 0.0
+    T1 = T0 + 4 * _PDur["slow"]  # ≈  31.1 s  — fast enters
+    T2 = T1 + 8 * _PDur["fast"]  # ≈  54.8 s  — mid enters
+    T3 = T2 + 6 * _PDur["mid"]  # ≈  83.6 s  — fast exits
+    T4 = T3 + 4 * _PDur["slow"]  # ≈ 114.7 s  — mid exits
+    T5 = T4 + 4 * _PDur["slow"]  # ≈ 145.8 s  — end / fade
 
     logger.info(
         "crystal_canon sections: T1=%.1f T2=%.1f T3=%.1f T4=%.1f T5=%.1f",
-        T1, T2, T3, T4, T5,
+        T1,
+        T2,
+        T3,
+        T4,
+        T5,
     )
 
     # ── Score ─────────────────────────────────────────────────────────────────
     score = Score(
         f0=f0,
         master_effects=[
-            EffectSpec("reverb", {"room_size": 0.78, "damping": 0.38, "wet_level": 0.22}),
-            EffectSpec("delay",  {"delay_seconds": 0.31, "feedback": 0.12, "mix": 0.07}),
+            EffectSpec(
+                "reverb", {"room_size": 0.78, "damping": 0.38, "wet_level": 0.22}
+            ),
+            EffectSpec("delay", {"delay_seconds": 0.31, "feedback": 0.12, "mix": 0.07}),
         ],
     )
 
@@ -130,10 +136,10 @@ def build_crystal_canon_score() -> Score:
             "engine": "additive",
             "params": {"n_harmonics": 8, "harmonic_rolloff": 0.50},
             "env": {
-                "attack_ms":    700.0,
-                "decay_ms":     400.0,
+                "attack_ms": 700.0,
+                "decay_ms": 400.0,
                 "sustain_ratio": 0.78,
-                "release_ms":  1400.0,
+                "release_ms": 1400.0,
             },
         },
         mix_db=0.0,
@@ -148,10 +154,10 @@ def build_crystal_canon_score() -> Score:
             "engine": "additive",
             "params": {"n_harmonics": 3, "harmonic_rolloff": 0.72},
             "env": {
-                "attack_ms":    10.0,
-                "decay_ms":    140.0,
+                "attack_ms": 10.0,
+                "decay_ms": 140.0,
                 "sustain_ratio": 0.38,
-                "release_ms":   260.0,
+                "release_ms": 260.0,
             },
         },
         mix_db=-3.0,
@@ -166,10 +172,10 @@ def build_crystal_canon_score() -> Score:
             "engine": "additive",
             "params": {"n_harmonics": 5, "harmonic_rolloff": 0.60},
             "env": {
-                "attack_ms":    90.0,
-                "decay_ms":    260.0,
+                "attack_ms": 90.0,
+                "decay_ms": 260.0,
                 "sustain_ratio": 0.62,
-                "release_ms":   560.0,
+                "release_ms": 560.0,
             },
         },
         mix_db=-2.0,
@@ -184,10 +190,10 @@ def build_crystal_canon_score() -> Score:
             "engine": "additive",
             "params": {"n_harmonics": 3, "harmonic_rolloff": 0.70},
             "env": {
-                "attack_ms":  2800.0,
-                "decay_ms":    400.0,
+                "attack_ms": 2800.0,
+                "decay_ms": 400.0,
                 "sustain_ratio": 0.88,
-                "release_ms":  4000.0,
+                "release_ms": 4000.0,
             },
         },
         mix_db=-14.0,
@@ -198,22 +204,44 @@ def build_crystal_canon_score() -> Score:
     # ── Phrases (same material, three dynamic levels matching mix positions) ──
     phrase_slow = _build_phrase(f0, amp_db=-10.0)
     phrase_fast = _build_phrase(f0, amp_db=-12.0)
-    phrase_mid  = _build_phrase(f0, amp_db=-11.0)
+    phrase_mid = _build_phrase(f0, amp_db=-11.0)
 
     # ── Fill voices across their active windows ───────────────────────────────
     # § 1 + § 2 + § 3 + § 4 + § 5 : slow runs throughout
-    _fill_voice(score, "slow", phrase_slow, _TS_SLOW, T0, T5, fade_in_phrases=1, fade_out_phrases=4)
+    _fill_voice(
+        score,
+        "slow",
+        phrase_slow,
+        _TS_SLOW,
+        T0,
+        T5,
+        fade_in_phrases=1,
+        fade_out_phrases=4,
+    )
 
     # § 2 + § 3 : fast active
-    _fill_voice(score, "fast", phrase_fast, _TS_FAST, T1, T3, fade_in_phrases=3, fade_out_phrases=4)
+    _fill_voice(
+        score,
+        "fast",
+        phrase_fast,
+        _TS_FAST,
+        T1,
+        T3,
+        fade_in_phrases=3,
+        fade_out_phrases=4,
+    )
 
     # § 3 + § 4 : mid active
-    _fill_voice(score, "mid",  phrase_mid,  _TS_MID,  T2, T4, fade_in_phrases=2, fade_out_phrases=3)
+    _fill_voice(
+        score, "mid", phrase_mid, _TS_MID, T2, T4, fade_in_phrases=2, fade_out_phrases=3
+    )
 
     # Drone: two overlapping long notes — one at the root, one at the sub-octave.
     # The sub enters a little late so the harmonic opening is gradual.
-    score.add_note("drone", start=T0,       duration=T5 + 4.0, freq=f0,       amp_db=-16.0)
-    score.add_note("drone", start=T0 + 8.0, duration=T5 - 4.0, freq=f0 / 2.0, amp_db=-20.0)
+    score.add_note("drone", start=T0, duration=T5 + 4.0, freq=f0, amp_db=-16.0)
+    score.add_note(
+        "drone", start=T0 + 8.0, duration=T5 - 4.0, freq=f0 / 2.0, amp_db=-20.0
+    )
 
     return score
 

@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # ─── shared arpeggio machinery ────────────────────────────────────────────────
 
-_NOTE_DUR: float = 0.16    # seconds per 16th-note step
+_NOTE_DUR: float = 0.16  # seconds per 16th-note step
 _N_PER_BAR: int = 8
 _BAR_DUR: float = _NOTE_DUR * _N_PER_BAR  # 1.28 s
 
@@ -93,14 +93,14 @@ def _keyboard_synth(
 def _5limit_bars(t: float) -> list[list[float]]:
     """8-bar A-major-like progression in 5-limit JI from tonic *t*."""
     return [
-        [t / 2,    t,        t * 5 / 4,  t * 3 / 2],    # I   (A maj)
-        [t * 2/3,  t * 4/3,  t * 5 / 3,  t * 2    ],    # IV  (D maj)
-        [t * 3/4,  t * 3/2,  t * 15 / 8, t * 9 / 4],    # V   (E maj)
-        [t / 2,    t,        t * 5 / 4,  t * 3 / 2],    # I
-        [t * 5/6,  t * 5/3,  t * 2,      t * 5 / 2],    # vi  (F# min)
-        [t * 9/16, t * 9/8,  t * 4 / 3,  t * 5 / 3],    # ii  (B min)
-        [t * 3/4,  t * 3/2,  t * 15 / 8, t * 8 / 3],    # V7  (E7, 5-lim D)
-        [t / 2,    t,        t * 5 / 4,  t * 3 / 2],    # I
+        [t / 2, t, t * 5 / 4, t * 3 / 2],  # I   (A maj)
+        [t * 2 / 3, t * 4 / 3, t * 5 / 3, t * 2],  # IV  (D maj)
+        [t * 3 / 4, t * 3 / 2, t * 15 / 8, t * 9 / 4],  # V   (E maj)
+        [t / 2, t, t * 5 / 4, t * 3 / 2],  # I
+        [t * 5 / 6, t * 5 / 3, t * 2, t * 5 / 2],  # vi  (F# min)
+        [t * 9 / 16, t * 9 / 8, t * 4 / 3, t * 5 / 3],  # ii  (B min)
+        [t * 3 / 4, t * 3 / 2, t * 15 / 8, t * 8 / 3],  # V7  (E7, 5-lim D)
+        [t / 2, t, t * 5 / 4, t * 3 / 2],  # I
     ]
 
 
@@ -111,16 +111,16 @@ def _7limit_bars(t: float) -> list[list[float]]:
     Bar 7: V7 with 7/4-based dominant 7th (21/8 ≈ 577 Hz) instead of 8/3 ≈ 587 Hz.
     """
     return [
-        [t / 2,    t,        t * 5 / 4,  t * 3 / 2],    # I
-        [t * 2/3,  t * 4/3,  t * 5 / 3,  t * 2    ],    # IV  (pure 5-limit)
-        [t * 3/4,  t * 3/2,  t * 15 / 8, t * 9 / 4],    # V
-        [t / 2,    t,        t * 5 / 4,  t * 3 / 2],    # I
+        [t / 2, t, t * 5 / 4, t * 3 / 2],  # I
+        [t * 2 / 3, t * 4 / 3, t * 5 / 3, t * 2],  # IV  (pure 5-limit)
+        [t * 3 / 4, t * 3 / 2, t * 15 / 8, t * 9 / 4],  # V
+        [t / 2, t, t * 5 / 4, t * 3 / 2],  # I
         # Septimal substitution: A dominant 7th using 7/4 (A-C#-G, no fifth)
-        [t / 2,    t,        t * 5 / 4,  t * 7 / 4],    # I+7 (A dom7 sept)
-        [t * 9/16, t * 9/8,  t * 4 / 3,  t * 5 / 3],    # ii
+        [t / 2, t, t * 5 / 4, t * 7 / 4],  # I+7 (A dom7 sept)
+        [t * 9 / 16, t * 9 / 8, t * 4 / 3, t * 5 / 3],  # ii
         # 7-limit dominant 7th: 21/8 = (3/2)*(7/4), ~26¢ flatter than 8/3
-        [t * 3/4,  t * 3/2,  t * 15 / 8, t * 21 / 8],   # V7  (7-lim D)
-        [t / 2,    t,        t * 5 / 4,  t * 3 / 2],    # I
+        [t * 3 / 4, t * 3 / 2, t * 15 / 8, t * 21 / 8],  # V7  (7-lim D)
+        [t / 2, t, t * 5 / 4, t * 3 / 2],  # I
     ]
 
 
@@ -186,16 +186,16 @@ def build_wtc_ji_7limit_score() -> Score:
 
 # ─── Sketch B: syntonic comma pump ────────────────────────────────────────────
 
-_COMMA: float = 81 / 80   # +21.5 ¢ per cycle
+_COMMA: float = 81 / 80  # +21.5 ¢ per cycle
 
 
 def _comma_cycle_bars(t: float) -> list[list[float]]:
     """4-bar I-IV-ii-V voicings for one cycle from tonic *t*."""
     return [
-        [t / 2,    t,        t * 5 / 4,  t * 3 / 2],    # I
-        [t * 2/3,  t * 4/3,  t * 5 / 3,  t * 2    ],    # IV
-        [t * 9/16, t * 9/8,  t * 4 / 3,  t * 5 / 3],    # ii
-        [t * 3/4,  t * 3/2,  t * 15 / 8, t * 9 / 4],    # V
+        [t / 2, t, t * 5 / 4, t * 3 / 2],  # I
+        [t * 2 / 3, t * 4 / 3, t * 5 / 3, t * 2],  # IV
+        [t * 9 / 16, t * 9 / 8, t * 4 / 3, t * 5 / 3],  # ii
+        [t * 3 / 4, t * 3 / 2, t * 15 / 8, t * 9 / 4],  # V
     ]
 
 
@@ -211,7 +211,9 @@ def build_wtc_comma_pump_score() -> Score:
     score = Score(
         f0=tonic,
         master_effects=[
-            EffectSpec("reverb", {"room_size": 0.62, "damping": 0.42, "wet_level": 0.22}),
+            EffectSpec(
+                "reverb", {"room_size": 0.62, "damping": 0.42, "wet_level": 0.22}
+            ),
         ],
     )
     score.add_voice(
@@ -223,7 +225,7 @@ def build_wtc_comma_pump_score() -> Score:
 
     t = 0.0
     for cycle_idx in range(n_cycles):
-        cycle_tonic = tonic * (_COMMA ** cycle_idx)
+        cycle_tonic = tonic * (_COMMA**cycle_idx)
         logger.info(
             "comma pump cycle %d  tonic=%.2f Hz  (+%.1f ¢)",
             cycle_idx,
@@ -253,7 +255,7 @@ def build_wtc_harmonic_score() -> Score:
     The climb ascends to [9,10,11,12] = B4 C#5 ~D#5(11th) E5, then reverses.
     A slow drone at A2 = 110 Hz grounds everything.
     """
-    base = 55.0   # A1; all arp notes are integer multiples of this
+    base = 55.0  # A1; all arp notes are integer multiples of this
     bars_per_window = 4
 
     # Windows: (lowest_partial, n_bars_at_this_window)
@@ -263,7 +265,7 @@ def build_wtc_harmonic_score() -> Score:
         (6, bars_per_window),
         (7, bars_per_window),
         (8, bars_per_window),
-        (9, bars_per_window + 2),   # linger at the peak
+        (9, bars_per_window + 2),  # linger at the peak
         (8, bars_per_window),
         (7, bars_per_window),
         (6, bars_per_window),
@@ -277,7 +279,9 @@ def build_wtc_harmonic_score() -> Score:
     score = Score(
         f0=base,
         master_effects=[
-            EffectSpec("reverb", {"room_size": 0.70, "damping": 0.48, "wet_level": 0.28}),
+            EffectSpec(
+                "reverb", {"room_size": 0.70, "damping": 0.48, "wet_level": 0.28}
+            ),
         ],
     )
     score.add_voice(

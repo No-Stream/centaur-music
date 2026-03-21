@@ -47,12 +47,12 @@ from code_musics.score import EffectSpec, Phrase, Score
 logger = logging.getLogger(__name__)
 
 # ── Canonical timing ──────────────────────────────────────────────────────────
-_NOTE_DUR: float = 0.16        # canonical note duration; time_scale stretches this
+_NOTE_DUR: float = 0.16  # canonical note duration; time_scale stretches this
 _N_PER_BAR: int = 8
-_BAR_DUR: float = _NOTE_DUR * _N_PER_BAR   # 1.28 s per bar at ×1.0
+_BAR_DUR: float = _NOTE_DUR * _N_PER_BAR  # 1.28 s per bar at ×1.0
 
 # ── Arp patterns — indices into the 4:5:6:7 chord [4r, 5r, 6r, 7r] ──────────
-_ARP_ASC: list[int] = [0, 1, 2, 3, 1, 2, 3, 2]   # rising, returns through middle
+_ARP_ASC: list[int] = [0, 1, 2, 3, 1, 2, 3, 2]  # rising, returns through middle
 _ARP_DESC: list[int] = [3, 2, 1, 0, 2, 1, 0, 1]  # descending mirror
 _ARP_PEAK: list[int] = [0, 3, 2, 3, 1, 3, 2, 1]  # 7th-heavy, agitated
 
@@ -98,7 +98,7 @@ def _pulse_drone(
             pm = PitchMotionSpec.vibrato(
                 depth_ratio=vibrato_depth,
                 rate_hz=vibrato_rate_hz,
-                phase=i * 0.7,   # irrational-ish step avoids synchronisation
+                phase=i * 0.7,  # irrational-ish step avoids synchronisation
             )
         score.add_note(
             "drone",
@@ -169,12 +169,14 @@ def _place_section(
 
 def build_natural_steps_score() -> Score:
     """Arch-form 4:5:6:7 JI arpeggio: A B C B′ A′ coda."""
-    base = 55.0   # A1 — all partials are integer multiples of this
+    base = 55.0  # A1 — all partials are integer multiples of this
 
     score = Score(
         f0=base,
         master_effects=[
-            EffectSpec("reverb", {"room_size": 0.72, "damping": 0.44, "wet_level": 0.28}),
+            EffectSpec(
+                "reverb", {"room_size": 0.72, "damping": 0.44, "wet_level": 0.28}
+            ),
         ],
     )
 
@@ -253,91 +255,95 @@ def build_natural_steps_score() -> Score:
     )
 
     # ── JI roots ──────────────────────────────────────────────────────────────
-    A  = base
-    B  = base * 9 / 8
+    A = base
+    B = base * 9 / 8
     Cs = base * 5 / 4
-    D  = base * 4 / 3
-    E  = base * 3 / 2
+    D = base * 4 / 3
+    E = base * 3 / 2
 
     # ── Time scales (×canonical bar) ──────────────────────────────────────────
-    TS_A  = 1.20   # statement: slow, deliberate
-    TS_B  = 1.00   # canon: medium
-    TS_C  = 0.75   # peak: driven, fast
-    TS_BD = 1.10   # descending canon: medium-slow
-    TS_AA = 1.80   # augmented return: very slow
+    TS_A = 1.20  # statement: slow, deliberate
+    TS_B = 1.00  # canon: medium
+    TS_C = 0.75  # peak: driven, fast
+    TS_BD = 1.10  # descending canon: medium-slow
+    TS_AA = 1.80  # augmented return: very slow
 
     # Canon delays: half a bar in each section's own time
-    CANON_B  = _BAR_DUR * TS_B  / 2   # 0.64 s
-    CANON_C  = _BAR_DUR * TS_C  / 2   # 0.48 s
-    CANON_BD = _BAR_DUR * TS_BD / 2   # 0.70 s
+    CANON_B = _BAR_DUR * TS_B / 2  # 0.64 s
+    CANON_C = _BAR_DUR * TS_C / 2  # 0.48 s
+    CANON_BD = _BAR_DUR * TS_BD / 2  # 0.70 s
 
     # Phase drift in section B: delay decreases by this amount each bar.
     # Section B has 18 bars; starting at CANON_B=0.64 s, the delay crosses
     # zero around bar 12 → unison → arp2 leads for bars 13-18.
     _B_BARS = 18
     _B_UNISON_BAR = 12
-    PHASE_DRIFT_B = CANON_B / _B_UNISON_BAR   # ≈ 0.053 s / bar
+    PHASE_DRIFT_B = CANON_B / _B_UNISON_BAR  # ≈ 0.053 s / bar
 
     # ── Progressions ──────────────────────────────────────────────────────────
 
     # A — ascending statement (single voice, no canon yet)
     prog_A = [
-        (A,  4, "A  [statement]"),
-        (B,  3, "B  [statement]"),
+        (A, 4, "A  [statement]"),
+        (B, 3, "B  [statement]"),
         (Cs, 2, "C# [statement]"),
-        (D,  3, "D  [statement]"),
-        (E,  3, "E  [statement]"),
+        (D, 3, "D  [statement]"),
+        (E, 3, "E  [statement]"),
     ]
     amp_A = [-13.0, -12.5, -12.0, -11.5, -10.5]
 
     # B — full round-trip with drifting phase canon + melody thread
     prog_B = [
-        (A,  3, "A  [canon]"),
-        (B,  2, "B  [canon]"),
+        (A, 3, "A  [canon]"),
+        (B, 2, "B  [canon]"),
         (Cs, 2, "C# [canon]"),
-        (D,  3, "D  [canon]"),
-        (E,  3, "E  [canon]"),
-        (D,  2, "D  [canon ↓]"),
-        (A,  3, "A  [canon ↓]"),
+        (D, 3, "D  [canon]"),
+        (E, 3, "E  [canon]"),
+        (D, 2, "D  [canon ↓]"),
+        (A, 3, "A  [canon ↓]"),
     ]
     amp_B = [-11.0, -10.5, -10.0, -9.5, -9.0, -10.0, -11.0]
     assert sum(n for _, n, _ in prog_B) == _B_BARS
 
     # C — peak: E chord only, both voices at full speed
     prog_C = [(E, 4, "E  [peak]")]
-    amp_C  = [-8.0]
+    amp_C = [-8.0]
 
     # B′ — descent, descending arp pattern, melody thread reappears
     prog_BD = [
-        (E,  2, "E  [descent]"),
-        (D,  2, "D  [descent]"),
+        (E, 2, "E  [descent]"),
+        (D, 2, "D  [descent]"),
         (Cs, 2, "C# [descent]"),
-        (B,  2, "B  [descent]"),
-        (A,  3, "A  [descent]"),
+        (B, 2, "B  [descent]"),
+        (A, 3, "A  [descent]"),
     ]
     amp_BD = [-10.5, -11.0, -11.5, -12.0, -12.5]
 
     # A′ — augmented return (single voice, much slower)
     prog_AA = [
-        (A,  2, "A  [augmented]"),
-        (B,  2, "B  [augmented]"),
+        (A, 2, "A  [augmented]"),
+        (B, 2, "B  [augmented]"),
         (Cs, 1, "C# [augmented]"),
-        (D,  2, "D  [augmented]"),
-        (E,  2, "E  [augmented]"),
+        (D, 2, "D  [augmented]"),
+        (E, 2, "E  [augmented]"),
     ]
     amp_AA = [-13.0, -12.5, -12.0, -11.5, -11.0]
 
     # ── Compose ───────────────────────────────────────────────────────────────
 
-    INTRO_DUR   = 3.5
-    SILENCE_DUR = 3.5   # drone-alone hinge between C and B′
-    CODA_DUR    = 9.0
+    INTRO_DUR = 3.5
+    SILENCE_DUR = 3.5  # drone-alone hinge between C and B′
+    CODA_DUR = 9.0
 
     t = INTRO_DUR
 
     # A — statement
     t = _place_section(
-        score, prog_A, amp_A, t, TS_A,
+        score,
+        prog_A,
+        amp_A,
+        t,
+        TS_A,
         arp_voice="arp",
     )
 
@@ -345,7 +351,11 @@ def build_natural_steps_score() -> Score:
 
     # B — drifting phase canon + melody
     t = _place_section(
-        score, prog_B, amp_B, t, TS_B,
+        score,
+        prog_B,
+        amp_B,
+        t,
+        TS_B,
         arp_voice="arp",
         canon_voice="arp2",
         canon_delay=CANON_B,
@@ -356,7 +366,11 @@ def build_natural_steps_score() -> Score:
     # C — peak (fixed canon, no drift — energy over subtlety)
     t_peak = t
     t = _place_section(
-        score, prog_C, amp_C, t, TS_C,
+        score,
+        prog_C,
+        amp_C,
+        t,
+        TS_C,
         arp_voice="arp",
         canon_voice="arp2",
         canon_delay=CANON_C,
@@ -371,14 +385,18 @@ def build_natural_steps_score() -> Score:
         amp_db=-8.0,
     )
 
-    t_silence = t          # silence begins here
+    t_silence = t  # silence begins here
     t += SILENCE_DUR
 
     t_BD = t  # section B′ start — A3 octave enters here
 
     # B′ — descending canon + melody
     t = _place_section(
-        score, prog_BD, amp_BD, t, TS_BD,
+        score,
+        prog_BD,
+        amp_BD,
+        t,
+        TS_BD,
         arp_voice="arp",
         canon_voice="arp2",
         canon_delay=CANON_BD,
@@ -390,7 +408,11 @@ def build_natural_steps_score() -> Score:
 
     # A′ — augmented return, single voice
     t = _place_section(
-        score, prog_AA, amp_AA, t, TS_AA,
+        score,
+        prog_AA,
+        amp_AA,
+        t,
+        TS_AA,
         arp_voice="arp",
     )
 
@@ -398,7 +420,9 @@ def build_natural_steps_score() -> Score:
 
     # Coda — A major triad (4:5:6); septimal 7th absent for the first time
     for mult in [4, 5, 6]:
-        score.add_note("arp", start=t_coda, duration=CODA_DUR, freq=base * mult, amp_db=-12.0)
+        score.add_note(
+            "arp", start=t_coda, duration=CODA_DUR, freq=base * mult, amp_db=-12.0
+        )
 
     total_dur = t_coda + CODA_DUR + 2.0
 
@@ -420,27 +444,35 @@ def build_natural_steps_score() -> Score:
 
     # Layer 1 — A2 (partial 2 = 110 Hz), throughout
     _pulse_drone(
-        score, 2.0,
-        start=0.0, end=total_dur,
+        score,
+        2.0,
+        start=0.0,
+        end=total_dur,
         periods=(7.5, 9.5, 8.0, 10.0),
-        note_dur=18.0, amp_db=-12.0,
-        vibrato_rate_hz=0.08, vibrato_depth=0.003,
+        note_dur=18.0,
+        amp_db=-12.0,
+        vibrato_rate_hz=0.08,
+        vibrato_depth=0.003,
     )
 
     # Layer 2 — E2 (partial 3 = 165 Hz), enters at section B
     _pulse_drone(
-        score, 3.0,
-        start=t_B, end=total_dur,
+        score,
+        3.0,
+        start=t_B,
+        end=total_dur,
         periods=(11.5, 13.0, 12.0),
-        note_dur=24.0, amp_db=-16.0,
-        vibrato_rate_hz=0.06, vibrato_depth=0.0025,
+        note_dur=24.0,
+        amp_db=-16.0,
+        vibrato_rate_hz=0.06,
+        vibrato_depth=0.0025,
     )
 
     # Featured glide during the silence: A2 rises to E2 as the drone speaks alone
     score.add_note(
         "drone",
         start=t_silence,
-        duration=SILENCE_DUR + 3.0,   # fades into the opening of B′
+        duration=SILENCE_DUR + 3.0,  # fades into the opening of B′
         partial=2.0,
         amp_db=-10.5,
         pitch_motion=PitchMotionSpec.ratio_glide(start_ratio=1.0, end_ratio=3 / 2),
@@ -448,18 +480,24 @@ def build_natural_steps_score() -> Score:
 
     # Layer 3 — A3 (partial 4 = 220 Hz), enters at peak, stops at A′
     _pulse_drone(
-        score, 4.0,
-        start=t_peak, end=t_AA,
+        score,
+        4.0,
+        start=t_peak,
+        end=t_AA,
         periods=(9.0, 11.5),
-        note_dur=18.0, amp_db=-21.0,
+        note_dur=18.0,
+        amp_db=-21.0,
     )
 
     # Layer 4 — E3 (partial 6 = 330 Hz), enters at B′ descent, stops at A′
     _pulse_drone(
-        score, 6.0,
-        start=t_BD, end=t_AA,
+        score,
+        6.0,
+        start=t_BD,
+        end=t_AA,
         periods=(13.5, 16.0),
-        note_dur=26.0, amp_db=-25.0,
+        note_dur=26.0,
+        amp_db=-25.0,
     )
 
     # Sub-bass A1 (partial 1 = 55 Hz), enters at coda for extra depth on resolution
