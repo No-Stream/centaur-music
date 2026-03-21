@@ -203,6 +203,9 @@ See `FUTURE.md` for way more ideas.
   normal composition surface, not as obscure implementation details.
 - Keep low-level synthesis simple unless a task explicitly calls for DSP changes.
 - Treat effect chains declaratively with `EffectSpec` on voices or the master bus.
+- The additive engine now supports explicit spectral partial sets plus optional
+  onset-to-sustain spectral morphing; use that when tuning and timbre should be
+  co-designed instead of assuming a plain harmonic ladder.
 - The native effect chain now includes a minimum-phase multi-band `eq` effect with
   ordered highpass, lowpass, bell, and shelf bands for routine tone shaping.
 - The native effect chain also includes a stereo-linked `compressor` effect with

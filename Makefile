@@ -10,6 +10,12 @@ WINDOW ?= 8
 START ?=
 DUR ?=
 TESTS ?= tests
+OBLIQUE ?= 0
+MUSICAL ?= 0
+VISUAL ?= 0
+IMAGE ?= 0
+CONSTRAINT ?= 0
+N ?=
 
 ifeq ($(PLOT),1)
 RENDER_PLOT_FLAG = --plot
@@ -111,3 +117,13 @@ render-sketches:
 .PHONY: render-all
 render-all:
 	$(UV_RUN) python main.py all $(RENDER_PLOT_FLAG)
+
+.PHONY: inspire
+inspire:
+	$(UV_RUN) python -m code_musics.inspire \
+		$(if $(N),--n=$(N),) \
+		$(if $(filter-out 0,$(OBLIQUE)),--oblique=$(OBLIQUE),) \
+		$(if $(filter-out 0,$(MUSICAL)),--musical=$(MUSICAL),) \
+		$(if $(filter-out 0,$(VISUAL)),--visual=$(VISUAL),) \
+		$(if $(filter-out 0,$(IMAGE)),--image=$(IMAGE),) \
+		$(if $(filter-out 0,$(CONSTRAINT)),--constraint=$(CONSTRAINT),)

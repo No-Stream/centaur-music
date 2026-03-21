@@ -14,6 +14,13 @@ from code_musics.engines.registry import (
 from code_musics.humanize import VelocityHumanizeSpec
 from code_musics.pitch_motion import PitchMotionSpec
 from code_musics.score import EffectSpec, Score, VelocityParamMap
+from code_musics.spectra import harmonic_spectrum, ratio_spectrum
+
+
+def _band_energy(signal: np.ndarray, *, sample_rate: int, min_hz: float) -> float:
+    spectrum = np.abs(np.fft.rfft(signal))
+    freqs = np.fft.rfftfreq(signal.size, d=1.0 / sample_rate)
+    return float(np.sum(spectrum[freqs >= min_hz]))
 
 
 def test_unknown_engine_raises_value_error() -> None:
@@ -136,6 +143,180 @@ def test_new_presets_resolve_and_render(
 
     assert np.all(np.isfinite(signal))
     assert np.max(np.abs(signal)) > 0.0
+
+
+@pytest.mark.parametrize(
+    "preset_name",
+    ["ji_fusion_pad", "septimal_reed", "eleven_limit_glass", "utonal_drone"],
+)
+def test_new_spectral_additive_presets_resolve_and_render(preset_name: str) -> None:
+    resolved = resolve_synth_params({"engine": "additive", "preset": preset_name})
+
+    assert resolved["engine"] == "additive"
+    assert "partials" in resolved
+
+    signal = render_note_signal(
+        freq=220.0,
+        duration=0.45,
+        amp=0.3,
+        sample_rate=44100,
+        params={"engine": "additive", "preset": preset_name},
+    )
+
+    assert np.all(np.isfinite(signal))
+    assert np.max(np.abs(signal)) > 0.0
+
+
+def test_additive_explicit_partials_override_harmonic_stack_controls() -> None:
+    explicit = render_note_signal(
+        freq=220.0,
+        duration=0.4,
+        amp=0.25,
+        sample_rate=44100,
+        params={
+            "engine": "additive",
+            "n_harmonics": 12,
+            "harmonic_rolloff": 0.9,
+            "partials": [{"ratio": 1.0, "amp": 1.0}],
+        },
+    )
+    harmonic = render_note_signal(
+        freq=220.0,
+        duration=0.4,
+        amp=0.25,
+        sample_rate=44100,
+        params={
+            "engine": "additive",
+            "n_harmonics": 12,
+            "harmonic_rolloff": 0.9,
+        },
+    )
+
+    assert _band_energy(explicit, sample_rate=44100, min_hz=800.0) < _band_energy(
+        harmonic, sample_rate=44100, min_hz=800.0
+    )
+
+
+def test_additive_rejects_invalid_spectral_partial_lists() -> None:
+    with pytest.raises(ValueError, match="strictly positive"):
+        render_note_signal(
+            freq=220.0,
+            duration=0.4,
+            amp=0.25,
+            sample_rate=44100,
+            params={
+                "engine": "additive",
+                "partials": [{"ratio": 0.0, "amp": 1.0}],
+            },
+        )
+
+
+def test_attack_partials_and_morph_time_make_the_onset_brighter() -> None:
+    signal = render_note_signal(
+        freq=220.0,
+        duration=0.6,
+        amp=0.25,
+        sample_rate=44100,
+        params={
+            "engine": "additive",
+            "partials": ratio_spectrum([1.0, 3 / 2], [1.0, 0.18]),
+            "attack_partials": ratio_spectrum([1.0, 3 / 2, 11 / 4], [1.0, 0.18, 0.45]),
+            "spectral_morph_time": 0.12,
+        },
+    )
+
+    attack_slice = signal[: int(0.12 * 44100)]
+    sustain_slice = signal[-int(0.12 * 44100) :]
+    assert _band_energy(attack_slice, sample_rate=44100, min_hz=500.0) > _band_energy(
+        sustain_slice, sample_rate=44100, min_hz=500.0
+    )
+
+
+def test_partial_decay_tilt_reduces_upper_band_energy_later_in_note() -> None:
+    signal = render_note_signal(
+        freq=220.0,
+        duration=0.8,
+        amp=0.25,
+        sample_rate=44100,
+        params={
+            "engine": "additive",
+            "partials": harmonic_spectrum(n_partials=6, harmonic_rolloff=0.8),
+            "partial_decay_tilt": 0.8,
+        },
+    )
+
+    early_slice = signal[: int(0.2 * 44100)]
+    late_slice = signal[-int(0.2 * 44100) :]
+    assert _band_energy(early_slice, sample_rate=44100, min_hz=1200.0) > _band_energy(
+        late_slice, sample_rate=44100, min_hz=1200.0
+    )
+
+
+def test_upper_partial_drift_is_deterministic_across_repeated_renders() -> None:
+    params = {
+        "engine": "additive",
+        "partials": ratio_spectrum(
+            [1.0, 11 / 8, 3 / 2, 11 / 4], [1.0, 0.3, 0.22, 0.12]
+        ),
+        "upper_partial_drift_cents": 4.0,
+        "upper_partial_drift_min_ratio": 1.3,
+    }
+
+    first = render_note_signal(
+        freq=220.0,
+        duration=0.5,
+        amp=0.25,
+        sample_rate=44100,
+        params=params,
+    )
+    second = render_note_signal(
+        freq=220.0,
+        duration=0.5,
+        amp=0.25,
+        sample_rate=44100,
+        params=params,
+    )
+    static = render_note_signal(
+        freq=220.0,
+        duration=0.5,
+        amp=0.25,
+        sample_rate=44100,
+        params={
+            "engine": "additive",
+            "partials": params["partials"],
+        },
+    )
+
+    assert np.allclose(first, second)
+    assert not np.allclose(first, static)
+
+
+def test_score_can_render_explicit_spectral_additive_voice() -> None:
+    score = Score(f0=110.0)
+    score.add_voice(
+        "pad",
+        synth_defaults={
+            "engine": "additive",
+            "params": {
+                "partials": ratio_spectrum([1.0, 7 / 4, 11 / 8], [1.0, 0.28, 0.16]),
+                "attack_partials": ratio_spectrum(
+                    [1.0, 7 / 4, 11 / 8, 11 / 4],
+                    [1.0, 0.28, 0.16, 0.1],
+                ),
+                "spectral_morph_time": 0.15,
+                "partial_decay_tilt": 0.3,
+            },
+            "env": {"attack_ms": 80.0, "release_ms": 600.0},
+        },
+    )
+    score.add_note("pad", start=0.0, duration=0.7, partial=2.0, amp=0.2)
+    score.add_note("pad", start=0.8, duration=0.6, partial=7 / 4, amp=0.18)
+
+    audio = score.render()
+
+    assert audio.ndim == 1
+    assert np.all(np.isfinite(audio))
+    assert np.max(np.abs(audio)) > 0.0
 
 
 def test_voice_level_engine_and_note_override_both_render() -> None:

@@ -871,6 +871,25 @@ Implementation: [code_musics/engines/additive.py](/home/jan/workspace/code-music
 
 Parameters:
 
+- `partials: list[dict[str, float]]`
+  Optional explicit spectral profile. Each entry must define positive `ratio`
+  and non-negative `amp`. When present, this becomes the authoritative
+  spectrum for the note and the old harmonic-stack generator params are ignored.
+- `attack_partials: list[dict[str, float]]`
+  Optional onset spectrum in the same format as `partials`. The engine builds
+  the union of `attack_partials` and `partials`, treats missing entries as
+  silent, and morphs from the attack amplitudes into the sustain amplitudes.
+- `spectral_morph_time: float`
+  Seconds spent interpolating from `attack_partials` into `partials`.
+- `partial_decay_tilt: float`
+  Makes higher-ratio partials settle faster over note time while lower partials
+  remain more stable.
+- `upper_partial_drift_cents: float`
+  Gentle deterministic drift applied only to upper partials.
+- `upper_partial_drift_min_ratio: float`
+  Ratios below this stay stable; ratios above it receive progressively more of
+  `upper_partial_drift_cents`.
+
 - `n_harmonics: int`
   Number of harmonic partials to include before Nyquist limiting.
 - `harmonic_rolloff: float`
@@ -887,20 +906,56 @@ Parameters:
 Notes:
 
 - Omitting the new parameters preserves the old additive behavior closely.
+- If `partials` is omitted, the engine still uses the legacy harmonic ladder
+  generated from `n_harmonics`, `harmonic_rolloff`, `brightness_tilt`, and
+  `odd_even_balance`.
 - `odd_even_balance` is clamped internally to avoid zeroing the spectrum too aggressively.
+- `attack_partials` only does anything when paired with `spectral_morph_time > 0`.
+- Explicit spectral ratios are relative to the resolved note frequency, not to
+  `Score.f0`.
+
+Helper builders:
+
+- `code_musics.spectra.ratio_spectrum(...)`
+  Build an explicit `partials` list from ratio and amplitude inputs.
+- `code_musics.spectra.harmonic_spectrum(...)`
+  Build a harmonic-series `partials` list matching the additive engine's
+  legacy weightings.
+- `code_musics.spectra.stretched_spectrum(...)`
+  Build a stretched or compressed overtone family for non-harmonic ladders.
+
+Recommended additive presets:
+
+- `soft_pad`
+- `drone`
+- `bright_pluck`
+- `organ`
+- `ji_fusion_pad`
+- `septimal_reed`
+- `eleven_limit_glass`
+- `utonal_drone`
 
 Example:
 
 ```python
+from code_musics.spectra import ratio_spectrum
+
 score.add_voice(
     "pad",
     synth_defaults={
         "engine": "additive",
         "env": {"attack_ms": 400.0, "release_ms": 1200.0},
         "params": {
-            "n_harmonics": 10,
-            "harmonic_rolloff": 0.55,
-            "brightness_tilt": -0.1,
+            "partials": ratio_spectrum(
+                [1.0, 5 / 4, 3 / 2, 7 / 4],
+                [1.0, 0.4, 0.28, 0.16],
+            ),
+            "attack_partials": ratio_spectrum(
+                [1.0, 5 / 4, 3 / 2, 7 / 4, 11 / 8],
+                [1.0, 0.48, 0.34, 0.2, 0.12],
+            ),
+            "spectral_morph_time": 0.18,
+            "partial_decay_tilt": 0.25,
             "unison_voices": 3,
             "detune_cents": 5.0,
         },

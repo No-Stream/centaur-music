@@ -15,6 +15,7 @@ from code_musics.engines import (
     noise_perc,
     polyblep,
 )
+from code_musics.spectra import ratio_spectrum, stretched_spectrum
 
 EngineRenderer = Callable[..., np.ndarray]
 
@@ -123,6 +124,64 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "decay": 0.08,
             "sustain_level": 0.92,
             "release": 0.12,
+        },
+        "ji_fusion_pad": {
+            "partials": ratio_spectrum(
+                [1.0, 5 / 4, 3 / 2, 7 / 4, 2.0],
+                [1.0, 0.42, 0.34, 0.22, 0.16],
+            ),
+            "attack_partials": ratio_spectrum(
+                [1.0, 5 / 4, 3 / 2, 7 / 4, 11 / 8, 2.0],
+                [1.0, 0.5, 0.42, 0.28, 0.18, 0.14],
+            ),
+            "spectral_morph_time": 0.22,
+            "partial_decay_tilt": 0.18,
+            "attack": 0.22,
+            "release": 1.4,
+            "unison_voices": 2,
+            "detune_cents": 2.0,
+        },
+        "septimal_reed": {
+            "partials": ratio_spectrum(
+                [1.0, 3 / 2, 7 / 4, 7 / 2, 21 / 8],
+                [1.0, 0.44, 0.36, 0.2, 0.12],
+            ),
+            "partial_decay_tilt": 0.35,
+            "attack": 0.03,
+            "decay": 0.12,
+            "sustain_level": 0.72,
+            "release": 0.28,
+        },
+        "eleven_limit_glass": {
+            "partials": ratio_spectrum(
+                [1.0, 11 / 8, 3 / 2, 11 / 4, 33 / 16],
+                [1.0, 0.34, 0.24, 0.14, 0.08],
+            ),
+            "attack_partials": stretched_spectrum(
+                n_partials=5,
+                stretch_exponent=1.08,
+                harmonic_rolloff=0.45,
+                brightness_tilt=0.1,
+            ),
+            "spectral_morph_time": 0.08,
+            "partial_decay_tilt": 0.55,
+            "upper_partial_drift_cents": 2.5,
+            "upper_partial_drift_min_ratio": 1.6,
+            "attack": 0.01,
+            "decay": 0.18,
+            "sustain_level": 0.48,
+            "release": 0.85,
+        },
+        "utonal_drone": {
+            "partials": ratio_spectrum(
+                [1.0, 7 / 6, 7 / 5, 7 / 4, 7 / 3],
+                [1.0, 0.38, 0.26, 0.22, 0.1],
+            ),
+            "partial_decay_tilt": 0.1,
+            "upper_partial_drift_cents": 1.5,
+            "upper_partial_drift_min_ratio": 1.7,
+            "attack": 0.9,
+            "release": 2.8,
         },
     },
     "fm": {

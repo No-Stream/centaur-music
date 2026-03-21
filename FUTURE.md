@@ -63,13 +63,6 @@ Most valuable next helpers:
 - overlap, beating, density, and register summaries that better flag when a
   texture has become too static, too crowded, or too continuously drony
 
-### Inspiration
-
-- oblique strategies type generator, combinations of strategies - see list in email of OGs
-- musical references (obvious, but pragamatic)
-- non-musical art references (e.g. inspired by Rothko temple pieces)
-- "poetic" references - non-art things that we can attempt to draw inspiration from
-
 ### Additive Synthesis Specifically
   Additive lets us not assume traditional harmonic structure. 
   e.g. we can have harmonics of just intervals, not e.g. simple sawtooth harmonics
@@ -84,7 +77,12 @@ Most valuable next helpers:
   4. Timbre-harmony fusion
   You can make a chord whose note frequencies and internal overtone structures are both drawn from the same ratio world.
   We should consider how to do this with a clean, musical interface that encourages sane defaults and easy programming, and modularity.
-  (Should include clean, higher-level API(s); could be as simple as partial_ratio:amt)
+  Remaining work after the new explicit spectral-partial additive voice:
+  - richer stereo-from-spectrum tools so different partial groups can occupy subtly different widths/positions
+  - automatic register-aware darkening / brightness limiting so high notes do not get brittle and low notes do not get muddy
+  - controlled inharmonic stretch and physical-object style detuning beyond the current gentle upper-partial drift
+  - deeper programmable per-partial envelopes and modulation, once the simple onset/sustain morph proves musically useful
+  - a broader role-oriented preset family for spectral additive voices, beyond the first JI / septimal / 11-limit / utonal set
 
 ### MIDI Export
 
@@ -114,6 +112,10 @@ Some of this is implemented already through timing, envelope, and velocity
 humanization; what remains is the more specialized layer.
 We recently added notes (rather than just time-based) arranging.
 And we have humanization + imperfection. But we should eventually add swing.
+
+### Polyrhythm/polymeter
+
+To some extent we already support this implicitly. Worth expanding?
 
 ### Autoresearch, for music
 

@@ -30,6 +30,7 @@ from code_musics.humanize import (
 from code_musics.meter import B, E, H, M, Q, S, SwingSpec, Timeline, W, dotted, triplet
 from code_musics.pitch_motion import PitchMotionSpec
 from code_musics.score import SendBusSpec, VelocityParamMap, VoiceSend
+from code_musics.spectra import harmonic_spectrum, ratio_spectrum, stretched_spectrum
 
 __all__ = [
     "AutomationSegment",
@@ -68,8 +69,11 @@ __all__ = [
     "metered_sections",
     "progression",
     "recontextualize_phrase",
+    "ratio_spectrum",
     "sequence",
     "staccato",
+    "stretched_spectrum",
     "triplet",
     "voiced_ratio_chord",
+    "harmonic_spectrum",
 ]
