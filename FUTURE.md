@@ -174,11 +174,15 @@ Most interesting directions:
 ### Co-design scale + synth
   - Additive synthesis + scale. works great with non-octave scales, e.g. Colundi (since we can omit octave harmonics)
   - FM, similar story
-  - Physical modeling
+  - Physical modeling: we can use physical models with _harmonics that are compatible with our scale_. e.g. Aleksi Perala does very cool xen bells
   - Granular (not necessarily _great_ for xenharmonic but doesn't have the octave bias of subtractive synths)
 
 ### Combination Product Set - Harmonic Lattice (Erv Wilson)
   - cool idea. let's try.
+
+### Non-octave-privileged distortion
+  Traditional distortion/saturation relies on octave-based products. 
+  Could we do something interesting with _other_ multiples?! Aligned with our scale.
 
 ### Better effect integration and routing
 
