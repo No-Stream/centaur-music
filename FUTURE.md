@@ -83,6 +83,7 @@ Most valuable next helpers:
   - controlled inharmonic stretch and physical-object style detuning beyond the current gentle upper-partial drift
   - deeper programmable per-partial envelopes and modulation, once the simple onset/sustain morph proves musically useful
   - a broader role-oriented preset family for spectral additive voices, beyond the first JI / septimal / 11-limit / utonal set
+  _implemented some of this, should revise this section_
 
 ### MIDI Export
 
@@ -203,6 +204,10 @@ Most promising directions:
   intentionally
 - continued plugin-backed EQ / glue / color exploration with a bias toward
   stable Linux-native VST3 or LV2 paths
+
+#### Filter drive and saturation
+
+I suspect our saturation/warmth native plugin could be better. Currently sounds fuzzy and probably aliased.
 
 #### Plugin reliability follow-up
 

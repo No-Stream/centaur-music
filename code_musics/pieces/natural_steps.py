@@ -134,7 +134,7 @@ def _place_section(
     bar_dur = _BAR_DUR * time_scale
     t = start
     current_delay = canon_delay
-    for (root, n_bars, label), amp_db in zip(progression, amp_arc):
+    for (root, n_bars, label), amp_db in zip(progression, amp_arc, strict=False):
         chord = [root * 4, root * 5, root * 6, root * 7]
         phrase = _arp(chord, amp_db=amp_db, pattern=arp_pattern)
         chord_dur = n_bars * bar_dur

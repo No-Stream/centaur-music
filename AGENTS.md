@@ -69,15 +69,23 @@
 
 - Prefer `amp_db` over raw `amp` for authoring levels. Linear `amp` still works, but
   dB is usually easier to reason about in mixes.
-- Voices are LUFS-normalized by default (`normalize_lufs=-24.0`), so do not treat a
-  synth engine's raw output level as the main mix decision. Mix intentionally with
-  `amp_db`, note levels, `mix_db`, `pre_fx_gain_db`, voice defaults, and effect
-  balances; use those "volume slider" style controls aggressively to shape the
-  arrangement.
-- Prefer `mix_db` as the normal voice-level mixer fader and `pre_fx_gain_db` when
-  you want to change how hard a voice hits its own insert effects. Treat
-  `normalize_lufs` as a specialized stem-standardization option rather than the
-  first tool for ordinary balance moves.
+- Voices are LUFS-normalized by default (`normalize_lufs=-24.0`). This is the
+  correct gain-staging approach for all tonal, melodic, and sustained voices — it
+  ensures effects always see a consistent input level. Do not treat a synth engine's
+  raw output level as the mix decision.
+- **`mix_db` is for mix balance only, not gain staging.** Normalization handles gain
+  staging; `mix_db` is the fader for balancing voices against each other. Similarly,
+  `pre_fx_gain_db` is an intentional trim to drive effects harder or softer.
+- **For percussive voices (kick, tom, noise hits), use `normalize_peak_db=-6.0`
+  instead of `normalize_lufs`.** LUFS normalization is unreliable for transient
+  content because the integrated LUFS varies with BPM and silence duration.
+  `normalize_peak_db` normalizes to a target peak level, giving compressors and
+  other effects a predictable input regardless of BPM or per-note `amp_db` values.
+  The `kick_punch` and `kick_glue` compressor presets are calibrated for a
+  `-6.0 dBFS` input peak.
+- `normalize_lufs` and `normalize_peak_db` are mutually exclusive. Avoid
+  `normalize_lufs=None` — prefer `normalize_peak_db` for any voice where LUFS
+  normalization is inappropriate.
 - `master_input_gain_db` trims the summed mix into `Score.master_effects`. Leave it
   at `0.0` by default; reach for it only when you intentionally want to change
   how hard the master bus glue/tone chain is being driven.
@@ -87,8 +95,6 @@
 - Use note-level `velocity` for accents and phrasing. By default it affects loudness
   through `velocity_db_per_unit`, and it can also drive synth params through
   `VelocityParamMap`.
-- Set `normalize_lufs=None` on a voice only when you explicitly want raw stem gain
-  instead of the default auto-normalized workflow.
 - `velocity_humanize` is voice-level and on by default when adding voices. Set it to
   `None` when you want a fully fixed/programmed result.
 - `velocity_group` lets multiple voices share correlated velocity drift, which is the
@@ -209,7 +215,8 @@ See `FUTURE.md` for way more ideas.
 - The native effect chain now includes a minimum-phase multi-band `eq` effect with
   ordered highpass, lowpass, bell, and shelf bands for routine tone shaping.
 - The native effect chain also includes a stereo-linked `compressor` effect with
-  feedforward/feedback modes and detector-path EQ bands for musical glue/control.
+  feedforward/feedback modes, detector-path EQ bands, and voice-to-voice
+  sidechaining plus lookahead for ducking/glue workflows.
 - There is now a dedicated `kick_tom` synth engine for 808/909-style kicks and
   toms; the intended happy path is pairing it with the native drum-oriented
   compressor/saturation presets documented in `docs/synth_api.md`.
@@ -293,3 +300,6 @@ See `FUTURE.md` for way more ideas.
 - bittersweet, haunting. (think burial - untrue or MBV loveless)
 - spacious, reverb, lofi (BoC, m83's dead cities)
 - spicy but euphonic chords, creative voicing, voice leading, sevenths and septimal harmony
+- it's fine to explore and fail. we can try a bunch of ideas, and none of them have to work
+- think of music creation like a GAN: we come up with ideas, we see how we like them, and we iterate
+(for more ideas, use `make inspire`)

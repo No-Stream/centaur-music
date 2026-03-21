@@ -514,6 +514,99 @@ def test_apply_compressor_detector_eq_changes_control_behavior() -> None:
     assert high_with_eq > high_without_eq * 1.2
 
 
+def test_apply_compressor_external_sidechain_ducks_signal_below_threshold() -> None:
+    sample_rate = synth.SAMPLE_RATE
+    duration_seconds = 1.0
+    time = np.linspace(
+        0.0,
+        duration_seconds,
+        int(sample_rate * duration_seconds),
+        endpoint=False,
+    )
+    program_signal = 0.08 * np.sin(2.0 * np.pi * 220.0 * time)
+    sidechain_signal = np.zeros_like(program_signal)
+    burst_window = slice(int(0.20 * sample_rate), int(0.35 * sample_rate))
+    sidechain_signal[burst_window] = 1.1 * np.sin(
+        2.0 * np.pi * 55.0 * time[burst_window]
+    )
+
+    without_sidechain = synth.apply_compressor(
+        program_signal,
+        threshold_db=-24.0,
+        ratio=6.0,
+        attack_ms=1.0,
+        release_ms=140.0,
+        knee_db=2.0,
+    )
+    with_sidechain = synth.apply_compressor(
+        program_signal,
+        threshold_db=-24.0,
+        ratio=6.0,
+        attack_ms=1.0,
+        release_ms=140.0,
+        knee_db=2.0,
+        sidechain_signal=sidechain_signal,
+    )
+
+    burst_rms_without_sidechain = float(
+        np.sqrt(np.mean(np.square(without_sidechain[burst_window])))
+    )
+    burst_rms_with_sidechain = float(
+        np.sqrt(np.mean(np.square(with_sidechain[burst_window])))
+    )
+
+    assert burst_rms_with_sidechain < burst_rms_without_sidechain * 0.7
+
+
+def test_apply_compressor_lookahead_starts_gain_reduction_earlier() -> None:
+    sample_rate = synth.SAMPLE_RATE
+    duration_seconds = 0.5
+    time = np.linspace(
+        0.0,
+        duration_seconds,
+        int(sample_rate * duration_seconds),
+        endpoint=False,
+    )
+    program_signal = 0.22 * np.sin(2.0 * np.pi * 220.0 * time)
+    sidechain_signal = np.zeros_like(program_signal)
+    burst_start = int(0.18 * sample_rate)
+    burst_end = int(0.24 * sample_rate)
+    sidechain_signal[burst_start:burst_end] = 1.2 * np.sin(
+        2.0 * np.pi * 80.0 * time[burst_start:burst_end]
+    )
+
+    without_lookahead = synth.apply_compressor(
+        program_signal,
+        threshold_db=-28.0,
+        ratio=8.0,
+        attack_ms=0.5,
+        release_ms=100.0,
+        knee_db=0.0,
+        sidechain_signal=sidechain_signal,
+        lookahead_ms=0.0,
+    )
+    with_lookahead = synth.apply_compressor(
+        program_signal,
+        threshold_db=-28.0,
+        ratio=8.0,
+        attack_ms=0.5,
+        release_ms=100.0,
+        knee_db=0.0,
+        sidechain_signal=sidechain_signal,
+        lookahead_ms=8.0,
+    )
+
+    pre_burst_window = slice(burst_start - int(0.006 * sample_rate), burst_start)
+    pre_burst_rms_without_lookahead = float(
+        np.sqrt(np.mean(np.square(without_lookahead[pre_burst_window])))
+    )
+    pre_burst_rms_with_lookahead = float(
+        np.sqrt(np.mean(np.square(with_lookahead[pre_burst_window])))
+    )
+
+    assert pre_burst_rms_with_lookahead < pre_burst_rms_without_lookahead * 0.85
+
+
 def test_apply_compressor_feedforward_and_feedback_differ() -> None:
     sample_rate = synth.SAMPLE_RATE
     signal = np.zeros(sample_rate, dtype=np.float64)
@@ -538,6 +631,14 @@ def test_apply_compressor_feedforward_and_feedback_differ() -> None:
     )
 
     assert np.max(np.abs(feedforward - feedback)) > 1e-3
+
+
+def test_apply_compressor_rejects_negative_lookahead() -> None:
+    with pytest.raises(ValueError, match="lookahead_ms must be non-negative"):
+        synth.apply_compressor(
+            np.ones(64, dtype=np.float64),
+            lookahead_ms=-0.1,
+        )
 
 
 def test_apply_compressor_preserves_stereo_layout() -> None:

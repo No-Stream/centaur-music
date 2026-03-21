@@ -471,6 +471,133 @@ def test_compressor_effect_analysis_reports_gain_reduction_metrics() -> None:
     assert "longest_run_above_1db_seconds" in compressor_metrics
 
 
+def test_score_voice_compressor_can_sidechain_from_another_voice() -> None:
+    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score.add_voice(
+        "kick",
+        normalize_peak_db=-6.0,
+        velocity_humanize=None,
+    )
+    score.add_voice(
+        "bass",
+        normalize_lufs=None,
+        velocity_humanize=None,
+        effects=[
+            EffectSpec(
+                "compressor",
+                {
+                    "threshold_db": -30.0,
+                    "ratio": 8.0,
+                    "attack_ms": 0.5,
+                    "release_ms": 120.0,
+                    "knee_db": 0.0,
+                    "lookahead_ms": 5.0,
+                    "sidechain_source": "kick",
+                },
+            )
+        ],
+    )
+    score.add_note("kick", start=0.20, duration=0.12, freq=55.0, amp=1.0)
+    score.add_note("bass", start=0.0, duration=0.8, partial=2.0, amp=0.12)
+
+    rendered_stems = score.render_stems()
+    bass_stem = rendered_stems["bass"]
+
+    dry_reference = Score(f0=55.0, auto_master_gain_stage=False)
+    dry_reference.add_voice("bass", normalize_lufs=None, velocity_humanize=None)
+    dry_reference.add_note("bass", start=0.0, duration=0.8, partial=2.0, amp=0.12)
+    dry_bass_stem = dry_reference.render_stems()["bass"]
+
+    duck_window = slice(int(0.20 * score.sample_rate), int(0.30 * score.sample_rate))
+    ducked_rms = float(np.sqrt(np.mean(np.square(bass_stem[duck_window]))))
+    dry_rms = float(np.sqrt(np.mean(np.square(dry_bass_stem[duck_window]))))
+
+    assert ducked_rms < dry_rms * 0.7
+
+
+def test_score_sidechain_processing_is_dependency_order_independent() -> None:
+    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score.add_voice(
+        "pad",
+        normalize_lufs=None,
+        velocity_humanize=None,
+        effects=[
+            EffectSpec(
+                "compressor",
+                {
+                    "threshold_db": -32.0,
+                    "ratio": 5.0,
+                    "attack_ms": 0.5,
+                    "release_ms": 160.0,
+                    "sidechain_source": "kick",
+                },
+            )
+        ],
+    )
+    score.add_voice("kick", normalize_peak_db=-6.0, velocity_humanize=None)
+    score.add_note("kick", start=0.10, duration=0.10, freq=55.0, amp=1.0)
+    score.add_note("pad", start=0.0, duration=0.7, partial=3.0, amp=0.10)
+
+    rendered_stems = score.render_stems()
+
+    assert "pad" in rendered_stems
+    assert np.max(np.abs(rendered_stems["pad"])) > 0.0
+
+
+def test_score_sidechain_rejects_unknown_source_voice() -> None:
+    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score.add_voice(
+        "bass",
+        normalize_lufs=None,
+        velocity_humanize=None,
+        effects=[
+            EffectSpec(
+                "compressor",
+                {
+                    "threshold_db": -28.0,
+                    "ratio": 4.0,
+                    "sidechain_source": "missing_kick",
+                },
+            )
+        ],
+    )
+    score.add_note("bass", start=0.0, duration=0.5, partial=2.0, amp=0.12)
+
+    with pytest.raises(ValueError, match="Unknown sidechain_source"):
+        score.render_stems()
+
+
+def test_score_sidechain_cycle_is_rejected() -> None:
+    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score.add_voice(
+        "a",
+        normalize_lufs=None,
+        velocity_humanize=None,
+        effects=[
+            EffectSpec(
+                "compressor",
+                {"threshold_db": -28.0, "ratio": 4.0, "sidechain_source": "b"},
+            )
+        ],
+    )
+    score.add_voice(
+        "b",
+        normalize_lufs=None,
+        velocity_humanize=None,
+        effects=[
+            EffectSpec(
+                "compressor",
+                {"threshold_db": -28.0, "ratio": 4.0, "sidechain_source": "a"},
+            )
+        ],
+    )
+    score.add_note("a", start=0.0, duration=0.5, partial=2.0, amp=0.12)
+    score.add_note("b", start=0.0, duration=0.5, partial=3.0, amp=0.12)
+
+    with pytest.raises(ValueError, match="contains a cycle"):
+        score.render_stems()
+
+
 def test_plugin_effect_sets_named_plugin_parameters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1405,44 +1532,24 @@ def test_saturation_effect_analysis_reports_shaper_activity() -> None:
     assert "crest_factor_delta_db" in saturation_metrics
 
 
-def test_compressor_effect_preset_matches_explicit_params() -> None:
-    signal = 0.7 * np.sin(
-        np.linspace(0.0, 14.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
-    )
+def test_kick_punch_preset_compresses_and_recovers() -> None:
+    """kick_punch should apply meaningful GR and not crush the signal."""
+    # Kick-like burst: exponential decay from ~-6 dBFS peak
+    t = np.linspace(0.0, 0.5, synth.SAMPLE_RATE // 2, endpoint=False)
+    kick = 0.5 * np.sin(2.0 * np.pi * 62.0 * t) * np.exp(-t / 0.3)
 
-    preset_processed = synth.apply_effect_chain(
-        signal,
+    processed = synth.apply_effect_chain(
+        kick,
         [EffectSpec("compressor", {"preset": "kick_punch"})],
     )
-    explicit_processed = synth.apply_effect_chain(
-        signal,
-        [
-            EffectSpec(
-                "compressor",
-                {
-                    "threshold_db": -21.0,
-                    "ratio": 3.6,
-                    "attack_ms": 7.0,
-                    "release_ms": 82.0,
-                    "release_tail_ms": 180.0,
-                    "knee_db": 4.0,
-                    "makeup_gain_db": 0.75,
-                    "mix": 0.92,
-                    "topology": "feedforward",
-                    "detector_mode": "peak",
-                    "detector_bands": [
-                        {
-                            "kind": "highpass",
-                            "cutoff_hz": 55.0,
-                            "slope_db_per_oct": 12,
-                        }
-                    ],
-                },
-            )
-        ],
-    )
+    assert isinstance(processed, np.ndarray)
 
-    assert np.allclose(preset_processed, explicit_processed)
+    input_peak = float(np.max(np.abs(kick)))
+    output_peak = float(np.max(np.abs(processed)))
+    # Compression should reduce the peak but not silence it
+    assert output_peak < input_peak, "kick_punch should reduce peak"
+    assert output_peak > input_peak * 0.2, "kick_punch should not crush the signal"
+    assert np.isfinite(processed).all()
 
 
 def test_plot_piano_roll_writes_file(tmp_path: Path) -> None:

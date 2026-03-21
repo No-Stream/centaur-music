@@ -187,8 +187,8 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
     "fm": {
         "bell": {
             "carrier_ratio": 1.0,
-            "mod_ratio": 2.0,
-            "mod_index": 4.5,
+            "mod_ratio": 1.0,  # unison modulator — full harmonic series, warm & tonal
+            "mod_index": 2.5,  # moderate depth: rich but not harsh
             "index_decay": 0.25,
             "index_sustain": 0.12,
             "attack": 0.01,
@@ -687,12 +687,12 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "waveform": "square",
             "pulse_width": 0.46,
             "cutoff_hz": 680.0,
-            "resonance": 0.42,
+            "resonance": 0.7,
             "filter_env_amount": 1.85,
             "filter_env_decay": 0.14,
             "keytrack": 0.04,
             "filter_mode": "lowpass",
-            "filter_drive": 0.44,
+            "filter_drive": 0.35,
             "attack": 0.003,
             "decay": 0.14,
             "sustain_level": 0.36,

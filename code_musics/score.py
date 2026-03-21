@@ -33,6 +33,8 @@ from code_musics.humanize import (
 )
 from code_musics.pitch_motion import PitchMotionSpec, build_frequency_trajectory
 
+_UNSET: object = object()  # sentinel distinguishing "not passed" from explicit None
+
 
 @dataclass(frozen=True)
 class EffectSpec:
@@ -265,6 +267,7 @@ class Voice:
     mix_db: float = 0.0
     sends: list[VoiceSend] = field(default_factory=list)
     normalize_lufs: float | None = -24.0
+    normalize_peak_db: float | None = None
     pan: float = 0.0
     automation: list[AutomationSpec] = field(default_factory=list)
     notes: list[NoteEvent] = field(default_factory=list)
@@ -329,11 +332,16 @@ class Score:
         pre_fx_gain_db: float = 0.0,
         mix_db: float = 0.0,
         sends: list[VoiceSend] | None = None,
-        normalize_lufs: float | None = -24.0,
+        normalize_lufs: float | None = _UNSET,  # type: ignore[assignment]
+        normalize_peak_db: float | None = None,
         pan: float = 0.0,
         automation: list[AutomationSpec] | None = None,
     ) -> Voice:
         """Add or replace a named voice definition."""
+        # Resolve normalize_lufs default: -24.0 unless normalize_peak_db is given,
+        # in which case default to None (caller doesn't need to explicitly clear it).
+        if normalize_lufs is _UNSET:
+            normalize_lufs = None if normalize_peak_db is not None else -24.0
         if not -1.0 <= pan <= 1.0:
             raise ValueError("pan must be between -1 and 1")
         if velocity_db_per_unit < 0:
@@ -342,8 +350,16 @@ class Score:
             raise ValueError("pre_fx_gain_db must be finite")
         if not np.isfinite(mix_db):
             raise ValueError("mix_db must be finite")
+        if normalize_lufs is not None and normalize_peak_db is not None:
+            raise ValueError(
+                "normalize_lufs and normalize_peak_db cannot both be set; "
+                "choose LUFS normalization for tonal voices or peak normalization "
+                "for percussive voices"
+            )
         if normalize_lufs is not None and not np.isfinite(normalize_lufs):
             raise ValueError("normalize_lufs must be finite when provided")
+        if normalize_peak_db is not None and not np.isfinite(normalize_peak_db):
+            raise ValueError("normalize_peak_db must be finite when provided")
         resolved_sends = list(sends or [])
         self._validate_voice_sends(resolved_sends)
         voice = Voice(
@@ -363,6 +379,7 @@ class Score:
             mix_db=mix_db,
             sends=resolved_sends,
             normalize_lufs=normalize_lufs,
+            normalize_peak_db=normalize_peak_db,
             pan=pan,
             automation=list(automation or []),
         )
@@ -590,30 +607,46 @@ class Score:
         dict[str, list[synth.EffectAnalysisEntry]],
     ]:
         """Render dry stems, send returns, and optional effect diagnostics."""
-        rendered_stems: dict[str, np.ndarray] = {}
         voice_effects: dict[str, list[synth.EffectAnalysisEntry]] = {}
         send_inputs: dict[str, list[np.ndarray]] = {
             send_bus.name: [] for send_bus in self.send_buses
         }
         timing_offsets = self.resolve_timing_offsets()
         velocity_multipliers = self._build_velocity_multiplier_map()
+        rendered_voice_bases: dict[str, np.ndarray] = {}
         for voice_name, voice in self.voices.items():
             self._validate_voice_sends(voice.sends)
+            rendered_voice_bases[voice_name] = self._render_voice_base(
+                voice_name=voice_name,
+                voice=voice,
+                timing_offsets=timing_offsets,
+                velocity_multipliers=velocity_multipliers,
+            )
+
+        processed_voice_outputs: dict[str, np.ndarray] = {}
+        for voice_name in self._voice_processing_order():
+            voice = self.voices[voice_name]
             rendered_voice, rendered_send_inputs, rendered_effect_analysis = (
-                self._render_voice(
+                self._finalize_voice_output(
                     voice_name=voice_name,
                     voice=voice,
-                    timing_offsets=timing_offsets,
-                    velocity_multipliers=velocity_multipliers,
+                    voice_mix=rendered_voice_bases[voice_name],
+                    processed_voice_outputs=processed_voice_outputs,
                     collect_effect_analysis=collect_effect_analysis,
                 )
             )
-            if rendered_voice.size > 0:
-                rendered_stems[voice_name] = rendered_voice
+            processed_voice_outputs[voice_name] = rendered_voice
             for bus_name, bus_signal in rendered_send_inputs.items():
                 send_inputs.setdefault(bus_name, []).append(bus_signal)
             if rendered_effect_analysis:
                 voice_effects[voice_name] = rendered_effect_analysis
+
+        rendered_stems = {
+            voice_name: processed_voice_outputs[voice_name]
+            for voice_name in self.voices
+            if voice_name in processed_voice_outputs
+            and processed_voice_outputs[voice_name].size > 0
+        }
         send_returns, send_effects = self._render_send_returns(
             send_inputs=send_inputs,
             collect_effect_analysis=collect_effect_analysis,
@@ -693,19 +726,14 @@ class Score:
 
         return figure, axis
 
-    def _render_voice(
+    def _render_voice_base(
         self,
         *,
         voice_name: str,
         voice: Voice,
         timing_offsets: dict[tuple[str, int], float],
         velocity_multipliers: dict[tuple[str, int], float],
-        collect_effect_analysis: bool,
-    ) -> tuple[
-        np.ndarray,
-        dict[str, np.ndarray],
-        list[synth.EffectAnalysisEntry],
-    ]:
+    ) -> np.ndarray:
         voice_signals: list[np.ndarray] = []
         for note_index, note in enumerate(voice.notes):
             synth_params = normalize_synth_spec(voice.synth_defaults)
@@ -820,7 +848,7 @@ class Score:
             )
 
         if not voice_signals:
-            return np.zeros(0), {}, []
+            return np.zeros(0)
 
         voice_mix = self._stack_signals(voice_signals)
         if voice.normalize_lufs is not None:
@@ -829,35 +857,64 @@ class Score:
                 sample_rate=self.sample_rate,
                 target_lufs=voice.normalize_lufs,
             )
+        elif voice.normalize_peak_db is not None:
+            peak = float(np.max(np.abs(voice_mix)))
+            if peak > 0.0:
+                voice_mix = voice_mix * (
+                    synth.db_to_amp(voice.normalize_peak_db) / peak
+                )
         if voice.pre_fx_gain_db != 0.0:
             voice_mix = voice_mix * synth.db_to_amp(voice.pre_fx_gain_db)
         if voice.pan != 0.0:
             voice_mix = synth.apply_pan(voice_mix, pan=voice.pan)
+        return voice_mix
+
+    def _finalize_voice_output(
+        self,
+        *,
+        voice_name: str,
+        voice: Voice,
+        voice_mix: np.ndarray,
+        processed_voice_outputs: dict[str, np.ndarray],
+        collect_effect_analysis: bool,
+    ) -> tuple[
+        np.ndarray,
+        dict[str, np.ndarray],
+        list[synth.EffectAnalysisEntry],
+    ]:
         effect_analysis: list[synth.EffectAnalysisEntry] = []
-        if voice.effects:
+        processed_voice_mix = np.asarray(voice_mix, dtype=np.float64)
+        if voice.effects and processed_voice_mix.size > 0:
             if collect_effect_analysis:
                 rendered_voice_mix, rendered_effect_analysis = cast(
                     tuple[np.ndarray, list[synth.EffectAnalysisEntry]],
                     synth.apply_effect_chain(
-                        voice_mix,
+                        processed_voice_mix,
                         voice.effects,
+                        sidechain_signals=processed_voice_outputs,
+                        signal_name=voice_name,
                         return_analysis=True,
                     ),
                 )
-                voice_mix = rendered_voice_mix
+                processed_voice_mix = rendered_voice_mix
                 effect_analysis = rendered_effect_analysis
             else:
-                voice_mix = cast(
+                processed_voice_mix = cast(
                     np.ndarray,
-                    synth.apply_effect_chain(voice_mix, voice.effects),
+                    synth.apply_effect_chain(
+                        processed_voice_mix,
+                        voice.effects,
+                        sidechain_signals=processed_voice_outputs,
+                        signal_name=voice_name,
+                    ),
                 )
         if voice.mix_db != 0.0:
-            voice_mix = voice_mix * synth.db_to_amp(voice.mix_db)
+            processed_voice_mix = processed_voice_mix * synth.db_to_amp(voice.mix_db)
         send_signals = {
-            send.target: voice_mix * synth.db_to_amp(send.send_db)
+            send.target: processed_voice_mix * synth.db_to_amp(send.send_db)
             for send in voice.sends
         }
-        return voice_mix, send_signals, effect_analysis
+        return processed_voice_mix, send_signals, effect_analysis
 
     def _render_send_returns(
         self,
@@ -960,6 +1017,53 @@ class Score:
                 raise ValueError(
                     f"voice send target does not exist on score: {send.target}"
                 )
+
+    def _voice_sidechain_sources(self, *, voice_name: str, voice: Voice) -> list[str]:
+        sources: list[str] = []
+        for effect in voice.effects:
+            if effect.kind != "compressor":
+                continue
+            sidechain_source = effect.params.get("sidechain_source")
+            if sidechain_source is None:
+                continue
+            if not isinstance(sidechain_source, str) or not sidechain_source.strip():
+                raise ValueError("sidechain_source must be a non-empty string")
+            normalized_source = sidechain_source.strip()
+            if normalized_source == voice_name:
+                continue
+            if normalized_source not in self.voices:
+                raise ValueError(f"Unknown sidechain_source: {normalized_source!r}")
+            sources.append(normalized_source)
+        return sources
+
+    def _voice_processing_order(self) -> list[str]:
+        ordered_voice_names: list[str] = []
+        visiting: list[str] = []
+        visit_state: dict[str, bool] = {}
+
+        def visit(voice_name: str) -> None:
+            if visit_state.get(voice_name) is True:
+                return
+            if voice_name in visiting:
+                cycle_start = visiting.index(voice_name)
+                cycle = visiting[cycle_start:] + [voice_name]
+                raise ValueError(
+                    "Voice sidechain routing contains a cycle: " + " -> ".join(cycle)
+                )
+
+            visiting.append(voice_name)
+            for source_voice_name in self._voice_sidechain_sources(
+                voice_name=voice_name,
+                voice=self.voices[voice_name],
+            ):
+                visit(source_voice_name)
+            visiting.pop()
+            visit_state[voice_name] = True
+            ordered_voice_names.append(voice_name)
+
+        for voice_name in self.voices:
+            visit(voice_name)
+        return ordered_voice_names
 
     def _apply_master_bus_processing(
         self,

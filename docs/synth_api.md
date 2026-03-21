@@ -351,7 +351,8 @@ Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musi
 
 Native stereo-linked compressor for glue, stem control, and master-bus shaping.
 It supports both feedforward and feedback topologies and can EQ the
-detector/listener path without EQing the audible signal itself.
+detector/listener path without EQing the audible signal itself. On score voices,
+it also supports external sidechaining from another named voice.
 
 Render analysis records native compressor metering in the analysis manifest.
 Current effect-analysis metrics include:
@@ -397,41 +398,53 @@ Parameters:
 - `detector_bands: list[dict[str, Any]] | None`
   Optional EQ bands applied only to the detector path. Band syntax is identical
   to the native `eq` effect.
+- `sidechain_source: str | None`
+  Optional external detector source for score voice effects. Names another voice
+  and uses that voice's post-everything output as the detector input.
+- `lookahead_ms: float`
+  Detector lookahead in milliseconds. Default `0.0`. Lets the compressor react a
+  little early, which is especially useful for kick/bass ducking and peak control.
 
 Notes:
 
 - channels are stereo-linked so left/right image does not wander under compression
 - `kick_punch` is the most obvious starting point for finished kick voices, while
   `kick_glue` is gentler and `tom_control` is the safer tom preset
+- all three kick/tom presets are calibrated for use in rhythmic electronic contexts
+  (120–150 BPM): thresholds are set so the compressor naturally exits between hits
+  as the kick tail decays, delivering 5–8 dB GR at the peak rather than continuous
+  limiting — expect roughly 3 dB for `kick_glue`, 5–7 dB for `kick_punch`
 - detector EQ is the native control-path tone-shaping surface; use it for things
   like bass-insensitive bus compression via a detector highpass
-- this implementation intentionally does not yet expose an external sidechain input
+- `sidechain_source` is currently a score-voice routing feature rather than a
+  general-purpose raw-audio API on every effect-chain call site
 - `release_ms` is the main “easy” release knob; add `release_tail_ms` only when
   you want a faster bounce-back followed by a slower, gentler tail
 - the gain release is two-stage when `release_tail_ms` is set, which tends to feel
   more musical than a single fixed release all the way back to zero reduction
+- `lookahead_ms` uses offline lookahead so the rendered output stays sample-aligned
+  while the detector can react ahead of fast transients
 
 Example:
 
 ```python
-score = Score(
-    f0=110.0,
-    master_effects=[
+score.add_voice("kick", normalize_peak_db=-6.0)
+score.add_voice(
+    "bass",
+    effects=[
         EffectSpec(
             "compressor",
             {
-                "threshold_db": -22.0,
-                "ratio": 2.5,
-                "attack_ms": 12.0,
-                "release_ms": 90.0,
-                "release_tail_ms": 260.0,
-                "knee_db": 6.0,
-                "topology": "feedback",
-                "detector_mode": "rms",
+                "threshold_db": -28.0,
+                "ratio": 4.0,
+                "attack_ms": 1.0,
+                "release_ms": 120.0,
+                "lookahead_ms": 5.0,
+                "sidechain_source": "kick",
+                "detector_mode": "peak",
                 "detector_bands": [
-                    {"kind": "highpass", "cutoff_hz": 110.0, "slope_db_per_oct": 12}
+                    {"kind": "lowpass", "cutoff_hz": 180.0, "slope_db_per_oct": 12}
                 ],
-                "makeup_gain_db": 1.5,
             },
         )
     ],

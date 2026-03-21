@@ -236,6 +236,7 @@ Fields:
 - `mix_db`
 - `sends`
 - `normalize_lufs`
+- `normalize_peak_db`
 - `pan`
 - `automation`
 - `notes`
@@ -246,7 +247,8 @@ Important behavior:
 - `pan` must be between `-1.0` and `1.0`
 - `velocity_db_per_unit` must be non-negative
 - `pre_fx_gain_db` and `mix_db` must be finite when provided
-- `normalize_lufs` defaults to `-24.0` and can be set to `None` to disable stem auto-normalization
+- `normalize_lufs` defaults to `-24.0`; set to `None` only as a last resort (prefer `normalize_peak_db` for percussive voices)
+- `normalize_peak_db` defaults to `None`; mutually exclusive with `normalize_lufs`
 
 Practical interpretation:
 
@@ -257,10 +259,11 @@ Practical interpretation:
 - `velocity_group` links multiple voices into a shared velocity-drift family
 - `velocity_to_params` makes louder/softer notes timbrally different
 - `pre_fx_gain_db` is the voice input trim before voice effects; use it when you want to hit chorus, saturation, compression, or reverb harder or softer without changing the note writing
-- `mix_db` is the voice fader after voice effects and before the master bus; this is the preferred "mixer volume" control for balancing voices
+- `mix_db` is the voice fader after voice effects and before the master bus — use it **only for mix balance**, not for gain staging; normalization handles gain staging
 - `sends` routes the post-fader voice signal into one or more shared send buses
-- `normalize_lufs` applies an integrated-LUFS stem gain trim before `pre_fx_gain_db`, pan, voice effects, and `mix_db`
-- in normal authoring, prefer `amp_db`, `pre_fx_gain_db`, and `mix_db` for musical balance and effect drive; `normalize_lufs` is a specialist stem-standardization option that is usually best left at its default
+- `normalize_lufs` applies an integrated-LUFS stem gain trim before `pre_fx_gain_db`, pan, voice effects, and `mix_db`; the default `-24.0` is the right choice for all tonal, melodic, and sustained voices
+- `normalize_peak_db` is the alternative for percussive/transient voices (kicks, toms, noise hits): it normalizes the voice to a target peak level before effects, making compressor thresholds and effect drive predictable regardless of BPM or individual note `amp_db` values — use `-6.0` as the standard target when pairing with the `kick_punch` or `kick_glue` compressor presets
+- `normalize_lufs` and `normalize_peak_db` are mutually exclusive; raise if both are set
 - `pan` places the rendered voice in stereo
 - `automation` adds explicit score-time parameter lanes beyond humanization
 
@@ -337,6 +340,7 @@ Parameters:
 - `mix_db`
 - `sends`
 - `normalize_lufs`
+- `normalize_peak_db`
 - `pan`
 
 Important behavior:
@@ -345,12 +349,13 @@ Important behavior:
 - `velocity_humanize=None` in the method call currently means "use the default subtle humanizer", not "disable velocity humanization"
 - if you want to disable velocity humanization after a voice exists, set `voice.velocity_humanize = None`
 - `pre_fx_gain_db` defaults to `0.0` and acts like a pre-insert trim
-- `mix_db` defaults to `0.0` and acts like a post-insert voice fader
+- `mix_db` defaults to `0.0` and acts like a post-insert voice fader; use it for mix balance only, not gain staging
 - `sends` defaults to `[]` and routes the post-fader voice into named shared aux buses
-- `normalize_lufs=None` disables the default per-voice auto-normalization if you want raw stem gain instead
-- with the default `normalize_lufs=-24.0`, it is normal and recommended to do most balancing with authored note `amp_db`, `pre_fx_gain_db`, and `mix_db` instead of moving the LUFS target around
+- `normalize_lufs=-24.0` (default) handles gain staging for all tonal voices — leave it at the default and use `mix_db` to balance
+- use `normalize_peak_db=-6.0` for percussive voices (kicks, toms, noise hits) instead of `normalize_lufs`; this gives effects a predictable input level regardless of BPM or note-level `amp_db` variation
+- `normalize_lufs` and `normalize_peak_db` are mutually exclusive
 
-That second point is easy to miss and worth being explicit about.
+That second-to-last point is easy to miss and worth being explicit about.
 
 Example:
 
@@ -460,6 +465,8 @@ Behavior:
 
 - returns an empty mono array if the score has no rendered voices
 - may return mono or stereo depending on pan and effects
+- voice insert effects are resolved after each voice's dry/base render is built, so
+  native compressor sidechains can read other voices' final post-everything outputs
 - when `auto_master_gain_stage=True`, raises or lowers the summed post-fader mix
   toward `master_bus_target_lufs` before the master bus while keeping premaster
   true peak under `master_bus_max_true_peak_dbfs`
@@ -576,13 +583,14 @@ The practical render path for one note is:
 9. resolve ADSR with `envelope_humanize`
 10. place the note in time using `timing_humanize`
 11. mix notes into the dry voice stem
-12. if `normalize_lufs` is set, apply a uniform gain trim toward that target integrated loudness
+12. if `normalize_lufs` is set, apply a uniform gain trim toward that target integrated loudness; if `normalize_peak_db` is set instead, normalize to that peak level — these are mutually exclusive
 13. apply `pre_fx_gain_db`
-14. apply pan and voice effects
-15. apply `mix_db`
-16. derive any post-fader voice sends
-17. sum dry voices and separately sum/process shared send returns
-18. mix dry voices and send returns together
+14. apply pan to produce the dry/base voice render
+15. resolve voice effects, including any named voice sidechains for native compressors
+16. apply `mix_db`
+17. derive any post-fader voice sends
+18. sum dry voices and separately sum/process shared send returns
+19. mix dry voices and send returns together
 19. if enabled, auto-stage the premaster mix for the master bus
 20. apply `master_input_gain_db`
 21. apply master effects

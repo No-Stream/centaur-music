@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -1308,6 +1308,14 @@ def _resolve_compressor_release_times(
     return float(release_ms), float(release_tail_ms)
 
 
+def _lookahead_samples(lookahead_ms: float, sample_rate: int) -> int:
+    if not np.isfinite(lookahead_ms):
+        raise ValueError("lookahead_ms must be finite")
+    if lookahead_ms < 0.0:
+        raise ValueError("lookahead_ms must be non-negative")
+    return int(round((lookahead_ms / 1000.0) * sample_rate))
+
+
 def _build_effect_warning(
     *,
     severity: str,
@@ -1571,6 +1579,8 @@ def apply_compressor(
     topology: str = "feedforward",
     detector_mode: str = "rms",
     detector_bands: list[dict[str, Any]] | None = None,
+    sidechain_signal: np.ndarray | None = None,
+    lookahead_ms: float = 0.0,
     sample_rate: int = SAMPLE_RATE,
     return_analysis: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
@@ -1592,6 +1602,7 @@ def apply_compressor(
     if normalized_detector_mode not in {"peak", "rms"}:
         raise ValueError("detector_mode must be 'peak' or 'rms'")
 
+    lookahead_samples = _lookahead_samples(lookahead_ms, sample_rate)
     resolved_release_stage1_ms, resolved_release_stage2_ms = (
         _resolve_compressor_release_times(
             release_ms=release_ms,
@@ -1600,10 +1611,16 @@ def apply_compressor(
     )
 
     input_signal = _coerce_signal_layout(signal)
-    detector_source = input_signal
+    detector_source = (
+        _coerce_signal_layout(sidechain_signal)
+        if sidechain_signal is not None
+        else input_signal
+    )
+    if detector_source.shape[-1] != input_signal.shape[-1]:
+        raise ValueError("sidechain_signal must match the program signal length")
     if detector_bands is not None:
         detector_source = apply_eq(
-            input_signal,
+            detector_source,
             bands=detector_bands,
             sample_rate=sample_rate,
         )
@@ -1622,16 +1639,31 @@ def apply_compressor(
 
     detector_trace = _linked_detector_signal(detector_source)
     sample_count = input_signal.shape[-1]
+    aligned_sample_count = sample_count + lookahead_samples
 
-    output_signal = np.zeros_like(input_signal, dtype=np.float64)
+    if input_signal.ndim == 1:
+        delayed_input_signal = np.pad(
+            input_signal,
+            (lookahead_samples, 0),
+            mode="constant",
+        )
+        output_signal = np.zeros(aligned_sample_count, dtype=np.float64)
+    else:
+        delayed_input_signal = np.pad(
+            input_signal,
+            ((0, 0), (lookahead_samples, 0)),
+            mode="constant",
+        )
+        output_signal = np.zeros_like(delayed_input_signal, dtype=np.float64)
     detector_state = 0.0
     smoothed_gain_db = 0.0
     output_detector_state = 0.0
-    gain_reduction_trace_db = np.zeros(sample_count, dtype=np.float64)
+    gain_reduction_trace_db = np.zeros(aligned_sample_count, dtype=np.float64)
 
-    for sample_index in range(sample_count):
+    for sample_index in range(aligned_sample_count):
+        detector_trace_index = min(sample_index, sample_count - 1)
         if normalized_topology == "feedforward":
-            detector_input = float(detector_trace[sample_index])
+            detector_input = float(detector_trace[detector_trace_index])
         else:
             detector_input = float(output_detector_state)
 
@@ -1675,45 +1707,69 @@ def apply_compressor(
 
         gain = db_to_amp(smoothed_gain_db) * makeup_gain
         if input_signal.ndim == 1:
-            wet_sample = input_signal[sample_index] * gain
-            output_signal[sample_index] = ((1.0 - mix) * input_signal[sample_index]) + (
-                mix * wet_sample
-            )
+            wet_sample = delayed_input_signal[sample_index] * gain
+            output_signal[sample_index] = (
+                (1.0 - mix) * delayed_input_signal[sample_index]
+            ) + (mix * wet_sample)
             output_detector_state = abs(float(output_signal[sample_index]))
         else:
-            wet_frame = input_signal[:, sample_index] * gain
+            wet_frame = delayed_input_signal[:, sample_index] * gain
             output_signal[:, sample_index] = (
-                (1.0 - mix) * input_signal[:, sample_index]
+                (1.0 - mix) * delayed_input_signal[:, sample_index]
             ) + (mix * wet_frame)
             output_detector_state = float(
                 np.max(np.abs(output_signal[:, sample_index]))
             )
 
-    processed_signal = np.asarray(output_signal, dtype=np.float64)
+    if input_signal.ndim == 1:
+        processed_signal = np.asarray(
+            output_signal[lookahead_samples : lookahead_samples + sample_count],
+            dtype=np.float64,
+        )
+    else:
+        processed_signal = np.asarray(
+            output_signal[:, lookahead_samples : lookahead_samples + sample_count],
+            dtype=np.float64,
+        )
+    aligned_gain_reduction_trace_db = gain_reduction_trace_db[
+        lookahead_samples : lookahead_samples + sample_count
+    ]
     if not return_analysis:
         return processed_signal
 
-    active_mask = gain_reduction_trace_db >= 1.0
-    below_1db_mask = gain_reduction_trace_db < 1.0
+    active_mask = aligned_gain_reduction_trace_db >= 1.0
+    below_1db_mask = aligned_gain_reduction_trace_db < 1.0
     analysis: dict[str, float | int | str] = {
-        "avg_gain_reduction_db": round(float(np.mean(gain_reduction_trace_db)), 2),
-        "max_gain_reduction_db": round(float(np.max(gain_reduction_trace_db)), 2),
+        "avg_gain_reduction_db": round(
+            float(np.mean(aligned_gain_reduction_trace_db)),
+            2,
+        ),
+        "max_gain_reduction_db": round(
+            float(np.max(aligned_gain_reduction_trace_db)),
+            2,
+        ),
         "p95_gain_reduction_db": round(
-            float(np.percentile(gain_reduction_trace_db, 95.0)),
+            float(np.percentile(aligned_gain_reduction_trace_db, 95.0)),
             2,
         ),
         "active_gain_reduction_fraction": round(
-            float(np.count_nonzero(active_mask) / max(sample_count, 1)),
+            float(
+                np.count_nonzero(active_mask)
+                / max(aligned_gain_reduction_trace_db.size, 1)
+            ),
             4,
         ),
         "avg_gain_reduction_when_active_db": round(
-            float(np.mean(gain_reduction_trace_db[active_mask]))
+            float(np.mean(aligned_gain_reduction_trace_db[active_mask]))
             if np.any(active_mask)
             else 0.0,
             2,
         ),
         "below_1db_fraction": round(
-            float(np.count_nonzero(below_1db_mask) / max(sample_count, 1)),
+            float(
+                np.count_nonzero(below_1db_mask)
+                / max(aligned_gain_reduction_trace_db.size, 1)
+            ),
             4,
         ),
         "longest_run_above_1db_seconds": round(
@@ -1737,6 +1793,23 @@ def _ensure_stereo(signal: np.ndarray) -> np.ndarray:
         raise ValueError(f"Unsupported signal shape: {signal.shape}")
     mono_signal = np.asarray(signal, dtype=np.float64)
     return np.stack([mono_signal, mono_signal])
+
+
+def _match_signal_length(signal: np.ndarray, target_length: int) -> np.ndarray:
+    """Pad or trim mono/stereo signal to a target duration in samples."""
+    normalized = _coerce_signal_layout(signal)
+    current_length = normalized.shape[-1]
+    if current_length == target_length:
+        return normalized
+    if current_length > target_length:
+        if normalized.ndim == 1:
+            return np.asarray(normalized[:target_length], dtype=np.float64)
+        return np.asarray(normalized[:, :target_length], dtype=np.float64)
+
+    pad_width = target_length - current_length
+    if normalized.ndim == 1:
+        return np.pad(normalized, (0, pad_width), mode="constant")
+    return np.pad(normalized, ((0, 0), (0, pad_width)), mode="constant")
 
 
 def _match_input_layout(processed: np.ndarray, reference: np.ndarray) -> np.ndarray:
@@ -2350,13 +2423,16 @@ _SATURATION_PRESETS: dict[str, dict[str, float | int | bool]] = {
 
 _COMPRESSOR_PRESETS: dict[str, dict[str, float | str | list[dict[str, Any]]]] = {
     "kick_glue": {
-        "threshold_db": -18.0,
+        # Calibrated for kicks peaking around -6 dBFS (typical with normalize_lufs=None
+        # and a moderate amp_db).  With body_decay ~300 ms the tail drops below -13 dBFS
+        # around 241 ms after the hit, leaving ~220 ms of release window at 130 BPM.
+        # Delivers ~4 dB GR at peak; use kick_punch if you need more bite.
+        "threshold_db": -13.0,
         "ratio": 2.4,
         "attack_ms": 12.0,
-        "release_ms": 110.0,
-        "release_tail_ms": 260.0,
+        "release_ms": 160.0,
         "knee_db": 5.0,
-        "makeup_gain_db": 0.5,
+        "makeup_gain_db": 0.75,
         "mix": 0.82,
         "topology": "feedforward",
         "detector_mode": "rms",
@@ -2365,13 +2441,16 @@ _COMPRESSOR_PRESETS: dict[str, dict[str, float | str | list[dict[str, Any]]]] = 
         ],
     },
     "kick_punch": {
-        "threshold_db": -21.0,
+        # Same input-level assumption as kick_glue (~-6 dBFS peak).  Threshold set
+        # so the tail drops below it around 276 ms after the hit, leaving ~185 ms
+        # of release time — safely clears at up to ~145 BPM with the 140 ms release.
+        # Delivers ~6 dB GR at the transient peak.
+        "threshold_db": -14.0,
         "ratio": 3.6,
-        "attack_ms": 7.0,
-        "release_ms": 82.0,
-        "release_tail_ms": 180.0,
+        "attack_ms": 6.0,
+        "release_ms": 140.0,
         "knee_db": 4.0,
-        "makeup_gain_db": 0.75,
+        "makeup_gain_db": 1.0,
         "mix": 0.92,
         "topology": "feedforward",
         "detector_mode": "peak",
@@ -2380,13 +2459,17 @@ _COMPRESSOR_PRESETS: dict[str, dict[str, float | str | list[dict[str, Any]]]] = 
         ],
     },
     "tom_control": {
-        "threshold_db": -19.0,
+        # Toms have longer body decays (420–520 ms) and are usually hit less densely
+        # than kicks, so continuous compression in dense fills is acceptable.
+        # Delivers ~5 dB GR at peak for a tom at -6 dBFS; the longer release tail
+        # lets the gain ride down more musically than a single-stage release.
+        "threshold_db": -14.0,
         "ratio": 2.2,
         "attack_ms": 14.0,
-        "release_ms": 150.0,
-        "release_tail_ms": 320.0,
+        "release_ms": 220.0,
+        "release_tail_ms": 420.0,
         "knee_db": 6.0,
-        "makeup_gain_db": 0.4,
+        "makeup_gain_db": 0.6,
         "mix": 0.74,
         "topology": "feedback",
         "detector_mode": "rms",
@@ -2582,6 +2665,8 @@ def apply_effect_chain(
     signal: np.ndarray,
     effects: list[Any],
     *,
+    sidechain_signals: Mapping[str, np.ndarray] | None = None,
+    signal_name: str | None = None,
     return_analysis: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, list[EffectAnalysisEntry]]:
     """Apply a declarative effect chain to mono or stereo audio."""
@@ -2620,11 +2705,39 @@ def apply_effect_chain(
         elif effect.kind == "eq":
             processed = apply_eq(processed, **params)
         elif effect.kind == "compressor":
+            sidechain_signal: np.ndarray | None = None
+            sidechain_source = params.pop("sidechain_source", None)
+            if sidechain_source is not None:
+                if (
+                    not isinstance(sidechain_source, str)
+                    or not sidechain_source.strip()
+                ):
+                    raise ValueError("sidechain_source must be a non-empty string")
+                normalized_sidechain_source = sidechain_source.strip()
+                if (
+                    signal_name is not None
+                    and normalized_sidechain_source == signal_name
+                ):
+                    sidechain_signal = processed
+                else:
+                    if sidechain_signals is None:
+                        raise ValueError(
+                            f"sidechain_source {normalized_sidechain_source!r} is unavailable"
+                        )
+                    if normalized_sidechain_source not in sidechain_signals:
+                        raise ValueError(
+                            f"Unknown sidechain_source: {normalized_sidechain_source!r}"
+                        )
+                    sidechain_signal = _match_signal_length(
+                        sidechain_signals[normalized_sidechain_source],
+                        processed.shape[-1],
+                    )
             if return_analysis:
                 processed_signal, compressor_metrics = cast(
                     tuple[np.ndarray, dict[str, float | int | str]],
                     apply_compressor(
                         processed,
+                        sidechain_signal=sidechain_signal,
                         **params,
                         return_analysis=True,
                     ),
@@ -2632,7 +2745,14 @@ def apply_effect_chain(
                 processed = processed_signal
                 native_metrics = compressor_metrics
             else:
-                processed = cast(np.ndarray, apply_compressor(processed, **params))
+                processed = cast(
+                    np.ndarray,
+                    apply_compressor(
+                        processed,
+                        sidechain_signal=sidechain_signal,
+                        **params,
+                    ),
+                )
         elif effect.kind == "tal_chorus_lx":
             processed = apply_tal_chorus_lx(processed, **params)
         elif effect.kind == "tal_reverb2":

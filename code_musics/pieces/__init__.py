@@ -15,6 +15,7 @@ from code_musics.pieces.natural_steps import PIECES as _NATURAL_STEPS_PIECES
 from code_musics.pieces.registry import merge_piece_maps
 from code_musics.pieces.septimal import PIECES as _SEPTIMAL_PIECES
 from code_musics.pieces.spectral_studies import PIECES as _SPECTRAL_STUDY_PIECES
+from code_musics.pieces.techno_studies import PIECES as _TECHNO_PIECES
 from code_musics.pieces.texture_studies import PIECES as _TEXTURE_STUDY_PIECES
 from code_musics.pieces.wtc_sketches import PIECES as _WTC_PIECES
 
@@ -33,6 +34,7 @@ PIECES = merge_piece_maps(
     _NATURAL_STEPS_PIECES,
     _CRYSTAL_CANON_PIECES,
     _SPECTRAL_STUDY_PIECES,
+    _TECHNO_PIECES,
 )
 
 __all__ = ["PIECES"]
