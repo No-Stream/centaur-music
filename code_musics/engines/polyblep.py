@@ -69,6 +69,11 @@ def render(
 
     waveform = str(params.get("waveform", "saw")).lower()
     pulse_width = float(params.get("pulse_width", 0.5))
+    osc2_level = float(params.get("osc2_level", 0.0))
+    osc2_waveform = str(params.get("osc2_waveform", waveform)).lower()
+    osc2_pulse_width = float(params.get("osc2_pulse_width", pulse_width))
+    osc2_detune_cents = float(params.get("osc2_detune_cents", 0.0))
+    osc2_semitones = float(params.get("osc2_semitones", 0.0))
     cutoff_hz = float(params.get("cutoff_hz", 3000.0))
     keytrack = float(params.get("keytrack", 0.0))
     reference_freq_hz = float(params.get("reference_freq_hz", 220.0))
@@ -89,9 +94,16 @@ def render(
         raise ValueError("filter_env_decay must be positive")
     if not 0.0 < pulse_width < 1.0:
         raise ValueError("pulse_width must be between 0 and 1")
+    if not 0.0 < osc2_pulse_width < 1.0:
+        raise ValueError("osc2_pulse_width must be between 0 and 1")
     if waveform not in {"saw", "square", "triangle"}:
         raise ValueError(
             f"Unsupported waveform: {waveform!r}. Use 'saw', 'square', or 'triangle'."
+        )
+    if osc2_waveform not in {"saw", "square", "triangle"}:
+        raise ValueError(
+            "Unsupported osc2_waveform: "
+            f"{osc2_waveform!r}. Use 'saw', 'square', or 'triangle'."
         )
     if filter_mode not in _SUPPORTED_FILTER_MODES:
         raise ValueError(
@@ -100,6 +112,8 @@ def render(
         )
     if filter_drive < 0:
         raise ValueError("filter_drive must be non-negative")
+    if osc2_level < 0:
+        raise ValueError("osc2_level must be non-negative")
 
     n_samples = int(sample_rate * duration)
     if n_samples == 0:
@@ -115,17 +129,23 @@ def render(
     else:
         freq_profile = np.full(n_samples, freq, dtype=np.float64)
 
-    # Phase accumulation in normalized [0, 1) domain
-    phase_inc = freq_profile / sample_rate
-    cumphase = np.cumsum(phase_inc)
-    phase = cumphase % 1.0
-
-    if waveform == "saw":
-        raw_signal = _polyblep_saw(phase, phase_inc)
-    elif waveform == "square":
-        raw_signal = _polyblep_square(phase, phase_inc, cumphase, pulse_width)
-    else:
-        raw_signal = _polyblep_triangle(phase, phase_inc, cumphase, sample_rate)
+    raw_signal = _render_oscillator(
+        waveform=waveform,
+        pulse_width=pulse_width,
+        freq_profile=freq_profile,
+        sample_rate=sample_rate,
+    )
+    if osc2_level > 0.0:
+        osc2_ratio = float(2.0 ** (osc2_semitones / 12.0)) * float(
+            2.0 ** (osc2_detune_cents / 1200.0)
+        )
+        osc2_signal = _render_oscillator(
+            waveform=osc2_waveform,
+            pulse_width=osc2_pulse_width,
+            freq_profile=freq_profile * osc2_ratio,
+            sample_rate=sample_rate,
+        )
+        raw_signal = (raw_signal + osc2_level * osc2_signal) / (1.0 + osc2_level)
 
     # Cutoff envelope (identical pattern to filtered_stack)
     t = np.linspace(0.0, duration, n_samples, endpoint=False)
@@ -151,6 +171,25 @@ def render(
         filtered /= peak
 
     return amp * filtered
+
+
+def _render_oscillator(
+    *,
+    waveform: str,
+    pulse_width: float,
+    freq_profile: np.ndarray,
+    sample_rate: int,
+) -> np.ndarray:
+    """Render one PolyBLEP oscillator from a frequency trajectory."""
+    phase_inc = freq_profile / sample_rate
+    cumphase = np.cumsum(phase_inc)
+    phase = cumphase % 1.0
+
+    if waveform == "saw":
+        return _polyblep_saw(phase, phase_inc)
+    if waveform == "square":
+        return _polyblep_square(phase, phase_inc, cumphase, pulse_width)
+    return _polyblep_triangle(phase, phase_inc, cumphase, sample_rate)
 
 
 def _polyblep_saw(phase: np.ndarray, phase_inc: np.ndarray) -> np.ndarray:

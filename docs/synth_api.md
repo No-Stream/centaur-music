@@ -230,16 +230,27 @@ Current v1 targets:
 - supported synth params for note-start modulation:
   `cutoff_hz`, `resonance`, `brightness_tilt`, `filter_env_amount`,
   `mod_index`, `attack`, `decay`, `sustain_level`, and `release`
+- control-surface lanes for score-time mixing and spatial motion:
+  `pan`, `mix_db`, `pre_fx_gain_db`, `send_db`, `return_db`, `mix`, `wet`,
+  and `wet_level`
 
 Attachment points:
 
 - `Voice.automation` for score-time lanes
 - `NoteEvent.automation` for note-local lanes
+- `VoiceSend.automation` for send level rides
+- `SendBusSpec.automation` for aux return level and pan rides
+- `EffectSpec.automation` for score-time wet/mix rides on insert, send, or
+  master effects
 
 Important v1 limits:
 
 - `pitch_ratio` automation is per-sample
 - synth-param automation is sampled at note start
+- control-surface automation is score-time and applied after note rendering at
+  the relevant voice/effect/send stage
+- effect automation currently targets wetness controls (`mix`, `wet`,
+  `wet_level`), not arbitrary effect internals
 - `pitch_motion` and `pitch_ratio` automation cannot be combined on the same note
 
 ## Engine Selection
@@ -1298,6 +1309,19 @@ Parameters:
   `pulse_width` is ignored for triangle.
 - `pulse_width: float`
   Pulse width used when `waveform="square"`. `0.5` is a symmetric square wave.
+- `osc2_level: float`
+  Level of the optional second oscillator. `0.0` disables it; higher values blend
+  in a second PolyBLEP oscillator before the filter, normalized against oscillator 1.
+- `osc2_waveform: str`
+  Optional waveform for oscillator 2. Supported values: `saw`, `square`,
+  `triangle`. Defaults to the main `waveform`.
+- `osc2_pulse_width: float`
+  Pulse width for oscillator 2 when `osc2_waveform="square"`. Defaults to the main
+  `pulse_width`.
+- `osc2_semitones: float`
+  Coarse oscillator-2 tuning offset in semitones. Default `0.0`.
+- `osc2_detune_cents: float`
+  Fine oscillator-2 tuning offset in cents. Default `0.0`.
 - `cutoff_hz: float`
   Base low-pass cutoff in Hertz. Default `3000.0`.
 - `filter_mode: str`
@@ -1337,8 +1361,11 @@ Validation:
 - `reference_freq_hz > 0`
 - `filter_env_decay > 0`
 - `filter_drive >= 0`
+- `osc2_level >= 0`
 - `0 < pulse_width < 1`
+- `0 < osc2_pulse_width < 1`
 - `waveform in {"saw", "square", "triangle"}`
+- `osc2_waveform in {"saw", "square", "triangle"}`
 - `filter_mode in {"lowpass", "bandpass", "highpass", "notch"}`
 
 Notes:
@@ -1350,6 +1377,8 @@ Notes:
   previous segmented approximation.
 - The output is peak-normalized before the final amplitude scale, matching the
   behavior of the `fm` engine.
+- For stacked subtractive sounds, use `osc2_level` plus small `osc2_detune_cents`
+  values for width, or `osc2_semitones=-12` for a built-in sub layer.
 - Supports `freq_trajectory` for pitch motion.
 
 Artifact-risk guidance:

@@ -45,6 +45,32 @@ class TestPolyBLEPSmoke:
 
 
 class TestPolyBLEPSpectral:
+    def test_second_oscillator_materially_changes_the_sound(self) -> None:
+        base = render(
+            freq=110.0,
+            duration=0.4,
+            amp=0.8,
+            sample_rate=44100,
+            params={"waveform": "saw", "cutoff_hz": 1_200.0},
+        )
+        layered = render(
+            freq=110.0,
+            duration=0.4,
+            amp=0.8,
+            sample_rate=44100,
+            params={
+                "waveform": "saw",
+                "cutoff_hz": 1_200.0,
+                "osc2_level": 0.8,
+                "osc2_waveform": "square",
+                "osc2_detune_cents": 7.0,
+            },
+        )
+
+        assert np.isfinite(layered).all()
+        assert not np.allclose(base, layered)
+        assert np.linalg.norm(base - layered) > 1.0
+
     def test_cutoff_affects_spectrum(self) -> None:
         dur = 0.5
         sr = 44100
@@ -233,6 +259,16 @@ class TestPolyBLEPDeterminism:
         a = render(**kwargs)  # type: ignore[arg-type]
         b = render(**kwargs)  # type: ignore[arg-type]
         assert np.allclose(a, b)
+
+    def test_second_oscillator_rejects_negative_level(self) -> None:
+        with np.testing.assert_raises(ValueError):
+            render(
+                freq=220.0,
+                duration=0.2,
+                amp=0.6,
+                sample_rate=44100,
+                params={"osc2_level": -0.1},
+            )
 
 
 class TestPolyBLEPRegistry:

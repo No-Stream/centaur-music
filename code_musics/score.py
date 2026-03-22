@@ -12,6 +12,7 @@ import numpy as np
 from code_musics import synth
 from code_musics.automation import (
     AutomationSpec,
+    apply_control_automation,
     apply_synth_automation,
     build_pitch_ratio_trajectory,
     has_pitch_ratio_automation,
@@ -42,6 +43,7 @@ class EffectSpec:
 
     kind: str
     params: dict[str, Any] = field(default_factory=dict)
+    automation: list[AutomationSpec] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,7 @@ class VoiceSend:
 
     target: str
     send_db: float = 0.0
+    automation: list[AutomationSpec] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.target:
@@ -66,6 +69,7 @@ class SendBusSpec:
     effects: list[EffectSpec] = field(default_factory=list)
     return_db: float = 0.0
     pan: float = 0.0
+    automation: list[AutomationSpec] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -268,6 +272,8 @@ class Voice:
     sends: list[VoiceSend] = field(default_factory=list)
     normalize_lufs: float | None = -24.0
     normalize_peak_db: float | None = None
+    max_polyphony: int | None = None
+    legato: bool = False
     pan: float = 0.0
     automation: list[AutomationSpec] = field(default_factory=list)
     notes: list[NoteEvent] = field(default_factory=list)
@@ -288,6 +294,26 @@ class ResolvedTimingNote:
     freq_hz: float
     partial: float | None
     label: str | None
+
+
+@dataclass
+class PreparedVoiceNote:
+    """Resolved note render state before voice-level mixing."""
+
+    note_index: int
+    note: NoteEvent
+    synth_params: dict[str, Any]
+    resolved_velocity: float
+    note_freq: float
+    humanized_start: float
+    attack: float
+    decay: float
+    sustain_level: float
+    release: float
+    freq_trajectory: np.ndarray | None
+    effective_hold_duration: float
+    effective_attack: float
+    effective_release: float
 
 
 @dataclass
@@ -334,6 +360,8 @@ class Score:
         sends: list[VoiceSend] | None = None,
         normalize_lufs: float | None = _UNSET,  # type: ignore[assignment]
         normalize_peak_db: float | None = None,
+        max_polyphony: int | None = None,
+        legato: bool = False,
         pan: float = 0.0,
         automation: list[AutomationSpec] | None = None,
     ) -> Voice:
@@ -360,6 +388,8 @@ class Score:
             raise ValueError("normalize_lufs must be finite when provided")
         if normalize_peak_db is not None and not np.isfinite(normalize_peak_db):
             raise ValueError("normalize_peak_db must be finite when provided")
+        if max_polyphony is not None and max_polyphony < 1:
+            raise ValueError("max_polyphony must be >= 1 when provided")
         resolved_sends = list(sends or [])
         self._validate_voice_sends(resolved_sends)
         voice = Voice(
@@ -380,6 +410,8 @@ class Score:
             sends=resolved_sends,
             normalize_lufs=normalize_lufs,
             normalize_peak_db=normalize_peak_db,
+            max_polyphony=max_polyphony,
+            legato=legato,
             pan=pan,
             automation=list(automation or []),
         )
@@ -393,6 +425,7 @@ class Score:
         effects: list[EffectSpec] | None = None,
         return_db: float = 0.0,
         pan: float = 0.0,
+        automation: list[AutomationSpec] | None = None,
     ) -> SendBusSpec:
         """Add or replace a named shared send bus definition."""
         send_bus = SendBusSpec(
@@ -400,6 +433,7 @@ class Score:
             effects=list(effects or []),
             return_db=return_db,
             pan=pan,
+            automation=list(automation or []),
         )
         existing_index = next(
             (index for index, bus in enumerate(self.send_buses) if bus.name == name),
@@ -735,6 +769,79 @@ class Score:
         velocity_multipliers: dict[tuple[str, int], float],
     ) -> np.ndarray:
         voice_signals: list[np.ndarray] = []
+        prepared_notes = self._prepare_voice_notes(
+            voice_name=voice_name,
+            voice=voice,
+            timing_offsets=timing_offsets,
+            velocity_multipliers=velocity_multipliers,
+        )
+        prepared_notes = self._apply_voice_polyphony(
+            prepared_notes=prepared_notes,
+            max_polyphony=voice.max_polyphony,
+            legato=voice.legato,
+        )
+        for prepared_note in prepared_notes:
+            if (
+                prepared_note.effective_hold_duration + prepared_note.effective_release
+                <= 0
+            ):
+                continue
+            note = prepared_note.note
+            note_signal = render_note_signal(
+                freq=prepared_note.note_freq,
+                duration=prepared_note.effective_hold_duration
+                + prepared_note.effective_release,
+                amp=self._resolve_note_amp(
+                    note=note,
+                    resolved_velocity=prepared_note.resolved_velocity,
+                    velocity_db_per_unit=voice.velocity_db_per_unit,
+                ),
+                sample_rate=self.sample_rate,
+                params=prepared_note.synth_params,
+                freq_trajectory=prepared_note.freq_trajectory,
+            )
+            note_signal = synth.adsr(
+                note_signal,
+                attack=prepared_note.effective_attack,
+                decay=prepared_note.decay,
+                sustain_level=prepared_note.sustain_level,
+                release=prepared_note.effective_release,
+                sample_rate=self.sample_rate,
+                hold_duration=prepared_note.effective_hold_duration,
+            )
+            voice_signals.append(
+                synth.at_sample_rate(
+                    note_signal, prepared_note.humanized_start, self.sample_rate
+                )
+            )
+
+        if not voice_signals:
+            return np.zeros(0)
+
+        voice_mix = self._stack_signals(voice_signals)
+        if voice.normalize_lufs is not None:
+            voice_mix = synth.normalize_to_lufs(
+                voice_mix,
+                sample_rate=self.sample_rate,
+                target_lufs=voice.normalize_lufs,
+            )
+        elif voice.normalize_peak_db is not None:
+            peak = float(np.max(np.abs(voice_mix)))
+            if peak > 0.0:
+                voice_mix = voice_mix * (
+                    synth.db_to_amp(voice.normalize_peak_db) / peak
+                )
+        return voice_mix
+
+    def _prepare_voice_notes(
+        self,
+        *,
+        voice_name: str,
+        voice: Voice,
+        timing_offsets: dict[tuple[str, int], float],
+        velocity_multipliers: dict[tuple[str, int], float],
+    ) -> list[PreparedVoiceNote]:
+        prepared_notes: list[PreparedVoiceNote] = []
         for note_index, note in enumerate(voice.notes):
             synth_params = normalize_synth_spec(voice.synth_defaults)
             if note.synth is not None:
@@ -822,52 +929,82 @@ class Score:
                     else:
                         freq_trajectory = held_trajectory
 
-            note_signal = render_note_signal(
-                freq=note_freq,
-                duration=note.duration + release,
-                amp=self._resolve_note_amp(
+            prepared_notes.append(
+                PreparedVoiceNote(
+                    note_index=note_index,
                     note=note,
+                    synth_params=synth_params,
                     resolved_velocity=resolved_velocity,
-                    velocity_db_per_unit=voice.velocity_db_per_unit,
-                ),
-                sample_rate=self.sample_rate,
-                params=synth_params,
-                freq_trajectory=freq_trajectory,
-            )
-            note_signal = synth.adsr(
-                note_signal,
-                attack=attack,
-                decay=decay,
-                sustain_level=sustain_level,
-                release=release,
-                sample_rate=self.sample_rate,
-                hold_duration=note.duration,
-            )
-            voice_signals.append(
-                synth.at_sample_rate(note_signal, humanized_start, self.sample_rate)
-            )
-
-        if not voice_signals:
-            return np.zeros(0)
-
-        voice_mix = self._stack_signals(voice_signals)
-        if voice.normalize_lufs is not None:
-            voice_mix = synth.normalize_to_lufs(
-                voice_mix,
-                sample_rate=self.sample_rate,
-                target_lufs=voice.normalize_lufs,
-            )
-        elif voice.normalize_peak_db is not None:
-            peak = float(np.max(np.abs(voice_mix)))
-            if peak > 0.0:
-                voice_mix = voice_mix * (
-                    synth.db_to_amp(voice.normalize_peak_db) / peak
+                    note_freq=note_freq,
+                    humanized_start=humanized_start,
+                    attack=attack,
+                    decay=decay,
+                    sustain_level=sustain_level,
+                    release=release,
+                    freq_trajectory=freq_trajectory,
+                    effective_hold_duration=note.duration,
+                    effective_attack=attack,
+                    effective_release=release,
                 )
-        if voice.pre_fx_gain_db != 0.0:
-            voice_mix = voice_mix * synth.db_to_amp(voice.pre_fx_gain_db)
-        if voice.pan != 0.0:
-            voice_mix = synth.apply_pan(voice_mix, pan=voice.pan)
-        return voice_mix
+            )
+        return prepared_notes
+
+    def _apply_voice_polyphony(
+        self,
+        *,
+        prepared_notes: list[PreparedVoiceNote],
+        max_polyphony: int | None,
+        legato: bool,
+    ) -> list[PreparedVoiceNote]:
+        if max_polyphony is None:
+            return prepared_notes
+
+        sorted_notes = sorted(
+            prepared_notes,
+            key=lambda prepared_note: (
+                prepared_note.humanized_start,
+                prepared_note.note.start,
+                prepared_note.note_index,
+            ),
+        )
+        active_notes: list[PreparedVoiceNote] = []
+        for prepared_note in sorted_notes:
+            prepared_note.effective_hold_duration = prepared_note.note.duration
+            prepared_note.effective_attack = prepared_note.attack
+            prepared_note.effective_release = prepared_note.release
+            current_start = prepared_note.humanized_start
+            active_notes = [
+                active_note
+                for active_note in active_notes
+                if (
+                    active_note.humanized_start
+                    + active_note.effective_hold_duration
+                    + active_note.effective_release
+                )
+                > current_start
+            ]
+            while len(active_notes) >= max_polyphony:
+                stolen_note = min(
+                    active_notes,
+                    key=lambda active_note: (
+                        active_note.humanized_start,
+                        active_note.note_index,
+                    ),
+                )
+                overlap = (
+                    stolen_note.humanized_start
+                    + stolen_note.effective_hold_duration
+                    + stolen_note.effective_release
+                ) > current_start
+                stolen_note.effective_hold_duration = max(
+                    0.0, current_start - stolen_note.humanized_start
+                )
+                stolen_note.effective_release = 0.0
+                active_notes.remove(stolen_note)
+                if legato and max_polyphony == 1 and overlap:
+                    prepared_note.effective_attack = 0.0
+            active_notes.append(prepared_note)
+        return prepared_notes
 
     def _finalize_voice_output(
         self,
@@ -884,6 +1021,20 @@ class Score:
     ]:
         effect_analysis: list[synth.EffectAnalysisEntry] = []
         processed_voice_mix = np.asarray(voice_mix, dtype=np.float64)
+        signal_times = self._signal_times(processed_voice_mix.shape[-1])
+        processed_voice_mix = self._apply_db_control(
+            processed_voice_mix,
+            base_db=voice.pre_fx_gain_db,
+            automation_specs=voice.automation,
+            target_name="pre_fx_gain_db",
+            signal_times=signal_times,
+        )
+        processed_voice_mix = self._apply_pan_control(
+            processed_voice_mix,
+            base_pan=voice.pan,
+            automation_specs=voice.automation,
+            signal_times=signal_times,
+        )
         if voice.effects and processed_voice_mix.size > 0:
             if collect_effect_analysis:
                 rendered_voice_mix, rendered_effect_analysis = cast(
@@ -893,6 +1044,7 @@ class Score:
                         voice.effects,
                         sidechain_signals=processed_voice_outputs,
                         signal_name=voice_name,
+                        start_time_seconds=self.time_origin_seconds,
                         return_analysis=True,
                     ),
                 )
@@ -906,12 +1058,24 @@ class Score:
                         voice.effects,
                         sidechain_signals=processed_voice_outputs,
                         signal_name=voice_name,
+                        start_time_seconds=self.time_origin_seconds,
                     ),
                 )
-        if voice.mix_db != 0.0:
-            processed_voice_mix = processed_voice_mix * synth.db_to_amp(voice.mix_db)
+        processed_voice_mix = self._apply_db_control(
+            processed_voice_mix,
+            base_db=voice.mix_db,
+            automation_specs=voice.automation,
+            target_name="mix_db",
+            signal_times=signal_times,
+        )
         send_signals = {
-            send.target: processed_voice_mix * synth.db_to_amp(send.send_db)
+            send.target: self._apply_db_control(
+                processed_voice_mix,
+                base_db=send.send_db,
+                automation_specs=send.automation,
+                target_name="send_db",
+                signal_times=signal_times,
+            )
             for send in voice.sends
         }
         return processed_voice_mix, send_signals, effect_analysis
@@ -933,6 +1097,7 @@ class Score:
             if not bus_inputs:
                 continue
             bus_mix = self._stack_signals(bus_inputs)
+            signal_times = self._signal_times(bus_mix.shape[-1])
             effect_analysis: list[synth.EffectAnalysisEntry] = []
             if send_bus.effects:
                 if collect_effect_analysis:
@@ -941,6 +1106,7 @@ class Score:
                         synth.apply_effect_chain(
                             bus_mix,
                             send_bus.effects,
+                            start_time_seconds=self.time_origin_seconds,
                             return_analysis=True,
                         ),
                     )
@@ -949,12 +1115,26 @@ class Score:
                 else:
                     bus_mix = cast(
                         np.ndarray,
-                        synth.apply_effect_chain(bus_mix, send_bus.effects),
+                        synth.apply_effect_chain(
+                            bus_mix,
+                            send_bus.effects,
+                            start_time_seconds=self.time_origin_seconds,
+                        ),
                     )
-            if send_bus.return_db != 0.0:
-                bus_mix = bus_mix * synth.db_to_amp(send_bus.return_db)
-            if send_bus.pan != 0.0:
-                bus_mix = synth.apply_pan(bus_mix, pan=send_bus.pan)
+            bus_mix = self._apply_db_control(
+                bus_mix,
+                base_db=send_bus.return_db,
+                automation_specs=send_bus.automation,
+                target_name="return_db",
+                signal_times=signal_times,
+            )
+            bus_mix = self._apply_pan_control(
+                bus_mix,
+                base_pan=send_bus.pan,
+                automation_specs=send_bus.automation,
+                target_name="pan",
+                signal_times=signal_times,
+            )
             if bus_mix.size > 0:
                 send_returns[send_bus.name] = bus_mix
             if effect_analysis:
@@ -1089,6 +1269,7 @@ class Score:
                     synth.apply_effect_chain(
                         processed_mix,
                         self.master_effects,
+                        start_time_seconds=self.time_origin_seconds,
                         return_analysis=True,
                     ),
                 )
@@ -1101,6 +1282,7 @@ class Score:
                     synth.apply_effect_chain(
                         processed_mix,
                         self.master_effects,
+                        start_time_seconds=self.time_origin_seconds,
                     ),
                 )
 
@@ -1119,6 +1301,57 @@ class Score:
         if note.partial is None:
             raise ValueError("note must provide partial or freq")
         return self.f0 * note.partial
+
+    def _signal_times(self, sample_count: int) -> np.ndarray:
+        return self.time_origin_seconds + (
+            np.arange(sample_count, dtype=np.float64) / self.sample_rate
+        )
+
+    @staticmethod
+    def _apply_db_control(
+        signal: np.ndarray,
+        *,
+        base_db: float,
+        automation_specs: list[AutomationSpec],
+        target_name: str,
+        signal_times: np.ndarray,
+    ) -> np.ndarray:
+        if signal.size == 0:
+            return np.asarray(signal, dtype=np.float64)
+        db_curve = apply_control_automation(
+            base_value=base_db,
+            specs=automation_specs,
+            target_name=target_name,
+            times=signal_times,
+        )
+        gain_curve = np.power(10.0, db_curve / 20.0)
+        if signal.ndim == 1:
+            return np.asarray(signal * gain_curve, dtype=np.float64)
+        return np.asarray(signal * gain_curve[np.newaxis, :], dtype=np.float64)
+
+    @staticmethod
+    def _apply_pan_control(
+        signal: np.ndarray,
+        *,
+        base_pan: float,
+        automation_specs: list[AutomationSpec],
+        target_name: str = "pan",
+        signal_times: np.ndarray,
+    ) -> np.ndarray:
+        if signal.size == 0:
+            return np.asarray(signal, dtype=np.float64)
+        if base_pan == 0.0 and not any(
+            spec.target.kind == "control" and spec.target.name == target_name
+            for spec in automation_specs
+        ):
+            return np.asarray(signal, dtype=np.float64)
+        pan_curve = apply_control_automation(
+            base_value=base_pan,
+            specs=automation_specs,
+            target_name=target_name,
+            times=signal_times,
+        )
+        return synth.apply_pan_automation(signal, pan_curve=pan_curve)
 
     def _build_velocity_multiplier_map(self) -> dict[tuple[str, int], float]:
         velocity_multipliers: dict[tuple[str, int], float] = {}

@@ -15,6 +15,8 @@ import pedalboard
 from scipy.io import wavfile
 from scipy.signal import butter, resample_poly, sosfilt, tf2sos
 
+from code_musics.automation import apply_control_automation
+
 logger: logging.Logger = logging.getLogger(__name__)
 
 _PEDALBOARD_CLS: Any = getattr(pedalboard, "Pedalboard")  # noqa: B009
@@ -1882,6 +1884,31 @@ def apply_pan(
     )
 
 
+def apply_pan_automation(
+    signal: np.ndarray,
+    *,
+    pan_curve: np.ndarray,
+) -> np.ndarray:
+    """Apply equal-power panning with a per-sample pan curve."""
+    resolved_pan_curve = np.asarray(pan_curve, dtype=np.float64)
+    if resolved_pan_curve.ndim != 1:
+        raise ValueError("pan_curve must be one-dimensional")
+    if np.any((resolved_pan_curve < -1.0) | (resolved_pan_curve > 1.0)):
+        raise ValueError("pan values must be between -1 and 1")
+
+    stereo_signal = _ensure_stereo(signal)
+    if stereo_signal.shape[-1] != resolved_pan_curve.size:
+        raise ValueError("pan_curve length must match the signal length")
+
+    mono_reference = stereo_signal.mean(axis=0)
+    pan_angles = (resolved_pan_curve + 1.0) * (np.pi / 4.0)
+    left_gain = np.cos(pan_angles)
+    right_gain = np.sin(pan_angles)
+    return np.stack([mono_reference * left_gain, mono_reference * right_gain]).astype(
+        np.float64
+    )
+
+
 BRICASTI_IR_DIR = Path(
     "/mnt/c/Music Production/Convolution Impulses"
     "/Samplicity - Bricasti IRs version 2023-10"
@@ -3339,12 +3366,95 @@ def apply_saturation(
     )
 
 
+_SUPPORTED_EFFECT_AMOUNT_AUTOMATION_TARGETS = {"mix", "wet", "wet_level"}
+
+
+def _blend_signals(
+    dry_signal: np.ndarray,
+    wet_signal: np.ndarray,
+    amount_curve: np.ndarray,
+) -> np.ndarray:
+    resolved_amount_curve = np.asarray(amount_curve, dtype=np.float64)
+    if resolved_amount_curve.ndim != 1:
+        raise ValueError("amount_curve must be one-dimensional")
+    dry = np.asarray(dry_signal, dtype=np.float64)
+    wet = np.asarray(wet_signal, dtype=np.float64)
+    if dry.shape[-1] != wet.shape[-1]:
+        raise ValueError("dry and wet signals must share the same length")
+    if dry.ndim != wet.ndim:
+        dry = _ensure_stereo(dry)
+        wet = _ensure_stereo(wet)
+    if dry.shape != wet.shape:
+        raise ValueError("dry and wet signals must share the same shape")
+    if dry.shape[-1] != resolved_amount_curve.size:
+        raise ValueError("amount_curve length must match the signal length")
+    if np.any((resolved_amount_curve < 0.0) | (resolved_amount_curve > 1.0)):
+        raise ValueError("effect amount automation must stay within [0, 1]")
+
+    if dry.ndim == 1:
+        return np.asarray(
+            ((1.0 - resolved_amount_curve) * dry) + (resolved_amount_curve * wet),
+            dtype=np.float64,
+        )
+    return np.asarray(
+        ((1.0 - resolved_amount_curve[np.newaxis, :]) * dry)
+        + (resolved_amount_curve[np.newaxis, :] * wet),
+        dtype=np.float64,
+    )
+
+
+def _resolve_effect_amount_automation(
+    *,
+    effect: Any,
+    params: dict[str, Any],
+    signal_length: int,
+    start_time_seconds: float,
+) -> tuple[str, np.ndarray] | None:
+    automation_specs = list(getattr(effect, "automation", []))
+    targeted_specs = [
+        spec
+        for spec in automation_specs
+        if spec.target.kind == "control"
+        and spec.target.name in _SUPPORTED_EFFECT_AMOUNT_AUTOMATION_TARGETS
+    ]
+    if not targeted_specs:
+        return None
+
+    target_names = {spec.target.name for spec in targeted_specs}
+    if len(target_names) != 1:
+        raise ValueError(
+            "effect automation must target exactly one of mix, wet, wet_level"
+        )
+
+    target_name = next(iter(target_names))
+    if target_name not in params:
+        raise ValueError(
+            f"effect automation target {target_name!r} requires that parameter on the effect"
+        )
+
+    signal_times = start_time_seconds + (
+        np.arange(signal_length, dtype=np.float64) / SAMPLE_RATE
+    )
+    amount_curve = apply_control_automation(
+        base_value=float(params[target_name]),
+        specs=targeted_specs,
+        target_name=target_name,
+        times=signal_times,
+    )
+    if np.any((amount_curve < 0.0) | (amount_curve > 1.0)):
+        raise ValueError(
+            f"effect automation target {target_name!r} must stay within [0, 1]"
+        )
+    return target_name, amount_curve
+
+
 def apply_effect_chain(
     signal: np.ndarray,
     effects: list[Any],
     *,
     sidechain_signals: Mapping[str, np.ndarray] | None = None,
     signal_name: str | None = None,
+    start_time_seconds: float = 0.0,
     return_analysis: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, list[EffectAnalysisEntry]]:
     """Apply a declarative effect chain to mono or stereo audio."""
@@ -3355,21 +3465,62 @@ def apply_effect_chain(
         params = dict(effect.params)
         if effect.kind in {"chorus", "compressor", "saturation"}:
             params = _resolve_effect_params(effect.kind, params)
+        effect_amount_automation = _resolve_effect_amount_automation(
+            effect=effect,
+            params=params,
+            signal_length=effect_input.shape[-1],
+            start_time_seconds=start_time_seconds,
+        )
         native_metrics: dict[str, float | int | str] | None = None
         if effect.kind == "gate":
             processed = cast(np.ndarray, apply_gate(processed, **params))
         elif effect.kind == "delay":
-            processed = apply_delay(processed, **params)
+            if effect_amount_automation is None:
+                processed = apply_delay(processed, **params)
+            else:
+                target_name, amount_curve = effect_amount_automation
+                wet_params = dict(params)
+                wet_params[target_name] = 1.0
+                wet_signal = apply_delay(processed, **wet_params)
+                processed = _blend_signals(effect_input, wet_signal, amount_curve)
         elif effect.kind == "reverb":
-            processed = apply_reverb(processed, **params)
+            if effect_amount_automation is None:
+                processed = apply_reverb(processed, **params)
+            else:
+                target_name, amount_curve = effect_amount_automation
+                wet_params = dict(params)
+                wet_params[target_name] = 1.0
+                wet_signal = apply_reverb(processed, **wet_params)
+                processed = _blend_signals(effect_input, wet_signal, amount_curve)
         elif effect.kind == "chow_tape":
-            processed = apply_chow_tape(processed, **params)
+            if effect_amount_automation is None:
+                processed = apply_chow_tape(processed, **params)
+            else:
+                target_name, amount_curve = effect_amount_automation
+                wet_params = dict(params)
+                wet_params[target_name] = 1.0
+                wet_signal = apply_chow_tape(processed, **wet_params)
+                processed = _blend_signals(effect_input, wet_signal, amount_curve)
         elif effect.kind == "bricasti":
-            processed = apply_bricasti(processed, **params)
+            if effect_amount_automation is None:
+                processed = apply_bricasti(processed, **params)
+            else:
+                target_name, amount_curve = effect_amount_automation
+                wet_params = dict(params)
+                wet_params[target_name] = 1.0
+                wet_signal = apply_bricasti(processed, **wet_params)
+                processed = _blend_signals(effect_input, wet_signal, amount_curve)
         elif effect.kind == "chorus":
-            processed = apply_chorus(processed, **params)
+            if effect_amount_automation is None:
+                processed = apply_chorus(processed, **params)
+            else:
+                target_name, amount_curve = effect_amount_automation
+                wet_params = dict(params)
+                wet_params[target_name] = 1.0
+                wet_signal = apply_chorus(processed, **wet_params)
+                processed = _blend_signals(effect_input, wet_signal, amount_curve)
         elif effect.kind == "saturation":
-            if return_analysis:
+            if effect_amount_automation is None and return_analysis:
                 processed_signal, saturation_metrics = cast(
                     tuple[np.ndarray, dict[str, float | int | str]],
                     apply_saturation(
@@ -3380,8 +3531,27 @@ def apply_effect_chain(
                 )
                 processed = processed_signal
                 native_metrics = saturation_metrics
-            else:
+            elif effect_amount_automation is None:
                 processed = cast(np.ndarray, apply_saturation(processed, **params))
+            else:
+                target_name, amount_curve = effect_amount_automation
+                wet_params = dict(params)
+                wet_params[target_name] = 1.0
+                if return_analysis:
+                    wet_signal, saturation_metrics = cast(
+                        tuple[np.ndarray, dict[str, float | int | str]],
+                        apply_saturation(
+                            processed,
+                            **wet_params,
+                            return_analysis=True,
+                        ),
+                    )
+                    native_metrics = saturation_metrics
+                else:
+                    wet_signal = cast(
+                        np.ndarray, apply_saturation(processed, **wet_params)
+                    )
+                processed = _blend_signals(effect_input, wet_signal, amount_curve)
         elif effect.kind == "eq":
             processed = apply_eq(processed, **params)
         elif effect.kind == "compressor":
@@ -3412,7 +3582,7 @@ def apply_effect_chain(
                         sidechain_signals[normalized_sidechain_source],
                         processed.shape[-1],
                     )
-            if return_analysis:
+            if effect_amount_automation is None and return_analysis:
                 processed_signal, compressor_metrics = cast(
                     tuple[np.ndarray, dict[str, float | int | str]],
                     apply_compressor(
@@ -3424,7 +3594,7 @@ def apply_effect_chain(
                 )
                 processed = processed_signal
                 native_metrics = compressor_metrics
-            else:
+            elif effect_amount_automation is None:
                 processed = cast(
                     np.ndarray,
                     apply_compressor(
@@ -3433,10 +3603,49 @@ def apply_effect_chain(
                         **params,
                     ),
                 )
+            else:
+                target_name, amount_curve = effect_amount_automation
+                wet_params = dict(params)
+                wet_params[target_name] = 1.0
+                if return_analysis:
+                    wet_signal, compressor_metrics = cast(
+                        tuple[np.ndarray, dict[str, float | int | str]],
+                        apply_compressor(
+                            processed,
+                            sidechain_signal=sidechain_signal,
+                            **wet_params,
+                            return_analysis=True,
+                        ),
+                    )
+                    native_metrics = compressor_metrics
+                else:
+                    wet_signal = cast(
+                        np.ndarray,
+                        apply_compressor(
+                            processed,
+                            sidechain_signal=sidechain_signal,
+                            **wet_params,
+                        ),
+                    )
+                processed = _blend_signals(effect_input, wet_signal, amount_curve)
         elif effect.kind == "tal_chorus_lx":
-            processed = apply_tal_chorus_lx(processed, **params)
+            if effect_amount_automation is None:
+                processed = apply_tal_chorus_lx(processed, **params)
+            else:
+                target_name, amount_curve = effect_amount_automation
+                wet_params = dict(params)
+                wet_params[target_name] = 1.0
+                wet_signal = apply_tal_chorus_lx(processed, **wet_params)
+                processed = _blend_signals(effect_input, wet_signal, amount_curve)
         elif effect.kind == "tal_reverb2":
-            processed = apply_tal_reverb2(processed, **params)
+            if effect_amount_automation is None:
+                processed = apply_tal_reverb2(processed, **params)
+            else:
+                target_name, amount_curve = effect_amount_automation
+                wet_params = dict(params)
+                wet_params[target_name] = 1.0
+                wet_signal = apply_tal_reverb2(processed, **wet_params)
+                processed = _blend_signals(effect_input, wet_signal, amount_curve)
         elif effect.kind == "dragonfly":
             processed = apply_dragonfly(processed, **params)
         elif effect.kind == "plugin":

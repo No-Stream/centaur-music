@@ -7,7 +7,7 @@ from typing import Literal
 
 import numpy as np
 
-AutomationTargetKind = Literal["synth", "pitch_ratio"]
+AutomationTargetKind = Literal["synth", "pitch_ratio", "control"]
 AutomationMode = Literal["replace", "add", "multiply"]
 AutomationShape = Literal["hold", "linear", "exp", "sine_lfo"]
 
@@ -22,6 +22,17 @@ _SUPPORTED_SYNTH_AUTOMATION_PARAMS = {
     "release",
     "resonance",
     "sustain_level",
+}
+
+_SUPPORTED_CONTROL_AUTOMATION_PARAMS = {
+    "mix",
+    "mix_db",
+    "pan",
+    "pre_fx_gain_db",
+    "return_db",
+    "send_db",
+    "wet",
+    "wet_level",
 }
 
 
@@ -39,6 +50,11 @@ class AutomationTarget:
             )
         if self.kind == "synth" and self.name not in _SUPPORTED_SYNTH_AUTOMATION_PARAMS:
             raise ValueError(f"Unsupported synth automation target: {self.name!r}")
+        if (
+            self.kind == "control"
+            and self.name not in _SUPPORTED_CONTROL_AUTOMATION_PARAMS
+        ):
+            raise ValueError(f"Unsupported control automation target: {self.name!r}")
 
 
 @dataclass(frozen=True)
@@ -249,6 +265,32 @@ def apply_synth_automation(
 def has_pitch_ratio_automation(specs: list[AutomationSpec]) -> bool:
     """Return whether any lane targets pitch ratio."""
     return any(spec.target.kind == "pitch_ratio" for spec in specs)
+
+
+def apply_control_automation(
+    *,
+    base_value: float,
+    specs: list[AutomationSpec],
+    target_name: str,
+    times: np.ndarray,
+) -> np.ndarray:
+    """Return a per-sample control curve for one control target."""
+    resolved_times = np.asarray(times, dtype=np.float64)
+    if resolved_times.ndim != 1:
+        raise ValueError("times must be a one-dimensional array")
+
+    values = np.full(resolved_times.shape, float(base_value), dtype=np.float64)
+    for spec in specs:
+        if spec.target.kind != "control" or spec.target.name != target_name:
+            continue
+        values = np.asarray(
+            [
+                spec.apply_to_base(base_value=float(current), time=float(time))
+                for current, time in zip(values, resolved_times, strict=True)
+            ],
+            dtype=np.float64,
+        )
+    return values
 
 
 def _segment_contains_time(segment: AutomationSegment, time: float) -> bool:

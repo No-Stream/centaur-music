@@ -200,6 +200,15 @@ def test_automation_modes_apply_expected_values() -> None:
     assert multiply.apply_to_base(base_value=400.0, time=0.5) == pytest.approx(600.0)
 
 
+def test_control_automation_target_validation() -> None:
+    target = AutomationTarget(kind="control", name="send_db")
+
+    assert target.name == "send_db"
+
+    with pytest.raises(ValueError, match="Unsupported control automation target"):
+        AutomationTarget(kind="control", name="feedback")
+
+
 def test_render_overlapping_voices_returns_audio() -> None:
     score = Score(f0=55.0)
     score.add_note("a", start=0.0, duration=1.0, partial=4, amp=0.3)
@@ -211,6 +220,72 @@ def test_render_overlapping_voices_returns_audio() -> None:
     assert audio.ndim == 1
     assert len(audio) == int(1.8 * score.sample_rate)
     assert np.max(np.abs(audio)) > 0
+
+
+def test_voice_max_polyphony_one_truncates_previous_note() -> None:
+    strict_mono = Score(f0=55.0, auto_master_gain_stage=False)
+    strict_mono.add_voice(
+        "bass",
+        synth_defaults={"engine": "polyblep", "waveform": "saw", "release": 0.12},
+        normalize_lufs=None,
+        max_polyphony=1,
+    )
+    strict_mono.add_note("bass", start=0.0, duration=0.6, freq=55.0, amp=0.2)
+    strict_mono.add_note("bass", start=0.3, duration=0.4, freq=82.5, amp=0.2)
+
+    manually_truncated = Score(f0=55.0, auto_master_gain_stage=False)
+    manually_truncated.add_voice(
+        "bass",
+        synth_defaults={"engine": "polyblep", "waveform": "saw", "release": 0.12},
+        normalize_lufs=None,
+    )
+    manually_truncated.add_note(
+        "bass",
+        start=0.0,
+        duration=0.3,
+        freq=55.0,
+        amp=0.2,
+        synth={"release": 0.0},
+    )
+    manually_truncated.add_note("bass", start=0.3, duration=0.4, freq=82.5, amp=0.2)
+
+    assert np.allclose(strict_mono.render(), manually_truncated.render(), atol=1e-8)
+
+
+def test_voice_legato_skips_attack_retrigger_when_polyphony_is_one() -> None:
+    retriggered = Score(f0=55.0, auto_master_gain_stage=False)
+    retriggered.add_voice(
+        "bass",
+        synth_defaults={"engine": "polyblep", "waveform": "saw", "attack": 0.05},
+        normalize_lufs=None,
+        max_polyphony=1,
+        legato=False,
+    )
+    retriggered.add_note("bass", start=0.0, duration=0.6, freq=55.0, amp=0.2)
+    retriggered.add_note("bass", start=0.3, duration=0.4, freq=82.5, amp=0.2)
+
+    legato = Score(f0=55.0, auto_master_gain_stage=False)
+    legato.add_voice(
+        "bass",
+        synth_defaults={"engine": "polyblep", "waveform": "saw", "attack": 0.05},
+        normalize_lufs=None,
+        max_polyphony=1,
+        legato=True,
+    )
+    legato.add_note("bass", start=0.0, duration=0.6, freq=55.0, amp=0.2)
+    legato.add_note("bass", start=0.3, duration=0.4, freq=82.5, amp=0.2)
+
+    retriggered_audio = retriggered.render()
+    legato_audio = legato.render()
+    onset_sample = int(0.3 * retriggered.sample_rate)
+    window_end = onset_sample + int(0.02 * retriggered.sample_rate)
+    retriggered_window = retriggered_audio[onset_sample:window_end]
+    legato_window = legato_audio[onset_sample:window_end]
+
+    assert not np.allclose(retriggered_audio, legato_audio)
+    assert np.sqrt(np.mean(np.square(legato_window))) > np.sqrt(
+        np.mean(np.square(retriggered_window))
+    )
 
 
 def test_score_send_bus_adds_shared_return_to_mix() -> None:
@@ -861,6 +936,39 @@ def test_voice_mix_db_applies_after_voice_effects() -> None:
     assert lowered_peak == pytest.approx(base_peak * synth.db_to_amp(-6.0), rel=5e-2)
 
 
+def test_voice_pan_automation_moves_stereo_image_over_time() -> None:
+    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score.add_voice(
+        "lead",
+        normalize_lufs=None,
+        automation=[
+            AutomationSpec(
+                target=AutomationTarget(kind="control", name="pan"),
+                segments=(
+                    AutomationSegment(
+                        start=0.0,
+                        end=1.0,
+                        shape="linear",
+                        start_value=-1.0,
+                        end_value=1.0,
+                    ),
+                ),
+            )
+        ],
+    )
+    score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.2)
+
+    rendered = score.render_stems()["lead"]
+    first_window = rendered[:, : int(0.2 * score.sample_rate)]
+    last_window = rendered[
+        :, int(0.8 * score.sample_rate) : int(1.0 * score.sample_rate)
+    ]
+
+    assert rendered.ndim == 2
+    assert np.max(np.abs(first_window[0])) > np.max(np.abs(first_window[1])) * 2.0
+    assert np.max(np.abs(last_window[1])) > np.max(np.abs(last_window[0])) * 2.0
+
+
 def test_voice_send_is_post_fader() -> None:
     base_score = Score(f0=55.0, auto_master_gain_stage=False)
     base_score.add_send_bus("room")
@@ -911,6 +1019,142 @@ def test_voice_send_uses_post_insert_signal() -> None:
     boosted_peak = np.max(np.abs(boosted_score.render()))
 
     assert boosted_peak == pytest.approx(base_peak * synth.db_to_amp(6.0), rel=5e-2)
+
+
+def test_voice_send_db_automation_changes_send_return_level_over_time() -> None:
+    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score.add_send_bus("room")
+    score.add_voice(
+        "lead",
+        normalize_lufs=None,
+        sends=[
+            VoiceSend(
+                "room",
+                send_db=-30.0,
+                automation=[
+                    AutomationSpec(
+                        target=AutomationTarget(kind="control", name="send_db"),
+                        segments=(
+                            AutomationSegment(
+                                start=0.0,
+                                end=1.0,
+                                shape="linear",
+                                start_value=-30.0,
+                                end_value=0.0,
+                            ),
+                        ),
+                    )
+                ],
+            )
+        ],
+    )
+    score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.2)
+
+    full_mix = score.render()
+    dry_stem = score.render_stems()["lead"]
+    send_return = full_mix - dry_stem
+
+    early_peak = np.max(np.abs(send_return[: int(0.2 * score.sample_rate)]))
+    late_peak = np.max(
+        np.abs(send_return[int(0.8 * score.sample_rate) : int(1.0 * score.sample_rate)])
+    )
+
+    assert late_peak > early_peak * 6.0
+
+
+def test_send_bus_pan_automation_moves_return_image_over_time() -> None:
+    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score.add_send_bus(
+        "room",
+        pan=0.0,
+        automation=[
+            AutomationSpec(
+                target=AutomationTarget(kind="control", name="pan"),
+                segments=(
+                    AutomationSegment(
+                        start=0.0,
+                        end=1.0,
+                        shape="linear",
+                        start_value=-1.0,
+                        end_value=1.0,
+                    ),
+                ),
+            )
+        ],
+    )
+    score.add_voice("lead", normalize_lufs=None, sends=[VoiceSend("room", send_db=0.0)])
+    score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.2)
+
+    full_mix = score.render()
+    dry_stem = score.render_stems()["lead"]
+    send_return = full_mix - np.stack([dry_stem, dry_stem])
+    first_window = send_return[:, : int(0.2 * score.sample_rate)]
+    last_window = send_return[
+        :, int(0.8 * score.sample_rate) : int(1.0 * score.sample_rate)
+    ]
+
+    assert send_return.ndim == 2
+    assert np.max(np.abs(first_window[0])) > np.max(np.abs(first_window[1])) * 2.0
+    assert np.max(np.abs(last_window[1])) > np.max(np.abs(last_window[0])) * 2.0
+
+
+def test_effect_mix_automation_changes_insert_wetness_over_time() -> None:
+    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score.add_voice(
+        "lead",
+        normalize_lufs=None,
+        effects=[
+            EffectSpec(
+                "chorus",
+                {"preset": "juno_subtle", "mix": 0.0},
+                automation=[
+                    AutomationSpec(
+                        target=AutomationTarget(kind="control", name="mix"),
+                        segments=(
+                            AutomationSegment(
+                                start=0.0,
+                                end=1.0,
+                                shape="linear",
+                                start_value=0.0,
+                                end_value=1.0,
+                            ),
+                        ),
+                    )
+                ],
+            )
+        ],
+    )
+    score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.2)
+
+    dry_reference = Score(f0=55.0, auto_master_gain_stage=False)
+    dry_reference.add_voice(
+        "lead",
+        normalize_lufs=None,
+        effects=[EffectSpec("chorus", {"preset": "juno_subtle", "mix": 0.0})],
+    )
+    dry_reference.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.2)
+
+    processed = score.render_stems()["lead"]
+    dry = dry_reference.render_stems()["lead"]
+    early_difference = np.max(
+        np.abs(
+            processed[:, : int(0.2 * score.sample_rate)]
+            - dry[:, : int(0.2 * score.sample_rate)]
+        )
+    )
+    late_difference = np.max(
+        np.abs(
+            processed[:, int(0.8 * score.sample_rate) : int(1.0 * score.sample_rate)]
+            - dry[
+                :,
+                int(0.8 * dry_reference.sample_rate) : int(
+                    1.0 * dry_reference.sample_rate
+                ),
+            ]
+        )
+    )
+
+    assert late_difference > early_difference * 3.0
 
 
 def test_render_stems_excludes_send_returns() -> None:

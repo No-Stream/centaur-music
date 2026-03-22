@@ -63,6 +63,15 @@ Most valuable next helpers:
 - overlap, beating, density, and register summaries that better flag when a
   texture has become too static, too crowded, or too continuously drony
 
+### Creative composition helpers
+- riemann
+- random notes in a scale
+- turing machines
+- probability gates + add proba into composition helpers as a first-class citizen
+- euclidean rytms + synths (not just rhythms)
+- probability dists (well PMFs) over notes in a scale
+- markov processes / markov chains - with and without memory
+
 ### Additive Synthesis Specifically
   Additive lets us not assume traditional harmonic structure. 
   e.g. we can have harmonics of just intervals, not e.g. simple sawtooth harmonics

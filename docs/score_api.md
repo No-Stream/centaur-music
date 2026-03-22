@@ -39,12 +39,19 @@ Fields:
 
 - `kind: str`
 - `params: dict[str, Any] = {}`
+- `automation: list[AutomationSpec] = []`
 
 Use it in:
 
 - `Voice.effects`
 - `SendBusSpec.effects`
 - `Score.master_effects`
+
+Practical note:
+
+- phase-1 effect automation is for score-time wetness control on `mix`, `wet`,
+  or `wet_level`; it does not yet automate arbitrary effect internals such as
+  delay feedback or compressor threshold
 
 Example:
 
@@ -237,6 +244,8 @@ Fields:
 - `sends`
 - `normalize_lufs`
 - `normalize_peak_db`
+- `max_polyphony`
+- `legato`
 - `pan`
 - `automation`
 - `notes`
@@ -249,6 +258,7 @@ Important behavior:
 - `pre_fx_gain_db` and `mix_db` must be finite when provided
 - `normalize_lufs` defaults to `-24.0`; set to `None` only as a last resort (prefer `normalize_peak_db` for percussive voices)
 - `normalize_peak_db` defaults to `None`; mutually exclusive with `normalize_lufs`
+- `max_polyphony` defaults to `None` (no cap); when provided it must be `>= 1`
 
 Practical interpretation:
 
@@ -264,8 +274,12 @@ Practical interpretation:
 - `normalize_lufs` applies an integrated-LUFS stem gain trim before `pre_fx_gain_db`, pan, voice effects, and `mix_db`; the default `-24.0` is the right choice for all tonal, melodic, and sustained voices
 - `normalize_peak_db` is the alternative for percussive/transient voices (kicks, toms, noise hits): it normalizes the voice to a target peak level before effects, making compressor thresholds and effect drive predictable regardless of BPM or individual note `amp_db` values — use `-6.0` as the standard target when pairing with the `kick_punch` or `kick_glue` compressor presets
 - `normalize_lufs` and `normalize_peak_db` are mutually exclusive; raise if both are set
+- `max_polyphony=1` gives strict mono note allocation for the voice by truncating any currently sounding note when a new note claims the last slot
+- `legato=True` only matters when `max_polyphony=1`: overlapping note transitions skip the new note's attack retrigger, giving a simple mono-legato glide behavior without continuous oscillator state carryover
 - `pan` places the rendered voice in stereo
 - `automation` adds explicit score-time parameter lanes beyond humanization
+- in phase 1, `Voice.automation` can target synth params, `pitch_ratio`, and
+  control surfaces such as `pan`, `pre_fx_gain_db`, and `mix_db`
 
 ## `VoiceSend`
 
@@ -275,6 +289,7 @@ Fields:
 
 - `target: str`
 - `send_db: float = 0.0`
+- `automation: list[AutomationSpec] = []`
 
 Behavior:
 
@@ -283,6 +298,7 @@ Behavior:
 - sends are post-fader in v1, so they follow the voice's `mix_db`
 - sends tap the voice after normalization, `pre_fx_gain_db`, pan, and `effects`
 - in normal mixing, treat `send_db` plus the voice's post-fader level as the main reverb/delay balance controls
+- `automation` can ride `send_db` over score time
 
 ## `SendBusSpec`
 
@@ -294,6 +310,7 @@ Fields:
 - `effects: list[EffectSpec] = []`
 - `return_db: float = 0.0`
 - `pan: float = 0.0`
+- `automation: list[AutomationSpec] = []`
 
 Behavior:
 
@@ -304,6 +321,7 @@ Behavior:
 - prefer leaving `return_db` at `0.0` in normal use so the wet level is determined by the post-fader source and each voice's `send_db`
 - treat `return_db` as an uncommon escape hatch for global aux-return trim, not the primary way to balance how audible a send effect is
 - if you heavily attenuate both `send_db` and `return_db`, the shared return can become effectively inaudible and harder to reason about
+- `automation` can ride `return_db` and `pan` over score time
 
 ## `Score`
 
@@ -341,6 +359,8 @@ Parameters:
 - `sends`
 - `normalize_lufs`
 - `normalize_peak_db`
+- `max_polyphony`
+- `legato`
 - `pan`
 
 Important behavior:
@@ -354,6 +374,8 @@ Important behavior:
 - `normalize_lufs=-24.0` (default) handles gain staging for all tonal voices — leave it at the default and use `mix_db` to balance
 - use `normalize_peak_db=-6.0` for percussive voices (kicks, toms, noise hits) instead of `normalize_lufs`; this gives effects a predictable input level regardless of BPM or note-level `amp_db` variation
 - `normalize_lufs` and `normalize_peak_db` are mutually exclusive
+- `max_polyphony=1` is the strict-mono setting for basses, leads, and other voices where overlap smear is unwanted
+- with `max_polyphony=1`, `legato=True` suppresses the attack retrigger on overlapped note changes
 
 That second-to-last point is easy to miss and worth being explicit about.
 
@@ -382,6 +404,8 @@ score.add_voice(
     },
     pre_fx_gain_db=2.0,
     mix_db=-3.0,
+    max_polyphony=1,
+    legato=True,
     pan=-0.15,
 )
 ```
@@ -582,18 +606,19 @@ The practical render path for one note is:
 8. convert velocity into a dB offset using `velocity_db_per_unit`
 9. resolve ADSR with `envelope_humanize`
 10. place the note in time using `timing_humanize`
-11. mix notes into the dry voice stem
-12. if `normalize_lufs` is set, apply a uniform gain trim toward that target integrated loudness; if `normalize_peak_db` is set instead, normalize to that peak level — these are mutually exclusive
-13. apply `pre_fx_gain_db`
-14. apply pan to produce the dry/base voice render
-15. resolve voice effects, including any named voice sidechains for native compressors
-16. apply `mix_db`
-17. derive any post-fader voice sends
-18. sum dry voices and separately sum/process shared send returns
-19. mix dry voices and send returns together
-19. if enabled, auto-stage the premaster mix for the master bus
-20. apply `master_input_gain_db`
-21. apply master effects
+11. if `max_polyphony` is set, apply voice-level note allocation; in strict mono this can truncate older notes, and `legato=True` suppresses attack retriggers on overlapped note changes
+12. mix notes into the dry voice stem
+13. if `normalize_lufs` is set, apply a uniform gain trim toward that target integrated loudness; if `normalize_peak_db` is set instead, normalize to that peak level — these are mutually exclusive
+14. apply `pre_fx_gain_db`
+15. apply pan to produce the dry/base voice render
+16. resolve voice effects, including any named voice sidechains for native compressors
+17. apply `mix_db`
+18. derive any post-fader voice sends
+19. sum dry voices and separately sum/process shared send returns
+20. mix dry voices and send returns together
+21. if enabled, auto-stage the premaster mix for the master bus
+22. apply `master_input_gain_db`
+23. apply master effects
 
 That ordering matters because it explains why:
 

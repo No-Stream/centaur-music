@@ -38,6 +38,8 @@
 - `Voice` stores note events plus synth defaults, voice-level effects, pan,
   humanization settings, optional velocity-to-parameter mappings, and optional
   voice-time automation.
+- `EffectSpec`, `VoiceSend`, and `SendBusSpec` also support score-time automation
+  for wet/mix, send level, return level, and pan control surfaces.
 - `Score` also supports shared named send buses so multiple voices can feed the
   same reverb, delay, or other return-style effect chain without duplicating
   insert effects per voice.
@@ -50,6 +52,8 @@
   score, while voice-level humanizers shape envelope and velocity variation.
 - `Voice.synth_defaults` and note-level `synth={...}` overrides accept an `engine`
   name, optional `preset`, and engine-specific params documented in `docs/synth_api.md`.
+- Voices can now enforce `max_polyphony` (including strict mono with `1`) and an
+  optional simple `legato` mode for overlap-driven non-retrigger behavior.
 - `code_musics.composition` includes phrase-first helpers for melodic writing and
   section building. High-level examples: `line(...)` / `ratio_line(...)` for phrase
   creation, `concat(...)` / `overlay(...)` / `echo(...)` for phrase transforms,
@@ -104,7 +108,8 @@
 - `timing_humanize` is score-level. Use it for ensemble looseness and shared drift,
   not for rewriting rhythmic structure.
 - automation is the explicit parameter-motion surface. Use it for deliberate
-  sweeps, bends, and timbral motion; use humanization for subtle living variation.
+  sweeps, bends, timbral motion, and wet/send/pan rides; use humanization for
+  subtle living variation.
 - When documenting or changing these APIs, keep `AGENTS.md` high-level and put the
   parameter-by-parameter details in `docs/score_api.md`,
   `docs/composition_api.md`, and
@@ -217,6 +222,8 @@ See `FUTURE.md` for way more ideas.
 - The additive engine now supports explicit spectral partial sets plus optional
   onset-to-sustain spectral morphing; use that when tuning and timbre should be
   co-designed instead of assuming a plain harmonic ladder.
+- The `polyblep` engine now supports an optional second oscillator via `osc2_*`
+  parameters for detuned stacks and sub layers.
 - The native effect chain now includes a minimum-phase multi-band `eq` effect with
   ordered highpass, lowpass, bell, and shelf bands for routine tone shaping.
 - The native effect chain also includes a stereo-linked `compressor` effect with
