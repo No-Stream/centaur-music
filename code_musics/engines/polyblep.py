@@ -73,6 +73,9 @@ def render(
     keytrack = float(params.get("keytrack", 0.0))
     reference_freq_hz = float(params.get("reference_freq_hz", 220.0))
     resonance = float(params.get("resonance", 0.0))
+    resonance_q: float | None = None
+    if "resonance_q" in params:
+        resonance_q = float(params["resonance_q"])
     filter_env_amount = float(params.get("filter_env_amount", 0.0))
     filter_env_decay = float(params.get("filter_env_decay", 0.18))
     filter_mode = str(params.get("filter_mode", "lowpass")).lower()
@@ -136,6 +139,7 @@ def render(
         raw_signal,
         cutoff_profile=cutoff_profile,
         resonance=resonance,
+        resonance_q=resonance_q,
         sample_rate=sample_rate,
         filter_mode=filter_mode,
         filter_drive=filter_drive,

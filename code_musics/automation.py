@@ -16,6 +16,7 @@ _SUPPORTED_SYNTH_AUTOMATION_PARAMS = {
     "cutoff_hz",
     "brightness_tilt",
     "decay",
+    "filter_drive",
     "filter_env_amount",
     "mod_index",
     "release",

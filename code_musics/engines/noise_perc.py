@@ -35,13 +35,21 @@ def render(
     noise_mix = float(params.get("noise_mix", 0.5))
     pitch_decay = float(params.get("pitch_decay", 0.08))
     tone_decay = float(params.get("tone_decay", 0.18))
+    # noise_decay controls the noise body envelope independently from pitch_decay.
+    # Defaults to pitch_decay when omitted (backward-compatible with old presets).
+    noise_decay = float(params.get("noise_decay", pitch_decay))
     bandpass_ratio = float(params.get("bandpass_ratio", 1.0))
+    bandpass_width_ratio = float(params.get("bandpass_width_ratio", 0.75))
     click_amount = float(params.get("click_amount", 0.12))
 
     if not 0.0 <= noise_mix <= 1.0:
         raise ValueError("noise_mix must be between 0 and 1")
     if pitch_decay <= 0 or tone_decay <= 0:
         raise ValueError("pitch_decay and tone_decay must be positive")
+    if noise_decay <= 0:
+        raise ValueError("noise_decay must be positive")
+    if bandpass_width_ratio <= 0:
+        raise ValueError("bandpass_width_ratio must be positive")
     if bandpass_ratio <= 0:
         raise ValueError("bandpass_ratio must be positive")
     if click_amount < 0:
@@ -53,7 +61,6 @@ def render(
 
     t = np.arange(n_samples, dtype=np.float64) / sample_rate
     tone_env = np.exp(-t / tone_decay)
-    pitch_env = np.exp(-t / pitch_decay)
 
     tone = np.sin(2.0 * np.pi * freq * t) * tone_env
     tone += (
@@ -66,9 +73,13 @@ def render(
 
     noise = rng.standard_normal(n_samples)
     noise = _bandpass_noise(
-        noise, sample_rate=sample_rate, center_hz=freq * bandpass_ratio
+        noise,
+        sample_rate=sample_rate,
+        center_hz=freq * bandpass_ratio,
+        width_ratio=bandpass_width_ratio,
     )
-    noise *= pitch_env
+    noise_env = np.exp(-t / noise_decay)
+    noise *= noise_env
 
     click = _click_envelope(n_samples) * rng.standard_normal(n_samples)
     click = _bandpass_noise(
@@ -94,15 +105,25 @@ def _click_envelope(n_samples: int) -> np.ndarray:
 
 
 def _bandpass_noise(
-    signal: np.ndarray, *, sample_rate: int, center_hz: float
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    center_hz: float,
+    width_ratio: float = 0.75,
 ) -> np.ndarray:
-    """Shape white noise with a broad spectral band around `center_hz`."""
+    """Shape white noise with a spectral band around `center_hz`.
+
+    Args:
+        width_ratio: Width of the band as a multiple of `center_hz`.
+            Default 0.75 gives a moderately focused band. Higher values
+            (e.g. 2.5–3.0) produce broad, natural-sounding noise.
+    """
     if signal.size == 0:
         return signal
 
     nyquist = sample_rate / 2.0
     center_hz = float(np.clip(center_hz, 30.0, nyquist * 0.95))
-    width_hz = max(80.0, center_hz * 0.75)
+    width_hz = max(80.0, center_hz * width_ratio)
     low_hz = max(20.0, center_hz - width_hz / 2.0)
     high_hz = min(nyquist * 0.98, center_hz + width_hz / 2.0)
 

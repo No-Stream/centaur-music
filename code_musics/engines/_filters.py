@@ -99,7 +99,8 @@ def apply_zdf_svf(
     signal: np.ndarray,
     *,
     cutoff_profile: np.ndarray,
-    resonance: float,
+    resonance: float = 0.0,
+    resonance_q: float | None = None,
     sample_rate: int,
     filter_mode: str,
     filter_drive: float,
@@ -112,13 +113,21 @@ def apply_zdf_svf(
     Args:
         signal: Input audio array.
         cutoff_profile: Per-sample cutoff frequency in Hz (same length as signal).
-        resonance: Non-negative resonance amount.
+        resonance: Non-negative resonance amount on a 0–1 scale.
+            ``resonance_q`` takes precedence when both are provided.
+        resonance_q: Filter Q as a direct Q value (≥ 0.5). Q=0.707 is Butterworth
+            (no resonance peak). Q=1 is a gentle peak; Q=4+ approaches
+            self-oscillation depending on drive. Preferred over ``resonance``
+            when an explicit Q is known.
         sample_rate: Audio sample rate in Hz.
         filter_mode: One of ``"lowpass"``, ``"bandpass"``, ``"highpass"``, ``"notch"``.
         filter_drive: Non-negative drive amount; 0.0 means fully linear/clean.
     """
-    resonance_bounded = max(0.0, float(resonance))
-    q = 0.707 + (11.293 * resonance_bounded)
+    if resonance_q is not None:
+        q = max(0.5, float(resonance_q))
+    else:
+        resonance_bounded = max(0.0, float(resonance))
+        q = 0.707 + (11.293 * resonance_bounded)
     damping = 1.0 / q
     linear_filtered = _apply_linear_zdf_svf(
         signal,

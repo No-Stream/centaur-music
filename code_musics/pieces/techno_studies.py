@@ -30,8 +30,9 @@ Structure:
 
 from __future__ import annotations
 
+from code_musics.automation import AutomationSegment, AutomationSpec, AutomationTarget
 from code_musics.pieces.registry import PieceDefinition
-from code_musics.score import EffectSpec, Score
+from code_musics.score import EffectSpec, Score, VoiceSend
 
 BPM: float = 130.0
 BEAT: float = 60.0 / BPM  # quarter-note duration ≈ 0.4615 s
@@ -41,16 +42,17 @@ S16: float = BEAT / 4.0  # sixteenth-note ≈ 0.1154 s
 F0: float = 55.0  # A1 — score root
 
 # Harmonic partial constants (freq = F0 * partial)
-P1: float = 1.0    # A1    55.0 Hz  bass root (sub)
-P15: float = 1.5   # E2    82.5 Hz  bass fifth
-P2: float = 2.0    # A2   110.0 Hz  bass octave
-P35: float = 3.5   # —    192.5 Hz  septimal 7th colour (bass accent)
-P4: float = 4.0    # A3   220.0 Hz  lead low anchor
-P5: float = 5.0    # C#4  275.0 Hz  harmonic major third (available)
-P6: float = 6.0    # E4   330.0 Hz  harmonic perfect fifth — open shadow
-P7: float = 7.0    # G4   385.0 Hz  septimal 7th — spice only
-P8: float = 8.0    # A4   440.0 Hz  lead home
-P9: float = 9.0    # B4   495.0 Hz  whole step above home — spice only
+P1: float = 1.0  # A1    55.0 Hz  bass root (sub)
+P15: float = 1.5  # E2    82.5 Hz  bass fifth
+P2: float = 2.0  # A2   110.0 Hz  bass octave
+P3: float = 3.0  # E3   165.0 Hz  harmonic fifth — lead lower voice
+P35: float = 3.5  # —    192.5 Hz  septimal 7th colour (bass accent)
+P4: float = 4.0  # A3   220.0 Hz  lead home
+P5: float = 5.0  # C#4  275.0 Hz  harmonic major third (available)
+P6: float = 6.0  # E4   330.0 Hz  harmonic perfect fifth — open shadow
+P7: float = 7.0  # G4   385.0 Hz  septimal 7th — spice only
+P8: float = 8.0  # A4   440.0 Hz  lead home
+P9: float = 9.0  # B4   495.0 Hz  whole step above home — spice only
 P11: float = 11.0  # —    605.0 Hz  undecimal super-fourth — spice only
 
 # note type: (bar_offset, beat, n16, partial, gate_sixteenths, amp_db)
@@ -95,7 +97,11 @@ def build_spectral_kick() -> Score:
                     "topology": "feedback",
                     "detector_mode": "rms",
                     "detector_bands": [
-                        {"kind": "highpass", "cutoff_hz": 120.0, "slope_db_per_oct": 12},
+                        {
+                            "kind": "highpass",
+                            "cutoff_hz": 120.0,
+                            "slope_db_per_oct": 12,
+                        },
                     ],
                 },
             ),
@@ -127,6 +133,25 @@ def build_spectral_kick() -> Score:
             )
 
     # ------------------------------------------------------------------
+    # Shared send bus: Bricasti room reverb — lead, hats, clap only.
+    # 100 % wet (send return); voices balance via send_db.
+    # ------------------------------------------------------------------
+    score.add_send_bus(
+        "room",
+        effects=[
+            EffectSpec(
+                "bricasti",
+                {
+                    "ir_name": "1 Halls 07 Large & Dark",
+                    "wet": 1.0,
+                    "lowpass_hz": 7000.0,
+                    "highpass_hz": 200.0,
+                },
+            )
+        ],
+    )
+
+    # ------------------------------------------------------------------
     # Bass: polyblep acid, JI-tuned partials
     # ------------------------------------------------------------------
     score.add_voice(
@@ -136,38 +161,109 @@ def build_spectral_kick() -> Score:
             "preset": "moog_bass",
             "params": {
                 # Square for odd-harmonic grit on top of the sub body;
-                # cutoff kept low for subbiness, drive adds the distorted edge.
+                # cutoff starts low for subbiness; filter opens via automation.
+                # resonance_q=0.707 (Butterworth — no resonance peak) keeps the
+                # bass thick without filter suckout. Occasional note-level bumps
+                # to Q≈2 can add flavor but this should be the stable base.
                 "waveform": "square",
-                "cutoff_hz": 210.0,
-                "filter_env_amount": 0.6,
+                "cutoff_hz": 180.0,
+                "filter_env_amount": 0.55,
                 "filter_drive": 0.45,
-                "resonance": 0.10,
+                "resonance_q": 0.707,
             },
         },
         mix_db=-5.0,
         velocity_humanize=None,
+        effects=[
+            EffectSpec(
+                "compressor", {"preset": "kick_duck", "sidechain_source": "kick"}
+            ),
+        ],
+        automation=[
+            # Cutoff opens from dark/sub (180 Hz) through the build,
+            # collapses for the drop, then fully blooms in the return.
+            AutomationSpec(
+                target=AutomationTarget(kind="synth", name="cutoff_hz"),
+                segments=(
+                    AutomationSegment(
+                        start=_pos(3),
+                        end=_pos(17),
+                        shape="linear",
+                        start_value=180.0,
+                        end_value=290.0,
+                    ),
+                    AutomationSegment(
+                        start=_pos(17),
+                        end=_pos(21),
+                        shape="linear",
+                        start_value=175.0,
+                        end_value=200.0,
+                    ),
+                    AutomationSegment(
+                        start=_pos(21),
+                        end=_pos(29),
+                        shape="linear",
+                        start_value=200.0,
+                        end_value=340.0,
+                    ),
+                ),
+            ),
+            # Filter env amount opens up alongside cutoff — more "talking"
+            # movement as the piece builds.
+            AutomationSpec(
+                target=AutomationTarget(kind="synth", name="filter_env_amount"),
+                segments=(
+                    AutomationSegment(
+                        start=_pos(3),
+                        end=_pos(17),
+                        shape="linear",
+                        start_value=0.55,
+                        end_value=0.72,
+                    ),
+                    AutomationSegment(
+                        start=_pos(17),
+                        end=_pos(21),
+                        shape="linear",
+                        start_value=0.48,
+                        end_value=0.55,
+                    ),
+                    AutomationSegment(
+                        start=_pos(21),
+                        end=_pos(29),
+                        shape="linear",
+                        start_value=0.60,
+                        end_value=0.85,
+                    ),
+                ),
+            ),
+        ],
     )
 
-    # Repeating pattern: all root. Beats 2 and 4 open for kick+snare.
-    _bass_pattern: list[tuple[int, int, float, int, float]] = [
-        (1, 0, P1, 1, -6.0),   # beat 1: root
-        (1, 2, P1, 1, -9.0),   # &-of-1: root
-        (1, 3, P1, 1, -11.0),  # a-of-1: ghost push
-        # beat 2 open — kick+snare
-        (2, 2, P1, 1, -8.0),   # &-of-2: root
-        (3, 0, P1, 1, -6.5),   # beat 3: root
-        (3, 2, P1, 1, -9.0),   # &-of-3: root
-        (3, 3, P1, 1, -11.0),  # a-of-3: ghost push
-        # beat 4 open — kick+snare
-        (4, 2, P1, 1, -9.0),   # &-of-4: root
+    # Two-bar alternating bass pattern. Beat 2 and 4 stay open (kick+clap).
+    # Pattern A: root-focused, steady drive.
+    # Pattern B: more syncopated — push notes anticipate beats 2 and 1.
+    _bass_pattern_a: list[tuple[int, int, float, int, float]] = [
+        (1, 0, P1, 1, -6.0),  # beat 1: root
+        (1, 2, P1, 1, -9.5),  # &-of-1: echo
+        (2, 2, P1, 1, -8.0),  # &-of-2: mid-bar pull
+        (3, 0, P1, 1, -6.5),  # beat 3: root
+        (4, 2, P1, 1, -9.5),  # &-of-4: tail
+    ]
+    _bass_pattern_b: list[tuple[int, int, float, int, float]] = [
+        (1, 0, P1, 1, -6.0),  # beat 1: root
+        (1, 3, P1, 1, -10.5),  # a-of-1: push before 2 (anticipation)
+        (2, 2, P1, 1, -8.5),  # &-of-2: continuation
+        (3, 0, P1, 1, -6.5),  # beat 3: root
+        (4, 3, P1, 1, -10.5),  # a-of-4: push before next bar's 1
     ]
 
     for bar in range(3, total_bars + 1):
-        for beat, n16, partial, gate_16ths, amp_db in _bass_pattern:
+        pattern = _bass_pattern_a if (bar % 2 == 1) else _bass_pattern_b
+        for beat, n16, partial, gate_16ths, amp_db in pattern:
             score.add_note(
                 "bass",
                 start=_pos(bar, beat, n16),
-                duration=gate_16ths * S16 * 0.82,
+                duration=gate_16ths * S16 * 0.75,
                 partial=partial,
                 amp_db=amp_db,
             )
@@ -175,12 +271,12 @@ def build_spectral_kick() -> Score:
     # Fifth (P15 = E2, 82.5 Hz): sparse and irregular — not every bar,
     # never the same beat position twice in a row.
     _fifth_hits: list[tuple[int, int, int]] = [
-        (7,  4, 2),   # bar 7,  &-of-4
-        (11, 2, 2),   # bar 11, &-of-2
-        (15, 3, 3),   # bar 15, a-of-3
-        (23, 4, 2),   # bar 23, &-of-4
-        (27, 2, 2),   # bar 27, &-of-2
-        (31, 1, 2),   # bar 31, &-of-1
+        (7, 4, 2),  # bar 7,  &-of-4
+        (11, 2, 2),  # bar 11, &-of-2
+        (15, 3, 3),  # bar 15, a-of-3
+        (23, 4, 2),  # bar 23, &-of-4
+        (27, 2, 2),  # bar 27, &-of-2
+        (31, 1, 2),  # bar 31, &-of-1
     ]
     for bar, beat, n16 in _fifth_hits:
         score.add_note(
@@ -203,41 +299,93 @@ def build_spectral_kick() -> Score:
             "params": {
                 # mod at 1× carrier: sidebands land on 2fc, 3fc, 4fc... —
                 # all integer harmonics of the carrier, maximally consonant.
-                # every note's FM overtones reinforce its own harmonic series.
+                # Starting dark (1.0) and ramping via automation; by bar 28
+                # it has opened up to a brighter, more harmonically dense texture.
                 "mod_ratio": 1.0,
-                "mod_index": 2.0,
+                "mod_index": 1.0,
             },
             "env": {
-                "attack_ms": 4.0,
-                "decay_ms": 220.0,
-                "sustain_ratio": 0.05,
-                "release_ms": 180.0,
+                # Slower attack for a chord bloom rather than a bell strike.
+                # Long decay so the three-note chord sustains through the bar.
+                "attack_ms": 14.0,
+                "decay_ms": 340.0,
+                "sustain_ratio": 0.04,
+                "release_ms": 260.0,
             },
         },
-        mix_db=-13.0,
+        mix_db=-8.0,
         velocity_humanize=None,
+        automation=[
+            # mod_index ramps 1.0 → 2.4 from bar 5 through bar 28:
+            # the chord opens from dark and fundamental to harmonically complex.
+            AutomationSpec(
+                target=AutomationTarget(kind="synth", name="mod_index"),
+                segments=(
+                    AutomationSegment(
+                        start=_pos(5),
+                        end=_pos(29),
+                        shape="linear",
+                        start_value=1.0,
+                        end_value=2.4,
+                    ),
+                ),
+            ),
+            # decay ramps 0.340 → 0.550 s alongside mod_index — as the timbre
+            # opens up harmonically, the chord bloom also sustains longer,
+            # creating a cumulative sense of expansion toward the peak.
+            AutomationSpec(
+                target=AutomationTarget(kind="synth", name="decay"),
+                segments=(
+                    AutomationSegment(
+                        start=_pos(5),
+                        end=_pos(29),
+                        shape="linear",
+                        start_value=0.340,
+                        end_value=0.550,
+                    ),
+                ),
+            ),
+            # release ramps 0.260 → 0.400 s — longer trails as the piece opens,
+            # creating progressively longer reverberant tails on chord hits.
+            AutomationSpec(
+                target=AutomationTarget(kind="synth", name="release"),
+                segments=(
+                    AutomationSegment(
+                        start=_pos(5),
+                        end=_pos(29),
+                        shape="linear",
+                        start_value=0.260,
+                        end_value=0.400,
+                    ),
+                ),
+            ),
+        ],
         effects=[
-            # highpass for cleanliness — lowest lead note is P4 = 220 Hz
-            EffectSpec("eq", {"bands": [{"kind": "highpass", "cutoff_hz": 160.0, "slope_db_per_oct": 12}]}),
-            # dotted-8th delay (3 × S16 ≈ 0.346s) — bounces rhythmically against kick
+            # HP at 280 Hz: chord root is P6=330 Hz; cut below to keep bass space clean.
+            EffectSpec(
+                "eq",
+                {
+                    "bands": [
+                        {"kind": "highpass", "cutoff_hz": 280.0, "slope_db_per_oct": 24}
+                    ]
+                },
+            ),
+            # Dotted-8th delay — high feedback and mix for a dense, hypnotic wash.
+            # At 130 BPM the tail rings through 6+ repetitions, filling the space
+            # between chord hits.
             EffectSpec(
                 "delay",
                 {
                     "delay_seconds": 3.0 * S16,
-                    "feedback": 0.39,
-                    "mix": 0.36,
+                    "feedback": 0.54,
+                    "mix": 0.48,
                 },
             ),
-            # light algorithmic reverb for air
             EffectSpec(
-                "reverb",
-                {
-                    "room_size": 0.38,
-                    "damping": 0.60,
-                    "wet_level": 0.30,
-                },
+                "compressor", {"preset": "kick_duck", "sidechain_source": "kick"}
             ),
         ],
+        sends=[VoiceSend(target="room", send_db=-6.0)],
     )
 
     def _place_lead(bar_start: int, phrase: list[_LeadNote]) -> None:
@@ -251,38 +399,49 @@ def build_spectral_kick() -> Score:
             )
 
     # ---------------------------------------------------------------
-    # Phrase A: 4-bar arc — low anchor → octave leap → open fifth.
-    # Three notes. The delay does the rest.
+    # Chord: P6–P7–P9 (E4 / G4−31¢ / B4) — septimal E minor-ish.
+    # Relative to the A bass, this spells: fifth / flat-seventh / ninth.
+    # Very dark, slightly alien, consonant within the harmonic series.
     # ---------------------------------------------------------------
+    # Phrase A: 4-bar — two chord hits with lots of space between.
+    # First hit on the 'a' of beat 2 (off-beat), second in bar 3.
+    # The dotted-8th delay + room reverb fill the two silent bars.
+    # ---------------------------------------------------------------
+    def _chord(
+        bar_off: int,
+        beat: int,
+        n16: int,
+        gate_16ths: float,
+        amp_db: float,
+    ) -> list[_LeadNote]:
+        """Return three simultaneous notes for the E-minor-septimal chord."""
+        return [
+            (bar_off, beat, n16, P6, gate_16ths, amp_db),  # E4
+            (bar_off, beat, n16, P7, gate_16ths, amp_db - 0.5),  # G4 −31¢
+            (bar_off, beat, n16, P9, gate_16ths, amp_db - 1.0),  # B4
+        ]
+
     PHRASE_A: list[_LeadNote] = [
-        # bar 1 — deep low bell; hold and let FM + delay fill
-        (0, 1, 0, P4, 8, -7.5),   # beat 1: low anchor (A3), half note
-        # bar 2 — silence, then octave leap
-        (1, 3, 0, P8, 4, -8.0),   # beat 3: home (A4), quarter
-        # bars 3–4 — open fifth, held long into the silence
-        (2, 1, 0, P6, 12, -8.5),  # beat 1: fifth (E4), dotted half — breathe out
+        *_chord(0, 2, 3, 10, -8.0),  # bar 1, 'a'-of-2: chord, sustained
+        *_chord(2, 3, 1, 8, -9.5),  # bar 3, &-of-3: echo, softer
     ]
 
     # ---------------------------------------------------------------
-    # Phrase B: 4-bar pre-drop dissolve.
-    # Same pitches, everything shifted late and shorter — hollowing out.
+    # Phrase B: pre-drop dissolve — single chord hit, late and quiet.
     # ---------------------------------------------------------------
     PHRASE_B: list[_LeadNote] = [
-        (0, 1, 0, P4, 6, -7.5),   # bar 1 beat 1: low anchor, shorter
-        (1, 4, 0, P8, 2, -8.5),   # bar 2 beat 4: late, hesitant 8th
-        (3, 2, 0, P6, 8, -9.5),   # bar 4 beat 2: fifth arrives late — hollow
+        *_chord(1, 4, 2, 6, -11.0),  # bar 2, 'e'-of-4: chord fading out
     ]
 
     # ---------------------------------------------------------------
-    # Phrase C: 1-bar skeleton (bars 29–32).
-    # Compressed: octave touch → fifth falls away.
+    # Phrase C: 1-bar skeleton (bars 29, 31).
+    # One chord hit per bar, very quiet — nearly inaudible, just air.
     # ---------------------------------------------------------------
     PHRASE_C: list[_LeadNote] = [
-        (0, 1, 0, P8, 2, -9.0),   # beat 1: home (A4), 8th
-        (0, 4, 0, P6, 4, -10.5),  # beat 4: fifth, falling away
+        *_chord(0, 1, 2, 6, -11.5),  # 'e' of beat 1
     ]
 
-    # bars 5–12: phrase A × 2 (4-bar phrase, every 4 bars)
+    # bars 5–12: phrase A × 2
     for b in [5, 9]:
         _place_lead(b, PHRASE_A)
     # bars 13–16: phrase B × 1 (pre-drop dissolve)
@@ -291,8 +450,8 @@ def build_spectral_kick() -> Score:
     # bars 21–28: phrase A × 2
     for b in [21, 25]:
         _place_lead(b, PHRASE_A)
-    # bars 29–32: phrase C × 4, one per bar (skeleton)
-    for b in [29, 30, 31, 32]:
+    # bars 29–32: phrase C on bars 29 and 31 only — silence on 30 and 32
+    for b in [29, 31]:
         _place_lead(b, PHRASE_C)
     # bars 33–36: outro — no lead
 
@@ -303,37 +462,114 @@ def build_spectral_kick() -> Score:
     score.add_voice(
         "hat",
         synth_defaults={"engine": "noise_perc", "preset": "chh"},
-        mix_db=-14.0,
+        mix_db=-11.0,
         velocity_humanize=None,
         effects=[
+            # High shelf for added air and crispness
+            EffectSpec(
+                "eq",
+                {"bands": [{"kind": "high_shelf", "freq_hz": 8000.0, "gain_db": 3.5}]},
+            ),
+            # Light saturation — subtle harmonic grit for a crisp, slightly dirty chh
+            EffectSpec("saturation", {"drive": 0.40}),
             # 16th-note echo — adds shimmer and rhythmic motion without smearing
-            EffectSpec("delay", {"delay_seconds": S16, "feedback": 0.12, "mix": 0.15}),
+            EffectSpec("delay", {"delay_seconds": S16, "feedback": 0.33, "mix": 0.33}),
+            EffectSpec(
+                "compressor", {"preset": "kick_duck", "sidechain_source": "kick"}
+            ),
         ],
+        sends=[VoiceSend(target="room", send_db=-18.0)],
     )
 
-    # 16ths: beat loudest, & medium, e and a soft ghosts
+    # 16ths: beat loudest, & medium, e and a soft ghosts.
+    # Base amps per 16th subdivision (0=beat, 1=&, 2=e, 3=a):
     _hat_amps = {0: -11.0, 1: -16.0, 2: -13.5, 3: -16.5}
+    # Section-based overall offset (dB) — intro quiet, builds through arrangement,
+    # drops out for the drop section, swells back, then fades in the outro skeleton.
+    _hat_section_offset: dict[int, float] = {
+        **{b: -3.0 for b in range(3, 5)},  # bars 3–4: intro, pulling in
+        **{b: 0.0 for b in range(5, 13)},  # bars 5–12: phrase A × 2, full
+        **{b: -2.0 for b in range(13, 17)},  # bars 13–16: pre-drop, thinning out
+        **{b: -1.5 for b in range(17, 21)},  # bars 17–20: drop, hats stay but quieter
+        **{b: 0.0 for b in range(21, 29)},  # bars 21–28: phrase A returns, full
+        **{b: -1.5 for b in range(29, 33)},  # bars 29–32: skeleton, settling
+    }
+    # Section-based frequency shapes hat brightness — lower = darker/more body,
+    # higher = brighter/more aggressive. Bandpass center = freq × 1.0 (CHH preset).
+    _hat_section_freq: dict[int, float] = {
+        **{b: 10000.0 for b in range(3, 5)},  # intro: restrained, dark
+        **{b: 13000.0 for b in range(5, 13)},  # phrase A × 2: standard bright
+        **{b: 11500.0 for b in range(13, 17)},  # pre-drop: pulling back
+        **{b: 9000.0 for b in range(17, 21)},  # drop: darkest, subdued
+        **{b: 13500.0 for b in range(21, 29)},  # return: peak brightness
+        **{b: 11000.0 for b in range(29, 33)},  # skeleton: settling
+    }
     for bar in range(3, 33):
+        offset = _hat_section_offset.get(bar, 0.0)
+        hat_freq = _hat_section_freq.get(bar, 13000.0)
         for beat in range(1, 5):
             for n16 in range(4):
-                score.add_note("hat", start=_pos(bar, beat, n16), duration=0.04, freq=13000.0, amp_db=_hat_amps[n16])
+                score.add_note(
+                    "hat",
+                    start=_pos(bar, beat, n16),
+                    duration=0.04,
+                    freq=hat_freq,
+                    amp_db=_hat_amps[n16] + offset,
+                )
 
     # ------------------------------------------------------------------
-    # Snare/clap: snareish preset, beats 2 and 4
+    # Clap: pure noise, beats 2 and 4
     # Active in full arrangement sections; absent during intro, drop, and outro
     # ------------------------------------------------------------------
     score.add_voice(
-        "snare",
-        synth_defaults={"engine": "noise_perc", "preset": "snareish"},
-        mix_db=-6.0,
+        "clap",
+        synth_defaults={"engine": "noise_perc", "preset": "clap"},
+        mix_db=-3.5,
+        normalize_peak_db=-6.0,  # percussive — LUFS normalization is unreliable here
         velocity_humanize=None,
+        effects=[
+            # Gate: peak at -6 dBFS (normalize_peak_db); noise RMS at onset
+            # ≈ -9 to -12 dBFS (broadband noise crest factor ~4-6 dB).
+            # Threshold -18 dBFS opens comfortably at hit; with noise_decay=40ms
+            # the gate closes at ~40-45 ms, hold=30ms + release=12ms → fully
+            # closed by ~85 ms — tight and punchy against a 120 ms note.
+            EffectSpec(
+                "gate",
+                {
+                    "threshold_db": -18.0,
+                    "attack_ms": 0.3,
+                    "hold_ms": 30.0,
+                    "release_ms": 12.0,
+                },
+            ),
+            EffectSpec(
+                "compressor", {"preset": "kick_duck", "sidechain_source": "kick"}
+            ),
+        ],
+        sends=[VoiceSend(target="room", send_db=-15.0)],
     )
 
-    snare_bars = list(range(5, 17)) + list(range(21, 33))
-    for bar in snare_bars:
+    # Section-based clap amp offset — louder in the full sections, quieter around
+    # the drop to let the drop feel like a release of tension.
+    _clap_section_offset: dict[int, float] = {
+        **{b: 0.0 for b in range(5, 13)},  # bars 5–12: full
+        **{b: -2.5 for b in range(13, 17)},  # bars 13–16: pre-drop, fading
+        **{b: 1.0 for b in range(21, 29)},  # bars 21–28: return, slightly louder
+        **{b: -1.5 for b in range(29, 33)},  # bars 29–32: skeleton, quieter
+    }
+    clap_bars = list(range(5, 17)) + list(range(21, 33))
+    for bar in clap_bars:
+        offset = _clap_section_offset.get(bar, 0.0)
         for beat in [2, 4]:
-            # freq=800 → bandpass center at 1280 Hz, well above the bass register
-            score.add_note("snare", start=_pos(bar, beat), duration=0.18, freq=200.0, amp_db=-4.0)
+            # freq=3000 Hz → bandpass center at 3000 × 0.8 = 2400 Hz (1500–3300 Hz
+            # range) — proper clap body range with the updated preset bandpass_ratio=0.8.
+            score.add_note(
+                "clap",
+                start=_pos(bar, beat),
+                duration=0.12,
+                freq=3000.0,
+                amp_db=-4.0 + offset,
+            )
 
     return score
 

@@ -1932,6 +1932,89 @@ def _float_to_int16_pcm(
     return np.rint((clipped + dither) * 32767.0).astype(np.int16)
 
 
+def apply_gate(
+    signal: np.ndarray,
+    *,
+    threshold_db: float = -40.0,
+    attack_ms: float = 0.5,
+    hold_ms: float = 40.0,
+    release_ms: float = 20.0,
+    floor_db: float = -80.0,
+    sample_rate: int = SAMPLE_RATE,
+    return_analysis: bool = False,
+) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
+    """Noise gate with attack/hold/release gain envelope.
+
+    Args:
+        threshold_db: Gate opens when signal exceeds this level.
+        attack_ms: Time to ramp from floor to full gain once gate opens.
+        hold_ms: Minimum time gate stays open after signal drops below threshold.
+        release_ms: Time to ramp from full gain to floor once hold expires.
+        floor_db: Attenuation when gate is fully closed. Default -80 dB ≈ silence.
+    """
+    if attack_ms <= 0:
+        raise ValueError("attack_ms must be positive")
+    if release_ms <= 0:
+        raise ValueError("release_ms must be positive")
+    if hold_ms < 0:
+        raise ValueError("hold_ms must be non-negative")
+
+    threshold_lin = 10.0 ** (threshold_db / 20.0)
+    floor_lin = 10.0 ** (floor_db / 20.0)
+    attack_samples = max(1, int(attack_ms * sample_rate / 1000.0))
+    hold_samples = max(0, int(hold_ms * sample_rate / 1000.0))
+    release_samples = max(1, int(release_ms * sample_rate / 1000.0))
+
+    # One-pole IIR coefficients — exponential approach to target
+    attack_coeff = 1.0 - np.exp(-1.0 / attack_samples)
+    release_coeff = 1.0 - np.exp(-1.0 / release_samples)
+
+    input_signal = np.asarray(signal, dtype=np.float64)
+
+    def _process_channel(channel: np.ndarray) -> np.ndarray:
+        n = len(channel)
+        if n == 0:
+            return channel.copy()
+
+        # 2 ms RMS envelope for smooth key signal (avoids flicker on zero crossings)
+        detect_window = max(1, int(0.002 * sample_rate))
+        kernel = np.ones(detect_window, dtype=np.float64) / detect_window
+        smoothed_level = np.sqrt(np.convolve(channel**2, kernel, mode="same"))
+
+        # Gate open = level above threshold; hold extends open regions forward
+        gate_open = (smoothed_level >= threshold_lin).astype(np.float64)
+        if hold_samples > 0:
+            hold_kernel = np.ones(hold_samples + 1, dtype=np.float64)
+            gate_open = np.convolve(gate_open, hold_kernel, mode="full")[:n]
+        gate_target = np.where(gate_open > 0, 1.0, floor_lin)
+
+        # Attack / release gain smoothing (same IIR pattern as compressor)
+        gain = np.empty(n, dtype=np.float64)
+        g = floor_lin
+        for i in range(n):
+            t = gate_target[i]
+            if t > g:
+                g += attack_coeff * (t - g)
+            else:
+                g += release_coeff * (t - g)
+            gain[i] = g
+
+        return channel * gain
+
+    output = _apply_per_channel(input_signal, _process_channel).astype(np.float64)
+
+    if not return_analysis:
+        return output
+
+    analysis: dict[str, float | int | str] = {
+        "threshold_db": round(threshold_db, 1),
+        "hold_ms": round(hold_ms, 1),
+        "release_ms": round(release_ms, 1),
+        "floor_db": round(floor_db, 1),
+    }
+    return output, analysis
+
+
 def apply_delay(
     signal: np.ndarray,
     delay_seconds: float = 0.35,
@@ -2352,72 +2435,84 @@ _CHORUS_PRESETS: dict[str, dict[str, float]] = {
     },
 }
 
-_SATURATION_PRESETS: dict[str, dict[str, float | int | bool]] = {
+_SATURATION_PRESETS: dict[str, dict[str, Any]] = {
     "tube_warm": {
+        "algorithm": "modern",
+        "mode": "tube",
         "drive": 1.18,
         "mix": 0.34,
-        "bias": 0.11,
-        "even_harmonics": 0.18,
+        "tone": 0.08,
+        "fidelity": 0.76,
         "oversample_factor": 4,
         "highpass_hz": 30.0,
-        "tone_tilt": 0.10,
-        "output_lowpass_hz": 13_500.0,
-        "compensation": True,
+        "preserve_lows_hz": 140.0,
+        "preserve_highs_hz": 6_500.0,
+        "compensation_mode": "auto",
     },
     "iron_soft": {
-        "drive": 1.22,
+        "algorithm": "modern",
+        "mode": "iron",
+        "drive": 1.08,
         "mix": 0.38,
-        "bias": 0.07,
-        "even_harmonics": 0.13,
+        "tone": -0.06,
+        "fidelity": 0.88,
         "oversample_factor": 4,
         "highpass_hz": 26.0,
-        "tone_tilt": -0.08,
-        "output_lowpass_hz": 12_000.0,
-        "compensation": True,
+        "preserve_lows_hz": 180.0,
+        "preserve_highs_hz": 5_200.0,
+        "compensation_mode": "auto",
     },
     "neve_gentle": {
-        "drive": 1.28,
+        "algorithm": "modern",
+        "mode": "triode",
+        "drive": 1.14,
         "mix": 0.36,
-        "bias": 0.09,
-        "even_harmonics": 0.16,
+        "tone": 0.14,
+        "fidelity": 0.72,
         "oversample_factor": 4,
         "highpass_hz": 28.0,
-        "tone_tilt": 0.16,
-        "output_lowpass_hz": 12_500.0,
-        "compensation": True,
+        "preserve_lows_hz": 150.0,
+        "preserve_highs_hz": 6_200.0,
+        "compensation_mode": "auto",
     },
     "kick_weight": {
+        "algorithm": "modern",
+        "mode": "iron",
         "drive": 1.36,
         "mix": 0.42,
-        "bias": 0.10,
-        "even_harmonics": 0.14,
+        "tone": 0.04,
+        "fidelity": 0.46,
         "oversample_factor": 4,
         "highpass_hz": 24.0,
-        "tone_tilt": 0.04,
-        "output_lowpass_hz": 10_000.0,
-        "compensation": True,
+        "preserve_lows_hz": 90.0,
+        "preserve_highs_hz": 4_200.0,
+        "compensation_mode": "rms",
     },
     "kick_crunch": {
+        "algorithm": "modern",
+        "mode": "triode",
         "drive": 1.85,
         "mix": 0.56,
-        "bias": 0.12,
-        "even_harmonics": 0.20,
-        "oversample_factor": 4,
+        "tone": 0.10,
+        "fidelity": 0.26,
+        "oversample_factor": 8,
         "highpass_hz": 28.0,
-        "tone_tilt": 0.12,
-        "output_lowpass_hz": 8_800.0,
-        "compensation": True,
+        "preserve_lows_hz": 80.0,
+        "preserve_highs_hz": 3_600.0,
+        "compensation_mode": "rms",
     },
     "tom_thicken": {
-        "drive": 1.26,
+        "algorithm": "modern",
+        "mode": "iron",
+        "drive": 1.20,
         "mix": 0.32,
-        "bias": 0.08,
-        "even_harmonics": 0.15,
+        "tone": -0.03,
+        "fidelity": 0.62,
         "oversample_factor": 4,
         "highpass_hz": 30.0,
-        "tone_tilt": -0.03,
-        "output_lowpass_hz": 11_500.0,
-        "compensation": True,
+        "preserve_lows_hz": 110.0,
+        "preserve_highs_hz": 5_000.0,
+        "compensation_mode": "rms",
     },
 }
 
@@ -2476,6 +2571,36 @@ _COMPRESSOR_PRESETS: dict[str, dict[str, float | str | list[dict[str, Any]]]] = 
         "detector_bands": [
             {"kind": "highpass", "cutoff_hz": 60.0, "slope_db_per_oct": 12}
         ],
+    },
+    "kick_duck": {
+        # Surgical kick-sidechain ducking for non-kick voices.
+        # 1 ms lookahead + 1 ms attack = near-instant onset, no transient bleed.
+        # 100 ms release clears well before the next 16th at 130 BPM (115 ms).
+        # No makeup gain — this is a duck, not a leveller.
+        "threshold_db": -20.0,
+        "ratio": 3.0,
+        "attack_ms": 1.0,
+        "release_ms": 100.0,
+        "knee_db": 2.0,
+        "makeup_gain_db": 0.0,
+        "mix": 1.0,
+        "topology": "feedforward",
+        "detector_mode": "peak",
+        "lookahead_ms": 1.0,
+    },
+    "kick_duck_hard": {
+        # Aggressive pumping duck — longer 300 ms release creates audible swell-back.
+        # Useful for the classic techno "breathing" effect.
+        "threshold_db": -20.0,
+        "ratio": 4.0,
+        "attack_ms": 1.0,
+        "release_ms": 300.0,
+        "knee_db": 2.0,
+        "makeup_gain_db": 0.0,
+        "mix": 1.0,
+        "topology": "feedforward",
+        "detector_mode": "peak",
+        "lookahead_ms": 1.0,
     },
 }
 
@@ -2570,29 +2695,194 @@ def apply_chorus(
     return blended.astype(np.float64)
 
 
-def apply_saturation(
+def _dc_block(
     signal: np.ndarray,
-    drive: float = 1.18,
-    mix: float = 0.34,
-    bias: float = 0.11,
-    even_harmonics: float = 0.18,
-    oversample_factor: int = 4,
-    highpass_hz: float = 30.0,
-    tone_tilt: float = 0.10,
-    output_lowpass_hz: float = 13_500.0,
-    compensation: bool = True,
-    return_analysis: bool = False,
-) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
-    """Apply subtle analog-style saturation to mono or stereo signal."""
-    if not 0.0 <= mix <= 1.0:
-        raise ValueError("mix must be between 0 and 1")
-    if drive <= 0:
-        raise ValueError("drive must be positive")
-    if oversample_factor < 1:
-        raise ValueError("oversample_factor must be at least 1")
+    *,
+    sample_rate: int,
+    cutoff_hz: float = 12.0,
+) -> np.ndarray:
+    """Remove static offset with a very low high-pass."""
+    return highpass(
+        np.asarray(signal, dtype=np.float64),
+        cutoff_hz=cutoff_hz,
+        sample_rate=sample_rate,
+        order=1,
+    )
 
+
+def _saturation_curve(
+    signal: np.ndarray,
+    *,
+    drive: float,
+    curve: str,
+) -> np.ndarray:
+    shaped_input = drive * np.asarray(signal, dtype=np.float64)
+    if curve == "tube":
+        return np.tanh(shaped_input + (0.08 * np.power(shaped_input, 3)))
+    if curve == "triode":
+        return np.tanh(shaped_input + (0.16 * np.square(shaped_input)))
+    if curve == "iron":
+        return (2.0 / np.pi) * np.arctan((np.pi / 2.0) * shaped_input)
+    raise ValueError(f"Unsupported saturation curve: {curve!r}")
+
+
+def _asymmetric_saturation_curve(
+    signal: np.ndarray,
+    *,
+    drive: float,
+    curve: str,
+    asymmetry: float,
+    even_harmonics: float,
+) -> np.ndarray:
+    clipped_even_harmonics = float(np.clip(even_harmonics, 0.0, 1.0))
+    symmetric = _saturation_curve(signal, drive=drive, curve=curve)
+    if asymmetry == 0.0 or clipped_even_harmonics == 0.0:
+        return symmetric
+
+    asymmetric = _saturation_curve(signal + asymmetry, drive=drive, curve=curve)
+    asymmetric_zero = _saturation_curve(
+        np.zeros(1, dtype=np.float64) + asymmetry,
+        drive=drive,
+        curve=curve,
+    )[0]
+    asymmetric = asymmetric - asymmetric_zero
+    return ((1.0 - clipped_even_harmonics) * symmetric) + (
+        clipped_even_harmonics * asymmetric
+    )
+
+
+def _apply_saturation_compensation(
+    signal: np.ndarray,
+    *,
+    reference_signal: np.ndarray,
+    sample_rate: int,
+    compensation_mode: str,
+    max_gain_db: float = 12.0,
+) -> tuple[np.ndarray, str, float]:
+    resolved_mode = compensation_mode.lower().strip()
+    if resolved_mode == "none":
+        return np.asarray(signal, dtype=np.float64), "none", 0.0
+    if resolved_mode not in {"auto", "lufs", "rms"}:
+        raise ValueError("compensation_mode must be 'none', 'auto', 'lufs', or 'rms'")
+
+    processed = np.asarray(signal, dtype=np.float64)
+    reference = np.asarray(reference_signal, dtype=np.float64)
+    measurement_mode = resolved_mode
+    if resolved_mode == "auto":
+        measurement_mode = "lufs"
+
+    if measurement_mode == "lufs":
+        reference_lufs, reference_active_fraction = integrated_lufs(
+            reference,
+            sample_rate=sample_rate,
+        )
+        processed_lufs, processed_active_fraction = integrated_lufs(
+            processed,
+            sample_rate=sample_rate,
+        )
+        if (
+            min(reference.shape[-1], processed.shape[-1]) < sample_rate
+            or reference_active_fraction < 0.25
+            or processed_active_fraction < 0.25
+            or not np.isfinite(reference_lufs)
+            or not np.isfinite(processed_lufs)
+        ):
+            if resolved_mode == "lufs":
+                return processed, "lufs", 0.0
+            measurement_mode = "rms"
+        else:
+            applied_gain_db = float(
+                np.clip(reference_lufs - processed_lufs, -max_gain_db, max_gain_db)
+            )
+            return processed * db_to_amp(applied_gain_db), "lufs", applied_gain_db
+
+    reference_rms_dbfs, reference_active_fraction = gated_rms_dbfs(
+        reference,
+        sample_rate=sample_rate,
+    )
+    processed_rms_dbfs, processed_active_fraction = gated_rms_dbfs(
+        processed,
+        sample_rate=sample_rate,
+    )
+    if (
+        not np.isfinite(reference_rms_dbfs)
+        or not np.isfinite(processed_rms_dbfs)
+        or reference_active_fraction <= 0.0
+        or processed_active_fraction <= 0.0
+    ):
+        return processed, measurement_mode, 0.0
+
+    applied_gain_db = float(
+        np.clip(reference_rms_dbfs - processed_rms_dbfs, -max_gain_db, max_gain_db)
+    )
+    return processed * db_to_amp(applied_gain_db), "rms", applied_gain_db
+
+
+def _saturation_thd(
+    processor: Callable[[np.ndarray], np.ndarray],
+    test_amp: float = 0.25,
+) -> tuple[float, str]:
+    """Compute characteristic THD% and classify distortion level.
+
+    Applies the saturation shaper to a 440 Hz reference sine and measures how
+    much harmonic energy (2nd–10th) exists relative to the fundamental.
+    Independent of actual audio content — characterises the shaper curve itself.
+
+    Returns (thd_pct, label) where label is one of:
+    ``"clean"``, ``"subtle_warmth"``, ``"warmth"``, ``"saturation"``,
+    ``"distortion"``, ``"fuzz"``.
+    """
+    sr = 44100
+    f0 = 440.0
+    n_fft = 4096
+    t = np.arange(n_fft, dtype=np.float64) / sr
+    x = test_amp * np.sin(2.0 * np.pi * f0 * t)
+
+    y = np.asarray(processor(x), dtype=np.float64)
+
+    spectrum = np.abs(np.fft.rfft(y))
+    bin_per_hz = n_fft / sr
+    h1_bin = int(round(f0 * bin_per_hz))
+    h1 = spectrum[h1_bin]
+    harmonics_sq_sum = sum(
+        spectrum[int(round(h * f0 * bin_per_hz))] ** 2
+        for h in range(2, 11)
+        if int(round(h * f0 * bin_per_hz)) < len(spectrum)
+    )
+    thd_pct = float(np.sqrt(harmonics_sq_sum)) / (h1 + 1e-10) * 100.0
+
+    if thd_pct < 0.5:
+        label = "clean"
+    elif thd_pct < 2.0:
+        label = "subtle_warmth"
+    elif thd_pct < 5.0:
+        label = "warmth"
+    elif thd_pct < 15.0:
+        label = "saturation"
+    elif thd_pct < 40.0:
+        label = "distortion"
+    else:
+        label = "fuzz"
+
+    return round(thd_pct, 2), label
+
+
+def _apply_saturation_legacy(
+    signal: np.ndarray,
+    *,
+    drive: float,
+    mix: float,
+    bias: float,
+    even_harmonics: float,
+    oversample_factor: int,
+    highpass_hz: float,
+    tone_tilt: float,
+    output_lowpass_hz: float,
+    compensation_mode: str,
+    output_trim_db: float,
+    return_analysis: bool,
+) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
     input_signal = np.asarray(signal, dtype=np.float64)
-    input_peak = np.max(np.abs(input_signal))
     shaper_hot_sample_count = 0
     total_wet_sample_count = 0
 
@@ -2601,7 +2891,7 @@ def apply_saturation(
         conditioned = highpass(
             channel, cutoff_hz=highpass_hz, sample_rate=SAMPLE_RATE, order=2
         )
-        if tone_tilt != 0:
+        if tone_tilt != 0.0:
             emphasized = lowpass(
                 conditioned, cutoff_hz=2_800.0, sample_rate=SAMPLE_RATE, order=1
             )
@@ -2628,27 +2918,53 @@ def apply_saturation(
         if oversample_factor > 1:
             wet_channel = resample_poly(wet_channel, 1, oversample_factor)
         wet_channel = wet_channel[: channel.shape[-1]]
-        wet_channel = lowpass(
-            wet_channel,
-            cutoff_hz=output_lowpass_hz,
-            sample_rate=SAMPLE_RATE,
-            order=2,
-        )
-        return wet_channel
+        if output_lowpass_hz > 0.0:
+            wet_channel = lowpass(
+                wet_channel,
+                cutoff_hz=output_lowpass_hz,
+                sample_rate=SAMPLE_RATE,
+                order=2,
+            )
+        return np.asarray(wet_channel, dtype=np.float64)
 
     wet_signal = _apply_per_channel(input_signal, _process_channel)
     blended = ((1.0 - mix) * input_signal) + (mix * wet_signal)
-
-    if compensation:
-        output_peak = np.max(np.abs(blended))
-        if output_peak > 0 and input_peak > 0:
-            blended = blended * (input_peak / output_peak)
-
-    processed_signal = blended.astype(np.float64)
+    compensated_signal, compensation_mode_used, compensation_gain_db = (
+        _apply_saturation_compensation(
+            blended,
+            reference_signal=input_signal,
+            sample_rate=SAMPLE_RATE,
+            compensation_mode=compensation_mode,
+        )
+    )
+    processed_signal = np.asarray(
+        compensated_signal * db_to_amp(output_trim_db),
+        dtype=np.float64,
+    )
     if not return_analysis:
         return processed_signal
 
+    thd_pct, thd_character = _saturation_thd(
+        lambda x: cast(
+            np.ndarray,
+            _apply_saturation_legacy(
+                x,
+                drive=drive,
+                mix=1.0,
+                bias=bias,
+                even_harmonics=even_harmonics,
+                oversample_factor=oversample_factor,
+                highpass_hz=max(highpass_hz, 1.0),
+                tone_tilt=tone_tilt,
+                output_lowpass_hz=output_lowpass_hz,
+                compensation_mode="none",
+                output_trim_db=0.0,
+                return_analysis=False,
+            ),
+        )
+    )
     analysis: dict[str, float | int | str] = {
+        "algorithm": "legacy",
         "drive": round(float(drive), 2),
         "mix": round(float(mix), 2),
         "even_harmonics": round(float(even_harmonics), 2),
@@ -2656,9 +2972,371 @@ def apply_saturation(
             float(shaper_hot_sample_count / max(total_wet_sample_count, 1)),
             4,
         ),
-        "compensation_enabled": str(bool(compensation)).lower(),
+        "dc_offset": round(float(np.mean(to_mono_reference(processed_signal))), 6),
+        "thd_pct": thd_pct,
+        "thd_character": thd_character,
+        "compensation_mode_used": compensation_mode_used,
+        "compensation_gain_db": round(float(compensation_gain_db), 2),
     }
     return processed_signal, analysis
+
+
+def _envelope_follower(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    attack_ms: float,
+    release_ms: float,
+) -> np.ndarray:
+    attack_coeff = _time_constant_to_coeff(attack_ms, sample_rate)
+    release_coeff = _time_constant_to_coeff(release_ms, sample_rate)
+    envelope = np.zeros_like(signal, dtype=np.float64)
+    previous = 0.0
+    for index, sample in enumerate(np.abs(np.asarray(signal, dtype=np.float64))):
+        coeff = attack_coeff if sample > previous else release_coeff
+        previous = (coeff * previous) + ((1.0 - coeff) * sample)
+        envelope[index] = previous
+    return envelope
+
+
+def _apply_saturation_modern(
+    signal: np.ndarray,
+    *,
+    drive: float,
+    mix: float,
+    mode: str,
+    tone: float,
+    fidelity: float,
+    bias: float,
+    even_harmonics: float,
+    oversample_factor: int,
+    highpass_hz: float,
+    tone_tilt: float,
+    output_lowpass_hz: float,
+    preserve_lows_hz: float,
+    preserve_highs_hz: float,
+    compensation_mode: str,
+    output_trim_db: float,
+    return_analysis: bool,
+) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
+    if not 0.0 <= fidelity <= 1.0:
+        raise ValueError("fidelity must be between 0 and 1")
+
+    profile_map: dict[str, dict[str, float | str]] = {
+        "tube": {
+            "curve1": "tube",
+            "curve2": "tube",
+            "stage1_gain": 1.35,
+            "stage2_gain": 0.78,
+            "asymmetry": 0.035,
+            "even": 0.24,
+            "sag": 0.10,
+            "interstage_tilt_db": -0.6,
+            "low_blend": 0.28,
+            "high_blend": 0.52,
+        },
+        "triode": {
+            "curve1": "triode",
+            "curve2": "tube",
+            "stage1_gain": 1.20,
+            "stage2_gain": 0.92,
+            "asymmetry": 0.055,
+            "even": 0.30,
+            "sag": 0.14,
+            "interstage_tilt_db": 0.4,
+            "low_blend": 0.22,
+            "high_blend": 0.44,
+        },
+        "iron": {
+            "curve1": "iron",
+            "curve2": "tube",
+            "stage1_gain": 1.08,
+            "stage2_gain": 0.62,
+            "asymmetry": 0.022,
+            "even": 0.12,
+            "sag": 0.06,
+            "interstage_tilt_db": -1.0,
+            "low_blend": 0.52,
+            "high_blend": 0.64,
+        },
+    }
+    normalized_mode = mode.strip().lower()
+    if normalized_mode not in profile_map:
+        raise ValueError("mode must be 'tube', 'triode', or 'iron'")
+    profile = profile_map[normalized_mode]
+
+    resolved_oversample_factor = oversample_factor
+    if drive >= 1.7 and resolved_oversample_factor < 8:
+        resolved_oversample_factor = 8
+
+    input_signal = np.asarray(signal, dtype=np.float64)
+    shaper_hot_sample_count = 0
+    total_wet_sample_count = 0
+
+    resolved_tone = float(np.clip(tone + (4.0 * tone_tilt), -1.0, 1.0))
+    resolved_even_harmonics = float(
+        np.clip((0.55 * float(profile["even"])) + (0.45 * even_harmonics), 0.0, 1.0)
+    )
+    resolved_asymmetry = float(profile["asymmetry"]) + bias
+    oversampled_sample_rate = SAMPLE_RATE * resolved_oversample_factor
+
+    def _process_channel(channel: np.ndarray) -> np.ndarray:
+        nonlocal shaper_hot_sample_count, total_wet_sample_count
+        dry_channel = np.asarray(channel, dtype=np.float64)
+        conditioned = highpass(
+            dry_channel,
+            cutoff_hz=highpass_hz,
+            sample_rate=SAMPLE_RATE,
+            order=2,
+        )
+        pre_tilt_db = (5.0 * resolved_tone) + float(profile["interstage_tilt_db"])
+        if pre_tilt_db != 0.0:
+            conditioned = _apply_tilt_eq(
+                conditioned,
+                sample_rate=SAMPLE_RATE,
+                tilt_db=pre_tilt_db,
+                pivot_hz=2_100.0,
+            )
+
+        if resolved_oversample_factor > 1:
+            conditioned = resample_poly(conditioned, resolved_oversample_factor, 1)
+
+        envelope = _envelope_follower(
+            conditioned,
+            sample_rate=oversampled_sample_rate,
+            attack_ms=6.0,
+            release_ms=90.0,
+        )
+        sag_amount = float(profile["sag"]) * (0.65 + (0.35 * drive))
+        sag_gain = 1.0 / (1.0 + (sag_amount * envelope))
+
+        stage1_drive = 1.0 + (float(profile["stage1_gain"]) * drive)
+        stage1_input = conditioned * stage1_drive * sag_gain
+        stage1 = _asymmetric_saturation_curve(
+            stage1_input,
+            drive=1.0,
+            curve=cast(str, profile["curve1"]),
+            asymmetry=resolved_asymmetry * (0.7 + (0.3 * drive)),
+            even_harmonics=resolved_even_harmonics,
+        )
+        shaper_hot_sample_count += int(np.count_nonzero(np.abs(stage1_input) >= 1.0))
+        total_wet_sample_count += int(stage1_input.size)
+
+        interstage = _dc_block(
+            stage1,
+            sample_rate=oversampled_sample_rate,
+            cutoff_hz=8.0,
+        )
+        interstage = highpass(
+            interstage,
+            cutoff_hz=max(highpass_hz * 0.75, 10.0),
+            sample_rate=oversampled_sample_rate,
+            order=1,
+        )
+        interstage = lowpass(
+            interstage,
+            cutoff_hz=16_000.0 - (3_500.0 * (1.0 - fidelity)),
+            sample_rate=oversampled_sample_rate,
+            order=1,
+        )
+        if resolved_tone != 0.0:
+            interstage = _apply_tilt_eq(
+                interstage,
+                sample_rate=oversampled_sample_rate,
+                tilt_db=2.5 * resolved_tone,
+                pivot_hz=3_000.0,
+            )
+
+        stage2_drive = 1.0 + (float(profile["stage2_gain"]) * drive)
+        stage2_input = interstage * stage2_drive
+        stage2 = _asymmetric_saturation_curve(
+            stage2_input,
+            drive=1.0,
+            curve=cast(str, profile["curve2"]),
+            asymmetry=resolved_asymmetry * 0.55,
+            even_harmonics=min(1.0, resolved_even_harmonics + 0.08),
+        )
+        shaper_hot_sample_count += int(np.count_nonzero(np.abs(stage2_input) >= 1.0))
+        total_wet_sample_count += int(stage2_input.size)
+
+        wet_channel = stage2
+        if resolved_oversample_factor > 1:
+            wet_channel = resample_poly(wet_channel, 1, resolved_oversample_factor)
+        wet_channel = np.asarray(wet_channel[: dry_channel.shape[-1]], dtype=np.float64)
+
+        if output_lowpass_hz > 0.0:
+            wet_channel = lowpass(
+                wet_channel,
+                cutoff_hz=output_lowpass_hz,
+                sample_rate=SAMPLE_RATE,
+                order=1,
+            )
+
+        wet_channel = _dc_block(wet_channel, sample_rate=SAMPLE_RATE, cutoff_hz=12.0)
+
+        low_blend = float(profile["low_blend"]) * fidelity
+        high_blend = float(profile["high_blend"]) * fidelity
+        if preserve_lows_hz > 0.0 and low_blend > 0.0:
+            dry_low = lowpass(
+                dry_channel,
+                cutoff_hz=preserve_lows_hz,
+                sample_rate=SAMPLE_RATE,
+                order=2,
+            )
+            wet_low = lowpass(
+                wet_channel,
+                cutoff_hz=preserve_lows_hz,
+                sample_rate=SAMPLE_RATE,
+                order=2,
+            )
+            wet_channel = wet_channel + (low_blend * (dry_low - wet_low))
+        if preserve_highs_hz > 0.0 and high_blend > 0.0:
+            dry_high = highpass(
+                dry_channel,
+                cutoff_hz=preserve_highs_hz,
+                sample_rate=SAMPLE_RATE,
+                order=2,
+            )
+            wet_high = highpass(
+                wet_channel,
+                cutoff_hz=preserve_highs_hz,
+                sample_rate=SAMPLE_RATE,
+                order=2,
+            )
+            wet_channel = wet_channel + (high_blend * (dry_high - wet_high))
+        return _dc_block(wet_channel, sample_rate=SAMPLE_RATE, cutoff_hz=12.0)
+
+    wet_signal = _apply_per_channel(input_signal, _process_channel)
+    blended = ((1.0 - mix) * input_signal) + (mix * wet_signal)
+    compensated_signal, compensation_mode_used, compensation_gain_db = (
+        _apply_saturation_compensation(
+            blended,
+            reference_signal=input_signal,
+            sample_rate=SAMPLE_RATE,
+            compensation_mode=compensation_mode,
+        )
+    )
+    processed_signal = np.asarray(
+        compensated_signal * db_to_amp(output_trim_db),
+        dtype=np.float64,
+    )
+    if not return_analysis:
+        return processed_signal
+
+    thd_pct, thd_character = _saturation_thd(
+        lambda x: cast(
+            np.ndarray,
+            _apply_saturation_modern(
+                x,
+                drive=drive,
+                mix=1.0,
+                mode=normalized_mode,
+                tone=tone,
+                fidelity=fidelity,
+                bias=bias,
+                even_harmonics=even_harmonics,
+                oversample_factor=resolved_oversample_factor,
+                highpass_hz=max(highpass_hz, 10.0),
+                tone_tilt=tone_tilt,
+                output_lowpass_hz=output_lowpass_hz,
+                preserve_lows_hz=0.0,
+                preserve_highs_hz=0.0,
+                compensation_mode="none",
+                output_trim_db=0.0,
+                return_analysis=False,
+            ),
+        )
+    )
+    analysis: dict[str, float | int | str] = {
+        "algorithm": "modern",
+        "mode": normalized_mode,
+        "drive": round(float(drive), 2),
+        "mix": round(float(mix), 2),
+        "fidelity": round(float(fidelity), 2),
+        "tone": round(float(tone), 2),
+        "shaper_hot_fraction": round(
+            float(shaper_hot_sample_count / max(total_wet_sample_count, 1)),
+            4,
+        ),
+        "dc_offset": round(float(np.mean(to_mono_reference(processed_signal))), 6),
+        "thd_pct": thd_pct,
+        "thd_character": thd_character,
+        "compensation_mode_used": compensation_mode_used,
+        "compensation_gain_db": round(float(compensation_gain_db), 2),
+    }
+    return processed_signal, analysis
+
+
+def apply_saturation(
+    signal: np.ndarray,
+    drive: float = 1.18,
+    mix: float = 0.34,
+    *,
+    algorithm: str = "modern",
+    mode: str = "tube",
+    tone: float = 0.0,
+    fidelity: float = 0.7,
+    bias: float = 0.11,
+    even_harmonics: float = 0.18,
+    oversample_factor: int = 4,
+    highpass_hz: float = 30.0,
+    tone_tilt: float = 0.10,
+    output_lowpass_hz: float = 0.0,
+    preserve_lows_hz: float = 120.0,
+    preserve_highs_hz: float = 6_000.0,
+    compensation_mode: str = "auto",
+    output_trim_db: float = 0.0,
+    return_analysis: bool = False,
+) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
+    """Apply subtle analog-style saturation to mono or stereo signal."""
+    if not 0.0 <= mix <= 1.0:
+        raise ValueError("mix must be between 0 and 1")
+    if drive <= 0:
+        raise ValueError("drive must be positive")
+    if oversample_factor < 1:
+        raise ValueError("oversample_factor must be at least 1")
+    if highpass_hz < 0.0:
+        raise ValueError("highpass_hz must be non-negative")
+    if preserve_lows_hz < 0.0 or preserve_highs_hz < 0.0:
+        raise ValueError("preserve_lows_hz and preserve_highs_hz must be non-negative")
+
+    resolved_algorithm = algorithm.strip().lower()
+    if resolved_algorithm == "legacy":
+        return _apply_saturation_legacy(
+            signal,
+            drive=drive,
+            mix=mix,
+            bias=bias,
+            even_harmonics=even_harmonics,
+            oversample_factor=oversample_factor,
+            highpass_hz=highpass_hz,
+            tone_tilt=tone_tilt,
+            output_lowpass_hz=output_lowpass_hz,
+            compensation_mode=compensation_mode,
+            output_trim_db=output_trim_db,
+            return_analysis=return_analysis,
+        )
+    if resolved_algorithm != "modern":
+        raise ValueError("algorithm must be 'modern' or 'legacy'")
+    return _apply_saturation_modern(
+        signal,
+        drive=drive,
+        mix=mix,
+        mode=mode,
+        tone=tone,
+        fidelity=fidelity,
+        bias=bias,
+        even_harmonics=even_harmonics,
+        oversample_factor=oversample_factor,
+        highpass_hz=highpass_hz,
+        tone_tilt=tone_tilt,
+        output_lowpass_hz=output_lowpass_hz,
+        preserve_lows_hz=preserve_lows_hz,
+        preserve_highs_hz=preserve_highs_hz,
+        compensation_mode=compensation_mode,
+        output_trim_db=output_trim_db,
+        return_analysis=return_analysis,
+    )
 
 
 def apply_effect_chain(
@@ -2678,7 +3356,9 @@ def apply_effect_chain(
         if effect.kind in {"chorus", "compressor", "saturation"}:
             params = _resolve_effect_params(effect.kind, params)
         native_metrics: dict[str, float | int | str] | None = None
-        if effect.kind == "delay":
+        if effect.kind == "gate":
+            processed = cast(np.ndarray, apply_gate(processed, **params))
+        elif effect.kind == "delay":
             processed = apply_delay(processed, **params)
         elif effect.kind == "reverb":
             processed = apply_reverb(processed, **params)

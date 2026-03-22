@@ -583,43 +583,85 @@ Presets:
 
 Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
 
-Subtle analog-style warming stage intended for tube/iron/preamp color rather
-than obvious distortion.
+High-fidelity native saturation for tube/iron/preamp-style warmth rather than
+obvious guitar-style distortion. The default engine is a modern two-stage
+saturator with DC-safe asymmetry, bounded loudness compensation, and optional
+clean low/high-band reintegration so warmth does not have to come from blanket
+top-end darkening. The previous one-stage soft-clip path remains available via
+`algorithm="legacy"`.
 
 Render analysis records saturation-stage diagnostics in the analysis manifest.
-Current metrics include the shared before/after density/clipping proxies plus a
-native `shaper_hot_fraction` metric that estimates how often the internal shaper
-is being driven into a clearly nonlinear region.
+Metrics include the shared before/after density/clipping proxies plus:
+
+- `algorithm`: `"modern"` or `"legacy"`.
+- `mode`: qualitative voicing for the modern engine.
+- `shaper_hot_fraction`: fraction of samples where the internal drive signal exceeds
+  ±1.0 (clearly nonlinear region).
+- `dc_offset`: final mono-reference DC offset after processing.
+- `thd_pct`: characteristic THD% computed from a 440 Hz reference sine at −12 dBFS
+  processed through the same shaper curve. Reflects the shaper character, not the
+  actual audio content.
+- `thd_character`: qualitative label derived from `thd_pct` —
+  `"clean"` (< 0.5%), `"subtle_warmth"` (0.5–2%), `"warmth"` (2–5%),
+  `"saturation"` (5–15%), `"distortion"` (15–40%), `"fuzz"` (> 40%).
+- `compensation_mode_used`: final makeup mode after resolving `auto` or honoring an
+  explicit strict mode.
+- `compensation_gain_db`: bounded output gain applied after measurement matching.
 
 Parameters:
 
 - `preset: str`
   Supported presets: `tube_warm`, `iron_soft`, `neve_gentle`, `kick_weight`,
   `kick_crunch`, `tom_thicken`
+- `algorithm: str`
+  `modern` (default) or `legacy`.
+- `mode: str`
+  Modern-engine voicing: `tube`, `triode`, or `iron`.
 - `drive: float`
   Amount of nonlinearity. Keep this conservative for bus sweetening.
 - `mix: float`
   Dry/wet blend from `0` to `1`.
+- `tone: float`
+  Broad tonal push before/through the nonlinear stages. Positive values add a
+  little more bite and presence; negative values lean softer/thicker.
+- `fidelity: float`
+  `0`–`1` control for how much low/high clean-band preservation is allowed back
+  into the saturated result. Higher values keep the effect more open and hi-fi.
 - `bias: float`
-  Asymmetry control that nudges the transfer toward even-order warmth.
+  Advanced asymmetry trim. Still supported, but the modern engine is voiced
+  primarily through `mode`, `tone`, and `fidelity`.
 - `even_harmonics: float`
-  Blend between a more symmetric and more asymmetric saturation curve.
+  Advanced blend between symmetric and asymmetric curves.
 - `oversample_factor: int`
   Oversampling factor used around the nonlinear stage.
 - `highpass_hz: float`
   Removes excessive sub/DC before saturation.
 - `tone_tilt: float`
-  Tilts more low-mid or upper-mid energy into the nonlinear stage.
+  Legacy-compatible extra tilt into the nonlinear path.
 - `output_lowpass_hz: float`
-  Smooths the post-saturation output.
-- `compensation: bool`
-  Applies output gain compensation so the result does not simply get louder.
+  Optional extra post-saturation smoothing. Default modern behavior does not rely
+  on a fixed lowpass to create warmth.
+- `preserve_lows_hz: float`
+  Low-band crossover below which some clean signal may be reintegrated.
+- `preserve_highs_hz: float`
+  High-band crossover above which some clean signal may be reintegrated.
+- `compensation_mode: str`
+  `none`, `auto`, `rms`, or `lufs`. Default is `auto`: prefer LUFS for sustained
+  material and switch to RMS for short/sparse/transient material. If you explicitly
+  request `lufs` or `rms`, that mode is used strictly with no hidden fallback.
+- `output_trim_db: float`
+  Final manual trim after automatic compensation.
 
 Notes:
 
 - default tuning is intentionally subtle enough for “always on” use
-- `tube_warm` is the safest default
-- `kick_weight` is the recommended default saturation companion for kick presets
+- the modern engine is now the default for existing `EffectSpec("saturation", ...)`
+  call sites
+- `tube_warm` is the safest bus-sweetening default
+- `iron_soft` is the most transformer-like subtle thickener
+- `kick_weight` is the recommended saturation companion for kick presets
+- use `algorithm="legacy"` only when you explicitly want the older one-stage
+  soft-clip behavior
 
 Example:
 
@@ -627,7 +669,10 @@ Example:
 score = Score(
     f0=110.0,
     master_effects=[
-        EffectSpec("saturation", {"preset": "tube_warm", "mix": 0.24}),
+        EffectSpec(
+            "saturation",
+            {"preset": "tube_warm", "mix": 0.24, "preserve_highs_hz": 7000.0},
+        ),
         EffectSpec("reverb", {"room_size": 0.65, "damping": 0.45, "wet_level": 0.22}),
     ],
 )
@@ -1104,11 +1149,18 @@ Parameters:
 - `noise_mix: float`
   Blend between pitched tone and noise layer. `0` is fully pitched; `1` is fully noise-driven.
 - `pitch_decay: float`
-  Decay time in seconds for the noise-focused transient envelope.
+  Decay time in seconds for the tone component's attack transient. Also used as the
+  default for `noise_decay` when `noise_decay` is not specified (backward-compatible).
+- `noise_decay: float`
+  Decay time in seconds for the noise body envelope, independent of `pitch_decay`.
+  Set this longer than `pitch_decay` to get a full noise body after the pitched
+  transient dies — the key parameter for clap and snare body. Defaults to
+  `pitch_decay` when omitted.
 - `tone_decay: float`
   Decay time in seconds for the pitched tone body.
 - `bandpass_ratio: float`
-  Ratio applied to the resolved note frequency to choose the center of the noise shaping band.
+  Ratio applied to the resolved note frequency to choose the center of the noise
+  shaping band. Bandpass width is `max(80, center × 0.75)` Hz.
 - `click_amount: float`
   Level of the short transient click layer.
 
@@ -1116,12 +1168,14 @@ Recommended authoring aliases:
 
 - `params.noise_mix_ratio`
 - `params.pitch_decay_ms`
+- `params.noise_decay_ms`
 - `params.tone_decay_ms`
 
 Validation:
 
 - `0 <= noise_mix <= 1`
 - `pitch_decay > 0`
+- `noise_decay > 0`
 - `tone_decay > 0`
 - `bandpass_ratio > 0`
 - `click_amount >= 0`
@@ -1256,8 +1310,15 @@ Parameters:
   Reference pitch for key tracking. When the note frequency equals this value, the
   effective cutoff is `cutoff_hz` before envelope modulation. Default `220.0`.
 - `resonance: float`
-  Resonance emphasis for the internal state-variable filter. Higher values sharpen
-  the cutoff region and make the filter feel more analog/reactive. Default `0.0`.
+  Resonance on a 0–1 internal scale. Maps to Q via `Q = 0.707 + 11.293 × resonance`
+  (so `resonance=0` → Q=0.707 Butterworth flat, `resonance=0.1` → Q≈1.84). Prefer
+  `resonance_q` when an explicit Q is known.
+- `resonance_q: float`
+  Filter Q as a direct value (≥ 0.5). Takes precedence over `resonance` when both
+  are provided. Q=0.707 is Butterworth flat (no resonance peak). Q=1 is a gentle
+  peak; Q=3–4 is clearly resonant; Q=8+ approaches self-oscillation. For bass
+  voices, keep Q near 0.707 to avoid filter suckout; occasional bumps to Q=1.5–2.5
+  add flavor without muddying the fundamental.
 - `filter_drive: float`
   Analog-inspired drive amount inside the filter path. `0` is clean; higher values
   thicken and soften the response. The response is intentionally eased so that

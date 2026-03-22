@@ -172,6 +172,11 @@ making for a better experience for both agent and human.
   exact score-backed snippet window when you want repeatable boundaries.
 - Pieces should expose either a `build_score()` function or a direct `render_audio()`
   function if they do not fit the score abstraction cleanly.
+- **Rendering is slow** — a full piece takes multiple DSP passes and typically runs
+  longer than real-time. When calling render commands via Bash, set a generous
+  timeout (at minimum 3–5× the piece duration in wall-clock seconds; 180 s is a
+  safe floor for most pieces). Prefer `make snippet` or `make render-window` when
+  iterating on a local moment rather than re-rendering the whole piece.
 
 ## Musical Direction
 
@@ -217,6 +222,9 @@ See `FUTURE.md` for way more ideas.
 - The native effect chain also includes a stereo-linked `compressor` effect with
   feedforward/feedback modes, detector-path EQ bands, and voice-to-voice
   sidechaining plus lookahead for ducking/glue workflows.
+- The native `saturation` effect now defaults to a higher-fidelity two-stage
+  analog-style path with optional clean low/high-band preservation; see
+  `docs/synth_api.md` for the modern vs legacy behavior and parameter surface.
 - There is now a dedicated `kick_tom` synth engine for 808/909-style kicks and
   toms; the intended happy path is pairing it with the native drum-oriented
   compressor/saturation presets documented in `docs/synth_api.md`.

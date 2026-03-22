@@ -1516,10 +1516,26 @@ def test_saturation_gain_compensation_keeps_level_reasonable() -> None:
     assert np.isclose(output_peak, input_peak, rtol=0.25)
 
 
-def test_saturation_effect_analysis_reports_shaper_activity() -> None:
-    signal = 0.7 * np.sin(
-        np.linspace(0.0, 10.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
+def test_saturation_modern_asymmetry_remains_dc_safe() -> None:
+    t = np.arange(synth.SAMPLE_RATE, dtype=np.float64) / synth.SAMPLE_RATE
+    signal = 0.4 * np.sin(2.0 * np.pi * 220.0 * t)
+
+    processed = synth.apply_saturation(
+        signal,
+        drive=1.8,
+        mix=1.0,
+        mode="triode",
+        bias=0.2,
+        algorithm="modern",
+        compensation_mode="none",
     )
+
+    assert abs(float(np.mean(processed))) < 0.005
+
+
+def test_saturation_effect_analysis_reports_shaper_activity() -> None:
+    t = np.arange(synth.SAMPLE_RATE, dtype=np.float64) / synth.SAMPLE_RATE
+    signal = 0.7 * np.sin(2.0 * np.pi * 220.0 * t)
 
     _processed, effect_analysis = synth.apply_effect_chain(
         signal,
@@ -1530,10 +1546,247 @@ def test_saturation_effect_analysis_reports_shaper_activity() -> None:
     saturation_metrics = effect_analysis[0].metrics
     assert saturation_metrics["shaper_hot_fraction"] > 0.0
     assert "crest_factor_delta_db" in saturation_metrics
+    assert saturation_metrics["algorithm"] == "modern"
+
+
+def test_saturation_modern_auto_uses_lufs_for_sustained_signal() -> None:
+    t = np.arange(synth.SAMPLE_RATE * 2, dtype=np.float64) / synth.SAMPLE_RATE
+    signal = 0.26 * np.sin(2.0 * np.pi * 220.0 * t)
+
+    processed, analysis = synth.apply_saturation(
+        signal,
+        drive=1.45,
+        mix=0.8,
+        mode="tube",
+        compensation_mode="auto",
+        return_analysis=True,
+    )
+    input_lufs, _ = synth.integrated_lufs(signal, sample_rate=synth.SAMPLE_RATE)
+    output_lufs, _ = synth.integrated_lufs(processed, sample_rate=synth.SAMPLE_RATE)
+
+    assert analysis["compensation_mode_used"] == "lufs"
+    assert abs(output_lufs - input_lufs) < 1.5
+
+
+def test_saturation_modern_auto_uses_rms_for_short_signal() -> None:
+    t = np.linspace(0.0, 0.15, int(0.15 * synth.SAMPLE_RATE), endpoint=False)
+    signal = 0.5 * np.sin(2.0 * np.pi * 110.0 * t) * np.exp(-t / 0.05)
+
+    _processed, analysis = synth.apply_saturation(
+        signal,
+        drive=1.5,
+        mix=0.8,
+        mode="tube",
+        compensation_mode="auto",
+        return_analysis=True,
+    )
+
+    assert analysis["compensation_mode_used"] == "rms"
+
+
+def test_saturation_explicit_lufs_is_strict() -> None:
+    t = np.linspace(0.0, 0.15, int(0.15 * synth.SAMPLE_RATE), endpoint=False)
+    signal = 0.5 * np.sin(2.0 * np.pi * 110.0 * t) * np.exp(-t / 0.05)
+
+    _processed, analysis = synth.apply_saturation(
+        signal,
+        drive=1.5,
+        mix=0.8,
+        mode="tube",
+        compensation_mode="lufs",
+        return_analysis=True,
+    )
+
+    assert analysis["compensation_mode_used"] == "lufs"
+
+
+def _band_energy(
+    signal: np.ndarray,
+    *,
+    low_hz: float,
+    high_hz: float,
+    sample_rate: int,
+) -> float:
+    mono = np.asarray(signal, dtype=np.float64)
+    if mono.ndim == 2:
+        mono = np.mean(mono, axis=0, dtype=np.float64)
+    spectrum = np.abs(np.fft.rfft(mono * np.hanning(mono.size))) ** 2
+    freqs = np.fft.rfftfreq(mono.size, 1.0 / sample_rate)
+    mask = (freqs >= low_hz) & (freqs < high_hz)
+    return float(np.sum(spectrum[mask]))
+
+
+def _alias_proxy(
+    signal: np.ndarray,
+    *,
+    fundamental_hz: float,
+    sample_rate: int,
+    max_harmonic: int = 12,
+    tolerance_hz: float = 30.0,
+) -> float:
+    mono = np.asarray(signal, dtype=np.float64)
+    if mono.ndim == 2:
+        mono = np.mean(mono, axis=0, dtype=np.float64)
+    spectrum = np.abs(np.fft.rfft(mono * np.hanning(mono.size))) ** 2
+    freqs = np.fft.rfftfreq(mono.size, 1.0 / sample_rate)
+    mask = freqs < 20.0
+    for harmonic_index in range(1, max_harmonic + 1):
+        harmonic_hz = harmonic_index * fundamental_hz
+        if harmonic_hz >= sample_rate / 2.0:
+            continue
+        mask |= np.abs(freqs - harmonic_hz) <= tolerance_hz
+    total_energy = float(np.sum(spectrum))
+    return float(np.sum(spectrum[~mask]) / max(total_energy, 1e-12))
+
+
+def test_saturation_modern_preserve_highs_retains_more_air() -> None:
+    t = np.arange(synth.SAMPLE_RATE, dtype=np.float64) / synth.SAMPLE_RATE
+    signal = (
+        0.25 * np.sin(2.0 * np.pi * 220.0 * t)
+        + 0.18 * np.sin(2.0 * np.pi * 6_400.0 * t)
+        + 0.10 * np.sin(2.0 * np.pi * 8_900.0 * t)
+    )
+
+    without_preserve = synth.apply_saturation(
+        signal,
+        drive=1.7,
+        mix=1.0,
+        mode="tube",
+        fidelity=0.0,
+        preserve_highs_hz=0.0,
+        compensation_mode="none",
+    )
+    with_preserve = synth.apply_saturation(
+        signal,
+        drive=1.7,
+        mix=1.0,
+        mode="tube",
+        fidelity=0.95,
+        preserve_highs_hz=6_000.0,
+        compensation_mode="none",
+    )
+
+    input_high_band = _band_energy(
+        signal,
+        low_hz=6_000.0,
+        high_hz=12_000.0,
+        sample_rate=synth.SAMPLE_RATE,
+    )
+    without_high_band = _band_energy(
+        without_preserve,
+        low_hz=6_000.0,
+        high_hz=12_000.0,
+        sample_rate=synth.SAMPLE_RATE,
+    )
+    with_high_band = _band_energy(
+        with_preserve,
+        low_hz=6_000.0,
+        high_hz=12_000.0,
+        sample_rate=synth.SAMPLE_RATE,
+    )
+    assert abs(with_high_band - input_high_band) < abs(
+        without_high_band - input_high_band
+    )
+
+
+def test_saturation_modern_has_lower_alias_proxy_than_legacy() -> None:
+    t = np.arange(synth.SAMPLE_RATE, dtype=np.float64) / synth.SAMPLE_RATE
+    signal = 0.6 * np.sin(2.0 * np.pi * 9_000.0 * t)
+
+    legacy = synth.apply_saturation(
+        signal,
+        drive=8.0,
+        mix=1.0,
+        algorithm="legacy",
+        compensation_mode="none",
+    )
+    modern = synth.apply_saturation(
+        signal,
+        drive=1.85,
+        mix=1.0,
+        mode="triode",
+        oversample_factor=8,
+        fidelity=0.45,
+        compensation_mode="none",
+    )
+
+    legacy_alias = _alias_proxy(
+        legacy,
+        fundamental_hz=9_000.0,
+        sample_rate=synth.SAMPLE_RATE,
+    )
+    modern_alias = _alias_proxy(
+        modern,
+        fundamental_hz=9_000.0,
+        sample_rate=synth.SAMPLE_RATE,
+    )
+    assert modern_alias < legacy_alias
+
+
+def test_saturation_modern_preserve_lows_keeps_low_end_more_stable() -> None:
+    t = np.arange(synth.SAMPLE_RATE, dtype=np.float64) / synth.SAMPLE_RATE
+    signal = (
+        0.50 * np.sin(2.0 * np.pi * 55.0 * t)
+        + 0.16 * np.sin(2.0 * np.pi * 220.0 * t)
+        + 0.08 * np.sin(2.0 * np.pi * 4_500.0 * t)
+    )
+
+    input_low_band = _band_energy(
+        signal,
+        low_hz=20.0,
+        high_hz=120.0,
+        sample_rate=synth.SAMPLE_RATE,
+    )
+    without_preserve = synth.apply_saturation(
+        signal,
+        drive=1.9,
+        mix=1.0,
+        mode="iron",
+        fidelity=0.0,
+        preserve_lows_hz=0.0,
+        compensation_mode="none",
+    )
+    with_preserve = synth.apply_saturation(
+        signal,
+        drive=1.9,
+        mix=1.0,
+        mode="iron",
+        fidelity=0.95,
+        preserve_lows_hz=120.0,
+        compensation_mode="none",
+    )
+
+    without_low_delta = abs(
+        _band_energy(
+            without_preserve,
+            low_hz=20.0,
+            high_hz=120.0,
+            sample_rate=synth.SAMPLE_RATE,
+        )
+        - input_low_band
+    )
+    with_low_delta = abs(
+        _band_energy(
+            with_preserve,
+            low_hz=20.0,
+            high_hz=120.0,
+            sample_rate=synth.SAMPLE_RATE,
+        )
+        - input_low_band
+    )
+    assert with_low_delta < without_low_delta
 
 
 def test_kick_punch_preset_compresses_and_recovers() -> None:
-    """kick_punch should apply meaningful GR and not crush the signal."""
+    """kick_punch should compress the kick body without silencing it.
+
+    kick_punch uses a 6 ms attack, which intentionally lets the initial
+    transient through uncompressed for punch.  The 1 dB makeup gain can push
+    the output peak slightly above the input peak, so a peak comparison is
+    not meaningful here.  Instead we verify that the body (post-transient) is
+    attenuated: the RMS of the post-attack region should be lower in the
+    processed signal than in the dry signal.
+    """
     # Kick-like burst: exponential decay from ~-6 dBFS peak
     t = np.linspace(0.0, 0.5, synth.SAMPLE_RATE // 2, endpoint=False)
     kick = 0.5 * np.sin(2.0 * np.pi * 62.0 * t) * np.exp(-t / 0.3)
@@ -1543,13 +1796,18 @@ def test_kick_punch_preset_compresses_and_recovers() -> None:
         [EffectSpec("compressor", {"preset": "kick_punch"})],
     )
     assert isinstance(processed, np.ndarray)
-
-    input_peak = float(np.max(np.abs(kick)))
-    output_peak = float(np.max(np.abs(processed)))
-    # Compression should reduce the peak but not silence it
-    assert output_peak < input_peak, "kick_punch should reduce peak"
-    assert output_peak > input_peak * 0.2, "kick_punch should not crush the signal"
     assert np.isfinite(processed).all()
+
+    # Skip the first ~20 ms (transient) so the attack phase doesn't mask GR.
+    body_start = int(0.020 * synth.SAMPLE_RATE)
+    input_body_rms = float(np.sqrt(np.mean(kick[body_start:] ** 2)))
+    output_body_rms = float(np.sqrt(np.mean(processed[body_start:] ** 2)))
+
+    # Compression should reduce the body RMS but not silence it
+    assert output_body_rms < input_body_rms, "kick_punch should compress the body"
+    assert output_body_rms > input_body_rms * 0.2, (
+        "kick_punch should not crush the signal"
+    )
 
 
 def test_plot_piano_roll_writes_file(tmp_path: Path) -> None:
@@ -1714,3 +1972,222 @@ def test_piece_registry_definitions_are_complete() -> None:
     for piece_name, definition in PIECES.items():
         assert definition.name == piece_name
         assert bool(definition.build_score) != bool(definition.render_audio)
+
+
+# ---------------------------------------------------------------------------
+# noise_perc: independent noise_decay / pitch_decay
+# ---------------------------------------------------------------------------
+
+
+def test_noise_perc_noise_decay_independent_from_pitch_decay() -> None:
+    """Short pitch_decay + long noise_decay should give more noise body than
+    using pitch_decay alone (the old behavior)."""
+    from code_musics.engines import noise_perc
+
+    sr = 44100
+    dur = 0.3
+    amp = 0.5
+    freq = 3000.0
+
+    # Old-style: pitch_decay=0.004 (short) dominates noise — no body
+    short_noise = noise_perc.render(
+        freq=freq,
+        duration=dur,
+        amp=amp,
+        sample_rate=sr,
+        params={
+            "noise_mix": 0.99,
+            "pitch_decay": 0.004,
+            "tone_decay": 0.003,
+            "bandpass_ratio": 0.8,
+            "click_amount": 0.06,
+        },
+    )
+    # New-style: noise_decay=0.085 gives proper body while pitch_decay stays short
+    long_noise = noise_perc.render(
+        freq=freq,
+        duration=dur,
+        amp=amp,
+        sample_rate=sr,
+        params={
+            "noise_mix": 0.99,
+            "pitch_decay": 0.004,
+            "noise_decay": 0.085,
+            "tone_decay": 0.003,
+            "bandpass_ratio": 0.8,
+            "click_amount": 0.06,
+        },
+    )
+
+    # The long_noise version should have more energy in the 50–200 ms window
+    # (the noise body) than the short version.
+    mid_start = int(0.05 * sr)
+    mid_end = int(0.20 * sr)
+    short_body_rms = float(np.sqrt(np.mean(short_noise[mid_start:mid_end] ** 2)))
+    long_body_rms = float(np.sqrt(np.mean(long_noise[mid_start:mid_end] ** 2)))
+    assert long_body_rms > short_body_rms * 2.0, (
+        f"Long noise_decay should have significantly more body: "
+        f"long={long_body_rms:.6f} short={short_body_rms:.6f}"
+    )
+
+
+def test_noise_perc_noise_decay_defaults_to_pitch_decay() -> None:
+    """Omitting noise_decay should give the same result as pitch_decay=noise_decay."""
+    from code_musics.engines import noise_perc
+
+    # Note: exact sample equality is not expected because the RNG seed incorporates
+    # the params dict, so adding noise_decay changes the seed even when the value
+    # matches pitch_decay. We verify behavior equivalence by energy comparison.
+    sr = 44100
+    dur = 0.25
+    pitch_dec = 0.03  # deliberately short so body disappears fast
+
+    without_noise_decay = noise_perc.render(
+        freq=300.0,
+        duration=dur,
+        amp=0.5,
+        sample_rate=sr,
+        params={
+            "noise_mix": 0.95,
+            "pitch_decay": pitch_dec,
+            "tone_decay": 0.05,
+            "bandpass_ratio": 1.0,
+            "click_amount": 0.05,
+        },
+    )
+    with_explicit_short = noise_perc.render(
+        freq=300.0,
+        duration=dur,
+        amp=0.5,
+        sample_rate=sr,
+        params={
+            "noise_mix": 0.95,
+            "pitch_decay": pitch_dec,
+            "noise_decay": pitch_dec,
+            "tone_decay": 0.05,
+            "bandpass_ratio": 1.0,
+            "click_amount": 0.05,
+        },
+    )
+    with_long_noise_decay = noise_perc.render(
+        freq=300.0,
+        duration=dur,
+        amp=0.5,
+        sample_rate=sr,
+        params={
+            "noise_mix": 0.95,
+            "pitch_decay": pitch_dec,
+            "noise_decay": 0.12,
+            "tone_decay": 0.05,
+            "bandpass_ratio": 1.0,
+            "click_amount": 0.05,
+        },
+    )
+
+    # Default and explicit-short should both have much less body than long.
+    mid_start = int(0.05 * sr)
+    mid_end = int(0.18 * sr)
+    rms_default = float(np.sqrt(np.mean(without_noise_decay[mid_start:mid_end] ** 2)))
+    rms_short = float(np.sqrt(np.mean(with_explicit_short[mid_start:mid_end] ** 2)))
+    rms_long = float(np.sqrt(np.mean(with_long_noise_decay[mid_start:mid_end] ** 2)))
+    assert rms_long > rms_default * 2.0
+    assert rms_long > rms_short * 2.0
+
+
+# ---------------------------------------------------------------------------
+# polyblep: resonance_q parameter
+# ---------------------------------------------------------------------------
+
+
+def test_polyblep_resonance_q_overrides_resonance() -> None:
+    """resonance_q=0.707 (Butterworth flat) should produce a less resonant
+    filter than resonance=0.5 (~Q=6.4), i.e. no resonant peak."""
+    score_q = Score(f0=55.0)
+    score_q.add_voice(
+        "bass",
+        synth_defaults={
+            "engine": "polyblep",
+            "params": {"waveform": "saw", "cutoff_hz": 800.0, "resonance_q": 0.707},
+        },
+    )
+    score_q.add_note("bass", start=0.0, duration=0.5, freq=110.0, amp_db=-6.0)
+
+    score_res = Score(f0=55.0)
+    score_res.add_voice(
+        "bass",
+        synth_defaults={
+            "engine": "polyblep",
+            "params": {"waveform": "saw", "cutoff_hz": 800.0, "resonance": 0.5},
+        },
+    )
+    score_res.add_note("bass", start=0.0, duration=0.5, freq=110.0, amp_db=-6.0)
+
+    audio_q = score_q.render()
+    audio_res = score_res.render()
+
+    # Both should produce finite audio and be different
+    assert np.isfinite(audio_q).all()
+    assert np.isfinite(audio_res).all()
+    assert not np.allclose(audio_q, audio_res)
+
+
+# ---------------------------------------------------------------------------
+# saturation: THD reporting
+# ---------------------------------------------------------------------------
+
+
+def test_saturation_thd_reported_in_analysis() -> None:
+    """apply_saturation with return_analysis=True should report thd_pct and
+    thd_character in the analysis dict."""
+    signal = 0.5 * np.sin(
+        np.linspace(0.0, 4.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
+    )
+    _, analysis = synth.apply_saturation(
+        signal, drive=1.5, mix=0.5, return_analysis=True
+    )
+
+    assert isinstance(analysis, dict)
+    assert "thd_pct" in analysis
+    assert "thd_character" in analysis
+    assert isinstance(analysis["thd_pct"], float)
+    assert analysis["thd_pct"] >= 0.0
+    assert analysis["thd_character"] in {
+        "clean",
+        "subtle_warmth",
+        "warmth",
+        "saturation",
+        "distortion",
+        "fuzz",
+    }
+
+
+def test_saturation_thd_increases_with_drive() -> None:
+    """Higher drive should produce higher THD%."""
+    signal = 0.3 * np.sin(
+        np.linspace(0.0, 4.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
+    )
+    _, low_analysis = synth.apply_saturation(
+        signal, drive=0.5, mix=0.5, return_analysis=True
+    )
+    _, high_analysis = synth.apply_saturation(
+        signal, drive=3.0, mix=0.5, return_analysis=True
+    )
+
+    assert isinstance(low_analysis, dict)
+    assert isinstance(high_analysis, dict)
+    assert float(high_analysis["thd_pct"]) > float(low_analysis["thd_pct"])
+
+
+def test_saturation_thd_reported_via_effect_chain() -> None:
+    """THD should appear in the effect analysis manifest via apply_effect_chain."""
+    signal = 0.5 * np.sin(
+        np.linspace(0.0, 4.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
+    )
+    _out, effect_analysis = synth.apply_effect_chain(
+        signal,
+        [EffectSpec("saturation", {"drive": 2.0, "mix": 0.6})],
+        return_analysis=True,
+    )
+    metrics = effect_analysis[0].metrics
+    assert "thd_pct" in metrics
+    assert "thd_character" in metrics

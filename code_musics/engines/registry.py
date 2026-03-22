@@ -60,12 +60,16 @@ _PARAM_ALIAS_TO_CANONICAL: dict[str, str] = {
     "pitch_decay": "pitch_decay",
     "tone_decay_ms": "tone_decay",
     "tone_decay": "tone_decay",
+    "noise_decay_ms": "noise_decay",
+    "noise_decay": "noise_decay",
+    "bandpass_width_ratio": "bandpass_width_ratio",
     "noise_mix_ratio": "noise_mix",
     "noise_mix": "noise_mix",
     "feedback_ratio": "feedback",
     "feedback": "feedback",
     "resonance_ratio": "resonance",
     "resonance": "resonance",
+    "resonance_q": "resonance_q",
     "filter_drive_ratio": "filter_drive",
     "filter_drive": "filter_drive",
     "body_punch": "body_punch_ratio",
@@ -334,25 +338,34 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
     },
     "noise_perc": {
         "kickish": {
+            # Kick-like perc: mostly tonal body with some noise grit.
+            # pitch_decay and noise_decay track together so the noise and tonal
+            # decay behave as one cohesive sound.
             "noise_mix": 0.18,
             "pitch_decay": 0.06,
+            "noise_decay": 0.06,
             "tone_decay": 0.2,
             "bandpass_ratio": 0.8,
             "click_amount": 0.04,
         },
         "snareish": {
-            # Snare/clap character: predominantly noise, minimal tone.
-            # Use with freq 150–250 Hz (snare body range); bandpass centers at freq × 1.6
-            # (e.g. freq=200 → center 320 Hz). Noise dominates — freq mainly sets bandpass.
+            # Snare character: predominantly noise, minimal tone.
+            # Use with freq 150–250 Hz; bandpass centers at freq × 1.6
+            # (e.g. freq=200 → center 320 Hz). pitch_decay kills the pitched
+            # transient quickly; noise_decay gives ~70 ms of snare body.
             "noise_mix": 0.95,
             "pitch_decay": 0.020,
+            "noise_decay": 0.070,
             "tone_decay": 0.09,
             "bandpass_ratio": 1.6,
             "click_amount": 0.22,
         },
         "tick": {
+            # Tick/rimshot: snappy noise burst, no sustain.
+            # noise_decay ~35 ms gives a dry tail without lingering.
             "noise_mix": 0.88,
             "pitch_decay": 0.02,
+            "noise_decay": 0.035,
             "tone_decay": 0.05,
             "bandpass_ratio": 2.4,
             "click_amount": 0.28,
@@ -360,13 +373,31 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
         "chh": {
             # Closed hi-hat: almost pure high-freq noise, very snappy.
             # Use with freq ~9000 Hz and duration ~0.04 s.
-            # noise_mix near 1 eliminates the pitched tone component;
-            # short decays give the CHH its crisp, dry attack.
+            # pitch_decay near 0 kills the pitched component immediately;
+            # noise_decay ~18 ms gives a slightly longer "shhh" tail than
+            # pitch_decay alone so the hat has body, not just a click.
             "noise_mix": 0.97,
             "pitch_decay": 0.005,
+            "noise_decay": 0.018,
             "tone_decay": 0.013,
             "bandpass_ratio": 1.0,
-            "click_amount": 0.20,
+            "click_amount": 0.25,
+        },
+        "clap": {
+            # Full-spectrum clap: almost zero pitched component.
+            # Use with freq ~3000 Hz. bandpass_ratio=1.5 → center 4500 Hz.
+            # bandpass_width_ratio=2.5 → width 11250 Hz → covers ~20 Hz–11 kHz,
+            # giving the full snappy spectrum of a real clap. pitch_decay and
+            # tone_decay are very short to kill the pitched component immediately.
+            # noise_decay 40 ms: shorter body so the gate has room to shape the
+            # tail. click_amount subtle; the wide noise body provides the attack.
+            "noise_mix": 0.99,
+            "pitch_decay": 0.004,
+            "noise_decay": 0.040,
+            "tone_decay": 0.003,
+            "bandpass_ratio": 1.5,
+            "bandpass_width_ratio": 2.5,
+            "click_amount": 0.05,
         },
     },
     "kick_tom": {
