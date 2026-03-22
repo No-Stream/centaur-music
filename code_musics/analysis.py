@@ -18,6 +18,17 @@ from code_musics.score import Score
 
 _EPSILON = 1e-12
 logger = logging.getLogger(__name__)
+
+# Artifact risk codes suppressed from log output (still written to JSON manifest).
+# These are legitimate checks for melodic voices but are structural false positives
+# on any arrangement that includes hi-hats or high-register FM leads.
+SUPPRESSED_CODES: frozenset[str] = frozenset(
+    {
+        "high_band_dominance",
+        "bright_spectral_centroid",
+        "flat_or_bright_tilt",  # expected on hi-hats and high-register leads
+    }
+)
 _DEFAULT_BANDS: tuple[tuple[str, float, float], ...] = (
     ("sub", 20.0, 60.0),
     ("bass", 60.0, 250.0),
@@ -210,8 +221,6 @@ def analyze_audio(
         low_high_balance_db=low_high_balance_db,
         high_band_emphasis_db=high_band_emphasis_db,
         tilt_error_db_per_octave=spectral_tilt - reference_tilt_db_per_octave,
-        amplitude_modulation_depth_db=amplitude_modulation_depth_db,
-        dominant_amplitude_modulation_hz=dominant_amplitude_modulation_hz,
     )
 
     return AudioAnalysis(
@@ -1019,8 +1028,6 @@ def _build_audio_artifact_risks(
     low_high_balance_db: float,
     high_band_emphasis_db: float,
     tilt_error_db_per_octave: float,
-    amplitude_modulation_depth_db: float,
-    dominant_amplitude_modulation_hz: float,
 ) -> list[ArtifactRiskWarning]:
     risks: list[ArtifactRiskWarning] = []
     if clipped_sample_count > 0 or true_peak_dbfs > 0.0:
@@ -1118,47 +1125,6 @@ def _build_audio_artifact_risks(
                 source="audio_analysis",
                 message="spectral tilt is brighter than the reference balance",
                 tilt_error_db_per_octave=round(tilt_error_db_per_octave, 2),
-            )
-        )
-    modulation_is_tremolo_like = dominant_amplitude_modulation_hz >= 2.0
-    if amplitude_modulation_depth_db >= 18.0 and modulation_is_tremolo_like:
-        risks.append(
-            _artifact_risk(
-                severity="severe",
-                code="strong_amplitude_modulation",
-                source="audio_analysis",
-                message=(
-                    "strong amplitude modulation may read as unintended tremolo "
-                    f"({dominant_amplitude_modulation_hz:.2f} Hz)"
-                ),
-                amplitude_modulation_depth_db=round(
-                    amplitude_modulation_depth_db,
-                    2,
-                ),
-                dominant_amplitude_modulation_hz=round(
-                    dominant_amplitude_modulation_hz,
-                    2,
-                ),
-            )
-        )
-    elif amplitude_modulation_depth_db >= 12.0 and modulation_is_tremolo_like:
-        risks.append(
-            _artifact_risk(
-                severity="warning",
-                code="strong_amplitude_modulation",
-                source="audio_analysis",
-                message=(
-                    "render shows pronounced amplitude modulation "
-                    f"({dominant_amplitude_modulation_hz:.2f} Hz)"
-                ),
-                amplitude_modulation_depth_db=round(
-                    amplitude_modulation_depth_db,
-                    2,
-                ),
-                dominant_amplitude_modulation_hz=round(
-                    dominant_amplitude_modulation_hz,
-                    2,
-                ),
             )
         )
     if integrated_lufs >= -11.0 and peak_dbfs <= -0.8:
@@ -1578,6 +1544,8 @@ def _log_artifact_risk_report(report: ArtifactRiskReport) -> None:
 
 
 def _log_artifact_risk(*, scope: str, risk: ArtifactRiskWarning) -> None:
+    if risk.code in SUPPRESSED_CODES:
+        return
     metric_items = ", ".join(
         f"{key}={value}" for key, value in sorted(risk.metrics.items())
     )

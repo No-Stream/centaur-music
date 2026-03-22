@@ -188,7 +188,7 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
         "bell": {
             "carrier_ratio": 1.0,
             "mod_ratio": 1.0,  # unison modulator — full harmonic series, warm & tonal
-            "mod_index": 2.5,  # moderate depth: rich but not harsh
+            "mod_index": 2.0,  # moderate depth: rich but not harsh
             "index_decay": 0.25,
             "index_sustain": 0.12,
             "attack": 0.01,
@@ -341,11 +341,14 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "click_amount": 0.04,
         },
         "snareish": {
-            "noise_mix": 0.75,
-            "pitch_decay": 0.03,
-            "tone_decay": 0.11,
+            # Snare/clap character: predominantly noise, minimal tone.
+            # Use with freq 150–250 Hz (snare body range); bandpass centers at freq × 1.6
+            # (e.g. freq=200 → center 320 Hz). Noise dominates — freq mainly sets bandpass.
+            "noise_mix": 0.95,
+            "pitch_decay": 0.020,
+            "tone_decay": 0.09,
             "bandpass_ratio": 1.6,
-            "click_amount": 0.12,
+            "click_amount": 0.22,
         },
         "tick": {
             "noise_mix": 0.88,
@@ -353,6 +356,17 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "tone_decay": 0.05,
             "bandpass_ratio": 2.4,
             "click_amount": 0.28,
+        },
+        "chh": {
+            # Closed hi-hat: almost pure high-freq noise, very snappy.
+            # Use with freq ~9000 Hz and duration ~0.04 s.
+            # noise_mix near 1 eliminates the pitched tone component;
+            # short decays give the CHH its crisp, dry attack.
+            "noise_mix": 0.97,
+            "pitch_decay": 0.005,
+            "tone_decay": 0.013,
+            "bandpass_ratio": 1.0,
+            "click_amount": 0.20,
         },
     },
     "kick_tom": {
@@ -663,7 +677,7 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "filter_env_decay": 0.16,
             "keytrack": 0.05,
             "filter_mode": "lowpass",
-            "filter_drive": 0.5,
+            "filter_drive": 0.4,
             "attack": 0.004,
             "decay": 0.18,
             "sustain_level": 0.5,
@@ -687,7 +701,7 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "waveform": "square",
             "pulse_width": 0.46,
             "cutoff_hz": 680.0,
-            "resonance": 0.7,
+            "resonance": 0.9,
             "filter_env_amount": 1.85,
             "filter_env_decay": 0.14,
             "keytrack": 0.04,
