@@ -19,6 +19,7 @@
 - `code_musics/pieces/` contains named musical works that can be rendered by the
   registry, including smaller themed study modules plus JI subpackages.
 - `code_musics/render.py` is the named-piece orchestration layer.
+- `code_musics/midi_export.py` exports score-backed pieces as shared tuning files plus per-voice MIDI stems.
 - `code_musics/meter.py` contains the optional high-level musical-time layer:
   `Timeline`, beat/bar helpers, rhythmic values, and bar-aware location math.
 - `main.py` is the main entrypoint for listing and rendering pieces.
@@ -133,6 +134,9 @@ make inspect PIECE=ji_chorale AT=2:10    # inspect score context around a timest
 make snippet PIECE=ji_chorale AT=2:10 WINDOW=12   # render a centered snippet
 make render-window PIECE=ji_chorale START=130 DUR=12  # render an exact snippet window
 make render-all                    # render every piece
+make midi PIECE=ji_chorale          # export a full MIDI bundle
+make midi-snippet PIECE=ji_chorale AT=2:10 WINDOW=12  # export a centered MIDI snippet bundle
+make midi-window PIECE=ji_chorale START=130 DUR=12    # export an exact MIDI snippet bundle
 make test                          # run the full test suite
 make test-selected TESTS=tests/test_score.py  # run a focused subset while iterating
 make typecheck                     # basedpyright
@@ -260,6 +264,7 @@ See `FUTURE.md` for way more ideas.
 - Snippet rendering is part of the normal workflow for score-backed pieces now.
   Prefer `make snippet` or `make render-window` when iterating on a local moment
   instead of re-rendering the whole piece.
+- MIDI export now mirrors that workflow for score-backed pieces via shared tuning files plus per-voice stems; prefer `make midi-snippet` or `make midi-window` when iterating on a local passage for DAW work.
 - Score analysis now includes timing-drift diagnostics. Overall drift is fine, but
   inter-voice spread should stay musically plausible across the piece; keep the
   warning thresholds and artifact details documented under `docs/`.

@@ -2,13 +2,20 @@
 
 import argparse
 import logging
+from typing import cast
 
 from code_musics.inspection import (
     format_inspection_summary,
     inspect_piece_timestamp,
     parse_timestamp_seconds,
 )
-from code_musics.render import RenderWindow, list_pieces, render_piece
+from code_musics.midi_export import ALL_STEM_FORMATS, MidiStemFormat
+from code_musics.render import (
+    RenderWindow,
+    export_piece_midi,
+    list_pieces,
+    render_piece,
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -24,6 +31,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--plot",
         action="store_true",
         help="Save a piano-roll plot when the piece uses the Score abstraction.",
+    )
+    parser.add_argument(
+        "--export-midi",
+        action="store_true",
+        help="Export a MIDI bundle instead of rendering audio.",
+    )
+    parser.add_argument(
+        "--midi-formats",
+        help=(
+            "Comma-separated MIDI stem formats to export. "
+            f"Choices: {', '.join(ALL_STEM_FORMATS)}"
+        ),
     )
     parser.add_argument(
         "--no-analysis",
@@ -60,6 +79,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Snippet duration in seconds used with --window-start.",
     )
     return parser.parse_args(argv)
+
+
+def _parse_midi_formats(midi_formats: str | None) -> tuple[MidiStemFormat, ...]:
+    if midi_formats is None:
+        return ALL_STEM_FORMATS
+    return tuple(
+        cast(MidiStemFormat, stem_format.strip())
+        for stem_format in midi_formats.split(",")
+        if stem_format.strip()
+    )
 
 
 def _build_render_window(args: argparse.Namespace) -> RenderWindow | None:
@@ -123,6 +152,15 @@ def main() -> None:
 
     piece_names = list_pieces() if args.piece == "all" else [args.piece]
     for piece_name in piece_names:
+        if args.export_midi:
+            result = export_piece_midi(
+                piece_name,
+                render_window=render_window,
+                stem_formats=_parse_midi_formats(args.midi_formats),
+            )
+            logging.info("Saved MIDI bundle manifest to %s", result.manifest_path)
+            continue
+
         result = render_piece(
             piece_name,
             save_plot=args.plot,

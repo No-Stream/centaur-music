@@ -18,6 +18,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from code_musics.analysis import save_analysis_artifacts
+from code_musics.midi_export import (
+    ALL_STEM_FORMATS,
+    MidiBundleExportResult,
+    MidiBundleExportSpec,
+    MidiStemFormat,
+    export_midi_bundle,
+)
 from code_musics.pieces import PIECES
 from code_musics.score import Score
 from code_musics.synth import (
@@ -92,6 +99,49 @@ class RenderWindow:
 def list_pieces() -> list[str]:
     """Return the registered piece names."""
     return sorted(PIECES)
+
+
+def export_piece_midi(
+    piece_name: str,
+    *,
+    output_dir: str | Path = "output/midi",
+    render_window: RenderWindow | None = None,
+    stem_formats: tuple[MidiStemFormat, ...] = ALL_STEM_FORMATS,
+) -> MidiBundleExportResult:
+    """Export a registered score-backed piece as a MIDI bundle."""
+    if piece_name not in PIECES:
+        raise ValueError(f"Unknown piece: {piece_name}")
+
+    definition = PIECES[piece_name]
+    if definition.build_score is None:
+        raise ValueError(
+            f"Piece {piece_name} does not support MIDI export because it uses "
+            "render_audio instead of build_score"
+        )
+
+    score = definition.build_score()
+
+    bundle_dir = _build_output_path(
+        output_dir=output_dir,
+        output_name=definition.output_name,
+        render_window=render_window,
+    ).with_suffix("")
+    spec = MidiBundleExportSpec(
+        piece_name=piece_name,
+        output_name=bundle_dir.name,
+        stem_formats=stem_formats,
+    )
+    return export_midi_bundle(
+        score,
+        bundle_dir,
+        spec=spec,
+        window_start_seconds=(
+            render_window.start_seconds if render_window is not None else None
+        ),
+        window_end_seconds=(
+            render_window.end_seconds if render_window is not None else None
+        ),
+    )
 
 
 def render_piece(

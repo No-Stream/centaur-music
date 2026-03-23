@@ -9,6 +9,7 @@ AT ?=
 WINDOW ?= 8
 START ?=
 DUR ?=
+MIDI_FORMATS ?=
 TESTS ?= tests
 OBLIQUE ?= 0
 MUSICAL ?= 0
@@ -21,6 +22,12 @@ ifeq ($(PLOT),1)
 RENDER_PLOT_FLAG = --plot
 else
 RENDER_PLOT_FLAG =
+endif
+
+ifneq ($(strip $(MIDI_FORMATS)),)
+MIDI_FORMATS_FLAG = --midi-formats $(MIDI_FORMATS)
+else
+MIDI_FORMATS_FLAG =
 endif
 
 .PHONY: all
@@ -101,6 +108,36 @@ ifndef DUR
 	$(error DUR is required, for example `make render-window PIECE=ji_chorale START=130 DUR=12`)
 endif
 	$(UV_RUN) python main.py $(PIECE) --window-start "$(START)" --window-dur $(DUR) $(RENDER_PLOT_FLAG)
+
+.PHONY: midi
+midi:
+ifndef PIECE
+	$(error PIECE is required, for example `make midi PIECE=ji_chorale`)
+endif
+	$(UV_RUN) python main.py $(PIECE) --export-midi $(MIDI_FORMATS_FLAG)
+
+.PHONY: midi-snippet
+midi-snippet:
+ifndef PIECE
+	$(error PIECE is required, for example `make midi-snippet PIECE=ji_chorale AT=2:10 WINDOW=12`)
+endif
+ifndef AT
+	$(error AT is required, for example `make midi-snippet PIECE=ji_chorale AT=2:10 WINDOW=12`)
+endif
+	$(UV_RUN) python main.py $(PIECE) --export-midi $(MIDI_FORMATS_FLAG) --snippet-at "$(AT)" --snippet-window $(WINDOW)
+
+.PHONY: midi-window
+midi-window:
+ifndef PIECE
+	$(error PIECE is required, for example `make midi-window PIECE=ji_chorale START=130 DUR=12`)
+endif
+ifndef START
+	$(error START is required, for example `make midi-window PIECE=ji_chorale START=130 DUR=12`)
+endif
+ifndef DUR
+	$(error DUR is required, for example `make midi-window PIECE=ji_chorale START=130 DUR=12`)
+endif
+	$(UV_RUN) python main.py $(PIECE) --export-midi $(MIDI_FORMATS_FLAG) --window-start "$(START)" --window-dur $(DUR)
 
 .PHONY: render-sketches
 render-sketches:

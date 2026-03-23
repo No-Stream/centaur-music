@@ -114,51 +114,57 @@ Most promising directions:
 - more preset curation around "musical default sounds" rather than only
   technical engine coverage
 
+---
+
 ## Medium priority
 
 ### Slop, swing, and drift extensions
 
-Some of this is implemented already through timing, envelope, and velocity
-humanization; what remains is the more specialized layer.
-We recently added notes (rather than just time-based) arranging.
-And we have humanization + imperfection. But we should eventually add swing.
+  Some of this is implemented already through timing, envelope, and velocity
+  humanization; what remains is the more specialized layer.
+  We recently added notes (rather than just time-based) arranging.
+  And we have humanization + imperfection. But we should eventually add swing.
 
 ### Polyrhythm/polymeter
 
-To some extent we already support this implicitly. Worth expanding?
+  To some extent we already support this implicitly. Worth expanding?
 
 ### Autoresearch, for music
 
-Automatically generate pieces and critique them, prune, develop.  
-Challenging given current-gen agents can't hear, but that's a challenge for this entire project.
+  Automatically generate pieces and critique them, prune, develop.  
+  Challenging given current-gen agents can't hear, but that's a challenge for this entire project.
 
 ### Timbre and mix automation
 
-Automation now exists, but it is still an intentionally limited v1 surface.
+  Automation now exists, but it is still an intentionally limited v1 surface.
 
-Useful next steps:
+  Useful next steps:
 
-- extend automation beyond the current synth-param and `pitch_ratio` targets
-  into pan, gain, effect wetness, and plugin parameters
-- phrase-level timbre gestures so sounds can evolve musically without low-level
-  automation plumbing in every piece
-- more reusable automation idioms for opening, darkening, widening, blooming,
-  and settling
-- stronger analysis feedback so we can verify whether a sound actually opens,
-  softens, or narrows the way intended
+  - extend automation beyond the current synth-param and `pitch_ratio` targets
+    into pan, gain, effect wetness, and plugin parameters
+  - phrase-level timbre gestures so sounds can evolve musically without low-level
+    automation plumbing in every piece
+  - more reusable automation idioms for opening, darkening, widening, blooming,
+    and settling
+  - stronger analysis feedback so we can verify whether a sound actually opens,
+    softens, or narrows the way intended
 
 ### Utonal, subharmonic, and drift-based harmony
 
-The helper layer exists, but there is still a lot of compositional ground left
-to cover.
+  The helper layer exists, but there is still a lot of compositional ground left
+  to cover.
 
-Most interesting directions:
+  Most interesting directions:
 
-- darker subharmonic passages that feel structurally intentional, not just novel
-- stronger overtone / undertone contrasts inside a single form
-- phrase-level recontextualization helpers that make comma drift and local tonic
-  reinterpretation easier to write as normal music
-- voice-leading idioms that stay elegant while harmonic context shifts
+  - darker subharmonic passages that feel structurally intentional, not just novel
+  - stronger overtone / undertone contrasts inside a single form
+  - phrase-level recontextualization helpers that make comma drift and local tonic
+    reinterpretation easier to write as normal music
+  - voice-leading idioms that stay elegant while harmonic context shifts
+
+### Trance, progressive house
+  fun genres to explore alt tunings in, since they're so reliant on harmony
+  let's get slightly cheesy
 
 ### Colundi-ish Scale
   ```
@@ -265,6 +271,8 @@ look worthwhile:
 
 ### Wavetable engine
 - allows unique timbres, somewhat complicated, needs to be done right (aliasing etc)
+
+---
 
 ## Lower priority
 
