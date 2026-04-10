@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+import librosa
+import librosa.display
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import spectrogram
@@ -348,7 +350,7 @@ def analyze_score(
         warnings.append("high attack density may feel busy or percussive")
     if (
         note_count > 0
-        and mean_note_duration_hz(score) > 2.5
+        and mean_note_duration_seconds(score) > 2.5
         and mean_attack_density_hz < 0.8
     ):
         warnings.append("long-note bias may read as drony")
@@ -382,6 +384,133 @@ def analyze_score(
         timing_drift_windows=timing_drift_windows,
         warnings=warnings,
     )
+
+
+def _save_mel_spectrogram_plot(
+    *,
+    signal: np.ndarray,
+    sample_rate: int,
+    path: Path,
+    title: str,
+) -> None:
+    if signal.size == 0:
+        return
+    mono = synth.to_mono_reference(signal) if signal.ndim == 2 else signal
+    mel_spec = librosa.feature.melspectrogram(
+        y=mono, sr=sample_rate, n_mels=128, fmax=12000
+    )
+    mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+    figure, axis = plt.subplots(figsize=(10, 4))
+    img = librosa.display.specshow(
+        mel_spec_db, sr=sample_rate, x_axis="time", y_axis="mel", fmax=12000, ax=axis
+    )
+    axis.set_title(title)
+    figure.colorbar(img, ax=axis, label="Power (dB)")
+    figure.tight_layout()
+    figure.savefig(path, bbox_inches="tight")
+    plt.close(figure)
+
+
+def _save_chromagram_plot(
+    *,
+    signal: np.ndarray,
+    sample_rate: int,
+    path: Path,
+    title: str,
+    bins_per_octave: int = 36,
+) -> None:
+    if signal.size == 0:
+        return
+    mono = synth.to_mono_reference(signal) if signal.ndim == 2 else signal
+    chroma = librosa.feature.chroma_cqt(
+        y=mono, sr=sample_rate, bins_per_octave=bins_per_octave
+    )
+    figure, axis = plt.subplots(figsize=(10, 4))
+    img = librosa.display.specshow(
+        chroma,
+        sr=sample_rate,
+        x_axis="time",
+        y_axis="chroma",
+        bins_per_octave=bins_per_octave,
+        ax=axis,
+    )
+    axis.set_title(title)
+    figure.colorbar(img, ax=axis, label="Intensity")
+    figure.tight_layout()
+    figure.savefig(path, bbox_inches="tight")
+    plt.close(figure)
+
+
+def _save_spectral_contrast_plot(
+    *,
+    signal: np.ndarray,
+    sample_rate: int,
+    path: Path,
+    title: str,
+) -> None:
+    if signal.size == 0:
+        return
+    mono = synth.to_mono_reference(signal) if signal.ndim == 2 else signal
+    contrast = librosa.feature.spectral_contrast(y=mono, sr=sample_rate)
+    figure, axis = plt.subplots(figsize=(10, 4))
+    img = librosa.display.specshow(contrast, sr=sample_rate, x_axis="time", ax=axis)
+    axis.set_title(title)
+    axis.set_ylabel("Frequency Band")
+    figure.colorbar(img, ax=axis, label="Contrast (dB)")
+    figure.tight_layout()
+    figure.savefig(path, bbox_inches="tight")
+    plt.close(figure)
+
+
+def _save_onset_envelope_plot(
+    *,
+    signal: np.ndarray,
+    sample_rate: int,
+    path: Path,
+    title: str,
+) -> None:
+    if signal.size == 0:
+        return
+    mono = synth.to_mono_reference(signal) if signal.ndim == 2 else signal
+    onset_env = librosa.onset.onset_strength(y=mono, sr=sample_rate)
+    times = librosa.times_like(onset_env, sr=sample_rate)
+    figure, axis = plt.subplots(figsize=(10, 4))
+    axis.plot(times, onset_env, linewidth=1.2)
+    axis.set_title(title)
+    axis.set_xlabel("Time (s)")
+    axis.set_ylabel("Onset Strength")
+    axis.grid(True, alpha=0.25)
+    figure.tight_layout()
+    figure.savefig(path, bbox_inches="tight")
+    plt.close(figure)
+
+
+def _save_hpss_balance_plot(
+    *,
+    signal: np.ndarray,
+    sample_rate: int,
+    path: Path,
+    title: str,
+) -> None:
+    if signal.size == 0:
+        return
+    mono = synth.to_mono_reference(signal) if signal.ndim == 2 else signal
+    harmonic, percussive = librosa.effects.hpss(mono)
+    rms_harmonic = librosa.feature.rms(y=harmonic)[0]
+    rms_percussive = librosa.feature.rms(y=percussive)[0]
+    times_harmonic = librosa.times_like(rms_harmonic, sr=sample_rate)
+    times_percussive = librosa.times_like(rms_percussive, sr=sample_rate)
+    figure, axis = plt.subplots(figsize=(10, 4))
+    axis.plot(times_harmonic, rms_harmonic, linewidth=1.2, label="Harmonic")
+    axis.plot(times_percussive, rms_percussive, linewidth=1.2, label="Percussive")
+    axis.set_title(title)
+    axis.set_xlabel("Time (s)")
+    axis.set_ylabel("RMS Energy")
+    axis.grid(True, alpha=0.25)
+    axis.legend()
+    figure.tight_layout()
+    figure.savefig(path, bbox_inches="tight")
+    plt.close(figure)
 
 
 def save_analysis_artifacts(
@@ -459,10 +588,58 @@ def save_analysis_artifacts(
         path=mix_band_energy_path,
         title="Mix Band Energy",
     )
+    mel_spectrogram_path = prefix_path.with_name(
+        f"{prefix_path.name}.mix_mel_spectrogram.png"
+    )
+    _save_mel_spectrogram_plot(
+        signal=mix_signal,
+        sample_rate=sample_rate,
+        path=mel_spectrogram_path,
+        title="Mix Mel Spectrogram",
+    )
+    chromagram_path = prefix_path.with_name(f"{prefix_path.name}.mix_chromagram.png")
+    _save_chromagram_plot(
+        signal=mix_signal,
+        sample_rate=sample_rate,
+        path=chromagram_path,
+        title="Mix Chromagram",
+    )
+    spectral_contrast_path = prefix_path.with_name(
+        f"{prefix_path.name}.mix_spectral_contrast.png"
+    )
+    _save_spectral_contrast_plot(
+        signal=mix_signal,
+        sample_rate=sample_rate,
+        path=spectral_contrast_path,
+        title="Mix Spectral Contrast",
+    )
+    onset_envelope_path = prefix_path.with_name(
+        f"{prefix_path.name}.mix_onset_envelope.png"
+    )
+    _save_onset_envelope_plot(
+        signal=mix_signal,
+        sample_rate=sample_rate,
+        path=onset_envelope_path,
+        title="Mix Onset Envelope",
+    )
+    hpss_balance_path = prefix_path.with_name(
+        f"{prefix_path.name}.mix_hpss_balance.png"
+    )
+    _save_hpss_balance_plot(
+        signal=mix_signal,
+        sample_rate=sample_rate,
+        path=hpss_balance_path,
+        title="Mix Harmonic-Percussive Balance",
+    )
     manifest["mix"]["artifacts"] = {
         "spectrum": str(mix_spectrum_path),
         "spectrogram": str(mix_spectrogram_path),
         "band_energy": str(mix_band_energy_path),
+        "mel_spectrogram": str(mel_spectrogram_path),
+        "chromagram": str(chromagram_path),
+        "spectral_contrast": str(spectral_contrast_path),
+        "onset_envelope": str(onset_envelope_path),
+        "hpss_balance": str(hpss_balance_path),
     }
 
     if score is not None:
@@ -505,10 +682,30 @@ def save_analysis_artifacts(
             title=f"Voice Spectrum: {voice_name}",
             reference_tilt_db_per_octave=reference_tilt_db_per_octave,
         )
+        voice_mel_path = prefix_path.with_name(
+            f"{prefix_path.name}.voice_{safe_voice_name}_mel_spectrogram.png"
+        )
+        _save_mel_spectrogram_plot(
+            signal=stem_signal,
+            sample_rate=sample_rate,
+            path=voice_mel_path,
+            title=f"Voice Mel Spectrogram: {voice_name}",
+        )
+        voice_chromagram_path = prefix_path.with_name(
+            f"{prefix_path.name}.voice_{safe_voice_name}_chromagram.png"
+        )
+        _save_chromagram_plot(
+            signal=stem_signal,
+            sample_rate=sample_rate,
+            path=voice_chromagram_path,
+            title=f"Voice Chromagram: {voice_name}",
+        )
         manifest["voices"][voice_name] = {
             "summary": voice_analysis.to_dict(),
             "artifacts": {
                 "spectrum": str(voice_spectrum_path),
+                "mel_spectrogram": str(voice_mel_path),
+                "chromagram": str(voice_chromagram_path),
             },
         }
 
@@ -614,7 +811,7 @@ def compare_analysis_manifests(
     return comparison
 
 
-def mean_note_duration_hz(score: Score) -> float:
+def mean_note_duration_seconds(score: Score) -> float:
     """Return the average note duration in seconds for warning heuristics."""
     durations = [
         note.duration for voice in score.voices.values() for note in voice.notes

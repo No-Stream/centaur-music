@@ -334,22 +334,22 @@ def build_wtc_harmonic_score() -> Score:
 PIECES: dict[str, PieceDefinition] = {
     "wtc_ji_5limit": PieceDefinition(
         name="wtc_ji_5limit",
-        output_name="24_wtc_ji_5limit.wav",
+        output_name="24_wtc_ji_5limit",
         build_score=build_wtc_ji_5limit_score,
     ),
     "wtc_ji_7limit": PieceDefinition(
         name="wtc_ji_7limit",
-        output_name="25_wtc_ji_7limit.wav",
+        output_name="25_wtc_ji_7limit",
         build_score=build_wtc_ji_7limit_score,
     ),
     "wtc_comma_pump": PieceDefinition(
         name="wtc_comma_pump",
-        output_name="26_wtc_comma_pump.wav",
+        output_name="26_wtc_comma_pump",
         build_score=build_wtc_comma_pump_score,
     ),
     "wtc_harmonic": PieceDefinition(
         name="wtc_harmonic",
-        output_name="27_wtc_harmonic.wav",
+        output_name="27_wtc_harmonic",
         build_score=build_wtc_harmonic_score,
     ),
 }

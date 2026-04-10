@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -34,6 +34,22 @@ from code_musics.humanize import (
 )
 from code_musics.pitch_motion import PitchMotionSpec, build_frequency_trajectory
 
+EffectKind = Literal[
+    "gate",
+    "delay",
+    "reverb",
+    "chow_tape",
+    "bricasti",
+    "chorus",
+    "saturation",
+    "eq",
+    "compressor",
+    "tal_chorus_lx",
+    "tal_reverb2",
+    "dragonfly",
+    "plugin",
+]
+
 _UNSET: object = object()  # sentinel distinguishing "not passed" from explicit None
 
 
@@ -41,7 +57,7 @@ _UNSET: object = object()  # sentinel distinguishing "not passed" from explicit 
 class EffectSpec:
     """Declarative effect-chain item."""
 
-    kind: str
+    kind: EffectKind
     params: dict[str, Any] = field(default_factory=dict)
     automation: list[AutomationSpec] = field(default_factory=list)
 
@@ -351,7 +367,7 @@ class Score:
         synth_defaults: dict[str, Any] | None = None,
         effects: list[EffectSpec] | None = None,
         envelope_humanize: EnvelopeHumanizeSpec | None = None,
-        velocity_humanize: VelocityHumanizeSpec | None = None,
+        velocity_humanize: VelocityHumanizeSpec | None = _UNSET,  # type: ignore[assignment]
         velocity_group: str | None = None,
         velocity_to_params: dict[str, VelocityParamMap] | None = None,
         velocity_db_per_unit: float = 12.0,
@@ -390,6 +406,8 @@ class Score:
             raise ValueError("normalize_peak_db must be finite when provided")
         if max_polyphony is not None and max_polyphony < 1:
             raise ValueError("max_polyphony must be >= 1 when provided")
+        if velocity_humanize is _UNSET:
+            velocity_humanize = VelocityHumanizeSpec()
         resolved_sends = list(sends or [])
         self._validate_voice_sends(resolved_sends)
         voice = Voice(
@@ -397,11 +415,7 @@ class Score:
             synth_defaults=dict(synth_defaults or {}),
             effects=list(effects or []),
             envelope_humanize=envelope_humanize,
-            velocity_humanize=(
-                VelocityHumanizeSpec()
-                if velocity_humanize is None
-                else velocity_humanize
-            ),
+            velocity_humanize=velocity_humanize,
             velocity_group=velocity_group,
             velocity_to_params=dict(velocity_to_params or {}),
             velocity_db_per_unit=velocity_db_per_unit,
@@ -445,7 +459,7 @@ class Score:
             self.send_buses[existing_index] = send_bus
         return send_bus
 
-    def get_voice(self, name: str) -> Voice:
+    def get_or_create_voice(self, name: str) -> Voice:
         """Get or create a voice with no defaults."""
         if name not in self.voices:
             self.voices[name] = Voice(name=name)
@@ -481,7 +495,7 @@ class Score:
             pitch_motion=pitch_motion,
             automation=list(automation) if automation is not None else None,
         )
-        self.get_voice(voice_name).notes.append(note)
+        self.get_or_create_voice(voice_name).notes.append(note)
         return note
 
     def add_phrase(
@@ -503,7 +517,7 @@ class Score:
             amp_scale=amp_scale,
             reverse=reverse,
         )
-        voice = self.get_voice(voice_name)
+        voice = self.get_or_create_voice(voice_name)
         voice.notes.extend(placed_notes)
         return placed_notes
 
@@ -768,6 +782,21 @@ class Score:
         timing_offsets: dict[tuple[str, int], float],
         velocity_multipliers: dict[tuple[str, int], float],
     ) -> np.ndarray:
+        # External instrument engines (e.g. Surge XT) render the whole voice at
+        # once instead of note-by-note, so dispatch early before the per-note loop.
+        synth_defaults = normalize_synth_spec(voice.synth_defaults)
+        resolved_defaults = resolve_synth_params(synth_defaults)
+        engine_name = str(resolved_defaults.get("engine", "additive"))
+
+        if engine_name == "surge_xt":
+            return self._render_voice_via_instrument(
+                voice_name=voice_name,
+                voice=voice,
+                timing_offsets=timing_offsets,
+                velocity_multipliers=velocity_multipliers,
+                engine_params=resolved_defaults,
+            )
+
         voice_signals: list[np.ndarray] = []
         prepared_notes = self._prepare_voice_notes(
             voice_name=voice_name,
@@ -819,6 +848,72 @@ class Score:
             return np.zeros(0)
 
         voice_mix = self._stack_signals(voice_signals)
+        return self._normalize_voice_signal(voice_mix, voice)
+
+    def _render_voice_via_instrument(
+        self,
+        *,
+        voice_name: str,
+        voice: Voice,
+        timing_offsets: dict[tuple[str, int], float],
+        velocity_multipliers: dict[tuple[str, int], float],
+        engine_params: dict[str, Any],
+    ) -> np.ndarray:
+        """Render a voice through an external instrument plugin (e.g. Surge XT).
+
+        Instead of iterating notes and calling ``render_note_signal`` per note,
+        this builds a list of note dicts and delegates to the engine's
+        ``render_voice`` entry point which drives the plugin with MIDI.
+        """
+        from code_musics.engines import surge_xt  # noqa: PLC0415
+
+        note_dicts: list[dict[str, Any]] = []
+        for note_index, note in enumerate(voice.notes):
+            note_freq = self._resolve_freq(note)
+            humanized_start = max(
+                0.0,
+                note.start + timing_offsets.get((voice_name, note_index), 0.0),
+            )
+            resolved_velocity = float(
+                np.clip(
+                    note.velocity
+                    * velocity_multipliers.get((voice_name, note_index), 1.0),
+                    0.05,
+                    2.0,
+                )
+            )
+            note_amp = self._resolve_note_amp(
+                note=note,
+                resolved_velocity=resolved_velocity,
+                velocity_db_per_unit=voice.velocity_db_per_unit,
+            )
+            note_dicts.append(
+                {
+                    "freq": note_freq,
+                    "start": humanized_start,
+                    "duration": note.duration,
+                    "velocity": resolved_velocity,
+                    "amp": note_amp,
+                }
+            )
+
+        if not note_dicts:
+            return np.zeros(0)
+
+        max_end = max(n["start"] + n["duration"] for n in note_dicts)
+        voice_mix = surge_xt.render_voice(
+            notes=note_dicts,
+            total_duration=max_end,
+            sample_rate=self.sample_rate,
+            params=engine_params,
+        )
+
+        return self._normalize_voice_signal(voice_mix, voice)
+
+    def _normalize_voice_signal(
+        self, voice_mix: np.ndarray, voice: Voice
+    ) -> np.ndarray:
+        """Apply LUFS or peak normalization to a rendered voice signal."""
         if voice.normalize_lufs is not None:
             voice_mix = synth.normalize_to_lufs(
                 voice_mix,
@@ -996,10 +1091,11 @@ class Score:
                     + stolen_note.effective_hold_duration
                     + stolen_note.effective_release
                 ) > current_start
+                _STEAL_RELEASE_S = 0.005  # 5 ms micro-release prevents click
                 stolen_note.effective_hold_duration = max(
                     0.0, current_start - stolen_note.humanized_start
                 )
-                stolen_note.effective_release = 0.0
+                stolen_note.effective_release = _STEAL_RELEASE_S
                 active_notes.remove(stolen_note)
                 if legato and max_polyphony == 1 and overlap:
                     prepared_note.effective_attack = 0.0
@@ -1298,8 +1394,9 @@ class Score:
     def _resolve_freq(self, note: NoteEvent) -> float:
         if note.freq is not None:
             return note.freq
-        if note.partial is None:
-            raise ValueError("note must provide partial or freq")
+        assert (
+            note.partial is not None
+        )  # NoteEvent invariant: exactly one of partial/freq
         return self.f0 * note.partial
 
     def _signal_times(self, sample_count: int) -> np.ndarray:

@@ -245,7 +245,7 @@ def test_voice_max_polyphony_one_truncates_previous_note() -> None:
         duration=0.3,
         freq=55.0,
         amp=0.2,
-        synth={"release": 0.0},
+        synth={"release": 0.005},
     )
     manually_truncated.add_note("bass", start=0.3, duration=0.4, freq=82.5, amp=0.2)
 
@@ -686,7 +686,7 @@ def test_plugin_effect_sets_named_plugin_parameters(
             return signal
 
     fake_plugin = FakePlugin()
-    monkeypatch.setattr(synth, "_load_external_plugin", lambda **_: fake_plugin)
+    monkeypatch.setattr(synth, "load_external_plugin", lambda **_: fake_plugin)
     signal = 0.5 * np.sin(
         np.linspace(0.0, 2.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
     )
@@ -720,7 +720,7 @@ def test_plugin_effect_analysis_reports_inactive_stage(
             assert sample_rate == synth.SAMPLE_RATE
             return signal
 
-    monkeypatch.setattr(synth, "_load_external_plugin", lambda **_: FakePlugin())
+    monkeypatch.setattr(synth, "load_external_plugin", lambda **_: FakePlugin())
     signal = 0.5 * np.sin(
         np.linspace(0.0, 2.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
     )
@@ -750,7 +750,7 @@ def test_plugin_effect_rejects_unknown_parameter(
         def __call__(self, signal: np.ndarray, sample_rate: int) -> np.ndarray:
             return signal
 
-    monkeypatch.setattr(synth, "_load_external_plugin", lambda **_: FakePlugin())
+    monkeypatch.setattr(synth, "load_external_plugin", lambda **_: FakePlugin())
     signal = np.sin(np.linspace(0.0, 2.0 * np.pi, 1024, endpoint=False))
 
     with pytest.raises(ValueError, match="no parameter"):
@@ -811,7 +811,7 @@ def test_tal_reverb_uses_shared_plugin_backend(
             return signal
 
     fake_plugin = FakePlugin()
-    monkeypatch.setattr(synth, "_load_external_plugin", lambda **_: fake_plugin)
+    monkeypatch.setattr(synth, "load_external_plugin", lambda **_: fake_plugin)
     signal = np.sin(np.linspace(0.0, 2.0 * np.pi, 1024, endpoint=False))
 
     processed = synth.apply_tal_reverb2(
@@ -1349,7 +1349,7 @@ def test_true_peak_estimation_uses_loudest_stereo_channel() -> None:
     assert true_peak == pytest.approx(0.8, rel=1e-3)
 
 
-def test_finalize_master_raises_when_lsp_limiter_is_unavailable(
+def test_finalize_master_falls_back_when_lsp_limiter_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(synth, "has_external_plugin", lambda plugin_name: False)
@@ -1357,8 +1357,10 @@ def test_finalize_master_raises_when_lsp_limiter_is_unavailable(
         np.linspace(0.0, 4.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
     )
 
-    with pytest.raises(FileNotFoundError, match="LSP limiter"):
-        synth.finalize_master(signal, sample_rate=synth.SAMPLE_RATE)
+    result = synth.finalize_master(signal, sample_rate=synth.SAMPLE_RATE)
+    assert isinstance(result, synth.MasteringResult)
+    assert np.isfinite(result.integrated_lufs)
+    assert np.isfinite(result.true_peak_dbfs)
 
 
 def test_finalize_master_targets_lufs_and_true_peak_with_limiter(

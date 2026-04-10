@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
-_SUPPORTED_DRIFT_STYLES = {"random_walk", "smooth_noise", "lfo", "sample_hold"}
+DriftStyle = Literal["random_walk", "smooth_noise", "lfo", "sample_hold"]
+
+_SUPPORTED_DRIFT_STYLES: set[DriftStyle] = {
+    "random_walk",
+    "smooth_noise",
+    "lfo",
+    "sample_hold",
+}
 
 _TIMING_PRESETS: dict[str, dict[str, Any]] = {
     "tight_ensemble": {
@@ -105,7 +112,7 @@ _VELOCITY_PRESETS: dict[str, dict[str, Any]] = {
 class DriftSpec:
     """Reusable drift generator definition."""
 
-    style: str = "random_walk"
+    style: DriftStyle = "random_walk"
     rate_hz: float = 0.035
     smoothness: float = 0.84
     seed: int | None = None

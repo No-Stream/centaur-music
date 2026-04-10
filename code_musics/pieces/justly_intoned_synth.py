@@ -309,7 +309,7 @@ def build_wtc_song_score() -> Score:
 PIECES: dict[str, PieceDefinition] = {
     "justly_intoned_synth": PieceDefinition(
         name="justly_intoned_synth",
-        output_name="28_justly_intoned_synth.wav",
+        output_name="28_justly_intoned_synth",
         build_score=build_wtc_song_score,
     ),
 }

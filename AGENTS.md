@@ -248,6 +248,22 @@ See `FUTURE.md` for way more ideas.
 - `Chow Tape Model`, `TAL-Chorus-LX`, `TAL-Reverb-2`, and Dragonfly VST3s have
   already been verified to load through `pedalboard`; prefer those before
   introducing more bridge-heavy or activation-heavy plugin paths.
+- The macOS environment has a broader plugin palette: all ChowDSP plugins
+  (CHOWTapeModel, BYOD, ChowMatrix, ChowCentaur, ChowKick, ChowMultiTool,
+  ChowPhaser), TAL (Chorus-LX, Reverb-2, Reverb-3), Dragonfly (Plate,
+  Room, Hall, Early Reflections), Airwindows Consolidated, and Surge XT.
+  LSP Plugins are Linux-only and unavailable on macOS.
+- Render analysis now also generates librosa-based visual analysis:
+  mel spectrogram, tuning-aware chromagram (36 bins/octave for JI
+  visibility), spectral contrast, onset envelope, and harmonic-percussive
+  separation balance — all registered in the analysis manifest. These are
+  the primary feedback channel for AI-assisted composition since LLMs
+  cannot hear audio.
+- There is now a `surge_xt` instrument engine that renders voices through
+  Surge XT via pedalboard's VSTi hosting. It uses MPE-style per-note
+  pitch bend (48-semitone range) for microtonal accuracy. Unlike the
+  native per-note engines, it renders the whole voice at once.
+  Use `engine="surge_xt"` in `synth_defaults`.
 - Keep plugin notes here high-level. Detailed parameter semantics and any new
   `EffectSpec` integration still belong in `docs/synth_api.md`.
 - If you change score/expression parameters or presets, update the docs in the same
@@ -274,6 +290,8 @@ See `FUTURE.md` for way more ideas.
 - WAV export logging now reports peak, true-peak, and integrated LUFS at write
   time, and warns when an exported master lands suspiciously far below the
   expected ceiling.
+- WAV export defaults to 24-bit PCM via `soundfile`. 16-bit (TPDF dithered)
+  and 32-bit float are available via the `bit_depth` parameter on `write_wav()`.
 - Render analysis now also emits artifact-risk warnings for suspicious
   brightness, modulation, compression/clipping, and risky filter-motion
   parameter combos; when touching those surfaces, update docs and tests in the
@@ -285,8 +303,8 @@ See `FUTURE.md` for way more ideas.
   when changing behavior.
 - If a doc in this repo describes something as future work, verify it against the code
   before repeating it. Several foundational ideas are already implemented.
-- Think carefully about interface design. Imagine you were interacting with devices with 
-  practically no context. What would be intuitive and easy to use? 
+- Think carefully about interface design. Imagine you were interacting with devices with
+  practically no context. What would be intuitive and easy to use?
   Prefer absolute units when possible (like msec for a compressor). For arbitrary knobs,
   use typical, usable ranges: 0-0.25 should be quite subtle, 0.25-0.33 should be clearly audible but
   still somewhat subtle, 0.33-0.66 should be moderate, and 0.66-0.8 should be strong. It's fine
@@ -294,11 +312,19 @@ See `FUTURE.md` for way more ideas.
   For example, a saturation effect might offer gentle mix warmth at 0.2, harmony-compatible warmth at 0.33,
   musical saturation at 0.5, strong but still musical saturation at 0.66, and distortion at 0.8.
 - Effects and voices should be designed considering musicality, not textbook designs.
-  Don't cut corners to save time. 
-  For example, if a distortion plugin would benefit from antialiasing, 
+  Don't cut corners to save time.
+  For example, if a distortion plugin would benefit from antialiasing,
   don't just implement the most naive algo.
 
+## Agent Delegation Policy
+
+Core composition and piece writing should happen in the main agent context for
+creative continuity and direct authorial control. Mechanical work (new engines,
+features, infrastructure, repo improvements, portability fixes) follows the normal
+delegation-to-subagents pattern.
+
 ## Test Philosophy
+
 - Test early and often. Ideally write tests _first_ then code (TDD).  
 - Focus on realistic, e2e tests (smoke, integration).  
 - No need for trivial tests or testing each unexpected edge case. First and foremost, tests should validate that code runs properly, end to end, without major bugs; and they should prevent regressions.

@@ -333,17 +333,17 @@ def build_variations_sketch() -> Score:
 PIECES: dict[str, PieceDefinition] = {
     "sketch_passacaglia": PieceDefinition(
         name="sketch_passacaglia",
-        output_name="07_sketch_passacaglia.wav",
+        output_name="07_sketch_passacaglia",
         build_score=build_passacaglia_sketch,
     ),
     "sketch_invention": PieceDefinition(
         name="sketch_invention",
-        output_name="08_sketch_invention.wav",
+        output_name="08_sketch_invention",
         build_score=build_invention_sketch,
     ),
     "sketch_variations": PieceDefinition(
         name="sketch_variations",
-        output_name="10_sketch_variations.wav",
+        output_name="10_sketch_variations",
         build_score=build_variations_sketch,
     ),
 }

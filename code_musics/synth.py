@@ -5,14 +5,15 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast, overload
 
 import numpy as np
 import pedalboard
-from scipy.io import wavfile
+import soundfile as sf
 from scipy.signal import butter, resample_poly, sosfilt, tf2sos
 
 from code_musics.automation import apply_control_automation
@@ -302,14 +303,16 @@ def _spectral_centroid_hz(signal: np.ndarray, *, sample_rate: int) -> float:
 def _seconds_for_mask(mask: np.ndarray, *, sample_rate: int) -> float:
     if mask.size == 0:
         return 0.0
-    longest_run = 0
-    run_length = 0
-    for value in mask:
-        if bool(value):
-            run_length += 1
-            longest_run = max(longest_run, run_length)
-        else:
-            run_length = 0
+    bool_mask = np.asarray(mask, dtype=bool)
+    if not np.any(bool_mask):
+        return 0.0
+    # Pad with False on both sides so diff always captures run boundaries.
+    padded = np.concatenate(([False], bool_mask, [False]))
+    edges = np.diff(padded.astype(np.int8))
+    # Rising edges (+1) mark run starts; falling edges (-1) mark run ends.
+    starts = np.flatnonzero(edges == 1)
+    ends = np.flatnonzero(edges == -1)
+    longest_run = int(np.max(ends - starts))
     return float(longest_run / sample_rate)
 
 
@@ -695,20 +698,53 @@ def _validate_eq_q(q: float) -> None:
         raise ValueError("q must be positive")
 
 
+@dataclass(frozen=True)
+class _PassBandSpec:
+    """Dispatch entry for Butterworth highpass / lowpass EQ bands."""
+
+    btype: str
+    allowed_keys: frozenset[str] = frozenset({"kind", "cutoff_hz", "slope_db_per_oct"})
+
+
+@dataclass(frozen=True)
+class _ParametricBandSpec:
+    """Dispatch entry for bell / shelf EQ bands."""
+
+    design_fn: Callable[..., tuple[np.ndarray, np.ndarray]]
+    default_q: float | None
+    allowed_keys: frozenset[str] = frozenset({"kind", "freq_hz", "gain_db", "q"})
+
+
+_EQ_BAND_DISPATCH: dict[str, _PassBandSpec | _ParametricBandSpec] = {
+    "highpass": _PassBandSpec(btype="highpass"),
+    "lowpass": _PassBandSpec(btype="lowpass"),
+    "bell": _ParametricBandSpec(design_fn=_design_peaking_biquad, default_q=None),
+    "low_shelf": _ParametricBandSpec(
+        design_fn=_design_low_shelf_biquad, default_q=0.707
+    ),
+    "high_shelf": _ParametricBandSpec(
+        design_fn=_design_high_shelf_biquad, default_q=0.707
+    ),
+}
+
+
 def _design_eq_band_sos(
     *,
     band: dict[str, Any],
     sample_rate: int,
 ) -> np.ndarray:
     band_kind = str(band.get("kind", "")).lower()
+    spec = _EQ_BAND_DISPATCH.get(band_kind)
+    if spec is None:
+        raise ValueError(f"Unsupported EQ band kind: {band_kind!r}")
 
-    if band_kind == "highpass":
-        allowed_keys = {"kind", "cutoff_hz", "slope_db_per_oct"}
-        unknown_keys = set(band) - allowed_keys
-        if unknown_keys:
-            raise ValueError(
-                f"Unsupported parameters for highpass EQ band: {sorted(unknown_keys)}"
-            )
+    unknown_keys = set(band) - spec.allowed_keys
+    if unknown_keys:
+        raise ValueError(
+            f"Unsupported parameters for {band_kind} EQ band: {sorted(unknown_keys)}"
+        )
+
+    if isinstance(spec, _PassBandSpec):
         cutoff_hz = float(band["cutoff_hz"])
         slope_db_per_oct = int(band["slope_db_per_oct"])
         _validate_eq_frequency(
@@ -723,120 +759,47 @@ def _design_eq_band_sos(
             butter(
                 order,
                 cutoff_hz / (sample_rate / 2.0),
-                btype="highpass",
+                btype=spec.btype,
                 output="sos",
             ),
             dtype=np.float64,
         )
 
-    if band_kind == "lowpass":
-        allowed_keys = {"kind", "cutoff_hz", "slope_db_per_oct"}
-        unknown_keys = set(band) - allowed_keys
-        if unknown_keys:
-            raise ValueError(
-                f"Unsupported parameters for lowpass EQ band: {sorted(unknown_keys)}"
-            )
-        cutoff_hz = float(band["cutoff_hz"])
-        slope_db_per_oct = int(band["slope_db_per_oct"])
-        _validate_eq_frequency(
-            frequency_hz=cutoff_hz,
-            sample_rate=sample_rate,
-            label="cutoff_hz",
-        )
-        if slope_db_per_oct not in {12, 24}:
-            raise ValueError("slope_db_per_oct must be 12 or 24")
-        order = slope_db_per_oct // 6
-        return np.asarray(
-            butter(
-                order,
-                cutoff_hz / (sample_rate / 2.0),
-                btype="lowpass",
-                output="sos",
-            ),
-            dtype=np.float64,
-        )
-
-    if band_kind == "bell":
-        allowed_keys = {"kind", "freq_hz", "gain_db", "q"}
-        unknown_keys = set(band) - allowed_keys
-        if unknown_keys:
-            raise ValueError(
-                f"Unsupported parameters for bell EQ band: {sorted(unknown_keys)}"
-            )
-        freq_hz = float(band["freq_hz"])
-        gain_db = float(band["gain_db"])
+    freq_hz = float(band["freq_hz"])
+    gain_db = float(band["gain_db"])
+    if spec.default_q is None:
         q = float(band["q"])
-        _validate_eq_frequency(
-            frequency_hz=freq_hz,
+    else:
+        q = float(band.get("q", spec.default_q))
+    _validate_eq_frequency(
+        frequency_hz=freq_hz,
+        sample_rate=sample_rate,
+        label="freq_hz",
+    )
+    _validate_eq_q(q)
+    return tf2sos(
+        *spec.design_fn(
             sample_rate=sample_rate,
-            label="freq_hz",
+            center_hz=freq_hz,
+            q=q,
+            gain_db=gain_db,
         )
-        _validate_eq_q(q)
-        return tf2sos(
-            *_design_peaking_biquad(
-                sample_rate=sample_rate,
-                center_hz=freq_hz,
-                q=q,
-                gain_db=gain_db,
-            )
-        )
-
-    if band_kind == "low_shelf":
-        allowed_keys = {"kind", "freq_hz", "gain_db", "q"}
-        unknown_keys = set(band) - allowed_keys
-        if unknown_keys:
-            raise ValueError(
-                f"Unsupported parameters for low_shelf EQ band: {sorted(unknown_keys)}"
-            )
-        freq_hz = float(band["freq_hz"])
-        gain_db = float(band["gain_db"])
-        q = float(band.get("q", 0.707))
-        _validate_eq_frequency(
-            frequency_hz=freq_hz,
-            sample_rate=sample_rate,
-            label="freq_hz",
-        )
-        _validate_eq_q(q)
-        return tf2sos(
-            *_design_low_shelf_biquad(
-                sample_rate=sample_rate,
-                center_hz=freq_hz,
-                q=q,
-                gain_db=gain_db,
-            )
-        )
-
-    if band_kind == "high_shelf":
-        allowed_keys = {"kind", "freq_hz", "gain_db", "q"}
-        unknown_keys = set(band) - allowed_keys
-        if unknown_keys:
-            raise ValueError(
-                f"Unsupported parameters for high_shelf EQ band: {sorted(unknown_keys)}"
-            )
-        freq_hz = float(band["freq_hz"])
-        gain_db = float(band["gain_db"])
-        q = float(band.get("q", 0.707))
-        _validate_eq_frequency(
-            frequency_hz=freq_hz,
-            sample_rate=sample_rate,
-            label="freq_hz",
-        )
-        _validate_eq_q(q)
-        return tf2sos(
-            *_design_high_shelf_biquad(
-                sample_rate=sample_rate,
-                center_hz=freq_hz,
-                q=q,
-                gain_db=gain_db,
-            )
-        )
-
-    raise ValueError(f"Unsupported EQ band kind: {band_kind!r}")
+    )
 
 
 # ---------------------------------------------------------------------------
 # Chow Tape Model VST3 (lazy-loaded singleton)
 # ---------------------------------------------------------------------------
+
+_LSP_PRELOAD_LIBRARIES: tuple[Path, ...] = (
+    (
+        Path.home() / ".local" / "lib" / "lsp-runtime" / "libpixman-1.so.0.38.4",
+        Path.home() / ".local" / "lib" / "lsp-runtime" / "libxcb-render.so.0.0.0",
+        Path.home() / ".local" / "lib" / "lsp-runtime" / "libcairo.so.2.11600.0",
+    )
+    if sys.platform == "linux"
+    else ()
+)
 
 _PLUGIN_SPECS: dict[str, ExternalPluginSpec] = {
     "lsp_compressor_stereo": ExternalPluginSpec(
@@ -844,22 +807,14 @@ _PLUGIN_SPECS: dict[str, ExternalPluginSpec] = {
         path=Path.home() / ".vst3" / "lsp-plugins.vst3",
         format="vst3",
         bundle_plugin_name="Compressor Stereo",
-        preload_libraries=(
-            Path.home() / ".local" / "lib" / "lsp-runtime" / "libpixman-1.so.0.38.4",
-            Path.home() / ".local" / "lib" / "lsp-runtime" / "libxcb-render.so.0.0.0",
-            Path.home() / ".local" / "lib" / "lsp-runtime" / "libcairo.so.2.11600.0",
-        ),
+        preload_libraries=_LSP_PRELOAD_LIBRARIES,
     ),
     "lsp_limiter_stereo": ExternalPluginSpec(
         name="lsp_limiter_stereo",
         path=Path.home() / ".vst3" / "lsp-plugins.vst3",
         format="vst3",
         bundle_plugin_name="Limiter Stereo",
-        preload_libraries=(
-            Path.home() / ".local" / "lib" / "lsp-runtime" / "libpixman-1.so.0.38.4",
-            Path.home() / ".local" / "lib" / "lsp-runtime" / "libxcb-render.so.0.0.0",
-            Path.home() / ".local" / "lib" / "lsp-runtime" / "libcairo.so.2.11600.0",
-        ),
+        preload_libraries=_LSP_PRELOAD_LIBRARIES,
     ),
     "lsp_compressor_stereo_vst2": ExternalPluginSpec(
         name="lsp_compressor_stereo_vst2",
@@ -893,6 +848,46 @@ _PLUGIN_SPECS: dict[str, ExternalPluginSpec] = {
     "dragonfly_early": ExternalPluginSpec(
         name="dragonfly_early",
         path=Path.home() / ".vst3" / "DragonflyEarlyReflections.vst3",
+    ),
+    "byod": ExternalPluginSpec(
+        name="byod",
+        path=Path.home() / ".vst3" / "BYOD.vst3",
+    ),
+    "chow_matrix": ExternalPluginSpec(
+        name="chow_matrix",
+        path=Path.home() / ".vst3" / "ChowMatrix.vst3",
+    ),
+    "airwindows": ExternalPluginSpec(
+        name="airwindows",
+        path=Path.home() / ".vst3" / "Airwindows Consolidated.vst3",
+    ),
+    "surge_xt": ExternalPluginSpec(
+        name="surge_xt",
+        path=Path.home() / ".vst3" / "Surge XT.vst3",
+    ),
+    "chow_centaur": ExternalPluginSpec(
+        name="chow_centaur",
+        path=Path.home() / ".vst3" / "ChowCentaur.vst3",
+    ),
+    "chow_kick": ExternalPluginSpec(
+        name="chow_kick",
+        path=Path.home() / ".vst3" / "ChowKick.vst3",
+    ),
+    "chow_multi_tool": ExternalPluginSpec(
+        name="chow_multi_tool",
+        path=Path.home() / ".vst3" / "ChowMultiTool.vst3",
+    ),
+    "chow_phaser_mono": ExternalPluginSpec(
+        name="chow_phaser_mono",
+        path=Path.home() / ".vst3" / "ChowPhaserMono.vst3",
+    ),
+    "chow_phaser_stereo": ExternalPluginSpec(
+        name="chow_phaser_stereo",
+        path=Path.home() / ".vst3" / "ChowPhaserStereo.vst3",
+    ),
+    "tal_reverb3": ExternalPluginSpec(
+        name="tal_reverb3",
+        path=Path.home() / ".vst3" / "TAL-Reverb-3.vst3",
     ),
 }
 _loaded_external_plugins: dict[tuple[str, str, Path, str | None], Any] = {}
@@ -943,7 +938,7 @@ def _preload_shared_libraries(library_paths: tuple[Path, ...]) -> None:
         ctypes.CDLL(str(library_path), mode=ctypes.RTLD_GLOBAL)
 
 
-def _load_external_plugin(
+def load_external_plugin(
     plugin_name: str | None = None,
     plugin_path: str | Path | None = None,
     plugin_format: str = "vst3",
@@ -1001,7 +996,7 @@ def _apply_plugin_processor(
     params: dict[str, Any] | None = None,
     configurer: PluginConfigurer | None = None,
 ) -> np.ndarray:
-    plugin = _load_external_plugin(
+    plugin = load_external_plugin(
         plugin_name=plugin_name,
         plugin_path=plugin_path,
         plugin_format=plugin_format,
@@ -1053,6 +1048,9 @@ def adsr(
     hold_duration: float | None = None,
 ) -> np.ndarray:
     """Apply ADSR amplitude envelope."""
+    _MIN_ATTACK_S = 0.003  # 3 ms floor — prevents onset clicks
+    attack = max(attack, _MIN_ATTACK_S)
+    release = max(release, _MIN_ATTACK_S)
     n = len(signal)
     n_attack = int(attack * sample_rate)
     n_decay = int(decay * sample_rate)
@@ -1909,11 +1907,12 @@ def apply_pan_automation(
     )
 
 
-BRICASTI_IR_DIR = Path(
+_DEFAULT_BRICASTI_IR_DIR = (
     "/mnt/c/Music Production/Convolution Impulses"
     "/Samplicity - Bricasti IRs version 2023-10"
     "/Samplicity - Bricasti IRs version 2023-10, left-right files, 44.1 Khz"
 )
+BRICASTI_IR_DIR = Path(os.environ.get("BRICASTI_IR_DIR", _DEFAULT_BRICASTI_IR_DIR))
 
 
 def normalize(signal: np.ndarray, peak: float = 0.85) -> np.ndarray:
@@ -2340,9 +2339,11 @@ def finalize_master(
             true_peak_dbfs=float("-inf"),
         )
 
-    if not has_external_plugin("lsp_limiter_stereo"):
-        raise FileNotFoundError(
-            "LSP limiter is required for export mastering but is not available."
+    use_lsp_limiter = has_external_plugin("lsp_limiter_stereo")
+    if not use_lsp_limiter:
+        logger.warning(
+            "LSP limiter unavailable — using native gain + true-peak normalization. "
+            "Install lsp-plugins.vst3 for transparent limiting."
         )
 
     current_lufs, active_window_fraction = integrated_lufs(
@@ -2366,12 +2367,15 @@ def finalize_master(
 
     limiter_input_gain_db = target_lufs - current_lufs
     limiter_output_gain_db = 0.0
-    mastered = apply_lsp_limiter(
-        source_signal,
-        threshold_db=true_peak_ceiling_dbfs,
-        input_gain_db=limiter_input_gain_db,
-        output_gain_db=limiter_output_gain_db,
-    )
+    if use_lsp_limiter:
+        mastered = apply_lsp_limiter(
+            source_signal,
+            threshold_db=true_peak_ceiling_dbfs,
+            input_gain_db=limiter_input_gain_db,
+            output_gain_db=limiter_output_gain_db,
+        )
+    else:
+        mastered = source_signal * db_to_amp(limiter_input_gain_db)
 
     for _ in range(max_iterations):
         mastered = normalize_true_peak(
@@ -2391,12 +2395,15 @@ def finalize_master(
             break
 
         limiter_input_gain_db += loudness_error
-        mastered = apply_lsp_limiter(
-            source_signal,
-            threshold_db=true_peak_ceiling_dbfs,
-            input_gain_db=limiter_input_gain_db,
-            output_gain_db=limiter_output_gain_db,
-        )
+        if use_lsp_limiter:
+            mastered = apply_lsp_limiter(
+                source_signal,
+                threshold_db=true_peak_ceiling_dbfs,
+                input_gain_db=limiter_input_gain_db,
+                output_gain_db=limiter_output_gain_db,
+            )
+        else:
+            mastered = source_signal * db_to_amp(limiter_input_gain_db)
 
     mastered = normalize_true_peak(
         mastered,
@@ -3448,6 +3455,78 @@ def _resolve_effect_amount_automation(
     return target_name, amount_curve
 
 
+_PLUGIN_BACKED_EFFECTS: dict[str, str] = {
+    "chow_tape": "chow_tape",
+    "tal_chorus_lx": "tal_chorus_lx",
+    "tal_reverb2": "tal_reverb2",
+    "dragonfly": "dragonfly_plate",
+}
+
+
+def _is_missing_vst3_plugin(plugin_name: str) -> bool:
+    """True when a registered VST3 plugin's files are absent (not installed).
+
+    Returns False for non-VST3 specs (e.g. VST2) so that format-mismatch
+    errors propagate normally instead of being silently skipped.
+    """
+    spec = _get_external_plugin_spec(plugin_name=plugin_name)
+    if spec.format != "vst3":
+        return False
+    return not has_external_plugin(plugin_name)
+
+
+_SIMPLE_EFFECT_DISPATCH: dict[str, Callable[..., np.ndarray]] = {
+    "delay": apply_delay,
+    "reverb": apply_reverb,
+    "chow_tape": apply_chow_tape,
+    "bricasti": apply_bricasti,
+    "chorus": apply_chorus,
+    "tal_chorus_lx": apply_tal_chorus_lx,
+    "tal_reverb2": apply_tal_reverb2,
+}
+
+
+def _apply_effect_with_automation(
+    apply_fn: Callable[..., np.ndarray],
+    processed: np.ndarray,
+    effect_input: np.ndarray,
+    params: dict[str, Any],
+    effect_amount_automation: tuple[str, np.ndarray] | None,
+) -> np.ndarray:
+    """Apply a simple effect, handling wet/dry automation when present."""
+    if effect_amount_automation is None:
+        return apply_fn(processed, **params)
+    target_name, amount_curve = effect_amount_automation
+    wet_params = dict(params)
+    wet_params[target_name] = 1.0
+    wet_signal = apply_fn(processed, **wet_params)
+    return _blend_signals(effect_input, wet_signal, amount_curve)
+
+
+@overload
+def apply_effect_chain(
+    signal: np.ndarray,
+    effects: list[Any],
+    *,
+    sidechain_signals: Mapping[str, np.ndarray] | None = ...,
+    signal_name: str | None = ...,
+    start_time_seconds: float = ...,
+    return_analysis: Literal[False] = ...,
+) -> np.ndarray: ...
+
+
+@overload
+def apply_effect_chain(
+    signal: np.ndarray,
+    effects: list[Any],
+    *,
+    sidechain_signals: Mapping[str, np.ndarray] | None = ...,
+    signal_name: str | None = ...,
+    start_time_seconds: float = ...,
+    return_analysis: Literal[True],
+) -> tuple[np.ndarray, list[EffectAnalysisEntry]]: ...
+
+
 def apply_effect_chain(
     signal: np.ndarray,
     effects: list[Any],
@@ -3472,53 +3551,30 @@ def apply_effect_chain(
             start_time_seconds=start_time_seconds,
         )
         native_metrics: dict[str, float | int | str] | None = None
+        # Guard: skip plugin-backed effects when the plugin isn't installed,
+        # logging a loud warning so agents and humans notice.
+        required_plugin = _PLUGIN_BACKED_EFFECTS.get(effect.kind)
+        if required_plugin is not None and _is_missing_vst3_plugin(required_plugin):
+            logger.warning(
+                "SKIPPING effect %r (#%d): plugin %r is not installed on this "
+                "machine. The signal passes through unprocessed. Install the "
+                "plugin to hear this effect.",
+                effect.kind,
+                effect_index,
+                required_plugin,
+            )
+            continue
+        simple_apply_fn = _SIMPLE_EFFECT_DISPATCH.get(effect.kind)
         if effect.kind == "gate":
             processed = cast(np.ndarray, apply_gate(processed, **params))
-        elif effect.kind == "delay":
-            if effect_amount_automation is None:
-                processed = apply_delay(processed, **params)
-            else:
-                target_name, amount_curve = effect_amount_automation
-                wet_params = dict(params)
-                wet_params[target_name] = 1.0
-                wet_signal = apply_delay(processed, **wet_params)
-                processed = _blend_signals(effect_input, wet_signal, amount_curve)
-        elif effect.kind == "reverb":
-            if effect_amount_automation is None:
-                processed = apply_reverb(processed, **params)
-            else:
-                target_name, amount_curve = effect_amount_automation
-                wet_params = dict(params)
-                wet_params[target_name] = 1.0
-                wet_signal = apply_reverb(processed, **wet_params)
-                processed = _blend_signals(effect_input, wet_signal, amount_curve)
-        elif effect.kind == "chow_tape":
-            if effect_amount_automation is None:
-                processed = apply_chow_tape(processed, **params)
-            else:
-                target_name, amount_curve = effect_amount_automation
-                wet_params = dict(params)
-                wet_params[target_name] = 1.0
-                wet_signal = apply_chow_tape(processed, **wet_params)
-                processed = _blend_signals(effect_input, wet_signal, amount_curve)
-        elif effect.kind == "bricasti":
-            if effect_amount_automation is None:
-                processed = apply_bricasti(processed, **params)
-            else:
-                target_name, amount_curve = effect_amount_automation
-                wet_params = dict(params)
-                wet_params[target_name] = 1.0
-                wet_signal = apply_bricasti(processed, **wet_params)
-                processed = _blend_signals(effect_input, wet_signal, amount_curve)
-        elif effect.kind == "chorus":
-            if effect_amount_automation is None:
-                processed = apply_chorus(processed, **params)
-            else:
-                target_name, amount_curve = effect_amount_automation
-                wet_params = dict(params)
-                wet_params[target_name] = 1.0
-                wet_signal = apply_chorus(processed, **wet_params)
-                processed = _blend_signals(effect_input, wet_signal, amount_curve)
+        elif simple_apply_fn is not None:
+            processed = _apply_effect_with_automation(
+                simple_apply_fn,
+                processed,
+                effect_input,
+                params,
+                effect_amount_automation,
+            )
         elif effect.kind == "saturation":
             if effect_amount_automation is None and return_analysis:
                 processed_signal, saturation_metrics = cast(
@@ -3628,27 +3684,24 @@ def apply_effect_chain(
                         ),
                     )
                 processed = _blend_signals(effect_input, wet_signal, amount_curve)
-        elif effect.kind == "tal_chorus_lx":
-            if effect_amount_automation is None:
-                processed = apply_tal_chorus_lx(processed, **params)
-            else:
-                target_name, amount_curve = effect_amount_automation
-                wet_params = dict(params)
-                wet_params[target_name] = 1.0
-                wet_signal = apply_tal_chorus_lx(processed, **wet_params)
-                processed = _blend_signals(effect_input, wet_signal, amount_curve)
-        elif effect.kind == "tal_reverb2":
-            if effect_amount_automation is None:
-                processed = apply_tal_reverb2(processed, **params)
-            else:
-                target_name, amount_curve = effect_amount_automation
-                wet_params = dict(params)
-                wet_params[target_name] = 1.0
-                wet_signal = apply_tal_reverb2(processed, **wet_params)
-                processed = _blend_signals(effect_input, wet_signal, amount_curve)
         elif effect.kind == "dragonfly":
             processed = apply_dragonfly(processed, **params)
         elif effect.kind == "plugin":
+            plugin_ref = params.get("plugin_name") or params.get("plugin_path")
+            if (
+                isinstance(plugin_ref, str)
+                and plugin_ref in _PLUGIN_SPECS
+                and _is_missing_vst3_plugin(plugin_ref)
+            ):
+                logger.warning(
+                    "SKIPPING generic plugin effect %r (#%d): plugin %r is "
+                    "not installed on this machine. The signal passes through "
+                    "unprocessed.",
+                    effect.kind,
+                    effect_index,
+                    plugin_ref,
+                )
+                continue
             processed = apply_plugin(processed, **params)
         else:
             raise ValueError(f"Unsupported effect kind: {effect.kind}")
@@ -3676,20 +3729,46 @@ def apply_effect_chain(
     return processed
 
 
-def write_wav(path: str | Path, signal: np.ndarray) -> None:
-    """Write mono (1D) or stereo (2, samples) signal to a 16-bit WAV file."""
+def write_wav(
+    path: str | Path,
+    signal: np.ndarray,
+    *,
+    bit_depth: int = 24,
+) -> None:
+    """Write mono (1D) or stereo (2, samples) signal to a WAV file.
+
+    Parameters
+    ----------
+    path : str | Path
+        Output file path.
+    signal : np.ndarray
+        Audio signal. Shape (samples,) for mono or (2, samples) for stereo.
+    bit_depth : int
+        Bit depth for WAV output: 16 (dithered PCM), 24 (PCM), or 32 (float).
+        Defaults to 24.
+    """
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     level_diagnostics = measure_signal_levels(signal, sample_rate=SAMPLE_RATE)
 
-    if signal.ndim == 2:
-        int16 = _float_to_int16_pcm(signal.T)
-    else:
-        int16 = _float_to_int16_pcm(signal)
-    wavfile.write(str(output_path), SAMPLE_RATE, int16)
+    # soundfile expects (samples, channels)
+    write_signal = signal.T if signal.ndim == 2 else signal
+
+    subtype_map = {16: "PCM_16", 24: "PCM_24", 32: "FLOAT"}
+    subtype = subtype_map.get(bit_depth)
+    if subtype is None:
+        raise ValueError(f"Unsupported bit_depth={bit_depth}; choose 16, 24, or 32")
+
+    if bit_depth == 16:
+        # Apply TPDF dither for 16-bit quantization
+        write_signal = _float_to_int16_pcm(write_signal).astype(np.float64) / 32767.0
+
+    sf.write(str(output_path), write_signal, SAMPLE_RATE, subtype=subtype)
     logger.info(
-        "Wrote %s (peak %.2f dBFS, true peak %.2f dBFS, integrated loudness %.2f LUFS)",
+        "Wrote %s (%d-bit %s, peak %.2f dBFS, true peak %.2f dBFS, integrated loudness %.2f LUFS)",
         output_path,
+        bit_depth,
+        subtype,
         level_diagnostics.peak_dbfs,
         level_diagnostics.true_peak_dbfs,
         level_diagnostics.integrated_lufs,

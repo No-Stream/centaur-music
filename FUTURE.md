@@ -64,6 +64,7 @@ Most valuable next helpers:
   texture has become too static, too crowded, or too continuously drony
 
 ### Creative composition helpers
+
 - riemann
 - random notes in a scale
 - turing machines
@@ -73,10 +74,12 @@ Most valuable next helpers:
 - markov processes / markov chains - with and without memory
 
 ### Additive Synthesis Specifically
-  Additive lets us not assume traditional harmonic structure. 
+
+  Additive lets us not assume traditional harmonic structure.
   e.g. we can have harmonics of just intervals, not e.g. simple sawtooth harmonics
   this should unlock some interesting creative opportunities.
-  for example - 
+  for example -
+
   1. Bell / mallet / metal / glass / struck-material sounds
   These are already naturally inharmonic or quasi-inharmonic, so they pair beautifully with unusual tunings. Xenharmonic music often feels more convincing when the timbre does not keep insisting on a standard harmonic ladder.
   2. Drones and spectral harmony
@@ -87,11 +90,12 @@ Most valuable next helpers:
   You can make a chord whose note frequencies and internal overtone structures are both drawn from the same ratio world.
   We should consider how to do this with a clean, musical interface that encourages sane defaults and easy programming, and modularity.
   Remaining work after the new explicit spectral-partial additive voice:
-  - richer stereo-from-spectrum tools so different partial groups can occupy subtly different widths/positions
-  - automatic register-aware darkening / brightness limiting so high notes do not get brittle and low notes do not get muddy
-  - controlled inharmonic stretch and physical-object style detuning beyond the current gentle upper-partial drift
-  - deeper programmable per-partial envelopes and modulation, once the simple onset/sustain morph proves musically useful
-  - a broader role-oriented preset family for spectral additive voices, beyond the first JI / septimal / 11-limit / utonal set
+
+- richer stereo-from-spectrum tools so different partial groups can occupy subtly different widths/positions
+- automatic register-aware darkening / brightness limiting so high notes do not get brittle and low notes do not get muddy
+- controlled inharmonic stretch and physical-object style detuning beyond the current gentle upper-partial drift
+- deeper programmable per-partial envelopes and modulation, once the simple onset/sustain morph proves musically useful
+- a broader role-oriented preset family for spectral additive voices, beyond the first JI / septimal / 11-limit / utonal set
   _implemented some of this, should revise this section_
 
 ### MIDI Export
@@ -140,13 +144,13 @@ Most promising directions:
 
   Useful next steps:
 
-  - extend automation beyond the current synth-param and `pitch_ratio` targets
+- extend automation beyond the current synth-param and `pitch_ratio` targets
     into pan, gain, effect wetness, and plugin parameters
-  - phrase-level timbre gestures so sounds can evolve musically without low-level
+- phrase-level timbre gestures so sounds can evolve musically without low-level
     automation plumbing in every piece
-  - more reusable automation idioms for opening, darkening, widening, blooming,
+- more reusable automation idioms for opening, darkening, widening, blooming,
     and settling
-  - stronger analysis feedback so we can verify whether a sound actually opens,
+- stronger analysis feedback so we can verify whether a sound actually opens,
     softens, or narrows the way intended
 
 ### Utonal, subharmonic, and drift-based harmony
@@ -156,17 +160,19 @@ Most promising directions:
 
   Most interesting directions:
 
-  - darker subharmonic passages that feel structurally intentional, not just novel
-  - stronger overtone / undertone contrasts inside a single form
-  - phrase-level recontextualization helpers that make comma drift and local tonic
+- darker subharmonic passages that feel structurally intentional, not just novel
+- stronger overtone / undertone contrasts inside a single form
+- phrase-level recontextualization helpers that make comma drift and local tonic
     reinterpretation easier to write as normal music
-  - voice-leading idioms that stay elegant while harmonic context shifts
+- voice-leading idioms that stay elegant while harmonic context shifts
 
 ### Trance, progressive house
+
   fun genres to explore alt tunings in, since they're so reliant on harmony
   let's get slightly cheesy
 
 ### Colundi-ish Scale
+
   ```
   ! colundi_ji_core.scl
   !
@@ -182,25 +188,32 @@ Most promising directions:
   2/1
   ```
 
-### Organs!
+### Organs
+
   Organs sound great, are fundamentally additive ish, should be alt-tuning friendly are huge in Bach.
   Let's try making some organ models and playing them!
 
 ### Pianoteq
-  I have a Pianoteq license and the Linux package downloaded. We can try setting it up headless. 
+
+  I have a Pianoteq license and the Linux package downloaded. We can try setting it up headless.
   (Pianoteq is famous for microtonal support but we'll need to hack around a bit to hopefully get it running without a DAW.)
+  (Surge XT instrument hosting is now working via pedalboard — the VSTi
+  hosting path is proven. Pianoteq would use the same mechanism.)
 
 ### Co-design scale + synth
-  - Additive synthesis + scale. works great with non-octave scales, e.g. Colundi (since we can omit octave harmonics)
-  - FM, similar story
-  - Physical modeling: we can use physical models with _harmonics that are compatible with our scale_. e.g. Aleksi Perala does very cool xen bells
-  - Granular (not necessarily _great_ for xenharmonic but doesn't have the octave bias of subtractive synths)
+
+- Additive synthesis + scale. works great with non-octave scales, e.g. Colundi (since we can omit octave harmonics)
+- FM, similar story
+- Physical modeling: we can use physical models with _harmonics that are compatible with our scale_. e.g. Aleksi Perala does very cool xen bells
+- Granular (not necessarily _great_ for xenharmonic but doesn't have the octave bias of subtractive synths)
 
 ### Combination Product Set - Harmonic Lattice (Erv Wilson)
-  - cool idea. let's try.
+
+- cool idea. let's try.
 
 ### Non-octave-privileged distortion
-  Traditional distortion/saturation relies on octave-based products. 
+
+  Traditional distortion/saturation relies on octave-based products.
   Could we do something interesting with _other_ multiples?! Aligned with our scale.
 
 ### Better effect integration and routing
@@ -241,6 +254,16 @@ Most valuable next steps:
 - decide more explicitly when native effects should be preferred over external
   plugins for stability
 
+### DawDreamer
+
+DawDreamer is a Python DAW framework with full MIDI + instrument hosting,
+Faust DSP compilation, RubberBand time-stretch, and complex routing graphs.
+It is GPLv3 — same license family as pedalboard (already a dep) — but the
+project prefers MIT for its own code, so evaluate carefully before adopting.
+Main value-adds beyond current pedalboard usage: Faust DSP compilation for
+rapid synth/effect prototyping, and CLAP plugin hosting. Consider if/when
+we need capabilities pedalboard cannot provide.
+
 ### Analysis and feedback tooling
 
 Analysis is now useful and part of the normal workflow. Future work here should
@@ -270,6 +293,7 @@ look worthwhile:
   root by default or move behind a clearer workspace/output boundary
 
 ### Wavetable engine
+
 - allows unique timbres, somewhat complicated, needs to be done right (aliasing etc)
 
 ---

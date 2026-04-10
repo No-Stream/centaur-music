@@ -191,7 +191,7 @@ def render_effects_showcase_demo() -> np.ndarray:
 PIECES = {
     "effects_showcase": PieceDefinition(
         name="effects_showcase",
-        output_name="23_effects_showcase.wav",
+        output_name="23_effects_showcase",
         render_audio=render_effects_showcase_demo,
     )
 }

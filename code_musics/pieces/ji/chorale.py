@@ -792,7 +792,7 @@ def build_ji_chorale_score() -> Score:
 PIECES: dict[str, PieceDefinition] = {
     "ji_chorale": PieceDefinition(
         name="ji_chorale",
-        output_name="17_ji_chorale.wav",
+        output_name="17_ji_chorale",
         build_score=build_ji_chorale_score,
         sections=(
             PieceSection(label="Prologue", start_seconds=0.0, end_seconds=12.0),

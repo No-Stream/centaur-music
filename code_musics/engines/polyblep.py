@@ -222,25 +222,3 @@ def _polyblep_square(
     square = (saw1 - saw2) / 2.0
     square -= square.mean()  # remove DC from pulse_width asymmetry (no-op at pw=0.5)
     return square
-
-
-def render_polyblep(
-    freq: float,
-    duration: float,
-    sample_rate: int,
-    params: dict[str, Any],
-    freq_trajectory: np.ndarray | None = None,
-) -> np.ndarray:
-    """Convenience wrapper around :func:`render` with positional arguments.
-
-    Renders at unit amplitude (``amp=1.0``); use the returned array directly or
-    scale afterward.
-    """
-    return render(
-        freq=freq,
-        duration=duration,
-        amp=1.0,
-        sample_rate=sample_rate,
-        params=params,
-        freq_trajectory=freq_trajectory,
-    )

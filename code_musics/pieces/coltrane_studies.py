@@ -464,17 +464,17 @@ def build_giant_steps_15edo_score() -> Score:
 PIECES: dict[str, PieceDefinition] = {
     "ji_spiral_steps": PieceDefinition(
         name="ji_spiral_steps",
-        output_name="20_ji_spiral_steps.wav",
+        output_name="20_ji_spiral_steps",
         build_score=build_ji_spiral_steps_score,
     ),
     "septimal_changes": PieceDefinition(
         name="septimal_changes",
-        output_name="21_septimal_changes.wav",
+        output_name="21_septimal_changes",
         build_score=build_septimal_changes_score,
     ),
     "giant_steps_15edo": PieceDefinition(
         name="giant_steps_15edo",
-        output_name="22_giant_steps_15edo.wav",
+        output_name="22_giant_steps_15edo",
         build_score=build_giant_steps_15edo_score,
     ),
 }

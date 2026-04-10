@@ -417,27 +417,27 @@ def build_interference_ji_sketch() -> Score:
 PIECES: dict[str, PieceDefinition] = {
     "sketch_spiral": PieceDefinition(
         name="sketch_spiral",
-        output_name="11_sketch_spiral.wav",
+        output_name="11_sketch_spiral",
         build_score=build_spiral_sketch,
     ),
     "sketch_interference": PieceDefinition(
         name="sketch_interference",
-        output_name="12_sketch_interference.wav",
+        output_name="12_sketch_interference",
         build_score=build_interference_sketch,
     ),
     "sketch_spiral_arch": PieceDefinition(
         name="sketch_spiral_arch",
-        output_name="14_sketch_spiral_arch.wav",
+        output_name="14_sketch_spiral_arch",
         build_score=build_spiral_arch_sketch,
     ),
     "sketch_interference_v2": PieceDefinition(
         name="sketch_interference_v2",
-        output_name="15_sketch_interference_v2.wav",
+        output_name="15_sketch_interference_v2",
         build_score=build_interference_v2_sketch,
     ),
     "sketch_interference_ji": PieceDefinition(
         name="sketch_interference_ji",
-        output_name="16_sketch_interference_ji.wav",
+        output_name="16_sketch_interference_ji",
         build_score=build_interference_ji_sketch,
     ),
 }

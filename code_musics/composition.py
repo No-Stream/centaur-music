@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from itertools import cycle, islice
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from code_musics import synth
 from code_musics.automation import (
@@ -28,6 +28,8 @@ from code_musics.score import BeatTiming, NoteEvent, Phrase
 
 if TYPE_CHECKING:
     from code_musics.score import Score
+
+PitchKind = Literal["partial", "freq"]
 
 __all__ = [
     "ArticulationSpec",
@@ -185,12 +187,11 @@ def line(
     tones: Sequence[float],
     rhythm: RhythmCell | Sequence[float],
     *,
-    pitch_kind: str = "partial",
+    pitch_kind: PitchKind = "partial",
     amp: float | None = None,
     amp_db: float | None = None,
     synth_defaults: dict[str, Any] | None = None,
     articulation: ArticulationSpec | None = None,
-    motions: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
     pitch_motion: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
     labels: Sequence[str] | None = None,
 ) -> Phrase:
@@ -220,8 +221,7 @@ def line(
     if len(note_labels) != len(tones):
         raise ValueError("labels must have the same length as tones")
 
-    motion_input = _resolve_motion_input(motions, pitch_motion)
-    note_motions = _expand_motions(motion_input, len(tones))
+    note_motions = _expand_motions(pitch_motion, len(tones))
 
     articulation = articulation or ArticulationSpec()
     articulation_gates = _expand_positive_values(articulation.gate, len(tones), "gate")
@@ -286,12 +286,11 @@ def grid_line(
     durations: Sequence[DurationLike],
     *,
     timeline: Timeline,
-    pitch_kind: str = "partial",
+    pitch_kind: PitchKind = "partial",
     amp: float | None = None,
     amp_db: float | None = None,
     synth_defaults: dict[str, Any] | None = None,
     articulation: ArticulationSpec | None = None,
-    motions: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
     pitch_motion: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
     labels: Sequence[str] | None = None,
 ) -> Phrase:
@@ -305,7 +304,6 @@ def grid_line(
         amp_db=amp_db,
         synth_defaults=synth_defaults,
         articulation=articulation,
-        motions=motions,
         pitch_motion=pitch_motion,
         labels=labels,
     )
@@ -395,7 +393,6 @@ def ratio_line(
     amp_db: float | None = None,
     synth_defaults: dict[str, Any] | None = None,
     articulation: ArticulationSpec | None = None,
-    motions: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
     pitch_motion: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
     labels: Sequence[str] | None = None,
 ) -> Phrase:
@@ -408,7 +405,6 @@ def ratio_line(
         amp_db=amp_db,
         synth_defaults=synth_defaults,
         articulation=articulation,
-        motions=motions,
         pitch_motion=pitch_motion,
         labels=labels,
     )
@@ -424,7 +420,6 @@ def grid_ratio_line(
     amp_db: float | None = None,
     synth_defaults: dict[str, Any] | None = None,
     articulation: ArticulationSpec | None = None,
-    motions: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
     pitch_motion: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
     labels: Sequence[str] | None = None,
 ) -> Phrase:
@@ -438,7 +433,6 @@ def grid_ratio_line(
         amp_db=amp_db,
         synth_defaults=synth_defaults,
         articulation=articulation,
-        motions=motions,
         pitch_motion=pitch_motion,
         labels=labels,
     )
@@ -460,7 +454,6 @@ def place_ratio_line(
     amp_db: float | None = None,
     synth_defaults: dict[str, Any] | None = None,
     articulation: ArticulationSpec | None = None,
-    motions: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
     pitch_motion: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
     labels: Sequence[str] | None = None,
 ) -> list[NoteEvent]:
@@ -475,7 +468,6 @@ def place_ratio_line(
         amp_db=amp_db,
         synth_defaults=synth_defaults,
         articulation=articulation,
-        motions=motions,
         pitch_motion=pitch_motion,
         labels=labels,
     )
@@ -489,7 +481,7 @@ def place_ratio_chord(
     section: ContextSection,
     ratios: Sequence[float],
     duration: float,
-    start: float = 0.0,
+    offset: float = 0.0,
     gap: float = 0.0,
     amp: float | Sequence[float] = 1.0,
     synth: dict[str, Any] | None = None,
@@ -498,8 +490,8 @@ def place_ratio_chord(
     """Place simultaneous or slightly staggered ratio-based notes into a section."""
     if duration <= 0:
         raise ValueError("duration must be positive")
-    if start < 0:
-        raise ValueError("start must be non-negative")
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
     if gap < 0:
         raise ValueError("gap must be non-negative")
 
@@ -516,7 +508,7 @@ def place_ratio_chord(
         notes.append(
             score.add_note(
                 voice_name,
-                start=section.start + start + (index * gap),
+                start=section.start + offset + (index * gap),
                 duration=duration,
                 freq=freq,
                 amp=amp_value,
@@ -1325,15 +1317,6 @@ def _inside_out_order(count: int) -> list[int]:
             order.append(right_index)
             right_index += 1
     return order
-
-
-def _resolve_motion_input(
-    motions: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None,
-    pitch_motion: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None,
-) -> PitchMotionSpec | Sequence[PitchMotionSpec | None] | None:
-    if motions is not None and pitch_motion is not None and motions != pitch_motion:
-        raise ValueError("use only one of motions or pitch_motion")
-    return pitch_motion if pitch_motion is not None else motions
 
 
 def _expand_motions(
