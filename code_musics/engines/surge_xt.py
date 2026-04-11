@@ -111,7 +111,10 @@ def render_voice(
             ]
         )
 
-    # Assign notes round-robin across MPE member channels 1-15.
+    # Assign notes to MPE member channels 1-15, preferring a channel whose
+    # previous note has already ended.  Falls back to round-robin when all
+    # 15 channels are occupied (with a warning).
+    channel_free_at = [0.0] * (MAX_MPE_CHANNELS + 1)  # index 0 unused
     for i, note_data in enumerate(notes):
         freq = float(note_data["freq"])
         start = float(note_data["start"])
@@ -120,7 +123,19 @@ def render_voice(
         amp = float(note_data.get("amp", 1.0))
 
         midi_velocity = max(1, min(127, int(round(velocity_raw * amp * 127))))
-        channel = (i % MAX_MPE_CHANNELS) + 1
+        for ch_offset in range(MAX_MPE_CHANNELS):
+            candidate = ((i + ch_offset) % MAX_MPE_CHANNELS) + 1
+            if channel_free_at[candidate] <= start:
+                channel = candidate
+                break
+        else:
+            channel = (i % MAX_MPE_CHANNELS) + 1
+            logger.warning(
+                "MPE channel collision: >%d overlapping notes at t=%.3f",
+                MAX_MPE_CHANNELS,
+                start,
+            )
+        channel_free_at[channel] = start + duration
 
         midi_note, bend_value = _resolve_note_and_bend(freq)
 

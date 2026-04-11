@@ -16,6 +16,11 @@
 - `code_musics/engines/` contains the synth engine registry and per-engine renderers.
 - `code_musics/tuning.py` contains small just-intonation, harmonic-series, utonal,
   and EDO helper functions.
+- `code_musics/generative/` contains algorithmic and stochastic composition
+  tools: TonePool (weighted pitch pools), euclidean rhythms, probability gates,
+  Markov chains, Turing machine sequencers, harmonic lattice walkers, and
+  stochastic cloud generators. All are seeded/deterministic, work in ratio
+  space, and produce standard Phrase/RhythmCell types.
 - `code_musics/pieces/` contains named musical works that can be rendered by the
   registry, including smaller themed study modules plus JI subpackages.
 - `code_musics/render.py` is the named-piece orchestration layer.
@@ -66,6 +71,12 @@
   `metered_sections(...)`, and `bar_automation(...)` for bar-aware voice timbre
   arcs that compile back down to the existing seconds-based score model. Full API
   details live in
+  `docs/composition_api.md`.
+- `code_musics.generative` provides algorithmic composition helpers including
+  weighted pitch pools, euclidean rhythms, probability gates, Markov chains,
+  Turing machine sequencers, lattice walkers, and stochastic clouds. All are
+  seeded/deterministic and produce standard `Phrase` or `RhythmCell` objects.
+  Full API details live in the "Generative Composition Helpers" section of
   `docs/composition_api.md`.
 - For detailed score-surface semantics, parameter meanings, and render-order
   behavior, read `docs/score_api.md`.
@@ -259,6 +270,17 @@ See `FUTURE.md` for way more ideas.
   separation balance — all registered in the analysis manifest. These are
   the primary feedback channel for AI-assisted composition since LLMs
   cannot hear audio.
+- There is now a dedicated `organ` synth engine for drawbar organ synthesis with
+  tonewheel drift, key click, scanner vibrato/chorus, crosstalk, and per-drawbar
+  harmonic shaping (`tonewheel_shape`). It supports custom drawbar ratio sets for
+  xenharmonic timbre-harmony fusion. Use `engine="organ"` in `synth_defaults`.
+- The `piano` synth engine uses modal synthesis with physical hammer-string
+  interaction (nonlinear contact model, second-order resonator bank). Velocity
+  naturally shapes timbre through the hammer physics. It supports unison strings
+  with drift, soundboard coloring, body saturation, damper noise, and custom
+  partial ratio sets for xenharmonic timbre-harmony fusion. Use
+  `engine="piano"` in `synth_defaults`. The legacy additive piano is available
+  as `engine="piano_additive"`.
 - There is now a `surge_xt` instrument engine that renders voices through
   Surge XT via pedalboard's VSTi hosting. It uses MPE-style per-note
   pitch bend (48-semitone range) for microtonal accuracy. Unlike the
@@ -348,4 +370,33 @@ delegation-to-subagents pattern.
 - spicy but euphonic chords, creative voicing, voice leading, sevenths and septimal harmony
 - it's fine to explore and fail. we can try a bunch of ideas, and none of them have to work
 - think of music creation like a GAN: we come up with ideas, we see how we like them, and we iterate
+- four tet (pretty and euphonic but not cheesy)
+- autechre
 (for more ideas, use `make inspire`)
+
+some tuning schemes -
+
+- ji 5-limit
+- ji 7-limit
+- harmonic series
+- colundi
+
+```
+! colundi_ji_core.scl
+!
+Approximate Colundi-inspired 7-note JI scale
+7
+!
+11/10
+19/16
+4/3
+3/2
+49/30
+7/4
+2/1
+```
+
+- EDOs/TETs
+- Meantone, well temperaments, and baroque tunings
+- Bohlen Pierce?
+- Other?

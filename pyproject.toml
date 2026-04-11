@@ -12,6 +12,7 @@ dependencies = [
     "scipy>=1.17.1",
     "soundfile>=0.13.1",
     "librosa>=0.10.2",
+    "numba>=0.65.0",
 ]
 
 [dependency-groups]

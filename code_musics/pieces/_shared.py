@@ -4,6 +4,30 @@ from __future__ import annotations
 
 from code_musics.score import EffectSpec
 from code_musics.synth import BRICASTI_IR_DIR
+from code_musics.tuning import TuningTable
+
+
+def bwv_846_tuning() -> TuningTable:
+    """5-limit major table customized for BWV 846's chromatic moments.
+
+    Shared by both the Prelude and Fugue modules.  Two overrides from the
+    stock five_limit_major table:
+
+    C# (pitch class 1): 25/24 instead of 16/15.
+    Bb (pitch class 10): 7/4 instead of 9/5 (septimal minor 7th).
+    """
+    base = TuningTable.five_limit_major()
+    ratios = list(base.ratios)
+    labels = list(base.labels)
+    ratios[1] = 25 / 24
+    labels[1] = "25/24"
+    ratios[10] = 7 / 4
+    labels[10] = "7/4"
+    return TuningTable(
+        ratios=tuple(ratios),
+        labels=tuple(labels),
+        name="BWV 846 (5-limit + septimal Bb)",
+    )
 
 
 def _make_reverb(wet: float) -> EffectSpec:

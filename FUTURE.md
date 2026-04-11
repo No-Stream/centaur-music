@@ -66,12 +66,6 @@ Most valuable next helpers:
 ### Creative composition helpers
 
 - riemann
-- random notes in a scale
-- turing machines
-- probability gates + add proba into composition helpers as a first-class citizen
-- euclidean rytms + synths (not just rhythms)
-- probability dists (well PMFs) over notes in a scale
-- markov processes / markov chains - with and without memory
 
 ### Additive Synthesis Specifically
 
@@ -188,10 +182,72 @@ Most promising directions:
   2/1
   ```
 
-### Organs
+### Pianos
 
-  Organs sound great, are fundamentally additive ish, should be alt-tuning friendly are huge in Bach.
-  Let's try making some organ models and playing them!
+  **Modal piano implemented.** The `piano` engine now uses modal synthesis with
+  physical hammer-string interaction: a nonlinear contact model
+  (`F = K * max(delta, 0)^p`) excites a bank of second-order resonators, so
+  velocity naturally shapes timbre through the hammer physics. Two-phase
+  rendering (Numba JIT contact + vectorized NumPy decay) keeps it tractable.
+  Supports unison strings with drift, soundboard coloring, body saturation,
+  damper noise, and custom partial ratios for xenharmonic timbre-harmony fusion.
+  Eight presets including a septimal variant.
+
+  The legacy additive piano is still available as `piano_additive`.
+
+  Architecture note: the contact simulation's audio output is NOT used directly
+  (its coherent peak creates extreme crest factors).  Instead, the simulation
+  initializes mode states and the entire audio output comes from the free decay
+  with an 8ms cosine fade-in.  Reintroducing contact audio properly would
+  require bridge/soundboard absorption modeling to tame the coherent peak.
+
+  Known calibration gaps:
+
+- Upper harmonic content is still low (~1.5% energy above 2 kHz vs 5-15% for a
+  real piano).  The 1/k output rolloff + felt filtering + natural 1/ω resonator
+  response triple-dips on high-frequency attenuation.  Fixing this properly
+  requires compensating for the resonator's frequency-dependent response.
+- Unison beating creates ~25 dB AM at ~5 Hz on individual voices.  Real pianos
+  have bridge-mediated coupling that dampens beating over time (double decay).
+  Adding bridge coupling would help.
+- Velocity-dependent timbral variation is subtle — the normalized waveforms
+  for soft vs loud hits are very similar.  The hammer contact does change the
+  mode excitation, but peak normalization partially masks the effect.
+
+  Follow-up ideas for the modal `piano` engine:
+
+- Bridge/soundboard absorption during contact (enables using contact audio
+  in the output for a more realistic attack transient)
+- Sympathetic string resonance (cross-note coupling; requires voice-level
+  awareness so undamped strings can ring in sympathy with active notes)
+- Double decay via bridge coupling (fast initial decay from energy transfer
+  to soundboard, slow secondary decay from residual string energy)
+- Sustain/una corda pedal modeling
+- Feedback delay network (FDN) body model replacing the resonator bank for
+  richer, more realistic soundboard response
+- Bass longitudinal mode enhancement (phantom partials from nonlinear
+  string-bridge coupling in the low register)
+- Register-dependent hammer mass/position (bass hammers are heavier and strike
+  further from the bridge than treble hammers)
+- Frequency compensation for resonator response rolloff (the modal resonators
+  naturally attenuate high-frequency modes by ~1/ω; compensating for this
+  in the input weights would let the felt filtering alone shape the spectrum)
+- Higher-order hammer contact models (wave-digital formulation for improved
+  numerical stability at high stiffness)
+- Soundboard PDE / measured IR convolution for more realistic body resonance
+- Duplex scaling (upper bridge treble resonance adding shimmer to high notes)
+- Multi-axis velocity response (velocity modulates decay, damping,
+  inharmonicity, hammer position simultaneously -- not just loudness and
+  hammer stiffness)
+- Prepared piano extensions (muting, objects on strings -- mute_position,
+  mute_amount, extra inharmonic partial layers from bolts/screws)
+
+  Follow-up ideas for `piano_additive` (legacy engine):
+
+- Register-dependent spectral templates (different partial profiles for
+  bass/mid/treble)
+- Pitch-scaled attack duration (higher notes get proportionally faster attacks)
+- Per-note soundboard coupling
 
 ### Pianoteq
 
@@ -235,7 +291,7 @@ Most promising directions:
 
 #### Filter drive and saturation
 
-I suspect our saturation/warmth native plugin could be better. Currently sounds fuzzy and probably aliased.
+I suspect our saturation/warmth native plugin could be better. Currently sounds fuzzy and probably aliased. (not sure if this is current.)
 
 #### Plugin reliability follow-up
 
@@ -253,6 +309,10 @@ Most valuable next steps:
   mapping bugs
 - decide more explicitly when native effects should be preferred over external
   plugins for stability
+
+### Harpsichord
+  
+  We already have a piano and an organ. We can probably add a harpsichord without too much work. As with other instruments, we should see if we can lean into the just intonation and alternate tuning focus of this repo to make a harpsichord that enhances the focus of this project. We can lean into fantasy or unrealistic elements. Like on a harpsichord, a major limitation is that there's not as much room for expression as on a piano, where a piano does an incredibly good job of allowing for expression and nuance. So maybe we can add this, or we can have the ability to change harmonics or character throughout a piece. We can think creatively about what a cool harpsichord-flavored instrument could be like. So, basically, capturing some of the timbre and benefits of a harpsichord without being tied to how a harpsichord physically works, focusing on sound quality, naturalism, organic, warmth, etc., rather than perfect physical modeling, but also drawing inspiration from physical characteristics of a harpsichord. We can lean into some of the airy and crisp qualities of the harpsichord and make it stand on its own.
 
 ### DawDreamer
 
@@ -327,6 +387,19 @@ Possible later additions:
 - more correlated ensemble behavior across voices for specific groove feels
 - selective synth-parameter drift such as cutoff drift or mild oscillator drift
   where it helps rather than muddies tuning clarity
+
+### Deferred generative ideas
+
+Ideas discussed but deferred during the generative toolkit build:
+
+- Combination Product Sets (Erv Wilson) — hexanies, dekanies, eikosanies as
+  harmonic vocabularies feeding TonePool and other generators
+- Comma pump generator — auto-generate chord progressions that drift by a
+  specified comma per cycle
+- Phase process helpers — parameterized Steve Reich-style gradual phase shifting
+- L-systems — Lindenmayer systems mapped to pitch/rhythm for fractal structures
+- Process pipelines — composable generator chaining for combining generators
+- Cellular automata — 1D CA rules mapped to musical parameters
 
 ### Sound-quality refinement
 

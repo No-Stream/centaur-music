@@ -18,7 +18,7 @@ def test_filtered_stack_renders_expected_length_and_finite_audio() -> None:
             "n_harmonics": 12,
             "cutoff_hz": 900.0,
             "keytrack": 0.2,
-            "resonance": 0.1,
+            "resonance_q": 1.84,
             "filter_env_amount": 1.5,
             "filter_env_decay": 0.25,
         },
@@ -42,7 +42,7 @@ def test_filtered_stack_cutoff_changes_the_sound() -> None:
             "n_harmonics": 16,
             "cutoff_hz": 350.0,
             "keytrack": 0.0,
-            "resonance": 0.0,
+            "resonance_q": 0.707,
         },
     )
     high_cutoff = render(
@@ -55,7 +55,7 @@ def test_filtered_stack_cutoff_changes_the_sound() -> None:
             "n_harmonics": 16,
             "cutoff_hz": 2_400.0,
             "keytrack": 0.0,
-            "resonance": 0.0,
+            "resonance_q": 0.707,
         },
     )
 

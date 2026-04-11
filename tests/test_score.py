@@ -1,6 +1,7 @@
 """Score abstraction tests."""
 
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -2074,7 +2075,7 @@ def test_render_piece_writes_audio_and_plot(tmp_path: Path) -> None:
     assert audio_path.exists()
     assert result.version_audio_path is not None
     assert result.version_audio_path.exists()
-    assert "versions/chord_4567/" in str(result.version_audio_path)
+    assert "chord_4567/versions/" in str(result.version_audio_path)
     assert plot_path is not None
     assert plot_path.exists()
     assert result.version_plot_path is not None
@@ -2363,7 +2364,7 @@ def test_polyblep_resonance_q_overrides_resonance() -> None:
         "bass",
         synth_defaults={
             "engine": "polyblep",
-            "params": {"waveform": "saw", "cutoff_hz": 800.0, "resonance": 0.5},
+            "params": {"waveform": "saw", "cutoff_hz": 800.0, "resonance_q": 6.35},
         },
     )
     score_res.add_note("bass", start=0.0, duration=0.5, freq=110.0, amp_db=-6.0)
@@ -2437,3 +2438,203 @@ def test_saturation_thd_reported_via_effect_chain() -> None:
     metrics = effect_analysis[0].metrics
     assert "thd_pct" in metrics
     assert "thd_character" in metrics
+
+
+class TestMasterBusDiagnosticLogging:
+    """Verify that the master bus signal chain emits diagnostic log messages."""
+
+    @staticmethod
+    def _build_simple_score() -> Score:
+        score = Score(f0=55.0)
+        score.add_voice("pad", synth_defaults={"engine": "additive"})
+        score.add_note("pad", start=0.0, duration=0.5, partial=4, amp_db=-6.0)
+        return score
+
+    def test_score_render_logs_pre_master_peak(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        score = self._build_simple_score()
+        with caplog.at_level(logging.INFO, logger="code_musics.score"):
+            score.render()
+        pre_master_messages = [
+            r.message for r in caplog.records if "pre-processing" in r.message
+        ]
+        assert len(pre_master_messages) == 1
+        assert "dBFS" in pre_master_messages[0]
+
+    def test_score_render_logs_post_gain_stage_peak(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        score = self._build_simple_score()
+        with caplog.at_level(logging.INFO, logger="code_musics.score"):
+            score.render()
+        post_stage_messages = [
+            r.message for r in caplog.records if "auto gain stage" in r.message.lower()
+        ]
+        assert len(post_stage_messages) == 1
+        assert "dBFS" in post_stage_messages[0]
+
+    def test_score_render_logs_ceiling_warning_when_peak_exceeds_threshold(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        score = Score(f0=55.0, auto_master_gain_stage=False)
+        score.add_voice(
+            "loud", synth_defaults={"engine": "additive"}, normalize_lufs=None
+        )
+        for i in range(20):
+            score.add_note("loud", start=0.0, duration=0.5, partial=4 + i, amp=1.0)
+        with caplog.at_level(logging.WARNING, logger="code_musics.score"):
+            score.render()
+        ceiling_messages = [
+            r.message for r in caplog.records if "ceiling activated" in r.message
+        ]
+        assert len(ceiling_messages) == 1
+        assert "attenuated" in ceiling_messages[0]
+
+    def test_score_render_no_ceiling_warning_for_quiet_mix(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        score = self._build_simple_score()
+        with caplog.at_level(logging.WARNING, logger="code_musics.score"):
+            score.render()
+        ceiling_messages = [
+            r.message for r in caplog.records if "ceiling activated" in r.message
+        ]
+        assert len(ceiling_messages) == 0
+
+
+class TestGainStageDiagnosticLogging:
+    """Verify that gain_stage_for_master_bus emits diagnostic log messages."""
+
+    def test_gain_stage_logs_decision(self, caplog: pytest.LogCaptureFixture) -> None:
+        signal = 0.1 * np.sin(
+            np.linspace(0.0, 2.0 * np.pi * 440.0, synth.SAMPLE_RATE, endpoint=False)
+        )
+        with caplog.at_level(logging.INFO, logger="code_musics.synth"):
+            synth.gain_stage_for_master_bus(signal, sample_rate=synth.SAMPLE_RATE)
+        gain_messages = [
+            r.message for r in caplog.records if "gain stage" in r.message.lower()
+        ]
+        assert len(gain_messages) >= 1
+        msg = gain_messages[0]
+        assert "input LUFS" in msg or "current LUFS" in msg
+        assert "applied" in msg.lower()
+
+
+class TestFinalizeMasterDiagnosticLogging:
+    """Verify that finalize_master emits diagnostic log messages."""
+
+    def test_finalize_master_logs_limiter_input_gain(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        signal = 0.3 * np.sin(
+            np.linspace(0.0, 2.0 * np.pi * 440.0, synth.SAMPLE_RATE * 2, endpoint=False)
+        )
+        with caplog.at_level(logging.INFO, logger="code_musics.synth"):
+            synth.finalize_master(signal, sample_rate=synth.SAMPLE_RATE)
+        limiter_messages = [
+            r.message for r in caplog.records if "limiter_input_gain_db" in r.message
+        ]
+        assert len(limiter_messages) >= 1
+
+    def test_finalize_master_logs_convergence_or_immediate(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        signal = 0.3 * np.sin(
+            np.linspace(0.0, 2.0 * np.pi * 440.0, synth.SAMPLE_RATE * 2, endpoint=False)
+        )
+        with caplog.at_level(logging.INFO, logger="code_musics.synth"):
+            result = synth.finalize_master(signal, sample_rate=synth.SAMPLE_RATE)
+        # The loop may converge immediately (no iteration messages) or need
+        # adjustments (iteration messages). Either is valid — verify we get
+        # a final result log regardless.
+        final_messages = [
+            r.message for r in caplog.records if "Mastering final" in r.message
+        ]
+        assert len(final_messages) >= 1
+        assert np.isfinite(result.integrated_lufs)
+
+    def test_finalize_master_logs_final_result(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        signal = 0.3 * np.sin(
+            np.linspace(0.0, 2.0 * np.pi * 440.0, synth.SAMPLE_RATE * 2, endpoint=False)
+        )
+        with caplog.at_level(logging.INFO, logger="code_musics.synth"):
+            synth.finalize_master(signal, sample_rate=synth.SAMPLE_RATE)
+        final_messages = [
+            r.message for r in caplog.records if "final" in r.message.lower()
+        ]
+        assert len(final_messages) >= 1
+        msg = final_messages[0]
+        assert "LUFS" in msg
+        assert "true peak" in msg.lower() or "true_peak" in msg.lower()
+
+
+class TestNativeLimiter:
+    """Tests for the native true-peak lookahead limiter."""
+
+    def test_native_limiter_enforces_ceiling(self) -> None:
+        """Feed a signal with peaks at +6 dBFS, verify output true peak is at or below threshold."""
+        duration_seconds = 0.5
+        num_samples = int(synth.SAMPLE_RATE * duration_seconds)
+        t = np.linspace(
+            0.0, 2.0 * np.pi * 440.0 * duration_seconds, num_samples, endpoint=False
+        )
+        hot_signal = 2.0 * np.sin(t)
+        stereo_hot = np.stack([hot_signal, hot_signal * 0.8])
+
+        threshold_db = -0.5
+        limited = synth.apply_native_limiter(stereo_hot, threshold_db=threshold_db)
+
+        true_peak = synth.estimate_true_peak_amplitude(limited, oversample_factor=4)
+        true_peak_db = synth.amp_to_db(max(true_peak, 1e-12))
+        assert true_peak_db <= threshold_db + 0.1
+
+    def test_native_limiter_transparent_below_threshold(self) -> None:
+        """Feed a signal well below threshold, verify output is approximately identical."""
+        duration_seconds = 0.5
+        num_samples = int(synth.SAMPLE_RATE * duration_seconds)
+        t = np.linspace(
+            0.0, 2.0 * np.pi * 440.0 * duration_seconds, num_samples, endpoint=False
+        )
+        quiet_signal = 0.1 * np.sin(t)
+        stereo_quiet = np.stack([quiet_signal, quiet_signal * 0.9])
+
+        limited = synth.apply_native_limiter(stereo_quiet, threshold_db=-0.5)
+
+        np.testing.assert_allclose(limited, stereo_quiet, atol=1e-3)
+
+    def test_native_limiter_preserves_shape(self) -> None:
+        """Verify mono stays mono, stereo stays stereo, length matches."""
+        num_samples = synth.SAMPLE_RATE
+        mono_signal = 0.5 * np.sin(
+            np.linspace(0.0, 2.0 * np.pi * 440.0, num_samples, endpoint=False)
+        )
+        stereo_signal = np.stack([mono_signal, mono_signal * 0.8])
+
+        mono_limited = synth.apply_native_limiter(mono_signal)
+        stereo_limited = synth.apply_native_limiter(stereo_signal)
+
+        assert mono_limited.ndim == 1
+        assert mono_limited.shape[0] == num_samples
+        assert stereo_limited.ndim == 2
+        assert stereo_limited.shape == (2, num_samples)
+
+    def test_native_limiter_logs_gain_reduction(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify the summary log message appears after processing."""
+        num_samples = int(synth.SAMPLE_RATE * 0.5)
+        t = np.linspace(0.0, 2.0 * np.pi * 440.0 * 0.5, num_samples, endpoint=False)
+        hot_signal = 2.0 * np.sin(t)
+
+        with caplog.at_level(logging.INFO, logger="code_musics.synth"):
+            synth.apply_native_limiter(hot_signal, threshold_db=-0.5)
+
+        limiter_messages = [
+            r.message for r in caplog.records if "limiter" in r.message.lower()
+        ]
+        assert len(limiter_messages) >= 1
+        msg = limiter_messages[0]
+        assert "gain reduction" in msg.lower() or "gr" in msg.lower()

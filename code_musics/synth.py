@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal, cast, overload
 
+import numba
 import numpy as np
 import pedalboard
 import soundfile as sf
@@ -482,6 +483,12 @@ def gain_stage_for_master_bus(
         max_true_peak_dbfs - amp_to_db(max(true_peak_amplitude, 1e-12))
     )
     applied_gain_db = min(target_gain_db, peak_limit_gain_db)
+    chosen = "LUFS" if target_gain_db <= peak_limit_gain_db else "peak-limit"
+    logger.info(
+        f"Master gain stage: input LUFS {current_lufs:.1f}, "
+        f"LUFS-gain {target_gain_db:.2f} dB, peak-limit-gain {peak_limit_gain_db:.2f} dB, "
+        f"applied {applied_gain_db:.2f} dB ({chosen})"
+    )
     return staged * db_to_amp(applied_gain_db)
 
 
@@ -1565,6 +1572,193 @@ def _build_effect_analysis_warnings(
     return warnings
 
 
+@numba.njit(cache=True)
+def _compressor_gain_db_vec(
+    level_db: np.ndarray,
+    threshold_db: float,
+    ratio: float,
+    knee_db: float,
+) -> np.ndarray:
+    """Vectorized compressor gain curve (numba for knee math)."""
+    n = level_db.shape[0]
+    gain_db = np.zeros(n, dtype=np.float64)
+    if knee_db <= 0.0:
+        for i in range(n):
+            if level_db[i] > threshold_db:
+                compressed = threshold_db + ((level_db[i] - threshold_db) / ratio)
+                gain_db[i] = compressed - level_db[i]
+    else:
+        lower_knee = threshold_db - (knee_db / 2.0)
+        upper_knee = threshold_db + (knee_db / 2.0)
+        inv_ratio_minus_one = (1.0 / ratio) - 1.0
+        for i in range(n):
+            lev = level_db[i]
+            if lev <= lower_knee:
+                pass
+            elif lev >= upper_knee:
+                compressed = threshold_db + ((lev - threshold_db) / ratio)
+                gain_db[i] = compressed - lev
+            else:
+                knee_progress = lev - lower_knee
+                gain_db[i] = inv_ratio_minus_one * (knee_progress**2) / (2.0 * knee_db)
+    return gain_db
+
+
+@numba.njit(cache=True)
+def _compressor_smooth_gain_loop(
+    target_gain_db: np.ndarray,
+    attack_coeff: float,
+    release_stage1_coeff: float,
+    release_stage2_coeff: float,
+) -> np.ndarray:
+    """Smooth the compressor gain curve with attack/release ballistics."""
+    n = target_gain_db.shape[0]
+    smoothed = np.empty(n, dtype=np.float64)
+    state = 0.0
+    for i in range(n):
+        tgt = target_gain_db[i]
+        if tgt < state:
+            coeff = attack_coeff
+        else:
+            abs_state = -state if state < 0.0 else state
+            abs_tgt = -tgt if tgt < 0.0 else tgt
+            denom = abs_tgt if abs_tgt > 1.0 else 1.0
+            progress = abs_state / denom
+            if progress < 0.0:
+                progress = 0.0
+            elif progress > 1.0:
+                progress = 1.0
+            coeff = (progress * release_stage2_coeff) + (
+                (1.0 - progress) * release_stage1_coeff
+            )
+        state = (coeff * state) + ((1.0 - coeff) * tgt)
+        smoothed[i] = state
+    return smoothed
+
+
+@numba.njit(cache=True)
+def _compressor_detector_smooth(
+    detector_trace: np.ndarray,
+    attack_coeff: float,
+    release_coeff: float,
+    is_rms: bool,
+) -> np.ndarray:
+    """One-pole attack/release smoothing of the detector signal."""
+    n = detector_trace.shape[0]
+    smoothed = np.empty(n, dtype=np.float64)
+    state = 0.0
+    for i in range(n):
+        inp = detector_trace[i]
+        target = inp * inp if is_rms else inp
+        coeff = attack_coeff if target > state else release_coeff
+        state = (coeff * state) + ((1.0 - coeff) * target)
+        if is_rms:
+            val = state**0.5
+            smoothed[i] = val if val > 1e-12 else 1e-12
+        else:
+            smoothed[i] = state if state > 1e-12 else 1e-12
+    return smoothed
+
+
+@numba.njit(cache=True)
+def _compressor_feedback_loop(
+    delayed_input_2d: np.ndarray,
+    is_rms: bool,
+    attack_coeff: float,
+    detector_release_coeff: float,
+    threshold_db: float,
+    ratio: float,
+    knee_db: float,
+    release_stage1_coeff: float,
+    release_stage2_coeff: float,
+    makeup_gain: float,
+    mix: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-sample feedback compressor loop (inherently sequential).
+
+    delayed_input_2d is always (channels, samples) -- mono is (1, samples).
+    """
+    n_channels = delayed_input_2d.shape[0]
+    aligned_n = delayed_input_2d.shape[1]
+    gain_reduction_trace = np.zeros(aligned_n, dtype=np.float64)
+    output = np.zeros_like(delayed_input_2d)
+
+    detector_state = 0.0
+    smoothed_gain_db = 0.0
+    output_detector_state = 0.0
+
+    lower_knee = threshold_db - (knee_db / 2.0)
+    upper_knee = threshold_db + (knee_db / 2.0)
+    inv_ratio_minus_one = (1.0 / ratio) - 1.0
+
+    for i in range(aligned_n):
+        detector_input = output_detector_state
+
+        target_level = detector_input * detector_input if is_rms else detector_input
+        det_coeff = (
+            attack_coeff if target_level > detector_state else detector_release_coeff
+        )
+        detector_state = (det_coeff * detector_state) + (
+            (1.0 - det_coeff) * target_level
+        )
+
+        if is_rms:
+            level_amp = detector_state**0.5
+            if level_amp < 1e-12:
+                level_amp = 1e-12
+        else:
+            level_amp = detector_state if detector_state > 1e-12 else 1e-12
+        level_db = 20.0 * np.log10(level_amp)
+
+        if knee_db <= 0.0:
+            if level_db <= threshold_db:
+                target_gain_db = 0.0
+            else:
+                target_gain_db = (
+                    threshold_db + ((level_db - threshold_db) / ratio)
+                ) - level_db
+        elif level_db <= lower_knee:
+            target_gain_db = 0.0
+        elif level_db >= upper_knee:
+            target_gain_db = (
+                threshold_db + ((level_db - threshold_db) / ratio)
+            ) - level_db
+        else:
+            knee_progress = level_db - lower_knee
+            target_gain_db = inv_ratio_minus_one * (knee_progress**2) / (2.0 * knee_db)
+
+        if target_gain_db < smoothed_gain_db:
+            gain_coeff = attack_coeff
+        else:
+            abs_sg = -smoothed_gain_db if smoothed_gain_db < 0.0 else smoothed_gain_db
+            abs_tg = -target_gain_db if target_gain_db < 0.0 else target_gain_db
+            denom = abs_tg if abs_tg > 1.0 else 1.0
+            progress = abs_sg / denom
+            if progress < 0.0:
+                progress = 0.0
+            elif progress > 1.0:
+                progress = 1.0
+            gain_coeff = (progress * release_stage2_coeff) + (
+                (1.0 - progress) * release_stage1_coeff
+            )
+        smoothed_gain_db = (gain_coeff * smoothed_gain_db) + (
+            (1.0 - gain_coeff) * target_gain_db
+        )
+        gain_reduction_trace[i] = max(0.0, -smoothed_gain_db)
+
+        gain = 10.0 ** (smoothed_gain_db / 20.0) * makeup_gain
+        max_abs = 0.0
+        for ch in range(n_channels):
+            wet_val = delayed_input_2d[ch, i] * gain
+            output[ch, i] = ((1.0 - mix) * delayed_input_2d[ch, i]) + (mix * wet_val)
+            abs_val = -output[ch, i] if output[ch, i] < 0.0 else output[ch, i]
+            if abs_val > max_abs:
+                max_abs = abs_val
+        output_detector_state = max_abs
+
+    return output, gain_reduction_trace
+
+
 def apply_compressor(
     signal: np.ndarray,
     *,
@@ -1647,81 +1841,63 @@ def apply_compressor(
             (lookahead_samples, 0),
             mode="constant",
         )
-        output_signal = np.zeros(aligned_sample_count, dtype=np.float64)
     else:
         delayed_input_signal = np.pad(
             input_signal,
             ((0, 0), (lookahead_samples, 0)),
             mode="constant",
         )
-        output_signal = np.zeros_like(delayed_input_signal, dtype=np.float64)
-    detector_state = 0.0
-    smoothed_gain_db = 0.0
-    output_detector_state = 0.0
-    gain_reduction_trace_db = np.zeros(aligned_sample_count, dtype=np.float64)
 
-    for sample_index in range(aligned_sample_count):
-        detector_trace_index = min(sample_index, sample_count - 1)
-        if normalized_topology == "feedforward":
-            detector_input = float(detector_trace[detector_trace_index])
-        else:
-            detector_input = float(output_detector_state)
+    is_rms = normalized_detector_mode == "rms"
+    was_mono = input_signal.ndim == 1
 
-        if normalized_detector_mode == "peak":
-            target_level = detector_input
-        else:
-            target_level = detector_input * detector_input
-
-        detector_coeff = (
-            attack_coeff if target_level > detector_state else detector_release_coeff
+    if normalized_topology == "feedback":
+        delayed_2d = (
+            delayed_input_signal[np.newaxis, :] if was_mono else delayed_input_signal
         )
-        detector_state = (detector_coeff * detector_state) + (
-            (1.0 - detector_coeff) * target_level
+        output_2d, gain_reduction_trace_db = _compressor_feedback_loop(
+            delayed_2d,
+            is_rms,
+            attack_coeff,
+            detector_release_coeff,
+            threshold_db,
+            ratio,
+            knee_db,
+            release_stage1_coeff,
+            release_stage2_coeff,
+            makeup_gain,
+            mix,
         )
+        output_signal = output_2d[0] if was_mono else output_2d
+    else:
+        # Vectorized feedforward path.  The old per-sample loop used
+        # min(sample_index, sample_count - 1) to index the detector trace,
+        # which means indices beyond sample_count clamp to the last value.
+        aligned_detector = np.pad(detector_trace, (0, lookahead_samples), mode="edge")[
+            :aligned_sample_count
+        ]
 
-        if normalized_detector_mode == "peak":
-            level_amplitude = max(detector_state, 1e-12)
-        else:
-            level_amplitude = max(np.sqrt(detector_state), 1e-12)
-        level_db = amp_to_db(level_amplitude)
-
-        target_gain_db = _compressor_gain_db(
-            level_db=level_db,
-            threshold_db=threshold_db,
-            ratio=ratio,
-            knee_db=knee_db,
+        smoothed_level = _compressor_detector_smooth(
+            aligned_detector, attack_coeff, detector_release_coeff, is_rms
         )
-        if target_gain_db < smoothed_gain_db:
-            gain_coeff = attack_coeff
-        else:
-            release_progress = float(
-                np.clip(abs(smoothed_gain_db) / max(abs(target_gain_db), 1.0), 0.0, 1.0)
-            )
-            gain_coeff = (release_progress * release_stage2_coeff) + (
-                (1.0 - release_progress) * release_stage1_coeff
-            )
-        smoothed_gain_db = (gain_coeff * smoothed_gain_db) + (
-            (1.0 - gain_coeff) * target_gain_db
+        level_db = 20.0 * np.log10(smoothed_level)
+
+        target_gain_db = _compressor_gain_db_vec(level_db, threshold_db, ratio, knee_db)
+
+        smoothed_gain_db = _compressor_smooth_gain_loop(
+            target_gain_db, attack_coeff, release_stage1_coeff, release_stage2_coeff
         )
-        gain_reduction_trace_db[sample_index] = max(0.0, -smoothed_gain_db)
+        gain_reduction_trace_db = np.maximum(0.0, -smoothed_gain_db)
 
-        gain = db_to_amp(smoothed_gain_db) * makeup_gain
-        if input_signal.ndim == 1:
-            wet_sample = delayed_input_signal[sample_index] * gain
-            output_signal[sample_index] = (
-                (1.0 - mix) * delayed_input_signal[sample_index]
-            ) + (mix * wet_sample)
-            output_detector_state = abs(float(output_signal[sample_index]))
+        gain_linear = 10.0 ** (smoothed_gain_db / 20.0) * makeup_gain
+        if was_mono:
+            wet_signal = delayed_input_signal * gain_linear
+            output_signal = ((1.0 - mix) * delayed_input_signal) + (mix * wet_signal)
         else:
-            wet_frame = delayed_input_signal[:, sample_index] * gain
-            output_signal[:, sample_index] = (
-                (1.0 - mix) * delayed_input_signal[:, sample_index]
-            ) + (mix * wet_frame)
-            output_detector_state = float(
-                np.max(np.abs(output_signal[:, sample_index]))
-            )
+            wet_signal = delayed_input_signal * gain_linear[np.newaxis, :]
+            output_signal = ((1.0 - mix) * delayed_input_signal) + (mix * wet_signal)
 
-    if input_signal.ndim == 1:
+    if was_mono:
         processed_signal = np.asarray(
             output_signal[lookahead_samples : lookahead_samples + sample_count],
             dtype=np.float64,
@@ -1958,6 +2134,26 @@ def _float_to_int16_pcm(
     return np.rint((clipped + dither) * 32767.0).astype(np.int16)
 
 
+@numba.njit(cache=True)
+def _gate_gain_smoothing_loop(
+    gate_target: np.ndarray,
+    attack_coeff: float,
+    release_coeff: float,
+    floor_lin: float,
+) -> np.ndarray:
+    n = gate_target.shape[0]
+    gain = np.empty(n, dtype=np.float64)
+    g = floor_lin
+    for i in range(n):
+        t = gate_target[i]
+        if t > g:
+            g += attack_coeff * (t - g)
+        else:
+            g += release_coeff * (t - g)
+        gain[i] = g
+    return gain
+
+
 def apply_gate(
     signal: np.ndarray,
     *,
@@ -2014,17 +2210,9 @@ def apply_gate(
             gate_open = np.convolve(gate_open, hold_kernel, mode="full")[:n]
         gate_target = np.where(gate_open > 0, 1.0, floor_lin)
 
-        # Attack / release gain smoothing (same IIR pattern as compressor)
-        gain = np.empty(n, dtype=np.float64)
-        g = floor_lin
-        for i in range(n):
-            t = gate_target[i]
-            if t > g:
-                g += attack_coeff * (t - g)
-            else:
-                g += release_coeff * (t - g)
-            gain[i] = g
-
+        gain = _gate_gain_smoothing_loop(
+            gate_target, attack_coeff, release_coeff, floor_lin
+        )
         return channel * gain
 
     output = _apply_per_channel(input_signal, _process_channel).astype(np.float64)
@@ -2316,6 +2504,118 @@ def apply_lsp_limiter(
     )
 
 
+@numba.njit(cache=True)
+def _limiter_smoothing_loop(
+    gain_reduction_db: np.ndarray,
+    attack_coeff: float,
+    release_coeff: float,
+) -> np.ndarray:
+    n = gain_reduction_db.shape[0]
+    smoothed = np.empty(n, dtype=np.float64)
+    smoothed[0] = gain_reduction_db[0]
+    for i in range(1, n):
+        target = gain_reduction_db[i]
+        coeff = attack_coeff if target < smoothed[i - 1] else release_coeff
+        smoothed[i] = coeff * smoothed[i - 1] + (1.0 - coeff) * target
+    return smoothed
+
+
+def apply_native_limiter(
+    signal: np.ndarray,
+    *,
+    threshold_db: float = -0.5,
+    input_gain_db: float = 0.0,
+    output_gain_db: float = 0.0,
+    sample_rate: int = SAMPLE_RATE,
+    lookahead_ms: float = 1.5,
+    release_ms: float = 50.0,
+    oversample_factor: int = 4,
+) -> np.ndarray:
+    """Native true-peak lookahead brickwall limiter.
+
+    Oversamples for inter-sample peak detection, applies gain reduction with
+    lookahead and smooth attack/release, then downsamples back.
+    """
+    attack_ms = 0.1
+
+    sig = np.asarray(signal, dtype=np.float64)
+    was_mono = sig.ndim == 1
+    if was_mono:
+        sig = sig[np.newaxis, :]
+    if sig.shape[-1] == 0:
+        return sig[0] if was_mono else sig
+    original_length = sig.shape[1]
+
+    sig = sig * db_to_amp(input_gain_db)
+
+    os_rate = sample_rate * oversample_factor
+    oversampled = np.stack(
+        [
+            np.asarray(resample_poly(ch, oversample_factor, 1), dtype=np.float64)
+            for ch in sig
+        ]
+    )
+
+    threshold_amp = db_to_amp(threshold_db)
+    linked_peak = np.max(np.abs(oversampled), axis=0)
+
+    gain_reduction_db = np.zeros(linked_peak.shape[0], dtype=np.float64)
+    above_mask = linked_peak > threshold_amp
+    gain_reduction_db[above_mask] = threshold_db - 20.0 * np.log10(
+        linked_peak[above_mask]
+    )
+
+    lookahead_samples = int(lookahead_ms * 0.001 * os_rate)
+    if lookahead_samples > 0:
+        shifted = np.empty_like(gain_reduction_db)
+        shifted[:(-lookahead_samples)] = gain_reduction_db[lookahead_samples:]
+        shifted[(-lookahead_samples):] = 0.0
+        reversed_shifted = shifted[::-1]
+        propagated = np.minimum.accumulate(reversed_shifted)
+        gain_reduction_db = np.minimum(gain_reduction_db, propagated[::-1])
+
+    attack_coeff = _time_constant_to_coeff(attack_ms, os_rate)
+    release_coeff = _time_constant_to_coeff(release_ms, os_rate)
+
+    gain_reduction_db = _limiter_smoothing_loop(
+        gain_reduction_db, attack_coeff, release_coeff
+    )
+
+    gain_linear = 10.0 ** (gain_reduction_db / 20.0)
+    limited_oversampled = oversampled * gain_linear[np.newaxis, :]
+
+    limited = np.stack(
+        [
+            np.asarray(resample_poly(ch, 1, oversample_factor), dtype=np.float64)
+            for ch in limited_oversampled
+        ]
+    )
+
+    if limited.shape[1] > original_length:
+        limited = limited[:, :original_length]
+    elif limited.shape[1] < original_length:
+        pad_width = original_length - limited.shape[1]
+        limited = np.pad(limited, ((0, 0), (0, pad_width)))
+
+    limited = limited * db_to_amp(output_gain_db)
+
+    max_gr_db = float(np.min(gain_reduction_db))
+    active_fraction = float(np.mean(gain_reduction_db < -0.01))
+    logger.info(
+        f"Native limiter: max gain reduction {max_gr_db:.2f} dB, "
+        f"limiting active on {active_fraction * 100.0:.1f}% of samples"
+    )
+    if max_gr_db < -6.0:
+        logger.warning(
+            f"Native limiter: heavy limiting ({max_gr_db:.1f} dB max GR) — "
+            "input is significantly hotter than threshold"
+        )
+
+    if was_mono:
+        return limited[0]
+    return limited
+
+
 def finalize_master(
     signal: np.ndarray,
     *,
@@ -2341,9 +2641,8 @@ def finalize_master(
 
     use_lsp_limiter = has_external_plugin("lsp_limiter_stereo")
     if not use_lsp_limiter:
-        logger.warning(
-            "LSP limiter unavailable — using native gain + true-peak normalization. "
-            "Install lsp-plugins.vst3 for transparent limiting."
+        logger.info(
+            "LSP limiter unavailable — using native lookahead limiter fallback."
         )
 
     current_lufs, active_window_fraction = integrated_lufs(
@@ -2366,23 +2665,43 @@ def finalize_master(
         )
 
     limiter_input_gain_db = target_lufs - current_lufs
+    logger.info(
+        f"Mastering: input {current_lufs:.1f} LUFS, "
+        f"target {target_lufs:.1f} LUFS, {limiter_input_gain_db=:.2f}, "
+        f"limiter={'LSP' if use_lsp_limiter else 'native'}"
+    )
     limiter_output_gain_db = 0.0
-    if use_lsp_limiter:
-        mastered = apply_lsp_limiter(
-            source_signal,
+
+    def _dispatch_limiter(source: np.ndarray, input_gain_db: float) -> np.ndarray:
+        if use_lsp_limiter:
+            return apply_lsp_limiter(
+                source,
+                threshold_db=true_peak_ceiling_dbfs,
+                input_gain_db=input_gain_db,
+                output_gain_db=limiter_output_gain_db,
+            )
+        return apply_native_limiter(
+            source,
             threshold_db=true_peak_ceiling_dbfs,
-            input_gain_db=limiter_input_gain_db,
-            output_gain_db=limiter_output_gain_db,
+            input_gain_db=input_gain_db,
+            sample_rate=sample_rate,
         )
-    else:
-        mastered = source_signal * db_to_amp(limiter_input_gain_db)
+
+    mastered = _dispatch_limiter(source_signal, limiter_input_gain_db)
 
     for _ in range(max_iterations):
-        mastered = normalize_true_peak(
-            mastered,
-            target_peak_dbfs=true_peak_ceiling_dbfs,
-            oversample_factor=oversample_factor,
-        )
+        # The native limiter already guarantees peaks are at or below the
+        # ceiling, so normalize_true_peak is only needed for the LSP path
+        # (where the plugin's output might not land exactly at the ceiling)
+        # or as a safety net.  For the native path, skip it — it would boost
+        # a high-crest-factor signal back to the ceiling and defeat LUFS
+        # convergence.
+        if use_lsp_limiter:
+            mastered = normalize_true_peak(
+                mastered,
+                target_peak_dbfs=true_peak_ceiling_dbfs,
+                oversample_factor=oversample_factor,
+            )
         current_lufs, active_window_fraction = integrated_lufs(
             mastered,
             sample_rate=sample_rate,
@@ -2394,22 +2713,28 @@ def finalize_master(
         if abs(loudness_error) <= loudness_tolerance_lufs:
             break
 
+        logger.info(
+            f"Mastering iteration: LUFS error {loudness_error:+.2f} LU, "
+            f"new gain {limiter_input_gain_db + loudness_error:.2f} dB"
+        )
         limiter_input_gain_db += loudness_error
-        if use_lsp_limiter:
-            mastered = apply_lsp_limiter(
-                source_signal,
-                threshold_db=true_peak_ceiling_dbfs,
-                input_gain_db=limiter_input_gain_db,
-                output_gain_db=limiter_output_gain_db,
-            )
-        else:
-            mastered = source_signal * db_to_amp(limiter_input_gain_db)
+        mastered = _dispatch_limiter(source_signal, limiter_input_gain_db)
 
-    mastered = normalize_true_peak(
-        mastered,
-        target_peak_dbfs=true_peak_ceiling_dbfs,
-        oversample_factor=oversample_factor,
+    # Final true-peak safety pass.  For the native limiter path, only
+    # attenuate — the limiter already guarantees the ceiling, and boosting a
+    # high-crest-factor signal defeats LUFS convergence.
+    current_true_peak = estimate_true_peak_amplitude(
+        mastered, oversample_factor=oversample_factor
     )
+    ceiling_amp = db_to_amp(true_peak_ceiling_dbfs)
+    if current_true_peak > ceiling_amp:
+        mastered = mastered * (ceiling_amp / current_true_peak)
+    elif use_lsp_limiter:
+        mastered = normalize_true_peak(
+            mastered,
+            target_peak_dbfs=true_peak_ceiling_dbfs,
+            oversample_factor=oversample_factor,
+        )
     final_lufs, _ = integrated_lufs(
         mastered,
         sample_rate=sample_rate,
@@ -2422,6 +2747,11 @@ def finalize_master(
             ),
             1e-12,
         )
+    )
+    logger.info(
+        f"Mastering final: {final_lufs:.1f} LUFS, "
+        f"true peak {final_true_peak_dbfs:.2f} dBFS, "
+        f"gain {limiter_input_gain_db:.2f} dB"
     )
     return MasteringResult(
         signal=mastered,
@@ -3015,6 +3345,23 @@ def _apply_saturation_legacy(
     return processed_signal, analysis
 
 
+@numba.njit(cache=True)
+def _envelope_follower_loop(
+    abs_signal: np.ndarray,
+    attack_coeff: float,
+    release_coeff: float,
+) -> np.ndarray:
+    n = abs_signal.shape[0]
+    envelope = np.empty(n, dtype=np.float64)
+    previous = 0.0
+    for i in range(n):
+        sample = abs_signal[i]
+        coeff = attack_coeff if sample > previous else release_coeff
+        previous = (coeff * previous) + ((1.0 - coeff) * sample)
+        envelope[i] = previous
+    return envelope
+
+
 def _envelope_follower(
     signal: np.ndarray,
     *,
@@ -3024,13 +3371,8 @@ def _envelope_follower(
 ) -> np.ndarray:
     attack_coeff = _time_constant_to_coeff(attack_ms, sample_rate)
     release_coeff = _time_constant_to_coeff(release_ms, sample_rate)
-    envelope = np.zeros_like(signal, dtype=np.float64)
-    previous = 0.0
-    for index, sample in enumerate(np.abs(np.asarray(signal, dtype=np.float64))):
-        coeff = attack_coeff if sample > previous else release_coeff
-        previous = (coeff * previous) + ((1.0 - coeff) * sample)
-        envelope[index] = previous
-    return envelope
+    abs_signal = np.abs(np.asarray(signal, dtype=np.float64))
+    return _envelope_follower_loop(abs_signal, attack_coeff, release_coeff)
 
 
 def _apply_saturation_modern(
@@ -3553,7 +3895,11 @@ def apply_effect_chain(
         native_metrics: dict[str, float | int | str] | None = None
         # Guard: skip plugin-backed effects when the plugin isn't installed,
         # logging a loud warning so agents and humans notice.
-        required_plugin = _PLUGIN_BACKED_EFFECTS.get(effect.kind)
+        if effect.kind == "dragonfly":
+            variant = params.get("variant", "plate")
+            required_plugin = f"dragonfly_{variant}"
+        else:
+            required_plugin = _PLUGIN_BACKED_EFFECTS.get(effect.kind)
         if required_plugin is not None and _is_missing_vst3_plugin(required_plugin):
             logger.warning(
                 "SKIPPING effect %r (#%d): plugin %r is not installed on this "

@@ -76,7 +76,7 @@ def test_normalize_synth_spec_supports_structured_env_and_params_aliases() -> No
     assert normalized["sustain_level"] == pytest.approx(0.62)
     assert normalized["release"] == pytest.approx(0.28)
     assert normalized["cutoff_hz"] == pytest.approx(2200.0)
-    assert normalized["resonance"] == pytest.approx(0.12)
+    assert normalized["resonance_q"] == pytest.approx(0.12)
     assert normalized["filter_env_amount"] == pytest.approx(0.7)
     assert normalized["filter_env_decay"] == pytest.approx(0.24)
     assert normalized["filter_drive"] == pytest.approx(0.18)
@@ -122,6 +122,14 @@ def test_new_unit_bearing_aliases_override_legacy_flat_names() -> None:
         ("polyblep", "sub_bass"),
         ("polyblep", "resonant_sweep"),
         ("polyblep", "soft_square_pad"),
+        ("organ", "warm"),
+        ("organ", "full"),
+        ("organ", "jazz"),
+        ("organ", "gospel"),
+        ("organ", "cathedral"),
+        ("organ", "baroque"),
+        ("organ", "septimal"),
+        ("organ", "glass_organ"),
     ],
 )
 def test_new_presets_resolve_and_render(

@@ -25,6 +25,9 @@ The rendering path is frequency-first:
 - [code_musics/engines/filtered_stack.py](/home/jan/workspace/code-musics/code_musics/engines/filtered_stack.py)
 - [code_musics/engines/kick_tom.py](/home/jan/workspace/code-musics/code_musics/engines/kick_tom.py)
 - [code_musics/engines/noise_perc.py](/home/jan/workspace/code-musics/code_musics/engines/noise_perc.py)
+- [code_musics/engines/organ.py](/home/jan/workspace/code-musics/code_musics/engines/organ.py)
+- [code_musics/engines/piano.py](/home/jan/workspace/code-musics/code_musics/engines/piano.py)
+- [code_musics/engines/piano_additive.py](/home/jan/workspace/code-musics/code_musics/engines/piano_additive.py)
 
 ## Canonical Authoring Shape
 
@@ -268,6 +271,9 @@ Available engines:
 - `filtered_stack`
 - `kick_tom`
 - `noise_perc`
+- `organ`
+- `piano`
+- `piano_additive`
 - `polyblep`
 
 ## Presets
@@ -285,6 +291,9 @@ Available presets:
 - `filtered_stack`: `warm_pad`, `reed_lead`, `round_bass`, `saw_pad`, `string_pad`
 - `kick_tom`: `808_hiphop`, `808_house`, `808_tape`, `909_techno`, `909_house`, `909_crunch`, `distorted_hardkick`, `zap_kick`, `round_tom`, `floor_tom`, `electro_tom`, `ring_tom`
 - `noise_perc`: `kickish`, `snareish`, `tick`
+- `organ`: `warm`, `full`, `jazz`, `gospel`, `cathedral`, `baroque`, `septimal`, `glass_organ`
+- `piano`: `grand`, `bright`, `warm`, `felt`, `honky_tonk`, `tack`, `glass`, `septimal`
+- `piano_additive`: `grand`, `bright`, `warm`, `felt`, `honky_tonk`, `tack`, `glass`, `septimal`
 - `polyblep`: `warm_lead`, `synth_pluck`, `analog_brass`, `square_lead`, `hoover`, `moog_bass`, `sync_lead`, `acid_bass`, `sub_bass`, `resonant_sweep`, `soft_square_pad`
 
 ## Effects
@@ -1291,6 +1300,161 @@ score.add_voice(
 )
 ```
 
+## `organ`
+
+Implementation: [code_musics/engines/organ.py](/home/jan/workspace/code-musics/code_musics/engines/organ.py)
+
+Drawbar organ engine covering both Hammond-style tonewheel and pipe organ
+character. Additive synthesis at its core, with drawbar-level mixing, tonewheel
+drift, key click, scanner vibrato/chorus, leakage, and per-drawbar harmonic
+shaping.
+
+Parameters:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `drawbars` | `list[int]` | `[0,8,8,8,0,0,0,0,0]` | 9 drawbar levels, each 0-8 (Hammond convention) |
+| `drawbar_ratios` | `list[float]` | `[0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0]` | frequency ratios for each drawbar; override for xenharmonic timbre |
+| `click` | `float` | `0.15` | key click / pipe chiff amount (0-1) |
+| `click_brightness` | `float` | `0.5` | spectral center of click (0-1; lower=breathier chiff, higher=sharper click) |
+| `vibrato_depth` | `float` | `0.0` | scanner vibrato depth (0-1; ~0.1=V1, ~0.3=V2, ~0.6=V3) |
+| `vibrato_rate_hz` | `float` | `6.8` | scanner vibrato rate |
+| `vibrato_chorus` | `float` | `0.0` | blend dry+modulated for chorus effect (0=pure vibrato, 1=full chorus) |
+| `drift` | `float` | `0.12` | organic tonewheel detuning (0-1, maps to 0-4 cents) |
+| `drift_rate_hz` | `float` | `0.07` | drift wander speed |
+| `leakage` | `float` | `0.08` | crosstalk from adjacent drawbar tonewheels (0-1) |
+| `tonewheel_shape` | `float` | `0.0` | per-drawbar harmonic richness: 0=pure sine (Hammond), 0.3-0.5=warm flue pipe, 0.6+=brighter principal/reed |
+
+Hammond drawbar convention: the 9 drawbars correspond to pipe footages: 16'
+(sub-octave), 8' (fundamental), 5-1/3' (3rd harmonic), 4' (2nd harmonic),
+2-2/3' (6th), 2' (8th), 1-3/5' (10th), 1-1/3' (12th), 1' (16th). Levels 0-8
+follow the real Hammond convention. For xenharmonic use, override
+`drawbar_ratios` with any set of frequency ratios.
+
+Presets:
+
+| Preset | Character |
+|--------|-----------|
+| `warm` | Classic warm Hammond, fundamental-heavy, gentle chorus |
+| `full` | Full registration, rock/soul wall of sound |
+| `jazz` | Clean jazz combo, light registration |
+| `gospel` | Bright, gritty, strong click and vibrato |
+| `cathedral` | Pipe organ, no vibrato, pipe harmonic color (shape=0.4), more drift |
+| `baroque` | Clear, articulate Bach-friendly, warm pipe color (shape=0.3) |
+| `septimal` | 7-limit xenharmonic drawbar ratios for timbre-harmony fusion |
+| `glass_organ` | 11-limit ethereal shimmer with custom drawbar ratios |
+
+Xenharmonic usage note: the default Hammond drawbar ratios (0.5, 1, 1.5, 2, 3,
+4, 5, 6, 8) are already harmonic-series based and naturally JI-compatible. For
+deeper timbre-harmony fusion, override `drawbar_ratios` with JI intervals (e.g.,
+septimal ratios like 7/4, 7/2, 7/6) so the organ's internal harmonics reinforce
+the scale's intervallic structure.
+
+Example:
+
+```python
+score.add_voice(
+    "organ",
+    synth_defaults={
+        "engine": "organ",
+        "preset": "warm",
+        "env": {"attack_ms": 8.0, "release_ms": 80.0},
+    },
+)
+```
+
+## `piano`
+
+Implementation: [code_musics/engines/piano.py](/home/jan/workspace/code-musics/code_musics/engines/piano.py)
+
+Modal piano synthesis with physical hammer-string interaction. Each note is
+rendered as a bank of second-order resonators (one per string mode) excited by a
+nonlinear hammer contact model (`F = K * max(delta, 0)^p`). Velocity naturally
+shapes timbre through the hammer physics rather than through a separate
+brightness knob. The engine uses two-phase rendering: Numba JIT for the contact
+phase (~2-8 ms) and vectorized NumPy for the free decay, giving both physical
+realism and reasonable render speed. Supports unison strings with drift and
+detune, soundboard coloring via a resonator bank, body saturation, and damper
+noise. The engine peak-normalizes internally and is deterministic for identical
+inputs.
+
+Parameters:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `n_modes` | `int` | `32` | Number of string modes in the resonator bank |
+| `inharmonicity` | `float` | `0.0005` | Stretch coefficient B in f_n = n *freq* sqrt(1 + B * n^2). Higher values widen upper modes (real pianos ~0.0001-0.001). Set to `0.0` for pure harmonic modes (JI use). |
+| `partial_ratios` | `list[dict] \| list[float]` | `None` | Custom partial set. Each entry is either a bare ratio or `{"ratio": float, "amp": float}`. Overrides `n_modes` and `inharmonicity` when present. |
+| `decay_base` | `float` | `3.5` | Base decay time constant in seconds |
+| `decay_tilt` | `float` | `0.5` | How much faster upper modes decay relative to lower ones (0-1) |
+| `hammer_mass` | `float` | `0.01` | Normalized hammer mass affecting contact duration and energy transfer |
+| `hammer_stiffness` | `float` | `1e8` | K in the contact force law; higher values give harder, brighter attacks |
+| `hammer_exponent` | `float` | `2.5` | Felt nonlinearity exponent p; higher values increase velocity-dependent brightness |
+| `hammer_position` | `float` | `0.12` | Strike point as fraction of string length; affects which modes are excited |
+| `bridge_position` | `float` | `0.95` | Output pickup position as fraction of string length |
+| `max_hammer_velocity` | `float` | `4.0` | Maximum hammer velocity in m/s for velocity scaling |
+| `drift` | `float` | `0.08` | Slow sinusoidal pitch drift amount for all strings (0-1, maps to 0-4 cents) |
+| `drift_rate_hz` | `float` | `0.05` | Drift wander speed in Hz |
+| `unison_count` | `int \| None` | `None` | Number of unison strings. `None` = automatic: 1 below 200 Hz, 2 below 400 Hz, 3 above. |
+| `unison_detune` | `float` | `3.0` | Detune spread between unison strings in cents |
+| `unison_drift` | `float` | `0.15` | Additional drift amount for non-primary unison strings (0-1) |
+| `body_saturation` | `float` | `0.15` | Subtle body saturation for warmth (0=clean, higher=warmer) |
+| `soundboard_color` | `float` | `0.4` | Soundboard resonance coloring amount (0=bypass, 1=full wet) |
+| `soundboard_brightness` | `float` | `0.5` | Soundboard filter cutoff position (0=dark ~200 Hz, 1=bright ~4200 Hz) |
+| `damper_noise` | `float` | `0.08` | Level of the short noise burst near note end representing damper contact (0=off) |
+
+Backward compatibility: `n_partials` is accepted as an alias for `n_modes`, and
+`decay_partial_tilt` is accepted as an alias for `decay_tilt`. Legacy additive
+parameters like `hammer_hardness`, `brightness`, and `hammer_noise` are silently
+ignored (physical defaults are used instead).
+
+Presets:
+
+| Preset | Character |
+|--------|-----------|
+| `grand` | Full concert grand with rich modes, moderate inharmonicity, and warm soundboard |
+| `bright` | Stiffer hammer with more upper-mode presence |
+| `warm` | Lower stiffness, darker soundboard, gentler overall character |
+| `felt` | Very soft felt-damped piano; low stiffness, muted attack, shorter decay |
+| `honky_tonk` | Wide unison detune and extra drift for a detuned barroom character |
+| `tack` | High stiffness and exponent for a percussive, bright attack — tack piano / prepared character |
+| `glass` | Fewer modes, more inharmonicity, long decay, minimal soundboard — crystalline and sparse |
+| `septimal` | Custom 7-limit partial ratios for xenharmonic timbre-harmony fusion |
+
+Xenharmonic usage note: for JI and xenharmonic work, set `inharmonicity=0.0` so
+modes remain purely harmonic, or use `partial_ratios` to specify an explicit
+set of JI ratios (e.g., septimal intervals like 7/4, 3/2, 7/2). The `septimal`
+preset demonstrates this approach with a 7-limit partial set. When
+`partial_ratios` is provided, `n_modes` and `inharmonicity` are ignored.
+
+Example:
+
+```python
+score.add_voice(
+    "piano",
+    synth_defaults={
+        "engine": "piano",
+        "preset": "grand",
+        "env": {"attack_ms": 5.0, "release_ms": 400.0},
+    },
+)
+```
+
+## `piano_additive`
+
+Implementation: [code_musics/engines/piano_additive.py](/home/jan/workspace/code-musics/code_musics/engines/piano_additive.py)
+
+Legacy additive piano synthesis with physical modeling envelopes. Each note
+renders a set of sinusoidal partials with stretched tuning (inharmonicity),
+per-partial two-stage exponential decay, velocity-dependent hammer excitation
+(filtered noise burst), optional unison strings with drift and detune,
+soundboard coloring via ZDF SVF, and a short damper thump near the note release.
+This is the original piano engine, now available as `piano_additive` after the
+modal engine took over the `piano` name. Same presets and parameter surface as
+before.
+
+Use `engine="piano_additive"` in `synth_defaults` to access the legacy engine.
+
 ## `polyblep`
 
 Implementation: [code_musics/engines/polyblep.py](/home/jan/workspace/code-musics/code_musics/engines/polyblep.py)
@@ -1304,9 +1468,10 @@ internal zero-delay-feedback / topology-preserving state-variable filter.
 Parameters:
 
 - `waveform: str`
-  Oscillator waveform. Supported values: `saw`, `square`, `triangle`. Triangle is
-  generated by integrating the bandlimited square (BLAMP approach) and is alias-free;
-  `pulse_width` is ignored for triangle.
+  Oscillator waveform. Supported values: `saw`, `square`, `triangle`, `sine`.
+  Triangle is generated by integrating the bandlimited square (BLAMP approach) and
+  is alias-free; `pulse_width` is ignored for triangle and sine. Sine is a pure
+  fundamental with no harmonics — useful for deep sub-bass.
 - `pulse_width: float`
   Pulse width used when `waveform="square"`. `0.5` is a symmetric square wave.
 - `osc2_level: float`
@@ -1314,7 +1479,7 @@ Parameters:
   in a second PolyBLEP oscillator before the filter, normalized against oscillator 1.
 - `osc2_waveform: str`
   Optional waveform for oscillator 2. Supported values: `saw`, `square`,
-  `triangle`. Defaults to the main `waveform`.
+  `triangle`, `sine`. Defaults to the main `waveform`.
 - `osc2_pulse_width: float`
   Pulse width for oscillator 2 when `osc2_waveform="square"`. Defaults to the main
   `pulse_width`.
@@ -1364,8 +1529,8 @@ Validation:
 - `osc2_level >= 0`
 - `0 < pulse_width < 1`
 - `0 < osc2_pulse_width < 1`
-- `waveform in {"saw", "square", "triangle"}`
-- `osc2_waveform in {"saw", "square", "triangle"}`
+- `waveform in {"saw", "square", "triangle", "sine"}`
+- `osc2_waveform in {"saw", "square", "triangle", "sine"}`
 - `filter_mode in {"lowpass", "bandpass", "highpass", "notch"}`
 
 Notes:

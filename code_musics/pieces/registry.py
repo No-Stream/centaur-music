@@ -34,6 +34,7 @@ class PieceDefinition:
     build_score: Callable[[], Score] | None = None
     render_audio: Callable[[], np.ndarray] | None = None
     sections: tuple[PieceSection, ...] = field(default_factory=tuple)
+    study: bool = False
 
 
 type PieceMap = Mapping[str, PieceDefinition]

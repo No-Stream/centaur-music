@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-04-02T21:35:43.916398Z"
+exclude-newer = "2026-04-03T20:03:43.398318Z"
 exclude-newer-span = "P1W"
 
 [[package]]
@@ -99,6 +99,7 @@ dependencies = [
     { name = "librosa" },
     { name = "matplotlib" },
     { name = "mido" },
+    { name = "numba" },
     { name = "numpy" },
     { name = "pedalboard" },
     { name = "scipy" },
@@ -118,6 +119,7 @@ requires-dist = [
     { name = "librosa", specifier = ">=0.10.2" },
     { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "mido", specifier = ">=1.3.3" },
+    { name = "numba", specifier = ">=0.65.0" },
     { name = "numpy", specifier = ">=2.4.3" },
     { name = "pedalboard", specifier = ">=0.9.22" },
     { name = "scipy", specifier = ">=1.17.1" },

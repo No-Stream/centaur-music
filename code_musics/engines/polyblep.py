@@ -5,10 +5,11 @@ at discontinuities. Produces smooth analog character with correct 1/n harmonic
 spectrum and no Gibbs phenomenon, unlike additive-truncated engines.
 
 Supported waveforms:
-- ``saw``    — bandlimited sawtooth via direct PolyBLEP correction
-- ``square`` — bandlimited square/pulse as the difference of two saws
+- ``saw``      — bandlimited sawtooth via direct PolyBLEP correction
+- ``square``   — bandlimited square/pulse as the difference of two saws
 - ``triangle`` — bandlimited triangle obtained by integrating the square wave
   (BLAMP approach); ``pulse_width`` is ignored for triangle
+- ``sine``     — pure sine wave (no harmonics, no antialiasing needed)
 """
 
 from __future__ import annotations
@@ -77,10 +78,7 @@ def render(
     cutoff_hz = float(params.get("cutoff_hz", 3000.0))
     keytrack = float(params.get("keytrack", 0.0))
     reference_freq_hz = float(params.get("reference_freq_hz", 220.0))
-    resonance = float(params.get("resonance", 0.0))
-    resonance_q: float | None = None
-    if "resonance_q" in params:
-        resonance_q = float(params["resonance_q"])
+    resonance_q = float(params.get("resonance_q", 0.707))
     filter_env_amount = float(params.get("filter_env_amount", 0.0))
     filter_env_decay = float(params.get("filter_env_decay", 0.18))
     filter_mode = str(params.get("filter_mode", "lowpass")).lower()
@@ -96,14 +94,14 @@ def render(
         raise ValueError("pulse_width must be between 0 and 1")
     if not 0.0 < osc2_pulse_width < 1.0:
         raise ValueError("osc2_pulse_width must be between 0 and 1")
-    if waveform not in {"saw", "square", "triangle"}:
+    if waveform not in {"saw", "square", "triangle", "sine"}:
         raise ValueError(
-            f"Unsupported waveform: {waveform!r}. Use 'saw', 'square', or 'triangle'."
+            f"Unsupported waveform: {waveform!r}. Use 'saw', 'square', 'triangle', or 'sine'."
         )
-    if osc2_waveform not in {"saw", "square", "triangle"}:
+    if osc2_waveform not in {"saw", "square", "triangle", "sine"}:
         raise ValueError(
             "Unsupported osc2_waveform: "
-            f"{osc2_waveform!r}. Use 'saw', 'square', or 'triangle'."
+            f"{osc2_waveform!r}. Use 'saw', 'square', 'triangle', or 'sine'."
         )
     if filter_mode not in _SUPPORTED_FILTER_MODES:
         raise ValueError(
@@ -158,7 +156,6 @@ def render(
     filtered = apply_zdf_svf(
         raw_signal,
         cutoff_profile=cutoff_profile,
-        resonance=resonance,
         resonance_q=resonance_q,
         sample_rate=sample_rate,
         filter_mode=filter_mode,
@@ -185,11 +182,15 @@ def _render_oscillator(
     cumphase = np.cumsum(phase_inc)
     phase = cumphase % 1.0
 
+    if waveform == "sine":
+        return np.sin(2.0 * np.pi * phase)
     if waveform == "saw":
         return _polyblep_saw(phase, phase_inc)
     if waveform == "square":
         return _polyblep_square(phase, phase_inc, cumphase, pulse_width)
-    return _polyblep_triangle(phase, phase_inc, cumphase, sample_rate)
+    if waveform == "triangle":
+        return _polyblep_triangle(phase, phase_inc, cumphase, sample_rate)
+    raise ValueError(f"Unknown waveform: {waveform!r}")
 
 
 def _polyblep_saw(phase: np.ndarray, phase_inc: np.ndarray) -> np.ndarray:

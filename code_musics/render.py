@@ -124,6 +124,8 @@ def export_piece_midi(
     bundle_dir = _build_output_path(
         output_dir=output_dir,
         output_name=definition.output_name,
+        piece_name=piece_name,
+        study=definition.study,
         render_window=render_window,
     ).with_suffix("")
     spec = MidiBundleExportSpec(
@@ -160,6 +162,8 @@ def render_piece(
     output_path = _build_output_path(
         output_dir=output_dir,
         output_name=definition.output_name,
+        piece_name=piece_name,
+        study=definition.study,
         render_window=render_window,
     )
     version_timestamp = _build_version_timestamp()
@@ -343,7 +347,7 @@ def _build_version_audio_path(
     version_timestamp: str,
 ) -> Path:
     """Return the archive location for a versioned audio render."""
-    version_dir = output_path.parent / "versions" / piece_name
+    version_dir = output_path.parent / "versions"
     version_stem = f"{output_path.stem}__{version_timestamp}"
     return version_dir / f"{version_stem}{output_path.suffix}"
 
@@ -352,10 +356,21 @@ def _build_output_path(
     *,
     output_dir: str | Path,
     output_name: str,
+    piece_name: str,
+    study: bool = False,
     render_window: RenderWindow | None,
 ) -> Path:
-    """Return the stable output path for the render request."""
-    base_output_path = Path(output_dir) / f"{output_name}.wav"
+    """Return the stable output path for the render request.
+
+    Renders land in per-piece subdirectories:
+      output/{piece_name}/{output_name}.wav          (regular pieces)
+      output/studies/{piece_name}/{output_name}.wav   (studies)
+    """
+    if study:
+        base_dir = Path(output_dir) / "studies" / piece_name
+    else:
+        base_dir = Path(output_dir) / piece_name
+    base_output_path = base_dir / f"{output_name}.wav"
     if render_window is None:
         return base_output_path
     snippet_suffix = (

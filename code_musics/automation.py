@@ -13,14 +13,18 @@ AutomationShape = Literal["hold", "linear", "exp", "sine_lfo"]
 
 _SUPPORTED_SYNTH_AUTOMATION_PARAMS = {
     "attack",
-    "cutoff_hz",
+    "brightness",
     "brightness_tilt",
+    "cutoff_hz",
     "decay",
     "filter_drive",
     "filter_env_amount",
+    "hammer_hardness",
+    "hammer_noise",
     "mod_index",
     "release",
-    "resonance",
+    "resonance_q",
+    "soundboard_color",
     "sustain_level",
 }
 

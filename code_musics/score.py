@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, cast
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -33,6 +36,8 @@ from code_musics.humanize import (
     resolve_envelope_params,
 )
 from code_musics.pitch_motion import PitchMotionSpec, build_frequency_trajectory
+
+_OUTPUT_CEILING_DBFS: float = -0.5
 
 EffectKind = Literal[
     "gate",
@@ -232,6 +237,7 @@ class Phrase:
                     start=placed_start,
                     duration=scaled_duration,
                     amp=resolved_amp * amp_scale,
+                    amp_db=None,
                     partial=new_partial,
                 )
             )
@@ -540,6 +546,9 @@ class Score:
         if not mix_inputs:
             return np.zeros(0)
         mix = self._stack_signals(mix_inputs)
+        pre_peak = float(np.max(np.abs(mix))) if mix.size > 0 else 0.0
+        pre_peak_db = 20.0 * np.log10(max(pre_peak, 1e-12))
+        logger.info(f"Master bus pre-processing: peak {pre_peak_db:.2f} dBFS")
         return self._apply_master_bus_processing(mix)
 
     def render_with_effect_analysis(
@@ -1356,6 +1365,12 @@ class Score:
                 target_lufs=self.master_bus_target_lufs,
                 max_true_peak_dbfs=self.master_bus_max_true_peak_dbfs,
             )
+            post_stage_peak = (
+                float(np.max(np.abs(processed_mix))) if processed_mix.size > 0 else 0.0
+            )
+            logger.info(
+                f"Master auto gain stage: peak {20.0 * np.log10(max(post_stage_peak, 1e-12)):.2f} dBFS"
+            )
         if self.master_input_gain_db != 0.0:
             processed_mix = processed_mix * synth.db_to_amp(self.master_input_gain_db)
         if self.master_effects:
@@ -1385,9 +1400,15 @@ class Score:
         # Transparent output ceiling: only reduces gain if the signal exceeds
         # -0.5 dBFS (~0.944), so normal mixes are untouched but accidental
         # overloads cannot hard-clip the final output.
-        ceiling = 0.944
+        ceiling = synth.db_to_amp(_OUTPUT_CEILING_DBFS)
         peak = float(np.max(np.abs(processed_mix))) if processed_mix.size > 0 else 0.0
         if peak > ceiling:
+            attenuation_db = 20.0 * np.log10(ceiling / peak)
+            logger.warning(
+                f"Master output ceiling activated: peak was "
+                f"{20.0 * np.log10(peak):.2f} dBFS, attenuated by "
+                f"{attenuation_db:.2f} dB to {20.0 * np.log10(ceiling):.2f} dBFS"
+            )
             processed_mix = processed_mix * (ceiling / peak)
         return processed_mix
 
