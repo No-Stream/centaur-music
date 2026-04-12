@@ -301,6 +301,71 @@ def _spectral_centroid_hz(signal: np.ndarray, *, sample_rate: int) -> float:
     return float(np.sum(freqs * magnitudes) / magnitude_sum)
 
 
+def _compute_signal_thd_from_spectrum(
+    freqs: np.ndarray,
+    magnitude_db: np.ndarray,
+    dominant_frequency_hz: float,
+    *,
+    bin_tolerance: int = 2,
+    max_harmonic: int = 10,
+) -> tuple[float, str]:
+    """Measure THD of actual program content from its averaged spectrum.
+
+    Works directly on ``(freqs, magnitude_db)`` arrays as returned by
+    :func:`_average_spectrum_db`.  Finds the fundamental bin nearest to
+    *dominant_frequency_hz* and sums energy at harmonics 2 through
+    *max_harmonic*.
+
+    Returns ``(thd_pct, label)`` using the same classification scale as
+    :func:`_saturation_thd`.
+    """
+    if dominant_frequency_hz <= 20.0 or len(freqs) < 2:
+        return 0.0, "clean"
+
+    bin_spacing_hz = float(freqs[1] - freqs[0])
+    if bin_spacing_hz <= 0:
+        return 0.0, "clean"
+
+    magnitude_linear = 10.0 ** (magnitude_db / 20.0)
+
+    def _peak_in_window(center_hz: float) -> float:
+        center_idx = int(round((center_hz - float(freqs[0])) / bin_spacing_hz))
+        lo = max(center_idx - bin_tolerance, 0)
+        hi = min(center_idx + bin_tolerance + 1, len(magnitude_linear))
+        if lo >= hi:
+            return 0.0
+        return float(np.max(magnitude_linear[lo:hi]))
+
+    fundamental_amp = _peak_in_window(dominant_frequency_hz)
+    if fundamental_amp <= 0.0:
+        return 0.0, "clean"
+
+    harmonic_power_sum = 0.0
+    nyquist = float(freqs[-1])
+    for h in range(2, max_harmonic + 1):
+        h_freq = h * dominant_frequency_hz
+        if h_freq > nyquist:
+            break
+        harmonic_power_sum += _peak_in_window(h_freq) ** 2
+
+    thd_pct = float(np.sqrt(harmonic_power_sum)) / fundamental_amp * 100.0
+
+    if thd_pct < 0.5:
+        label = "clean"
+    elif thd_pct < 2.0:
+        label = "subtle_warmth"
+    elif thd_pct < 5.0:
+        label = "warmth"
+    elif thd_pct < 15.0:
+        label = "saturation"
+    elif thd_pct < 40.0:
+        label = "distortion"
+    else:
+        label = "fuzz"
+
+    return round(thd_pct, 2), label
+
+
 def _seconds_for_mask(mask: np.ndarray, *, sample_rate: int) -> float:
     if mask.size == 0:
         return 0.0
@@ -1385,6 +1450,22 @@ def _build_effect_analysis_entry(
         input_signal,
         sample_rate=sample_rate,
     )
+
+    # Signal-level THD: use the input dominant frequency as reference for both
+    # so the delta isolates distortion the effect introduced, not spectral reshaping.
+    input_dominant_hz = (
+        float(input_freqs[np.argmax(input_magnitude_db)])
+        if input_freqs.size > 0
+        else 0.0
+    )
+    input_thd_pct, input_thd_character = _compute_signal_thd_from_spectrum(
+        input_freqs, input_magnitude_db, input_dominant_hz
+    )
+    output_thd_pct, output_thd_character = _compute_signal_thd_from_spectrum(
+        output_freqs, output_magnitude_db, input_dominant_hz
+    )
+    thd_delta_pct = output_thd_pct - input_thd_pct
+
     metrics: dict[str, float | int | str] = {
         "input_peak_dbfs": round(input_peak_dbfs, 2),
         "output_peak_dbfs": round(output_peak_dbfs, 2),
@@ -1412,6 +1493,11 @@ def _build_effect_analysis_entry(
         ),
         "high_band_delta_db": round(output_high_band_db - input_high_band_db, 2),
         "spectral_centroid_delta_hz": round(spectral_centroid_delta_hz, 1),
+        "input_thd_pct": round(input_thd_pct, 2),
+        "input_thd_character": input_thd_character,
+        "output_thd_pct": round(output_thd_pct, 2),
+        "output_thd_character": output_thd_character,
+        "thd_delta_pct": round(thd_delta_pct, 2),
     }
     if native_metrics is not None:
         metrics.update(native_metrics)
@@ -1569,6 +1655,31 @@ def _build_effect_analysis_warnings(
                 crest_factor_delta_db=round(crest_factor_delta_db, 2),
             )
         )
+
+    thd_delta_pct = float(metrics.get("thd_delta_pct", 0.0))
+    if thd_delta_pct >= 20.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="severe",
+                code="effect_introduced_distortion",
+                message="effect introduced heavy harmonic distortion",
+                thd_delta_pct=round(thd_delta_pct, 2),
+                input_thd_pct=float(metrics.get("input_thd_pct", 0.0)),
+                output_thd_pct=float(metrics.get("output_thd_pct", 0.0)),
+            )
+        )
+    elif thd_delta_pct >= 8.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="warning",
+                code="effect_introduced_distortion",
+                message="effect introduced noticeable harmonic distortion",
+                thd_delta_pct=round(thd_delta_pct, 2),
+                input_thd_pct=float(metrics.get("input_thd_pct", 0.0)),
+                output_thd_pct=float(metrics.get("output_thd_pct", 0.0)),
+            )
+        )
+
     return warnings
 
 
@@ -2398,6 +2509,7 @@ def apply_dragonfly(
     signal: np.ndarray,
     variant: str = "plate",
     wet_level: float = 20.0,
+    dry_level: float = 100.0,
     decay_s: float = 0.4,
     width: float = 100.0,
     predelay_ms: float = 0.0,
@@ -2413,6 +2525,7 @@ def apply_dragonfly(
     ----------
     variant:      "plate", "room", "hall", or "early".
     wet_level:    Wet level 0–100 (percent).
+    dry_level:    Dry level 0–100 (percent). Set to 0 for send-bus (100% wet) usage.
     decay_s:      Reverb decay in seconds.
     width:        Stereo width 0–100.
     predelay_ms:  Pre-delay in milliseconds.
@@ -2431,7 +2544,7 @@ def apply_dragonfly(
         signal,
         plugin_name=plugin_name,
         params={
-            "dry_level": 100.0,
+            "dry_level": float(dry_level),
             "wet_level": float(wet_level),
             "decay_s": float(decay_s),
             "width": float(width),

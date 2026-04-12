@@ -281,6 +281,16 @@ See `FUTURE.md` for way more ideas.
   partial ratio sets for xenharmonic timbre-harmony fusion. Use
   `engine="piano"` in `synth_defaults`. The legacy additive piano is available
   as `engine="piano_additive"`.
+- The `harpsichord` synth engine uses pluck excitation + modal resonator
+  synthesis with multi-register blending (front 8', back 8', 4', lute),
+  per-note spectral morphing, and velocity-driven brightness. It supports
+  custom partial ratio sets for xenharmonic timbre-harmony fusion. Use
+  `engine="harpsichord"` in `synth_defaults`.
+- `Voice` now supports engine-agnostic sympathetic resonance via
+  `sympathetic_amount`, `sympathetic_decay`, and `sympathetic_modes`. This
+  adds a resonator bank tuned to active note harmonics, applied after note
+  mixing and before normalization. Works best with harpsichord and piano
+  voices where harmonically related notes reinforce each other.
 - There is now a `surge_xt` instrument engine that renders voices through
   Surge XT via pedalboard's VSTi hosting. It uses MPE-style per-note
   pitch bend (48-semitone range) for microtonal accuracy. Unlike the

@@ -7,8 +7,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, cast
 
-logger: logging.Logger = logging.getLogger(__name__)
-
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -36,6 +34,8 @@ from code_musics.humanize import (
     resolve_envelope_params,
 )
 from code_musics.pitch_motion import PitchMotionSpec, build_frequency_trajectory
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 _OUTPUT_CEILING_DBFS: float = -0.5
 
@@ -297,6 +297,9 @@ class Voice:
     max_polyphony: int | None = None
     legato: bool = False
     pan: float = 0.0
+    sympathetic_amount: float = 0.0
+    sympathetic_decay: float = 2.0
+    sympathetic_modes: int = 8
     automation: list[AutomationSpec] = field(default_factory=list)
     notes: list[NoteEvent] = field(default_factory=list)
 
@@ -385,6 +388,9 @@ class Score:
         max_polyphony: int | None = None,
         legato: bool = False,
         pan: float = 0.0,
+        sympathetic_amount: float = 0.0,
+        sympathetic_decay: float = 2.0,
+        sympathetic_modes: int = 8,
         automation: list[AutomationSpec] | None = None,
     ) -> Voice:
         """Add or replace a named voice definition."""
@@ -433,6 +439,9 @@ class Score:
             max_polyphony=max_polyphony,
             legato=legato,
             pan=pan,
+            sympathetic_amount=sympathetic_amount,
+            sympathetic_decay=sympathetic_decay,
+            sympathetic_modes=sympathetic_modes,
             automation=list(automation or []),
         )
         self.voices[name] = voice
@@ -857,7 +866,90 @@ class Score:
             return np.zeros(0)
 
         voice_mix = self._stack_signals(voice_signals)
+        if voice.sympathetic_amount > 0:
+            voice_mix = self._apply_sympathetic_resonance(
+                voice_mix, voice, prepared_notes
+            )
         return self._normalize_voice_signal(voice_mix, voice)
+
+    def _apply_sympathetic_resonance(
+        self,
+        voice_mix: np.ndarray,
+        voice: Voice,
+        prepared_notes: list[PreparedVoiceNote],
+    ) -> np.ndarray:
+        """Add sympathetic resonance by exciting resonant modes from the voice signal.
+
+        For each note, computes harmonic mode frequencies, measures how much
+        energy the voice signal contains at each mode via windowed correlation,
+        then synthesizes decaying sinusoids at those frequencies scaled by the
+        measured excitation.  This is unconditionally numerically stable (no
+        recursive filters).
+        """
+        if voice.sympathetic_amount <= 0 or not prepared_notes:
+            return voice_mix
+
+        nyquist = self.sample_rate * 0.45
+        max_resonators = 64
+
+        mode_entries: list[tuple[float, float, float]] = []
+        for pn in prepared_notes:
+            note_dur = pn.effective_hold_duration + pn.effective_release
+            for k in range(1, voice.sympathetic_modes + 1):
+                mode_freq = pn.note_freq * k
+                if mode_freq >= nyquist:
+                    break
+                mode_entries.append((mode_freq, pn.humanized_start, note_dur))
+
+        if not mode_entries:
+            return voice_mix
+
+        mode_entries.sort(key=lambda x: x[0])
+        deduped: list[tuple[float, float, float]] = []
+        for freq, start, dur in mode_entries:
+            if deduped and abs(freq - deduped[-1][0]) / deduped[-1][0] < 0.01:
+                existing_freq, existing_start, existing_dur = deduped[-1]
+                deduped[-1] = (
+                    existing_freq,
+                    min(existing_start, start),
+                    max(existing_dur, dur),
+                )
+            else:
+                deduped.append((freq, start, dur))
+
+        if len(deduped) > max_resonators:
+            deduped = deduped[:max_resonators]
+
+        n_samples = len(voice_mix)
+        sr = self.sample_rate
+        t_all = np.arange(n_samples, dtype=np.float64) / sr
+        resonance_sum = np.zeros(n_samples, dtype=np.float64)
+
+        for mode_freq, note_start, note_dur in deduped:
+            start_sample = max(0, int(note_start * sr))
+            end_sample = min(n_samples, int((note_start + note_dur) * sr))
+            if end_sample <= start_sample:
+                continue
+            segment = voice_mix[start_sample:end_sample].astype(np.float64)
+            seg_t = t_all[start_sample:end_sample]
+            ref_sin = np.sin(2.0 * np.pi * mode_freq * seg_t)
+            excitation = float(np.abs(np.mean(segment * ref_sin))) * 2.0
+
+            if excitation < 1e-12:
+                continue
+
+            decay_tau = max(voice.sympathetic_decay, 0.01)
+            ring_t = t_all[start_sample:]
+            ring_offset = ring_t - ring_t[0]
+            ring_sin = np.sin(2.0 * np.pi * mode_freq * ring_t)
+            ring_env = np.exp(-ring_offset / decay_tau)
+            resonance_sum[start_sample:] += excitation * ring_sin * ring_env
+
+        sum_peak = float(np.max(np.abs(resonance_sum)))
+        input_peak = float(np.max(np.abs(voice_mix)))
+        if sum_peak > 0 and input_peak > 0:
+            resonance_sum = resonance_sum * (input_peak / sum_peak)
+        return voice_mix + resonance_sum * voice.sympathetic_amount
 
     def _render_voice_via_instrument(
         self,
@@ -896,15 +988,34 @@ class Score:
                 resolved_velocity=resolved_velocity,
                 velocity_db_per_unit=voice.velocity_db_per_unit,
             )
-            note_dicts.append(
-                {
-                    "freq": note_freq,
-                    "start": humanized_start,
-                    "duration": note.duration,
-                    "velocity": resolved_velocity,
-                    "amp": note_amp,
-                }
-            )
+            note_dict: dict[str, Any] = {
+                "freq": note_freq,
+                "start": humanized_start,
+                "duration": note.duration,
+                "velocity": resolved_velocity,
+                "amp": note_amp,
+            }
+
+            # Translate score-level PitchMotionSpec into engine-level glide params
+            if note.pitch_motion is not None:
+                motion = note.pitch_motion
+                if motion.kind == "linear_bend":
+                    target_freq = motion.target_frequency(score_f0=self.f0)
+                    # linear_bend: note starts at note_freq, bends toward target.
+                    # Engine glide: note starts at glide_from, bends toward freq.
+                    note_dict["freq"] = target_freq
+                    note_dict["glide_from"] = note_freq
+                    note_dict["glide_time"] = note.duration
+                elif motion.kind == "ratio_glide":
+                    start_ratio = float(motion.params.get("start_ratio", 1.0))
+                    end_ratio = float(motion.params.get("end_ratio", 1.0))
+                    note_dict["freq"] = note_freq * end_ratio
+                    note_dict["glide_from"] = note_freq * start_ratio
+                    note_dict["glide_time"] = float(
+                        motion.params.get("glide_duration", note.duration)
+                    )
+
+            note_dicts.append(note_dict)
 
         if not note_dicts:
             return np.zeros(0)

@@ -23,6 +23,7 @@ The rendering path is frequency-first:
 - [code_musics/engines/additive.py](/home/jan/workspace/code-musics/code_musics/engines/additive.py)
 - [code_musics/engines/fm.py](/home/jan/workspace/code-musics/code_musics/engines/fm.py)
 - [code_musics/engines/filtered_stack.py](/home/jan/workspace/code-musics/code_musics/engines/filtered_stack.py)
+- [code_musics/engines/harpsichord.py](/home/jan/workspace/code-musics/code_musics/engines/harpsichord.py)
 - [code_musics/engines/kick_tom.py](/home/jan/workspace/code-musics/code_musics/engines/kick_tom.py)
 - [code_musics/engines/noise_perc.py](/home/jan/workspace/code-musics/code_musics/engines/noise_perc.py)
 - [code_musics/engines/organ.py](/home/jan/workspace/code-musics/code_musics/engines/organ.py)
@@ -269,6 +270,7 @@ Available engines:
 - `additive`
 - `fm`
 - `filtered_stack`
+- `harpsichord`
 - `kick_tom`
 - `noise_perc`
 - `organ`
@@ -292,6 +294,7 @@ Available presets:
 - `kick_tom`: `808_hiphop`, `808_house`, `808_tape`, `909_techno`, `909_house`, `909_crunch`, `distorted_hardkick`, `zap_kick`, `round_tom`, `floor_tom`, `electro_tom`, `ring_tom`
 - `noise_perc`: `kickish`, `snareish`, `tick`
 - `organ`: `warm`, `full`, `jazz`, `gospel`, `cathedral`, `baroque`, `septimal`, `glass_organ`
+- `harpsichord`: `baroque`, `concert`, `bright`, `warm`, `ethereal`, `glass`, `septimal`
 - `piano`: `grand`, `bright`, `warm`, `felt`, `honky_tonk`, `tack`, `glass`, `septimal`
 - `piano_additive`: `grand`, `bright`, `warm`, `felt`, `honky_tonk`, `tack`, `glass`, `septimal`
 - `polyblep`: `warm_lead`, `synth_pluck`, `analog_brass`, `square_lead`, `hoover`, `moog_bass`, `sync_lead`, `acid_bass`, `sub_bass`, `resonant_sweep`, `soft_square_pad`
@@ -1156,6 +1159,102 @@ score.add_voice(
             "filter_env_depth_ratio": 0.8,
             "filter_env_decay_ms": 180.0,
         },
+    },
+)
+```
+
+## `harpsichord`
+
+Implementation: [code_musics/engines/harpsichord.py](/home/jan/workspace/code-musics/code_musics/engines/harpsichord.py)
+
+Pluck-excitation + modal-resonator harpsichord engine. Captures the crisp,
+immediate attack and bright decay of a plucked string while going beyond
+physical constraints: velocity expression, per-note spectral morphing,
+continuous register blending, and custom partial ratios for xenharmonic tuning.
+
+The synthesis chain:
+
+1. Shaped pluck impulse determines initial mode amplitudes
+2. Modal resonator bank (decaying sinusoids) produces the string tone
+3. Multiple registers (8', 4', lute) are blended with independent pluck
+   character and decay
+4. Per-note spectral morphing fades from bright attack to warmer sustain
+5. Post-processing: drift, soundboard, saturation, release noise
+
+Parameters:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `pluck_position` | `float` | `0.15` | Pluck point as fraction of string length; affects which modes are excited via position comb filtering |
+| `pluck_hardness` | `float` | `0.6` | Pluck hardness (0-1); harder plucks excite more high partials |
+| `pluck_noise` | `float` | `0.3` | Level of the short noise burst mixed into the pluck attack |
+| `velocity_tilt` | `float` | `0.4` | How much velocity shifts pluck hardness; higher values make louder notes brighter |
+| `n_modes` | `int` | `40` | Number of string modes in the resonator bank |
+| `inharmonicity` | `float` | `0.00005` | Stretch coefficient B in f_n = n *freq* sqrt(1 + B * n^2). Real harpsichords have very low inharmonicity. Set to `0.0` for pure harmonic modes (JI use). |
+| `decay_base` | `float` | `1.5` | Base decay time constant in seconds |
+| `decay_tilt` | `float` | `3.0` | How much faster upper modes decay relative to lower ones |
+| `attack_brightness` | `float` | `1.5` | Spectral morph onset boost; values above 1.0 make the attack brighter than the sustain |
+| `morph_time` | `float` | `0.3` | Seconds spent morphing from bright attack spectrum to steady sustain spectrum |
+| `drift` | `float` | `0.06` | Slow sinusoidal pitch drift amount (0-1) |
+| `drift_rate_hz` | `float` | `0.04` | Drift wander speed in Hz |
+| `body_saturation` | `float` | `0.10` | Subtle body saturation for warmth (0=clean) |
+| `soundboard_color` | `float` | `0.25` | Soundboard resonance coloring amount (0=bypass, 1=full wet) |
+| `soundboard_brightness` | `float` | `0.65` | Soundboard filter cutoff position (0=dark, 1=bright) |
+| `release_noise` | `float` | `0.06` | Level of the short bright noise burst near note end representing the plectrum's return past the string |
+| `partial_ratios` | `list[dict] \| list[float]` | `None` | Custom partial set. Each entry is either a bare ratio or `{"ratio": float, "amp": float}`. Overrides `n_modes` and `inharmonicity` when present. |
+
+### Register System
+
+The harpsichord engine supports multiple registers that are blended together,
+each with independent pluck character, pitch multiplier, and decay scaling.
+
+Default registers:
+
+| Register | `pitch_mult` | `pluck_position` | `pluck_hardness` | `brightness_tilt` | `decay_scale` | Default `blend` |
+|----------|-------------|-------------------|-------------------|---------------------|----------------|-----------------|
+| `front_8` | `1.0` | `0.15` | `0.6` | `0.0` | `1.0` | `1.0` |
+| `back_8` | `1.0` | `0.22` | `0.55` | `-0.1` | `1.05` | `0.0` |
+| `four_foot` | `2.0` | `0.12` | `0.7` | `0.15` | `0.7` | `0.0` |
+| `lute` | `1.0` | `0.18` | `0.4` | `-0.3` | `0.6` | `0.0` |
+
+Convenience blend parameters (override default register blend levels):
+
+- `front_8_blend: float`
+- `back_8_blend: float`
+- `four_foot_blend: float`
+- `lute_blend: float`
+
+For fully custom register sets, pass `registers` as a list of dicts with keys:
+`name`, `pitch_mult`, `pluck_position`, `pluck_hardness`, `pluck_noise`,
+`brightness_tilt`, `decay_scale`, `partial_ratios`, `blend`.
+
+Presets:
+
+| Preset | Character |
+|--------|-----------|
+| `baroque` | Single front 8' register, moderate hardness, clear and articulate |
+| `concert` | Front 8' + back 8' coupled, fuller body, standard concert sound |
+| `bright` | Front 8' + 4' register, harder pluck, sparkling highs |
+| `warm` | Front 8' + lute stop, softer pluck, darker soundboard, gentler character |
+| `ethereal` | Front 8' + light back 8', soft pluck, long morph and decay, shimmering sustain |
+| `glass` | Custom 11-limit partial ratios, hard pluck, crystalline and sparse |
+| `septimal` | Custom 7-limit partial ratios for xenharmonic timbre-harmony fusion |
+
+Xenharmonic usage note: for JI and xenharmonic work, set `inharmonicity=0.0` so
+modes remain purely harmonic, or use `partial_ratios` to specify an explicit
+set of JI ratios (e.g., septimal intervals like 7/4, 3/2, 7/2). The `septimal`
+and `glass` presets demonstrate this approach. When `partial_ratios` is provided,
+`n_modes` and `inharmonicity` are ignored.
+
+Example:
+
+```python
+score.add_voice(
+    "harpsichord",
+    synth_defaults={
+        "engine": "harpsichord",
+        "preset": "baroque",
+        "env": {"attack_ms": 3.0, "release_ms": 200.0},
     },
 )
 ```

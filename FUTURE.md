@@ -63,6 +63,20 @@ Most valuable next helpers:
 - overlap, beating, density, and register summaries that better flag when a
   texture has become too static, too crowded, or too continuously drony
 
+### Chord smearing and loveless-adjacent ideas
+
+  - on loveless, shields uses repitching to create smearing, ambiguity, reaching, yearning. let's capture some of this.
+  - so on a guitar, fragmented chords + global pitch bend (tremolo)
+  - interfaces between multiple voices, layering, collaboration
+  - relatively simple progressions
+  - seconds, sus2/sus4 unresolving, add9, etc.
+  - octave duplication of notes for size
+  - stereo, chorus, etc., but as bonuses, the core is the score
+  - possibly: out of sync, polyrhythmic, weird drums
+  - stacked saturation and warmth
+
+
+
 ### Creative composition helpers
 
 - riemann
@@ -310,9 +324,26 @@ Most valuable next steps:
 - decide more explicitly when native effects should be preferred over external
   plugins for stability
 
-### Harpsichord
-  
-  We already have a piano and an organ. We can probably add a harpsichord without too much work. As with other instruments, we should see if we can lean into the just intonation and alternate tuning focus of this repo to make a harpsichord that enhances the focus of this project. We can lean into fantasy or unrealistic elements. Like on a harpsichord, a major limitation is that there's not as much room for expression as on a piano, where a piano does an incredibly good job of allowing for expression and nuance. So maybe we can add this, or we can have the ability to change harmonics or character throughout a piece. We can think creatively about what a cool harpsichord-flavored instrument could be like. So, basically, capturing some of the timbre and benefits of a harpsichord without being tied to how a harpsichord physically works, focusing on sound quality, naturalism, organic, warmth, etc., rather than perfect physical modeling, but also drawing inspiration from physical characteristics of a harpsichord. We can lean into some of the airy and crisp qualities of the harpsichord and make it stand on its own.
+### Harpsichord — Implemented
+
+**The `harpsichord` engine is now implemented** with pluck-excitation + modal
+resonator synthesis, four-register blending (front 8', back 8', 4', lute),
+per-note spectral morphing, velocity expression, and custom `partial_ratios`
+for xenharmonic tuning. Seven presets including `septimal` and `glass`.
+Voice-level sympathetic resonance is also available (engine-agnostic).
+
+Follow-up ideas:
+
+- Karplus-Strong / waveguide alternative synthesis path (different timbral
+  character, more natural pluck sustain, but harder to integrate custom
+  partial ratios — would need a hybrid approach)
+- Additive synthesis with pluck envelopes (lighter computation, full spectral
+  control, but less physically grounded than the modal approach)
+- Coupling / sympathetic resonance between registers (currently registers are
+  independent; bridge coupling would let them interact)
+- Extended register palette: 16' sub-octave, nasalized/reed-like fantasy stops
+- Buff stop physical modeling (currently approximated with decay/brightness
+  scaling)
 
 ### DawDreamer
 

@@ -210,6 +210,44 @@ def test_control_automation_target_validation() -> None:
         AutomationTarget(kind="control", name="feedback")
 
 
+def test_synth_automation_params_accepted() -> None:
+    """All supported synth params should be accepted by AutomationTarget."""
+    expected_params = [
+        "attack",
+        "brightness",
+        "brightness_tilt",
+        "click_amount",
+        "cutoff_hz",
+        "decay",
+        "drive_ratio",
+        "feedback",
+        "filter_drive",
+        "filter_env_amount",
+        "filter_env_decay",
+        "hammer_hardness",
+        "hammer_noise",
+        "index_decay",
+        "mod_index",
+        "noise_amount",
+        "osc2_detune_cents",
+        "osc2_level",
+        "overtone_amount",
+        "release",
+        "resonance_q",
+        "soundboard_color",
+        "sustain_level",
+    ]
+    for param_name in expected_params:
+        target = AutomationTarget(kind="synth", name=param_name)
+        assert target.kind == "synth"
+        assert target.name == param_name
+
+
+def test_synth_automation_rejects_unsupported_param() -> None:
+    with pytest.raises(ValueError, match="Unsupported synth automation target"):
+        AutomationTarget(kind="synth", name="waveform")
+
+
 def test_render_overlapping_voices_returns_audio() -> None:
     score = Score(f0=55.0)
     score.add_note("a", start=0.0, duration=1.0, partial=4, amp=0.3)
@@ -2438,6 +2476,60 @@ def test_saturation_thd_reported_via_effect_chain() -> None:
     metrics = effect_analysis[0].metrics
     assert "thd_pct" in metrics
     assert "thd_character" in metrics
+
+
+def test_effect_analysis_includes_signal_thd_metrics() -> None:
+    """Every effect stage should report input/output THD and delta."""
+    t = np.arange(synth.SAMPLE_RATE, dtype=np.float64) / synth.SAMPLE_RATE
+    signal = 0.5 * np.sin(2.0 * np.pi * 220.0 * t)
+
+    _processed, effect_analysis = synth.apply_effect_chain(
+        signal,
+        [EffectSpec("saturation", {"drive": 2.0, "mix": 0.6})],
+        return_analysis=True,
+    )
+
+    metrics = effect_analysis[0].metrics
+    assert "input_thd_pct" in metrics
+    assert "output_thd_pct" in metrics
+    assert "thd_delta_pct" in metrics
+    assert "input_thd_character" in metrics
+    assert "output_thd_character" in metrics
+    # A sine input should have very low input THD.
+    assert float(metrics["input_thd_pct"]) < 2.0
+    # Saturation should raise THD.
+    assert float(metrics["output_thd_pct"]) > float(metrics["input_thd_pct"])
+    assert float(metrics["thd_delta_pct"]) > 0.0
+
+
+def test_aggressive_saturation_triggers_thd_warning() -> None:
+    """Heavy saturation should trigger the effect_introduced_distortion warning."""
+    t = np.arange(synth.SAMPLE_RATE, dtype=np.float64) / synth.SAMPLE_RATE
+    signal = 0.7 * np.sin(2.0 * np.pi * 220.0 * t)
+
+    _processed, effect_analysis = synth.apply_effect_chain(
+        signal,
+        [EffectSpec("saturation", {"drive": 6.0, "mix": 1.0})],
+        return_analysis=True,
+    )
+
+    warning_codes = {w.code for w in effect_analysis[0].warnings}
+    assert "effect_introduced_distortion" in warning_codes
+
+
+def test_gentle_saturation_does_not_trigger_thd_warning() -> None:
+    """Mild saturation should not fire the distortion warning."""
+    t = np.arange(synth.SAMPLE_RATE, dtype=np.float64) / synth.SAMPLE_RATE
+    signal = 0.3 * np.sin(2.0 * np.pi * 220.0 * t)
+
+    _processed, effect_analysis = synth.apply_effect_chain(
+        signal,
+        [EffectSpec("saturation", {"drive": 1.2, "mix": 0.3})],
+        return_analysis=True,
+    )
+
+    warning_codes = {w.code for w in effect_analysis[0].warnings}
+    assert "effect_introduced_distortion" not in warning_codes
 
 
 class TestMasterBusDiagnosticLogging:

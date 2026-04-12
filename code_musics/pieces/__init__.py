@@ -18,17 +18,20 @@ from code_musics.pieces.natural_steps import PIECES as _NATURAL_STEPS_PIECES
 from code_musics.pieces.organ_passacaglia import PIECES as _ORGAN_CHORALE_PIECES
 from code_musics.pieces.registry import merge_piece_maps
 from code_musics.pieces.septimal import PIECES as _SEPTIMAL_PIECES
+from code_musics.pieces.septimal_bloom import PIECES as _SEPTIMAL_BLOOM_PIECES
 from code_musics.pieces.slow_glass import PIECES as _SLOW_GLASS_PIECES
 from code_musics.pieces.spectral_studies import PIECES as _SPECTRAL_STUDY_PIECES
 from code_musics.pieces.studies import PIECES as _STUDIES_PIECES
 from code_musics.pieces.techno_studies import PIECES as _TECHNO_PIECES
 from code_musics.pieces.texture_studies import PIECES as _TEXTURE_STUDY_PIECES
+from code_musics.pieces.trance_studies import PIECES as _TRANCE_PIECES
 from code_musics.pieces.wtc_sketches import PIECES as _WTC_PIECES
 
 PIECES = merge_piece_maps(
     _BWV_846_PIECES,
     _BWV_846_FUGUE_PIECES,
     _SEPTIMAL_PIECES,
+    _SEPTIMAL_BLOOM_PIECES,
     _COUNTERPOINT_PIECES,
     _HARMONIC_STUDY_PIECES,
     _TEXTURE_STUDY_PIECES,
@@ -47,6 +50,7 @@ PIECES = merge_piece_maps(
     _COLUNDI_SEQUENCE_PIECES,
     _STUDIES_PIECES,
     _ORGAN_CHORALE_PIECES,
+    _TRANCE_PIECES,
 )
 
 __all__ = ["PIECES"]

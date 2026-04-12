@@ -247,6 +247,9 @@ Fields:
 - `max_polyphony`
 - `legato`
 - `pan`
+- `sympathetic_amount`
+- `sympathetic_decay`
+- `sympathetic_modes`
 - `automation`
 - `notes`
 
@@ -277,9 +280,59 @@ Practical interpretation:
 - `max_polyphony=1` gives strict mono note allocation for the voice by truncating any currently sounding note when a new note claims the last slot
 - `legato=True` only matters when `max_polyphony=1`: overlapping note transitions skip the new note's attack retrigger, giving a simple mono-legato glide behavior without continuous oscillator state carryover
 - `pan` places the rendered voice in stereo
+- `sympathetic_amount` controls the level of sympathetic resonance added to the voice; `0.0` (default) disables it
+- `sympathetic_decay` sets the decay time in seconds for sympathetic resonator ringing; default `2.0`
+- `sympathetic_modes` sets how many harmonic modes per note are used as resonator frequencies; default `8`
 - `automation` adds explicit score-time parameter lanes beyond humanization
 - in phase 1, `Voice.automation` can target synth params, `pitch_ratio`, and
   control surfaces such as `pan`, `pre_fx_gain_db`, and `mix_db`
+
+### Sympathetic Resonance
+
+`sympathetic_amount`, `sympathetic_decay`, and `sympathetic_modes` control an
+optional resonator bank that adds sympathetic ringing to a voice.
+
+Parameters:
+
+- `sympathetic_amount: float = 0.0`
+  Level of sympathetic resonance mixed into the voice. `0.0` disables the
+  feature entirely.
+- `sympathetic_decay: float = 2.0`
+  Decay time in seconds for each resonator mode.
+- `sympathetic_modes: int = 8`
+  Number of harmonic modes per note used as resonator frequencies.
+
+How it works:
+
+- for each note in the voice, harmonic mode frequencies (`note_freq * k` for
+  `k = 1..sympathetic_modes`) are collected, deduplicated (modes within 1% are
+  merged), and capped at 64 total resonators
+- the voice's mixed signal is analyzed at each mode frequency via windowed
+  correlation to measure excitation energy
+- decaying sinusoids are synthesized at the excited mode frequencies and summed
+- the resonance sum is peak-normalized relative to the input signal and mixed in
+  at `sympathetic_amount`
+
+Pipeline position: sympathetic resonance is applied after note mixing but before
+voice normalization (`normalize_lufs` / `normalize_peak_db`), so the resonance
+tail is gain-staged alongside the dry voice signal.
+
+This feature is engine-agnostic — it works with any synth engine. It is most
+effective with harmonically related notes where the resonator modes reinforce
+each other naturally. Good candidates include harpsichord, piano, and other
+plucked or struck string voices.
+
+Example:
+
+```python
+score.add_voice(
+    "harpsichord",
+    synth_defaults={"engine": "harpsichord", "preset": "baroque"},
+    sympathetic_amount=0.15,
+    sympathetic_decay=2.5,
+    sympathetic_modes=6,
+)
+```
 
 ## `VoiceSend`
 
@@ -608,17 +661,18 @@ The practical render path for one note is:
 10. place the note in time using `timing_humanize`
 11. if `max_polyphony` is set, apply voice-level note allocation; in strict mono this can truncate older notes, and `legato=True` suppresses attack retriggers on overlapped note changes
 12. mix notes into the dry voice stem
-13. if `normalize_lufs` is set, apply a uniform gain trim toward that target integrated loudness; if `normalize_peak_db` is set instead, normalize to that peak level — these are mutually exclusive
-14. apply `pre_fx_gain_db`
-15. apply pan to produce the dry/base voice render
-16. resolve voice effects, including any named voice sidechains for native compressors
-17. apply `mix_db`
-18. derive any post-fader voice sends
-19. sum dry voices and separately sum/process shared send returns
-20. mix dry voices and send returns together
-21. if enabled, auto-stage the premaster mix for the master bus
-22. apply `master_input_gain_db`
-23. apply master effects
+13. if `sympathetic_amount > 0`, apply sympathetic resonance to the mixed voice signal
+14. if `normalize_lufs` is set, apply a uniform gain trim toward that target integrated loudness; if `normalize_peak_db` is set instead, normalize to that peak level — these are mutually exclusive
+15. apply `pre_fx_gain_db`
+16. apply pan to produce the dry/base voice render
+17. resolve voice effects, including any named voice sidechains for native compressors
+18. apply `mix_db`
+19. derive any post-fader voice sends
+20. sum dry voices and separately sum/process shared send returns
+21. mix dry voices and send returns together
+22. if enabled, auto-stage the premaster mix for the master bus
+23. apply `master_input_gain_db`
+24. apply master effects
 
 That ordering matters because it explains why:
 

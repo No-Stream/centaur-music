@@ -7,11 +7,15 @@ import logging
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import spectrogram
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
 
 from code_musics import synth
 from code_musics.pieces.registry import PieceSection
@@ -90,6 +94,8 @@ class AudioAnalysis:
     tilt_error_db_per_octave: float
     amplitude_modulation_depth_db: float
     dominant_amplitude_modulation_hz: float
+    thd_pct: float
+    thd_character: str
     band_energy_db: dict[str, float]
     warnings: list[str]
     artifact_risks: list[ArtifactRiskWarning]
@@ -147,6 +153,8 @@ def analyze_audio(
             crest_factor_db=0.0,
             spectral_centroid_hz=0.0,
             dominant_frequency_hz=0.0,
+            thd_pct=0.0,
+            thd_character="clean",
             low_high_balance_db=0.0,
             high_band_emphasis_db=0.0,
             spectral_tilt_db_per_octave=0.0,
@@ -193,6 +201,9 @@ def analyze_audio(
 
     spectral_centroid_hz = _spectral_centroid(freqs=freqs, magnitude_db=magnitude_db)
     dominant_frequency_hz = float(freqs[np.argmax(magnitude_db)])
+    thd_pct, thd_character = _compute_signal_thd(
+        freqs, magnitude_db, dominant_frequency_hz
+    )
     spectral_tilt = _fit_spectral_tilt(freqs=freqs, magnitude_db=magnitude_db)
     dominant_amplitude_modulation_hz = _dominant_amplitude_modulation_hz(
         mono_signal,
@@ -241,6 +252,8 @@ def analyze_audio(
         crest_factor_db=max(0.0, peak_dbfs - _amplitude_to_db(rms_amplitude)),
         spectral_centroid_hz=spectral_centroid_hz,
         dominant_frequency_hz=dominant_frequency_hz,
+        thd_pct=thd_pct,
+        thd_character=thd_character,
         low_high_balance_db=low_high_balance_db,
         high_band_emphasis_db=high_band_emphasis_db,
         spectral_tilt_db_per_octave=spectral_tilt,
@@ -928,6 +941,68 @@ def _average_spectrum(
     return freqs[valid], magnitude_db[valid]
 
 
+def _compute_signal_thd(
+    freqs: np.ndarray,
+    magnitude_db: np.ndarray,
+    dominant_frequency_hz: float,
+    *,
+    bin_tolerance: int = 2,
+    max_harmonic: int = 10,
+) -> tuple[float, str]:
+    """Measure THD of the rendered signal from its averaged spectrum.
+
+    Finds the fundamental bin nearest to *dominant_frequency_hz* and sums
+    energy at harmonics 2 through *max_harmonic*.  Returns ``(thd_pct, label)``
+    using the same classification scale as :func:`synth._saturation_thd`.
+    """
+    if dominant_frequency_hz <= 20.0 or len(freqs) < 2:
+        return 0.0, "clean"
+
+    bin_spacing_hz = float(freqs[1] - freqs[0])
+    if bin_spacing_hz <= 0:
+        return 0.0, "clean"
+
+    # Convert dB back to linear magnitude for power summation.
+    magnitude_linear = 10.0 ** (magnitude_db / 20.0)
+
+    def _peak_in_window(center_hz: float) -> float:
+        center_idx = int(round((center_hz - float(freqs[0])) / bin_spacing_hz))
+        lo = max(center_idx - bin_tolerance, 0)
+        hi = min(center_idx + bin_tolerance + 1, len(magnitude_linear))
+        if lo >= hi:
+            return 0.0
+        return float(np.max(magnitude_linear[lo:hi]))
+
+    fundamental_amp = _peak_in_window(dominant_frequency_hz)
+    if fundamental_amp <= 0.0:
+        return 0.0, "clean"
+
+    harmonic_power_sum = 0.0
+    nyquist = float(freqs[-1])
+    for h in range(2, max_harmonic + 1):
+        h_freq = h * dominant_frequency_hz
+        if h_freq > nyquist:
+            break
+        harmonic_power_sum += _peak_in_window(h_freq) ** 2
+
+    thd_pct = float(np.sqrt(harmonic_power_sum)) / fundamental_amp * 100.0
+
+    if thd_pct < 0.5:
+        label = "clean"
+    elif thd_pct < 2.0:
+        label = "subtle_warmth"
+    elif thd_pct < 5.0:
+        label = "warmth"
+    elif thd_pct < 15.0:
+        label = "saturation"
+    elif thd_pct < 40.0:
+        label = "distortion"
+    else:
+        label = "fuzz"
+
+    return round(thd_pct, 2), label
+
+
 def _compute_band_energies(
     *,
     freqs: np.ndarray,
@@ -1132,8 +1207,8 @@ def _build_audio_artifact_risks(
                 tilt_error_db_per_octave=round(tilt_error_db_per_octave, 2),
             )
         )
-    modulation_is_tremolo_like = dominant_amplitude_modulation_hz >= 2.0
-    if amplitude_modulation_depth_db >= 18.0 and modulation_is_tremolo_like:
+    modulation_is_tremolo_like = dominant_amplitude_modulation_hz >= 4.0
+    if amplitude_modulation_depth_db >= 24.0 and modulation_is_tremolo_like:
         risks.append(
             _artifact_risk(
                 severity="severe",
@@ -1149,7 +1224,7 @@ def _build_audio_artifact_risks(
                 ),
             )
         )
-    elif amplitude_modulation_depth_db >= 12.0 and modulation_is_tremolo_like:
+    elif amplitude_modulation_depth_db >= 18.0 and modulation_is_tremolo_like:
         risks.append(
             _artifact_risk(
                 severity="warning",
@@ -1309,6 +1384,38 @@ def _build_artifact_risk_report(
                         pre_export_mix_analysis.crest_factor_db,
                         2,
                     ),
+                )
+            )
+
+        thd_delta_pct = (
+            pre_export_mix_analysis.thd_pct - pre_master_mix_analysis.thd_pct
+        )
+        if thd_delta_pct >= 12.0:
+            mix_risks.append(
+                _artifact_risk(
+                    severity="severe",
+                    code="harmonic_distortion",
+                    source="mastering_analysis",
+                    message="master bus processing introduced heavy harmonic distortion",
+                    thd_delta_pct=round(thd_delta_pct, 2),
+                    pre_master_thd_pct=round(pre_master_mix_analysis.thd_pct, 2),
+                    post_master_thd_pct=round(pre_export_mix_analysis.thd_pct, 2),
+                    pre_master_thd_character=pre_master_mix_analysis.thd_character,
+                    post_master_thd_character=pre_export_mix_analysis.thd_character,
+                )
+            )
+        elif thd_delta_pct >= 5.0:
+            mix_risks.append(
+                _artifact_risk(
+                    severity="warning",
+                    code="harmonic_distortion",
+                    source="mastering_analysis",
+                    message="master bus processing added noticeable harmonic distortion",
+                    thd_delta_pct=round(thd_delta_pct, 2),
+                    pre_master_thd_pct=round(pre_master_mix_analysis.thd_pct, 2),
+                    post_master_thd_pct=round(pre_export_mix_analysis.thd_pct, 2),
+                    pre_master_thd_character=pre_master_mix_analysis.thd_character,
+                    post_master_thd_character=pre_export_mix_analysis.thd_character,
                 )
             )
 
@@ -1758,7 +1865,7 @@ def _save_plot(
     *,
     path: Path,
     title: str,
-    render_fn: Callable[[plt.Figure, plt.Axes], None],
+    render_fn: Callable[[Figure, Axes], None],
     figsize: tuple[float, float] = (10, 4),
 ) -> None:
     """Shared scaffolding for all analysis plots: create figure, render, save, close."""
@@ -1783,7 +1890,7 @@ def _save_spectrum_plot(
         sample_rate=sample_rate,
     )
 
-    def _render(figure: plt.Figure, axis: plt.Axes) -> None:
+    def _render(figure: Figure, axis: Axes) -> None:
         del figure
         axis.semilogx(freqs, magnitude_db, linewidth=1.2, label="measured")
         reference_curve = magnitude_db[0] + reference_tilt_db_per_octave * (
@@ -1826,7 +1933,7 @@ def _save_spectrogram_plot(
     )
     spec_db = 20.0 * np.log10(np.maximum(spec, _EPSILON))
 
-    def _render(figure: plt.Figure, axis: plt.Axes) -> None:
+    def _render(figure: Figure, axis: Axes) -> None:
         mesh = axis.pcolormesh(times, freqs, spec_db, shading="auto")
         axis.set_ylim(20.0, min(sample_rate / 2.0, 12_000.0))
         axis.set_xlabel("Time (seconds)")
@@ -1842,7 +1949,7 @@ def _save_band_energy_plot(
     path: Path,
     title: str,
 ) -> None:
-    def _render(figure: plt.Figure, axis: plt.Axes) -> None:
+    def _render(figure: Figure, axis: Axes) -> None:
         del figure
         labels = list(band_energy_db)
         values = [band_energy_db[label] for label in labels]
@@ -1857,7 +1964,7 @@ def _save_score_density_plot(*, score: Score, path: Path) -> None:
     total_duration = score.total_dur
     if total_duration == 0:
 
-        def _render_empty(figure: plt.Figure, axis: plt.Axes) -> None:
+        def _render_empty(figure: Figure, axis: Axes) -> None:
             del figure
             axis.text(0.5, 0.5, "Empty score", ha="center", va="center")
 
@@ -1884,7 +1991,7 @@ def _save_score_density_plot(*, score: Score, path: Path) -> None:
         onset_counts.append(onsets)
         active_counts.append(active)
 
-    def _render(figure: plt.Figure, axis: plt.Axes) -> None:
+    def _render(figure: Figure, axis: Axes) -> None:
         del figure
         axis.plot(window_starts, onset_counts, label="attacks / sec", linewidth=1.5)
         axis.plot(window_starts, active_counts, label="active notes", linewidth=1.5)

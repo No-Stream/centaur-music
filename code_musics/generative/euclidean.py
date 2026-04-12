@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from code_musics.composition import RhythmCell, line, ratio_line
 
 if TYPE_CHECKING:
-    from code_musics.composition import HarmonicContext
+    from code_musics.composition import HarmonicContext, PitchKind
     from code_musics.score import Phrase
 
 
@@ -105,7 +105,7 @@ def euclidean_line(
     *,
     span: float = 0.25,
     rotation: int = 0,
-    pitch_kind: str = "partial",
+    pitch_kind: PitchKind = "partial",
     amp: float | None = None,
     amp_db: float | None = None,
     gate: float = 0.9,
