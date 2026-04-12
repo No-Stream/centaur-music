@@ -27,7 +27,9 @@ from code_musics.engines._dsp_utils import (
     apply_soundboard,
     bandpass_noise,
     build_drift,
+    compute_mode_ratios,
     nyquist_fade,
+    render_damper_thump,
     render_noise_floor,
     rng_for_note,
 )
@@ -189,12 +191,13 @@ def render(
             reg_freq_trajectory = freq_trajectory * reg["pitch_mult"]
 
         # Compute mode ratios
-        mode_ratios, mode_amps = _compute_mode_ratios(
+        mode_ratios, mode_amps = compute_mode_ratios(
             freq=reg_freq,
             n_modes=n_modes,
             inharmonicity=inharmonicity,
             partial_ratios=reg_partial_ratios,
             sample_rate=sample_rate,
+            amp_rolloff_exp=0.8,
         )
 
         if mode_ratios.size == 0:
@@ -255,13 +258,16 @@ def render(
     if release_noise > 0:
         string_rms = float(np.sqrt(np.mean(mixed**2)))
         release_center_hz = min(freq * 4.0, sample_rate * 0.4)
-        release_burst = _render_release_noise(
-            center_hz=release_center_hz,
-            release_noise=release_noise,
+        release_burst = render_damper_thump(
+            freq=freq,
+            damper_noise=release_noise,
             n_samples=n_samples,
             sample_rate=sample_rate,
             rng=rng,
             level_scale=string_rms,
+            burst_duration_s=0.012,
+            center_hz=release_center_hz,
+            width_ratio=1.2,
         )
         mixed += release_burst
 
@@ -270,42 +276,6 @@ def render(
     if peak <= 0.0:
         raise ValueError("harpsichord render produced no audible output")
     return amp * (mixed / peak)
-
-
-def _compute_mode_ratios(
-    *,
-    freq: float,
-    n_modes: int,
-    inharmonicity: float,
-    partial_ratios: list[dict[str, float]] | list[float] | None,
-    sample_rate: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Compute mode frequency ratios and per-mode amplitude weights.
-
-    Returns (ratios, amps) where ratios are multipliers of the base frequency.
-    """
-    nyquist = sample_rate / 2.0
-
-    if partial_ratios is not None:
-        ratios_list: list[float] = []
-        amps_list: list[float] = []
-        for entry in partial_ratios:
-            if isinstance(entry, dict):
-                ratios_list.append(float(entry["ratio"]))
-                amps_list.append(float(entry.get("amp", 1.0)))
-            else:
-                ratios_list.append(float(entry))
-                amps_list.append(1.0)
-        ratios_arr = np.array(ratios_list, dtype=np.float64)
-        amps_arr = np.array(amps_list, dtype=np.float64)
-        below_nyquist = (ratios_arr * freq) < nyquist
-        return ratios_arr[below_nyquist], amps_arr[below_nyquist]
-
-    ks = np.arange(1, n_modes + 1, dtype=np.float64)
-    ratios_arr = ks * np.sqrt(1.0 + inharmonicity * ks**2)
-    amps_arr = 1.0 / ks**0.8
-    below_nyquist = (ratios_arr * freq) < nyquist
-    return ratios_arr[below_nyquist], amps_arr[below_nyquist]
 
 
 def _render_register_string(
@@ -395,6 +365,11 @@ def _render_register_string(
         1.0 - np.arange(morph_samples, dtype=np.float64) / morph_samples
     )
 
+    # Precompute cumulative phase-increment and decay base outside the mode loop.
+    # Each mode multiplies by its own scalar theta, avoiding n_modes cumsum calls.
+    cumsum_scaled_drift = np.cumsum(freq_scale * drift_trajectory)
+    base_decay = np.exp(-n_arr / sample_rate)
+
     for k in range(n_modes):
         if excitation_amps[k] < 1e-10:
             continue
@@ -402,15 +377,14 @@ def _render_register_string(
         # Base angular frequency
         theta = 2.0 * np.pi * mode_freqs_hz[k] / sample_rate
 
-        # Apply freq_trajectory scaling and drift
-        effective_theta = theta * freq_scale * drift_trajectory
-        cumulative_phase = np.cumsum(effective_theta)
+        # Phase from precomputed cumulative drift (scaled by per-mode theta)
+        cumulative_phase = theta * cumsum_scaled_drift
 
         # Random initial phase for more natural onset
         init_phase = rng.uniform(0.0, 2.0 * np.pi)
 
-        # Exponential decay
-        decay = np.exp(-sigma[k] * n_arr / sample_rate)
+        # Exponential decay from precomputed base
+        decay = base_decay ** sigma[k]
 
         # Time-varying amplitude with spectral morph
         # steady amplitude + morph envelope * (boost - 1)
@@ -447,41 +421,6 @@ def _render_register_string(
             signal += pluck_noise * amp * signal_peak * noise_env * noise_burst
 
     return signal
-
-
-def _render_release_noise(
-    *,
-    center_hz: float,
-    release_noise: float,
-    n_samples: int,
-    sample_rate: int,
-    rng: np.random.Generator,
-    level_scale: float = 1.0,
-) -> np.ndarray:
-    """Render a short bright noise burst near the end of the note.
-
-    Similar to the piano's damper thump but brighter and crisper, representing
-    the plectrum's return past the string.
-    """
-    if release_noise <= 0 or (level_scale != 1.0 and level_scale <= 0):
-        return np.zeros(n_samples, dtype=np.float64)
-
-    burst_duration_samples = max(1, int(0.012 * sample_rate))
-    burst_start = max(0, n_samples - burst_duration_samples * 3)
-
-    noise = rng.standard_normal(n_samples)
-    envelope = np.zeros(n_samples, dtype=np.float64)
-    burst_len = min(burst_duration_samples * 3, n_samples - burst_start)
-    t_burst = np.arange(burst_len, dtype=np.float64)
-    envelope[burst_start : burst_start + burst_len] = np.exp(
-        -t_burst / max(1.0, burst_duration_samples)
-    )
-
-    noise = bandpass_noise(
-        noise, sample_rate=sample_rate, center_hz=center_hz, width_ratio=1.2
-    )
-
-    return release_noise * level_scale * envelope * noise
 
 
 def _resolve_registers(params: dict[str, Any]) -> list[dict[str, Any]]:

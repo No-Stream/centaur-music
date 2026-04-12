@@ -12,6 +12,7 @@ from code_musics.engines._dsp_utils import (
     apply_body_saturation,
     apply_soundboard,
     build_drift,
+    compute_mode_ratios,
     render_damper_thump,
     render_noise_floor,
     rng_for_note,
@@ -109,7 +110,7 @@ def render(
     else:
         unison_count = 3
 
-    mode_ratios, _ = _compute_mode_ratios(
+    mode_ratios, _ = compute_mode_ratios(
         freq=freq,
         n_modes=n_modes,
         inharmonicity=inharmonicity,
@@ -190,43 +191,6 @@ def render(
     if peak <= 0.0:
         raise ValueError("piano render produced no audible output")
     return amp * (mixed / peak)
-
-
-def _compute_mode_ratios(
-    *,
-    freq: float,
-    n_modes: int,
-    inharmonicity: float,
-    partial_ratios: list[dict[str, float]] | list[float] | None,
-    sample_rate: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Compute mode frequency ratios (relative to f0) and per-mode amplitude weights.
-
-    Returns ratios as multipliers of freq so the caller can apply detuning and drift
-    before converting to absolute Hz.
-    """
-    nyquist = sample_rate / 2.0
-
-    if partial_ratios is not None:
-        ratios_list: list[float] = []
-        amps_list: list[float] = []
-        for entry in partial_ratios:
-            if isinstance(entry, dict):
-                ratios_list.append(float(entry["ratio"]))
-                amps_list.append(float(entry.get("amp", 1.0)))
-            else:
-                ratios_list.append(float(entry))
-                amps_list.append(1.0)
-        ratios_arr = np.array(ratios_list, dtype=np.float64)
-        amps_arr = np.array(amps_list, dtype=np.float64)
-        below_nyquist = (ratios_arr * freq) < nyquist
-        return ratios_arr[below_nyquist], amps_arr[below_nyquist]
-
-    ks = np.arange(1, n_modes + 1, dtype=np.float64)
-    ratios_arr = ks * np.sqrt(1.0 + inharmonicity * ks**2)
-    amps_arr = 1.0 / ks
-    below_nyquist = (ratios_arr * freq) < nyquist
-    return ratios_arr[below_nyquist], amps_arr[below_nyquist]
 
 
 def _render_modal_string(

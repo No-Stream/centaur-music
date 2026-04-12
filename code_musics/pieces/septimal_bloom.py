@@ -36,7 +36,7 @@ F0_HZ: float = 110.0
 A_START: float = 0.0
 B_START: float = 60.0
 A2_START: float = 110.0
-PIECE_END: float = 160.0
+PIECE_END: float = 175.0
 
 # -- Surge XT patches -------------------------------------------------------
 
@@ -105,7 +105,7 @@ def _hall_reverb() -> EffectSpec:
                         ),
                         AutomationSegment(
                             start=130.0,
-                            end=160.0,
+                            end=175.0,
                             shape="linear",
                             start_value=0.28,
                             end_value=0.35,
@@ -144,7 +144,7 @@ def _hall_reverb() -> EffectSpec:
                     ),
                     AutomationSegment(
                         start=130.0,
-                        end=160.0,
+                        end=175.0,
                         shape="linear",
                         start_value=0.28,
                         end_value=0.35,
@@ -179,7 +179,17 @@ def build_score() -> Score:
         f0=F0_HZ,
         timing_humanize=TimingHumanizeSpec(preset="chamber"),
         send_buses=[
-            SendBusSpec(name="hall", effects=[_hall_reverb(), _hall_delay()]),
+            SendBusSpec(
+                name="hall",
+                effects=[
+                    _hall_reverb(),
+                    _hall_delay(),
+                    EffectSpec(
+                        "saturation",
+                        {"preset": "tube_warm", "mix": 0.18, "drive": 1.08},
+                    ),
+                ],
+            ),
         ],
         master_effects=[_master_tape()],
     )
@@ -326,17 +336,23 @@ def _write_section_a(score: Score) -> None:
     # iv7
     _pad_chord(score, 8.0, [4 / 3, 7 / 3, 8 / 3], 8.0, amp_db=-9)
 
-    # vi
-    _pad_chord(score, 16.0, [5 / 3, 2, 7 / 2], 8.0, amp_db=-9)
+    # vi — add 5 (major 3rd two octaves up, 550 Hz) for first hint of shimmer
+    _pad_chord(score, 16.0, [5 / 3, 2, 7 / 2, 5], 8.0, amp_db=-9)
 
-    # I7 — full septimal close
-    _pad_chord(score, 24.0, [1, 5 / 4, 3 / 2, 7 / 4], 10.0, amp_db=-9)
+    # I7 — add sub-octave for weight
+    _pad_chord(score, 24.0, [1 / 2, 1, 5 / 4, 3 / 2, 7 / 4], 10.0, amp_db=-9)
 
-    # -- Pass 2: fuller voicings (34–60s) ------------------------------------
-    _pad_chord(score, 34.0, [1, 5 / 4, 5 / 2, 3], 8.0, amp_db=-8, vel=0.75)
-    _pad_chord(score, 42.0, [4 / 3, 7 / 3, 8 / 3, 4], 8.0, amp_db=-8, vel=0.75)
-    _pad_chord(score, 50.0, [5 / 3, 2, 7 / 2, 3], 8.0, amp_db=-8, vel=0.75)
-    _pad_chord(score, 58.0, [1, 5 / 4, 3 / 2, 7 / 4], 8.0, amp_db=-8, vel=0.75)
+    # -- Pass 2: fuller voicings with extended range (34–60s) ----------------
+    # I — add 4 (A4) and 6 (E5, 660 Hz third harmonic) for sparkle
+    _pad_chord(score, 34.0, [1, 5 / 4, 5 / 2, 3, 4, 6], 8.0, amp_db=-8, vel=0.75)
+    # iv7 — add 14 / 3 (7th harmonic of 4/3 root, ~513 Hz)
+    _pad_chord(score, 42.0, [4 / 3, 7 / 3, 8 / 3, 4, 14 / 3], 8.0, amp_db=-8, vel=0.75)
+    # vi — add 5 again + 10 / 3 is now 3 to avoid the clash, but add higher 5
+    _pad_chord(score, 50.0, [5 / 3, 2, 7 / 2, 3, 5], 8.0, amp_db=-8, vel=0.75)
+    # I7 — sub + shimmer: 1/2 weight, 7/2 (sept 7th high)
+    _pad_chord(
+        score, 58.0, [1 / 2, 1, 5 / 4, 3 / 2, 7 / 4, 7 / 2], 8.0, amp_db=-8, vel=0.75
+    )
 
     # -- Melody (enters ~10s) ------------------------------------------------
     # Palette per chord:
@@ -393,8 +409,8 @@ def _write_section_a(score: Score) -> None:
 def _write_section_b(score: Score) -> None:
     # -- Chords: utonal + tonic drift (60–110s) ------------------------------
 
-    # I utonal — hollow minor
-    _pad_chord(score, 60.0, [1, 8 / 5, 4 / 3], 12.0, amp_db=-9, vel=0.7)
+    # I utonal — hollow minor + high octave doubling for width
+    _pad_chord(score, 60.0, [1, 8 / 5, 4 / 3, 2, 16 / 5], 12.0, amp_db=-9, vel=0.7)
 
     # VII — major chord on the harmonic 7th (tonic = 7/4)
     # Fullest chord in the piece: sub (7/8), root, third, fifth, shimmer (7)
@@ -402,11 +418,13 @@ def _write_section_b(score: Score) -> None:
         score, 72.0, [7 / 8, 7 / 4, 35 / 16, 21 / 8, 7], 12.0, amp_db=-8, vel=0.75
     )
 
-    # bVI — gentle rest
-    _pad_chord(score, 84.0, [8 / 5, 2, 12 / 5], 12.0, amp_db=-9, vel=0.7)
+    # bVI — gentle rest + octave doublings above
+    _pad_chord(score, 84.0, [8 / 5, 2, 12 / 5, 16 / 5, 4], 12.0, amp_db=-9, vel=0.7)
 
-    # V7 — septimal dominant pulling home
-    _pad_chord(score, 96.0, [3 / 2, 15 / 8, 9 / 4, 21 / 8], 14.0, amp_db=-8, vel=0.75)
+    # V7 — septimal dominant, add sub (3/4) + high 3 for pull
+    _pad_chord(
+        score, 96.0, [3 / 4, 3 / 2, 15 / 8, 9 / 4, 21 / 8, 3], 14.0, amp_db=-8, vel=0.75
+    )
 
     # -- Melody: exposed, wandering, more breath between phrases ---------------
     # Palettes:
@@ -455,13 +473,17 @@ def _write_section_b(score: Score) -> None:
 
 
 def _write_section_a_prime(score: Score) -> None:
-    # -- Chords: same as A pass 2 but gradually thinning ---------------------
-    _pad_chord(score, 110.0, [1, 5 / 4, 5 / 2, 3], 8.0, amp_db=-8, vel=0.75)
-    _pad_chord(score, 118.0, [4 / 3, 7 / 3, 8 / 3, 4], 8.0, amp_db=-9, vel=0.7)
-    _pad_chord(score, 126.0, [5 / 3, 2, 7 / 2, 3], 8.0, amp_db=-9, vel=0.7)
-    _pad_chord(score, 134.0, [1, 5 / 4, 3 / 2, 7 / 4], 8.0, amp_db=-10, vel=0.65)
-    # Dissolve — bare root + fifth
-    _pad_chord(score, 142.0, [1, 3], 12.0, amp_db=-12, vel=0.55)
+    # -- Chords: A' starts full (matching A pass 2 extended), then thins ------
+    # I — full, with shimmer from A pass 2
+    _pad_chord(score, 110.0, [1, 5 / 4, 5 / 2, 3, 4, 6], 8.0, amp_db=-8, vel=0.75)
+    # iv7 — shimmer but slightly less
+    _pad_chord(score, 118.0, [4 / 3, 7 / 3, 8 / 3, 4, 14 / 3], 8.0, amp_db=-9, vel=0.7)
+    # vi — thinning: drop the highest, keep 5
+    _pad_chord(score, 126.0, [5 / 3, 2, 7 / 2, 3, 5], 8.0, amp_db=-9, vel=0.7)
+    # I7 — no shimmer, just the core + sub for weight
+    _pad_chord(score, 134.0, [1 / 2, 1, 5 / 4, 3 / 2, 7 / 4], 8.0, amp_db=-10, vel=0.65)
+    # Dissolve — bare root + fifth, extended tail
+    _pad_chord(score, 142.0, [1, 3], 20.0, amp_db=-12, vel=0.55)
 
     # -- Melody: echoes A but more fragmented, landing on 7/6 -----------------
 
@@ -492,11 +514,13 @@ def _write_section_a_prime(score: Score) -> None:
     )  # slow glide to 7/6 — askew
     # silence (137.5-139)
 
-    # dissolve — a ghost of the root, barely there
-    _m(score, 139.5, 3 / 2, 0.6, amp_db=-12, vel=0.55)  # whisper: E3
+    # dissolve — ghosts of the melody, barely there
+    _m(score, 139.5, 3 / 2, 0.8, amp_db=-12, vel=0.55)  # whisper: E3
     _m(
-        score, 140.5, 1, 7.0, amp_db=-14, vel=0.45, glide_from=3 / 2
+        score, 140.8, 1, 8.0, amp_db=-14, vel=0.45, glide_from=3 / 2
     )  # glide down to root, fading
+    # final echo — the sept 7th one last time, almost subliminal
+    _m(score, 150.0, 7 / 4, 6.0, amp_db=-18, vel=0.35)  # ghost of the harmonic 7th
 
 
 # ---------------------------------------------------------------------------

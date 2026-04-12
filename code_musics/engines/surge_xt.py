@@ -63,6 +63,8 @@ def _resolve_glide_bend(target_midi_note: int, freq_hz: float) -> int:
     value would tune that note to an arbitrary frequency.  Returns a 14-bit
     signed bend value in [-8191, 8191].
     """
+    if freq_hz <= 0:
+        raise ValueError(f"freq_hz must be positive, got {freq_hz}")
     target_semitones = 69.0 + 12.0 * math.log2(freq_hz / 440.0)
     residual = target_semitones - target_midi_note
     normalized = residual / BEND_RANGE_SEMITONES

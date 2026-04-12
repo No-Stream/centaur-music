@@ -2730,3 +2730,98 @@ class TestNativeLimiter:
         assert len(limiter_messages) >= 1
         msg = limiter_messages[0]
         assert "gain reduction" in msg.lower() or "gr" in msg.lower()
+
+
+class TestPitchMotionGlideTranslation:
+    """Verify PitchMotionSpec translates to correct glide params for instrument engines."""
+
+    @staticmethod
+    def _fake_render_voice(
+        captured: list[list[dict]],
+    ):  # noqa: ANN205
+        """Return a callable that captures note dicts passed to surge_xt.render_voice."""
+
+        def fake(
+            *, notes: list[dict], total_duration: float, sample_rate: int, params: dict
+        ) -> np.ndarray:
+            captured.append(notes)
+            n_samples = int(total_duration * sample_rate)
+            return np.zeros((2, n_samples), dtype=np.float64)
+
+        return fake
+
+    def test_linear_bend_produces_glide_params(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """linear_bend should swap freq/glide_from so the engine glides TO the target."""
+        import code_musics.engines.surge_xt as surge_xt_mod
+
+        captured: list[list[dict]] = []
+        monkeypatch.setattr(
+            surge_xt_mod, "render_voice", self._fake_render_voice(captured)
+        )
+
+        f0 = 100.0
+        score = Score(f0=f0, auto_master_gain_stage=False)
+        score.add_voice(
+            "lead",
+            synth_defaults={"engine": "surge_xt"},
+            normalize_lufs=None,
+        )
+        score.add_note(
+            "lead",
+            start=0.0,
+            duration=1.0,
+            partial=4,
+            pitch_motion=PitchMotionSpec.linear_bend(target_partial=6.0),
+        )
+        score.render()
+
+        assert len(captured) == 1
+        note_dicts = captured[0]
+        assert len(note_dicts) == 1
+        nd = note_dicts[0]
+
+        note_freq = f0 * 4  # 400 Hz
+        target_freq = f0 * 6  # 600 Hz
+        assert nd["freq"] == pytest.approx(target_freq)
+        assert nd["glide_from"] == pytest.approx(note_freq)
+        assert nd["glide_time"] == pytest.approx(1.0)
+
+    def test_ratio_glide_produces_glide_params(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ratio_glide should compute start/end freqs from ratios."""
+        import code_musics.engines.surge_xt as surge_xt_mod
+
+        captured: list[list[dict]] = []
+        monkeypatch.setattr(
+            surge_xt_mod, "render_voice", self._fake_render_voice(captured)
+        )
+
+        f0 = 100.0
+        score = Score(f0=f0, auto_master_gain_stage=False)
+        score.add_voice(
+            "lead",
+            synth_defaults={"engine": "surge_xt"},
+            normalize_lufs=None,
+        )
+        score.add_note(
+            "lead",
+            start=0.0,
+            duration=2.0,
+            partial=4,
+            pitch_motion=PitchMotionSpec.ratio_glide(start_ratio=0.5, end_ratio=1.5),
+        )
+        score.render()
+
+        assert len(captured) == 1
+        note_dicts = captured[0]
+        assert len(note_dicts) == 1
+        nd = note_dicts[0]
+
+        note_freq = f0 * 4  # 400 Hz
+        assert nd["freq"] == pytest.approx(note_freq * 1.5)
+        assert nd["glide_from"] == pytest.approx(note_freq * 0.5)
+        # glide_duration not set, so defaults to note.duration
+        assert nd["glide_time"] == pytest.approx(2.0)

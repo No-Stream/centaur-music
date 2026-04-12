@@ -1192,7 +1192,7 @@ Parameters:
 | `n_modes` | `int` | `40` | Number of string modes in the resonator bank |
 | `inharmonicity` | `float` | `0.00005` | Stretch coefficient B in f_n = n *freq* sqrt(1 + B * n^2). Real harpsichords have very low inharmonicity. Set to `0.0` for pure harmonic modes (JI use). |
 | `decay_base` | `float` | `1.5` | Base decay time constant in seconds |
-| `decay_tilt` | `float` | `3.0` | How much faster upper modes decay relative to lower ones |
+| `decay_tilt` | `float` | `1.2` | How much faster upper modes decay relative to lower ones |
 | `attack_brightness` | `float` | `1.5` | Spectral morph onset boost; values above 1.0 make the attack brighter than the sustain |
 | `morph_time` | `float` | `0.3` | Seconds spent morphing from bright attack spectrum to steady sustain spectrum |
 | `drift` | `float` | `0.06` | Slow sinusoidal pitch drift amount (0-1) |

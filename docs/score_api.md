@@ -317,10 +317,15 @@ Pipeline position: sympathetic resonance is applied after note mixing but before
 voice normalization (`normalize_lufs` / `normalize_peak_db`), so the resonance
 tail is gain-staged alongside the dry voice signal.
 
-This feature is engine-agnostic — it works with any synth engine. It is most
-effective with harmonically related notes where the resonator modes reinforce
-each other naturally. Good candidates include harpsichord, piano, and other
-plucked or struck string voices.
+Sympathetic resonance is only applied to native per-note engines (additive, fm,
+harpsichord, piano, etc.). Instrument-engine voices (e.g., `surge_xt`) return
+pre-mixed audio from a plugin, so the resonator bank cannot operate on individual
+notes. Setting `sympathetic_amount > 0` on an instrument-engine voice emits a
+warning and is ignored.
+
+The feature is most effective with harmonically related notes where the resonator
+modes reinforce each other naturally. Good candidates include harpsichord, piano,
+and other plucked or struck string voices.
 
 Example:
 

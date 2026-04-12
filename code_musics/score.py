@@ -922,28 +922,63 @@ class Score:
 
         n_samples = len(voice_mix)
         sr = self.sample_rate
+        voice_mix_f64 = (
+            voice_mix.astype(np.float64) if voice_mix.dtype != np.float64 else voice_mix
+        )
         t_all = np.arange(n_samples, dtype=np.float64) / sr
-        resonance_sum = np.zeros(n_samples, dtype=np.float64)
+        decay_tau = max(voice.sympathetic_decay, 0.01)
 
+        # Phase 1: measure excitation per mode (loop over segments, not full arrays)
+        excited: list[tuple[float, int, float]] = []
         for mode_freq, note_start, note_dur in deduped:
             start_sample = max(0, int(note_start * sr))
             end_sample = min(n_samples, int((note_start + note_dur) * sr))
             if end_sample <= start_sample:
                 continue
-            segment = voice_mix[start_sample:end_sample].astype(np.float64)
-            seg_t = t_all[start_sample:end_sample]
-            ref_sin = np.sin(2.0 * np.pi * mode_freq * seg_t)
-            excitation = float(np.abs(np.mean(segment * ref_sin))) * 2.0
+            segment = voice_mix_f64[start_sample:end_sample]
+            ref_sin = np.sin(2.0 * np.pi * mode_freq * t_all[start_sample:end_sample])
+            excitation = abs(np.dot(segment, ref_sin) / len(segment)) * 2.0
 
             if excitation < 1e-12:
                 continue
+            excited.append((mode_freq, start_sample, excitation))
 
-            decay_tau = max(voice.sympathetic_decay, 0.01)
-            ring_t = t_all[start_sample:]
-            ring_offset = ring_t - ring_t[0]
-            ring_sin = np.sin(2.0 * np.pi * mode_freq * ring_t)
-            ring_env = np.exp(-ring_offset / decay_tau)
-            resonance_sum[start_sample:] += excitation * ring_sin * ring_env
+        if not excited:
+            return voice_mix
+
+        # Phase 2: batch resonator synthesis
+        freqs_arr = np.array([e[0] for e in excited], dtype=np.float64)
+        starts_arr = np.array([e[1] for e in excited], dtype=np.float64)
+        excitations = np.array([e[2] for e in excited], dtype=np.float64)
+
+        r_count = len(freqs_arr)
+        chunk_threshold = 50_000_000
+
+        if r_count * n_samples <= chunk_threshold:
+            t_2d = t_all[np.newaxis, :]
+            phase = 2.0 * np.pi * freqs_arr[:, np.newaxis] * t_2d
+            start_times = starts_arr[:, np.newaxis] / sr
+            offsets = t_2d - start_times
+            ring_env = np.where(offsets >= 0, np.exp(-offsets / decay_tau), 0.0)
+            resonance_sum = np.sum(
+                excitations[:, np.newaxis] * np.sin(phase) * ring_env, axis=0
+            )
+        else:
+            resonance_sum = np.zeros(n_samples, dtype=np.float64)
+            chunk_size = max(1, chunk_threshold // r_count)
+            for chunk_start in range(0, n_samples, chunk_size):
+                chunk_end = min(chunk_start + chunk_size, n_samples)
+                t_chunk = t_all[np.newaxis, chunk_start:chunk_end]
+                phase_chunk = 2.0 * np.pi * freqs_arr[:, np.newaxis] * t_chunk
+                start_times = starts_arr[:, np.newaxis] / sr
+                offsets_chunk = t_chunk - start_times
+                ring_env_chunk = np.where(
+                    offsets_chunk >= 0, np.exp(-offsets_chunk / decay_tau), 0.0
+                )
+                resonance_sum[chunk_start:chunk_end] = np.sum(
+                    excitations[:, np.newaxis] * np.sin(phase_chunk) * ring_env_chunk,
+                    axis=0,
+                )
 
         sum_peak = float(np.max(np.abs(resonance_sum)))
         input_peak = float(np.max(np.abs(voice_mix)))
@@ -966,6 +1001,13 @@ class Score:
         this builds a list of note dicts and delegates to the engine's
         ``render_voice`` entry point which drives the plugin with MIDI.
         """
+        if voice.sympathetic_amount > 0:
+            logger.warning(
+                "sympathetic_amount=%.2f on instrument-engine voice %r ignored "
+                "(sympathetic resonance only applies to native per-note engines)",
+                voice.sympathetic_amount,
+                voice_name,
+            )
         from code_musics.engines import surge_xt  # noqa: PLC0415
 
         note_dicts: list[dict[str, Any]] = []

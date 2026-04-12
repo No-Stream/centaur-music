@@ -18,6 +18,7 @@ import soundfile as sf
 from scipy.signal import butter, resample_poly, sosfilt, tf2sos
 
 from code_musics.automation import apply_control_automation
+from code_musics.engines._dsp_utils import classify_thd, compute_signal_thd
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -299,71 +300,6 @@ def _spectral_centroid_hz(signal: np.ndarray, *, sample_rate: int) -> float:
     if magnitude_sum <= 0:
         return 0.0
     return float(np.sum(freqs * magnitudes) / magnitude_sum)
-
-
-def _compute_signal_thd_from_spectrum(
-    freqs: np.ndarray,
-    magnitude_db: np.ndarray,
-    dominant_frequency_hz: float,
-    *,
-    bin_tolerance: int = 2,
-    max_harmonic: int = 10,
-) -> tuple[float, str]:
-    """Measure THD of actual program content from its averaged spectrum.
-
-    Works directly on ``(freqs, magnitude_db)`` arrays as returned by
-    :func:`_average_spectrum_db`.  Finds the fundamental bin nearest to
-    *dominant_frequency_hz* and sums energy at harmonics 2 through
-    *max_harmonic*.
-
-    Returns ``(thd_pct, label)`` using the same classification scale as
-    :func:`_saturation_thd`.
-    """
-    if dominant_frequency_hz <= 20.0 or len(freqs) < 2:
-        return 0.0, "clean"
-
-    bin_spacing_hz = float(freqs[1] - freqs[0])
-    if bin_spacing_hz <= 0:
-        return 0.0, "clean"
-
-    magnitude_linear = 10.0 ** (magnitude_db / 20.0)
-
-    def _peak_in_window(center_hz: float) -> float:
-        center_idx = int(round((center_hz - float(freqs[0])) / bin_spacing_hz))
-        lo = max(center_idx - bin_tolerance, 0)
-        hi = min(center_idx + bin_tolerance + 1, len(magnitude_linear))
-        if lo >= hi:
-            return 0.0
-        return float(np.max(magnitude_linear[lo:hi]))
-
-    fundamental_amp = _peak_in_window(dominant_frequency_hz)
-    if fundamental_amp <= 0.0:
-        return 0.0, "clean"
-
-    harmonic_power_sum = 0.0
-    nyquist = float(freqs[-1])
-    for h in range(2, max_harmonic + 1):
-        h_freq = h * dominant_frequency_hz
-        if h_freq > nyquist:
-            break
-        harmonic_power_sum += _peak_in_window(h_freq) ** 2
-
-    thd_pct = float(np.sqrt(harmonic_power_sum)) / fundamental_amp * 100.0
-
-    if thd_pct < 0.5:
-        label = "clean"
-    elif thd_pct < 2.0:
-        label = "subtle_warmth"
-    elif thd_pct < 5.0:
-        label = "warmth"
-    elif thd_pct < 15.0:
-        label = "saturation"
-    elif thd_pct < 40.0:
-        label = "distortion"
-    else:
-        label = "fuzz"
-
-    return round(thd_pct, 2), label
 
 
 def _seconds_for_mask(mask: np.ndarray, *, sample_rate: int) -> float:
@@ -1458,10 +1394,10 @@ def _build_effect_analysis_entry(
         if input_freqs.size > 0
         else 0.0
     )
-    input_thd_pct, input_thd_character = _compute_signal_thd_from_spectrum(
+    input_thd_pct, input_thd_character = compute_signal_thd(
         input_freqs, input_magnitude_db, input_dominant_hz
     )
-    output_thd_pct, output_thd_character = _compute_signal_thd_from_spectrum(
+    output_thd_pct, output_thd_character = compute_signal_thd(
         output_freqs, output_magnitude_db, input_dominant_hz
     )
     thd_delta_pct = output_thd_pct - input_thd_pct
@@ -3327,19 +3263,7 @@ def _saturation_thd(
         if int(round(h * f0 * bin_per_hz)) < len(spectrum)
     )
     thd_pct = float(np.sqrt(harmonics_sq_sum)) / (h1 + 1e-10) * 100.0
-
-    if thd_pct < 0.5:
-        label = "clean"
-    elif thd_pct < 2.0:
-        label = "subtle_warmth"
-    elif thd_pct < 5.0:
-        label = "warmth"
-    elif thd_pct < 15.0:
-        label = "saturation"
-    elif thd_pct < 40.0:
-        label = "distortion"
-    else:
-        label = "fuzz"
+    label = classify_thd(thd_pct)
 
     return round(thd_pct, 2), label
 

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
 from code_musics import synth
+from code_musics.engines._dsp_utils import compute_signal_thd
 from code_musics.pieces.registry import PieceSection
 from code_musics.score import Score
 
@@ -201,7 +202,7 @@ def analyze_audio(
 
     spectral_centroid_hz = _spectral_centroid(freqs=freqs, magnitude_db=magnitude_db)
     dominant_frequency_hz = float(freqs[np.argmax(magnitude_db)])
-    thd_pct, thd_character = _compute_signal_thd(
+    thd_pct, thd_character = compute_signal_thd(
         freqs, magnitude_db, dominant_frequency_hz
     )
     spectral_tilt = _fit_spectral_tilt(freqs=freqs, magnitude_db=magnitude_db)
@@ -939,68 +940,6 @@ def _average_spectrum(
     )
     valid = freqs > 0
     return freqs[valid], magnitude_db[valid]
-
-
-def _compute_signal_thd(
-    freqs: np.ndarray,
-    magnitude_db: np.ndarray,
-    dominant_frequency_hz: float,
-    *,
-    bin_tolerance: int = 2,
-    max_harmonic: int = 10,
-) -> tuple[float, str]:
-    """Measure THD of the rendered signal from its averaged spectrum.
-
-    Finds the fundamental bin nearest to *dominant_frequency_hz* and sums
-    energy at harmonics 2 through *max_harmonic*.  Returns ``(thd_pct, label)``
-    using the same classification scale as :func:`synth._saturation_thd`.
-    """
-    if dominant_frequency_hz <= 20.0 or len(freqs) < 2:
-        return 0.0, "clean"
-
-    bin_spacing_hz = float(freqs[1] - freqs[0])
-    if bin_spacing_hz <= 0:
-        return 0.0, "clean"
-
-    # Convert dB back to linear magnitude for power summation.
-    magnitude_linear = 10.0 ** (magnitude_db / 20.0)
-
-    def _peak_in_window(center_hz: float) -> float:
-        center_idx = int(round((center_hz - float(freqs[0])) / bin_spacing_hz))
-        lo = max(center_idx - bin_tolerance, 0)
-        hi = min(center_idx + bin_tolerance + 1, len(magnitude_linear))
-        if lo >= hi:
-            return 0.0
-        return float(np.max(magnitude_linear[lo:hi]))
-
-    fundamental_amp = _peak_in_window(dominant_frequency_hz)
-    if fundamental_amp <= 0.0:
-        return 0.0, "clean"
-
-    harmonic_power_sum = 0.0
-    nyquist = float(freqs[-1])
-    for h in range(2, max_harmonic + 1):
-        h_freq = h * dominant_frequency_hz
-        if h_freq > nyquist:
-            break
-        harmonic_power_sum += _peak_in_window(h_freq) ** 2
-
-    thd_pct = float(np.sqrt(harmonic_power_sum)) / fundamental_amp * 100.0
-
-    if thd_pct < 0.5:
-        label = "clean"
-    elif thd_pct < 2.0:
-        label = "subtle_warmth"
-    elif thd_pct < 5.0:
-        label = "warmth"
-    elif thd_pct < 15.0:
-        label = "saturation"
-    elif thd_pct < 40.0:
-        label = "distortion"
-    else:
-        label = "fuzz"
-
-    return round(thd_pct, 2), label
 
 
 def _compute_band_energies(

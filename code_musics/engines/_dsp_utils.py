@@ -35,6 +35,113 @@ SOUNDBOARD_MODES = (
 )
 
 
+def classify_thd(thd_pct: float) -> str:
+    """Classify a THD percentage into a human-readable distortion label.
+
+    Returns one of: ``"clean"``, ``"subtle_warmth"``, ``"warmth"``,
+    ``"saturation"``, ``"distortion"``, ``"fuzz"``.
+    """
+    if thd_pct < 0.5:
+        return "clean"
+    elif thd_pct < 2.0:
+        return "subtle_warmth"
+    elif thd_pct < 5.0:
+        return "warmth"
+    elif thd_pct < 15.0:
+        return "saturation"
+    elif thd_pct < 40.0:
+        return "distortion"
+    return "fuzz"
+
+
+def compute_signal_thd(
+    freqs: np.ndarray,
+    magnitude_db: np.ndarray,
+    dominant_frequency_hz: float,
+    *,
+    bin_tolerance: int = 2,
+    max_harmonic: int = 10,
+) -> tuple[float, str]:
+    """Measure THD of a signal from its averaged spectrum.
+
+    Finds the fundamental bin nearest to *dominant_frequency_hz* and sums
+    energy at harmonics 2 through *max_harmonic*.  Returns ``(thd_pct, label)``
+    where *label* comes from :func:`classify_thd`.
+    """
+    if dominant_frequency_hz <= 20.0 or len(freqs) < 2:
+        return 0.0, "clean"
+
+    bin_spacing_hz = float(freqs[1] - freqs[0])
+    if bin_spacing_hz <= 0:
+        return 0.0, "clean"
+
+    # Convert dB back to linear magnitude for power summation.
+    magnitude_linear = 10.0 ** (magnitude_db / 20.0)
+
+    def _peak_in_window(center_hz: float) -> float:
+        center_idx = int(round((center_hz - float(freqs[0])) / bin_spacing_hz))
+        lo = max(center_idx - bin_tolerance, 0)
+        hi = min(center_idx + bin_tolerance + 1, len(magnitude_linear))
+        if lo >= hi:
+            return 0.0
+        return float(np.max(magnitude_linear[lo:hi]))
+
+    fundamental_amp = _peak_in_window(dominant_frequency_hz)
+    if fundamental_amp <= 0.0:
+        return 0.0, "clean"
+
+    harmonic_power_sum = 0.0
+    nyquist = float(freqs[-1])
+    for h in range(2, max_harmonic + 1):
+        h_freq = h * dominant_frequency_hz
+        if h_freq > nyquist:
+            break
+        harmonic_power_sum += _peak_in_window(h_freq) ** 2
+
+    thd_pct = float(np.sqrt(harmonic_power_sum)) / fundamental_amp * 100.0
+    label = classify_thd(thd_pct)
+    return round(thd_pct, 2), label
+
+
+def compute_mode_ratios(
+    *,
+    freq: float,
+    n_modes: int,
+    inharmonicity: float,
+    partial_ratios: list[dict[str, float]] | list[float] | None,
+    sample_rate: int,
+    amp_rolloff_exp: float = 1.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute mode frequency ratios (relative to f0) and per-mode amplitude weights.
+
+    Returns ``(ratios, amps)`` where ratios are multipliers of the base frequency.
+    ``amp_rolloff_exp`` controls the default amplitude rolloff: ``1/k^exp``.
+    Piano uses ``1.0`` (default), harpsichord uses ``0.8``.
+    """
+    nyquist = sample_rate / 2.0
+
+    if partial_ratios is not None:
+        ratios_list: list[float] = []
+        amps_list: list[float] = []
+        for entry in partial_ratios:
+            if isinstance(entry, dict):
+                ratios_list.append(float(entry["ratio"]))
+                amps_list.append(float(entry.get("amp", 1.0)))
+            else:
+                ratios_list.append(float(entry))
+                amps_list.append(1.0)
+        ratios_arr = np.array(ratios_list, dtype=np.float64)
+        amps_arr = np.array(amps_list, dtype=np.float64)
+        below_nyquist = (ratios_arr * freq) < nyquist
+        return ratios_arr[below_nyquist], amps_arr[below_nyquist]
+
+    ks = np.arange(1, n_modes + 1, dtype=np.float64)
+    ratios_arr = ks * np.sqrt(1.0 + inharmonicity * ks**2)
+    amps_arr = 1.0 / ks**amp_rolloff_exp
+    below_nyquist = (ratios_arr * freq) < nyquist
+    return ratios_arr[below_nyquist], amps_arr[below_nyquist]
+
+
 def nyquist_fade(freq_profile: np.ndarray, nyquist_hz: float) -> np.ndarray:
     """Smooth fade starting at 85% of Nyquist to avoid brittle spectral edges."""
     fade_start_hz = nyquist_hz * NYQUIST_FADE_START
@@ -126,16 +233,7 @@ def apply_body_saturation(
         diff_rms = float(np.sqrt(np.mean((result / peak - normalized) ** 2)))
         sig_rms = float(np.sqrt(np.mean(normalized**2)))
         thd_pct = diff_rms / max(sig_rms, 1e-10) * 100.0
-        if thd_pct < 0.5:
-            label = "clean"
-        elif thd_pct < 2.0:
-            label = "subtle_warmth"
-        elif thd_pct < 5.0:
-            label = "warmth"
-        elif thd_pct < 15.0:
-            label = "saturation"
-        else:
-            label = "distortion"
+        label = classify_thd(thd_pct)
         logger.debug(f"body_saturation {amount=:.3f}: THD {thd_pct:.2f}% ({label})")
 
     return result
@@ -228,27 +326,41 @@ def render_damper_thump(
     sample_rate: int,
     rng: np.random.Generator,
     level_scale: float = 1.0,
+    burst_duration_s: float = 0.02,
+    center_hz: float | None = None,
+    width_ratio: float = 0.75,
 ) -> np.ndarray:
     """Render a short noise burst near the end of the note.
 
     ``level_scale`` allows the caller to pass an external amplitude reference
     (e.g. ``string_rms``) that scales the output level.
+
+    ``burst_duration_s`` controls the decay time of the noise burst (piano
+    damper thump uses 0.02, harpsichord release noise uses 0.012).
+
+    ``center_hz`` overrides the bandpass center frequency (defaults to *freq*).
+
+    ``width_ratio`` controls the bandpass width (piano uses 0.75, harpsichord
+    uses 1.2 for a brighter burst).
     """
     if damper_noise <= 0 or (level_scale != 1.0 and level_scale <= 0):
         return np.zeros(n_samples, dtype=np.float64)
 
-    thump_duration_samples = max(1, int(0.02 * sample_rate))
-    thump_start = max(0, n_samples - thump_duration_samples * 3)
+    burst_duration_samples = max(1, int(burst_duration_s * sample_rate))
+    burst_start = max(0, n_samples - burst_duration_samples * 3)
 
     noise = rng.standard_normal(n_samples)
     envelope = np.zeros(n_samples, dtype=np.float64)
-    thump_len = min(thump_duration_samples * 3, n_samples - thump_start)
-    t_thump = np.arange(thump_len, dtype=np.float64)
-    envelope[thump_start : thump_start + thump_len] = np.exp(
-        -t_thump / max(1.0, thump_duration_samples)
+    burst_len = min(burst_duration_samples * 3, n_samples - burst_start)
+    t_burst = np.arange(burst_len, dtype=np.float64)
+    envelope[burst_start : burst_start + burst_len] = np.exp(
+        -t_burst / max(1.0, burst_duration_samples)
     )
 
-    noise = bandpass_noise(noise, sample_rate=sample_rate, center_hz=freq)
+    bp_center = center_hz if center_hz is not None else freq
+    noise = bandpass_noise(
+        noise, sample_rate=sample_rate, center_hz=bp_center, width_ratio=width_ratio
+    )
     return damper_noise * level_scale * envelope * noise
 
 
