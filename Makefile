@@ -11,6 +11,7 @@ WINDOW ?= 8
 START ?=
 DUR ?=
 MIDI_FORMATS ?=
+ANALYSIS ?= 1
 TESTS ?= tests
 OBLIQUE ?= 0
 MUSICAL ?= 0
@@ -23,6 +24,12 @@ ifeq ($(PLOT),1)
 RENDER_PLOT_FLAG = --plot
 else
 RENDER_PLOT_FLAG =
+endif
+
+ifeq ($(ANALYSIS),0)
+RENDER_ANALYSIS_FLAG = --no-analysis
+else
+RENDER_ANALYSIS_FLAG =
 endif
 
 ifneq ($(strip $(MIDI_FORMATS)),)
@@ -75,7 +82,7 @@ render:
 ifndef PIECE
 	$(error PIECE is required, for example `make render PIECE=harmonic_window`)
 endif
-	$(UV_RUN) python main.py $(PIECE) $(RENDER_PLOT_FLAG)
+	$(UV_RUN) python main.py $(PIECE) $(RENDER_PLOT_FLAG) $(RENDER_ANALYSIS_FLAG)
 
 .PHONY: inspect
 inspect:

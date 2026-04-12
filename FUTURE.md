@@ -65,17 +65,15 @@ Most valuable next helpers:
 
 ### Chord smearing and loveless-adjacent ideas
 
-  - on loveless, shields uses repitching to create smearing, ambiguity, reaching, yearning. let's capture some of this.
-  - so on a guitar, fragmented chords + global pitch bend (tremolo)
-  - interfaces between multiple voices, layering, collaboration
-  - relatively simple progressions
-  - seconds, sus2/sus4 unresolving, add9, etc.
-  - octave duplication of notes for size
-  - stereo, chorus, etc., but as bonuses, the core is the score
-  - possibly: out of sync, polyrhythmic, weird drums
-  - stacked saturation and warmth
-
-
+- on loveless, shields uses repitching to create smearing, ambiguity, reaching, yearning. let's capture some of this.
+- so on a guitar, fragmented chords + global pitch bend (tremolo)
+- interfaces between multiple voices, layering, collaboration
+- relatively simple progressions
+- seconds, sus2/sus4 unresolving, add9, etc.
+- octave duplication of notes for size
+- stereo, chorus, etc., but as bonuses, the core is the score
+- possibly: out of sync, polyrhythmic, weird drums
+- stacked saturation and warmth
 
 ### Creative composition helpers
 
@@ -145,6 +143,9 @@ Most promising directions:
 
   Automatically generate pieces and critique them, prune, develop.  
   Challenging given current-gen agents can't hear, but that's a challenge for this entire project.
+  We could rely on e.g. Gemma4 models which are cheap, could even run locally, and are fully omnimodal. (or gemini 3.x flash/pro)
+  In addition to, or as a dumber approach we could also consider coming up with a template for evaluation of a piece. and a way to transmit a piece as text and have this detailed template passed to LLM judge or judges for evaluation. Obviously, there are a bunch of ways this could go horribly wrong, so we would need to consider creativity, complexity, interestingness, consonance, and so on, so things don't get super degenerate.
+  <https://github.com/karpathy/autoresearch>
 
 ### Timbre and mix automation
 
@@ -323,6 +324,57 @@ Most valuable next steps:
   mapping bugs
 - decide more explicitly when native effects should be preferred over external
   plugins for stability
+
+### Surge XT Parameter Automation
+
+We explored three approaches for automating Surge XT's internal parameters
+(filter cutoff, resonance, etc.) over time during a render:
+
+1. **MIDI CC automation** (`cc_curves` in engine params) — The infrastructure
+   works and sends CC messages during render, but Surge XT's init patch has no
+   CC-to-parameter modulation routing configured. The CCs arrive and are
+   silently ignored. This would work if the loaded patch had modulation routing
+   set up (e.g. CC74 → filter cutoff).
+
+2. **Chunked rendering** (`param_curves` in engine params) — Breaks the render
+   into short segments, updates plugin parameters between chunks, concatenates
+   with crossfade. **Fundamentally broken**: creates clicking/popping artifacts
+   at chunk boundaries because the plugin's internal DSP state (IIR filter
+   feedback, oscillator phase) cannot smoothly transition when parameters change
+   as step functions. Tried crossfade overlap (128 samples) and aggressive chunk
+   reduction (0.5 s down to 0.05 s) — neither fixes it. The artifacts are
+   generated inside the plugin before the output, so output-level crossfading
+   cannot help.
+
+3. **Native post-processing filter** (current workaround) — Render Surge XT
+   with a fixed bright filter, then apply a native lowpass EQ as a voice insert
+   effect with score-time automation. Sample-accurate, zero artifacts. Works for
+   overall brightness control but cannot access the synth's internal filter
+   character (resonance, self-oscillation, nonlinear feedback, etc.).
+
+**Path forward — configure Surge XT's modulation matrix via `raw_state`:**
+
+- Save a preset with CC→cutoff (and other parameter) modulation routing
+  configured, load it via `raw_state`, then use `cc_curves` to drive the
+  parameters via MIDI CC. This keeps the modulation inside the synth where it
+  belongs and gives access to the full filter character.
+- Alternatively, configure a very slow internal LFO (period = piece duration)
+  routed to filter cutoff via the mod matrix. Same challenge of getting the
+  routing into the state blob.
+- Both approaches require either figuring out Surge XT's state format
+  programmatically or using the GUI to configure routing and capturing the
+  resulting state.
+- MTS-ESP (already mentioned elsewhere in this file) would also complement
+  this for dynamic tuning changes without pitch bend.
+
+**Global-glide chord mode** (`mpe=False`):
+
+The `_build_global_bend_messages()` implementation provides correct
+tremolo-bar-style chord glides where the whole harmonic structure slides as a
+unit. The bass note gets perfect pitch; upper voices have up to ~31 cent error
+from MIDI note quantization (musically desirable for a loveless/shoegaze
+aesthetic). Chord-to-chord transitions glide smoothly over a configurable
+duration (default 0.4 s).
 
 ### Harpsichord — Implemented
 

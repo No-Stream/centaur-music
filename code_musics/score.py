@@ -46,9 +46,11 @@ EffectKind = Literal[
     "chow_tape",
     "bricasti",
     "chorus",
+    "mod_delay",
     "saturation",
     "eq",
     "compressor",
+    "phaser",
     "tal_chorus_lx",
     "tal_reverb2",
     "dragonfly",
@@ -562,15 +564,22 @@ class Score:
 
     def render_with_effect_analysis(
         self,
-    ) -> tuple[np.ndarray, dict[str, np.ndarray], dict[str, Any]]:
+        *,
+        collect_effect_analysis: bool = True,
+    ) -> tuple[
+        np.ndarray, dict[str, np.ndarray], dict[str, np.ndarray], dict[str, Any]
+    ]:
         """Render the score plus per-effect diagnostics for agents and analysis."""
         stems, send_returns, voice_effects, send_effects = (
-            self._render_mix_components_internal(collect_effect_analysis=True)
+            self._render_mix_components_internal(
+                collect_effect_analysis=collect_effect_analysis
+            )
         )
         mix_inputs = [*stems.values(), *send_returns.values()]
         if not mix_inputs:
             return (
                 np.zeros(0),
+                {},
                 {},
                 {"mix_effects": [], "voice_effects": {}, "send_effects": {}},
             )
@@ -579,13 +588,14 @@ class Score:
         mix_effects: list[synth.EffectAnalysisEntry] = []
         mix = self._apply_master_bus_processing(
             mix,
-            collect_effect_analysis=True,
+            collect_effect_analysis=collect_effect_analysis,
             mix_effects=mix_effects,
         )
 
         return (
             mix,
             stems,
+            send_returns,
             {
                 "mix_effects": [entry.to_dict() for entry in mix_effects],
                 "voice_effects": {

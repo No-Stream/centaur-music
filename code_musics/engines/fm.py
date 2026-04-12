@@ -2,9 +2,44 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
+import numba
 import numpy as np
+
+
+@numba.njit(cache=True)
+def _fm_sample_loop(
+    signal: np.ndarray,
+    carrier_phase_increment: np.ndarray,
+    mod_phase_increment: np.ndarray,
+    mod_index: float,
+    feedback: float,
+    index_decay_samples: int,
+    sustain_scale: float,
+    n_samples: int,
+) -> None:
+    carrier_phase = 0.0
+    mod_phase = 0.0
+    previous_feedback_sample = 0.0
+    decay_denom = max(1, index_decay_samples - 1)
+
+    for i in range(n_samples):
+        if index_decay_samples <= 0 or i >= index_decay_samples:
+            mod_envelope = sustain_scale
+        else:
+            mod_envelope = 1.0 + (sustain_scale - 1.0) * (i / decay_denom)
+
+        current_index = mod_index * mod_envelope
+
+        modulator_sample = math.sin(mod_phase + feedback * previous_feedback_sample)
+        previous_feedback_sample = modulator_sample
+
+        signal[i] = math.sin(carrier_phase + current_index * modulator_sample)
+
+        carrier_phase += carrier_phase_increment[i]
+        mod_phase += mod_phase_increment[i]
 
 
 def render(
@@ -70,48 +105,23 @@ def render(
         mod_phase_increment = 2.0 * np.pi * freq_trajectory * mod_ratio / sample_rate
 
     signal = np.empty(n_samples, dtype=np.float64)
-    carrier_phase = 0.0
-    mod_phase = 0.0
-    previous_feedback_sample = 0.0
 
     index_decay_samples = int(index_decay * sample_rate)
     index_decay_samples = min(max(index_decay_samples, 0), n_samples)
     sustain_scale = max(0.0, index_sustain)
 
-    for sample_index in range(n_samples):
-        modulation_envelope = _modulation_envelope(
-            sample_index=sample_index,
-            decay_samples=index_decay_samples,
-            sustain_scale=sustain_scale,
-        )
-        current_index = mod_index * modulation_envelope
-
-        modulator_sample = np.sin(mod_phase + feedback * previous_feedback_sample)
-        previous_feedback_sample = modulator_sample
-
-        carrier_sample = np.sin(carrier_phase + current_index * modulator_sample)
-        signal[sample_index] = carrier_sample
-
-        carrier_phase += carrier_phase_increment[sample_index]
-        mod_phase += mod_phase_increment[sample_index]
+    _fm_sample_loop(
+        signal,
+        carrier_phase_increment,
+        mod_phase_increment,
+        mod_index,
+        feedback,
+        index_decay_samples,
+        sustain_scale,
+        n_samples,
+    )
 
     peak = np.max(np.abs(signal))
     if peak > 0:
         signal = signal / peak
     return amp * signal
-
-
-def _modulation_envelope(
-    *,
-    sample_index: int,
-    decay_samples: int,
-    sustain_scale: float,
-) -> float:
-    """Return the modulation-index envelope multiplier for a sample."""
-    if decay_samples <= 0:
-        return sustain_scale
-    if sample_index >= decay_samples:
-        return sustain_scale
-
-    decay_progress = sample_index / max(1, decay_samples - 1)
-    return 1.0 + (sustain_scale - 1.0) * decay_progress

@@ -141,6 +141,8 @@ make check                         # alias for make all
 make list                          # list registered pieces
 make render PIECE=harmonic_drift   # render a piece (adds --plot by default)
 make render PIECE=harmonic_drift PLOT=0  # render without plot
+make render PIECE=harmonic_drift ANALYSIS=0  # render without analysis (faster)
+make render PIECE=harmonic_drift PLOT=0 ANALYSIS=0  # fastest iteration render
 make inspect PIECE=ji_chorale AT=2:10    # inspect score context around a timestamp
 make snippet PIECE=ji_chorale AT=2:10 WINDOW=12   # render a centered snippet
 make render-window PIECE=ji_chorale START=130 DUR=12  # render an exact snippet window

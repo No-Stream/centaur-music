@@ -1728,9 +1728,9 @@ class TestRenderVoiceParamCurves:
                 },
             )
 
-        # 3.0s total / 0.5s chunks = 6 calls
-        assert call_count == 6, (
-            f"Expected 6 chunked plugin calls for 3.0s render, got {call_count}"
+        # 3.0s total / 0.05s chunks = 60 calls
+        assert call_count == 60, (
+            f"Expected 60 chunked plugin calls for 3.0s render, got {call_count}"
         )
 
     def test_chunked_messages_have_correct_relative_times(self) -> None:
@@ -1782,19 +1782,19 @@ class TestRenderVoiceParamCurves:
                 },
             )
 
-        # The note starts at 0.5s absolute. With 0.5s chunks, it should land
-        # in the second chunk (chunk_start=0.5). Its relative time should be 0.0.
-        assert len(chunk_calls) >= 2, (
-            f"Expected multiple chunks, got {len(chunk_calls)}"
+        # The note starts at 0.5s absolute. With 0.05s chunks, it should land
+        # in chunk index 10 (chunk_start=0.50). Its relative time should be 0.0.
+        assert len(chunk_calls) >= 11, (
+            f"Expected at least 11 chunks, got {len(chunk_calls)}"
         )
 
-        # Check second chunk (index 1, chunk_start=0.5) for the note_on
-        second_chunk_msgs = chunk_calls[1][0]
-        note_on_msgs = [m for m in second_chunk_msgs if m.type == "note_on"]
+        # Check chunk 10 (chunk_start=0.50) for the note_on
+        target_chunk_msgs = chunk_calls[10][0]
+        note_on_msgs = [m for m in target_chunk_msgs if m.type == "note_on"]
         assert len(note_on_msgs) == 1, (
-            f"Expected note_on in second chunk, found {len(note_on_msgs)}"
+            f"Expected note_on in chunk 10, found {len(note_on_msgs)}"
         )
-        # Time should be relative to chunk start (0.5), so 0.5 - 0.5 = 0.0
+        # Time should be relative to chunk start (0.50), so 0.5 - 0.50 = 0.0
         assert note_on_msgs[0].time == pytest.approx(0.0, abs=0.01)
 
     def test_output_length_matches_single_pass(self) -> None:
@@ -1856,4 +1856,560 @@ class TestRenderVoiceParamCurves:
 
         assert audio.shape == (2, expected_samples), (
             f"Expected shape (2, {expected_samples}), got {audio.shape}"
+        )
+
+
+# ===========================================================================
+# Group 12: Global-bend chord mode (mpe=False) -- correct polyphonic tuning
+# ===========================================================================
+
+
+class TestGlobalBendChordMath:
+    """Pure math tests for _resolve_chord_notes helper."""
+
+    def test_single_note_matches_resolve_note_and_bend(self) -> None:
+        """A single-note chord should produce the same result as _resolve_note_and_bend."""
+        from code_musics.engines.surge_xt import _resolve_chord_notes
+
+        freq = 220.0 * 7 / 4  # 385 Hz, septimal seventh
+        midi_note, bend = _resolve_note_and_bend(freq)
+        chord_notes = _resolve_chord_notes([freq])
+        assert len(chord_notes) == 1
+        assert chord_notes[0][0] == midi_note
+        # The bass bend should match exactly
+        reconstructed = _reconstruct_freq(chord_notes[0][0], chord_notes[0][1])
+        error = _cents_error(reconstructed, freq)
+        assert error < _MATH_TOLERANCE_CENTS
+
+    def test_bass_note_perfectly_tuned(self) -> None:
+        """The bass note of a chord should be tuned to within pitch-bend resolution."""
+        from code_musics.engines.surge_xt import _resolve_chord_notes
+
+        f0 = 220.0
+        freqs = [f0, f0 * 5 / 4, f0 * 3 / 2]  # root, maj third, fifth
+        chord_notes = _resolve_chord_notes(freqs)
+        # chord_notes returns list of (midi_note, bend) tuples
+        # The first (bass) note shares the global bend
+        bass_midi, bass_bend = chord_notes[0]
+        bass_reconstructed = _reconstruct_freq(bass_midi, bass_bend)
+        error = _cents_error(bass_reconstructed, f0)
+        assert error < _MATH_TOLERANCE_CENTS, (
+            f"Bass note error {error:.4f} cents (expected < {_MATH_TOLERANCE_CENTS})"
+        )
+
+    def test_all_notes_share_same_bend(self) -> None:
+        """All notes in a chord share the same global pitch bend value."""
+        from code_musics.engines.surge_xt import _resolve_chord_notes
+
+        f0 = 110.0
+        freqs = [f0, f0 * 5 / 4, f0 * 3 / 2, f0 * 7 / 4]
+        chord_notes = _resolve_chord_notes(freqs)
+        bends = [bend for _, bend in chord_notes]
+        assert all(b == bends[0] for b in bends), (
+            f"All notes should share the same bend, got {bends}"
+        )
+
+    def test_non_bass_notes_have_bounded_error(self) -> None:
+        """Non-bass notes should have bounded error (at most 50 cents from rounding)."""
+        from code_musics.engines.surge_xt import _resolve_chord_notes
+
+        f0 = 220.0
+        freqs = [f0, f0 * 5 / 4, f0 * 3 / 2, f0 * 7 / 4]
+        chord_notes = _resolve_chord_notes(freqs)
+        global_bend = chord_notes[0][1]
+        for i, (midi_note, bend) in enumerate(chord_notes):
+            assert bend == global_bend
+            reconstructed = _reconstruct_freq(midi_note, bend)
+            error = _cents_error(reconstructed, freqs[i])
+            # Non-bass notes can have up to 50 cents error from MIDI note rounding
+            assert error < 55.0, (
+                f"Note {i} ({freqs[i]:.1f} Hz): error {error:.1f} cents exceeds 55"
+            )
+
+    def test_common_ji_intervals_reasonable_error(self) -> None:
+        """Common JI intervals should have small enough error for musical use."""
+        from code_musics.engines.surge_xt import _resolve_chord_notes
+
+        f0 = 220.0
+        # Test specific intervals and their known 12-TET deviations
+        test_cases = [
+            (f0 * 3 / 2, 2.0),  # perfect fifth: ~2 cents from 12-TET
+            (f0 * 5 / 4, 14.0),  # major third: ~14 cents from 12-TET
+            (f0 * 7 / 4, 31.0),  # septimal seventh: ~31 cents from 12-TET
+        ]
+        for target_freq, expected_max_error in test_cases:
+            freqs = [f0, target_freq]
+            chord_notes = _resolve_chord_notes(freqs)
+            midi_note, bend = chord_notes[1]
+            reconstructed = _reconstruct_freq(midi_note, bend)
+            error = _cents_error(reconstructed, target_freq)
+            assert error < expected_max_error + 5, (
+                f"{target_freq:.1f} Hz: error {error:.1f} cents "
+                f"(expected < {expected_max_error + 5})"
+            )
+
+    def test_unison_notes_identical(self) -> None:
+        """Two notes at the same frequency should get the same MIDI note."""
+        from code_musics.engines.surge_xt import _resolve_chord_notes
+
+        freq = 440.0
+        chord_notes = _resolve_chord_notes([freq, freq])
+        assert chord_notes[0] == chord_notes[1]
+
+    def test_octave_notes_12_apart(self) -> None:
+        """Notes an octave apart should differ by exactly 12 MIDI notes."""
+        from code_musics.engines.surge_xt import _resolve_chord_notes
+
+        f0 = 220.0
+        chord_notes = _resolve_chord_notes([f0, f0 * 2])
+        midi_low, _ = chord_notes[0]
+        midi_high, _ = chord_notes[1]
+        assert midi_high - midi_low == 12
+
+
+class TestGlobalBendMidiMessages:
+    """Test MIDI message structure when mpe=False (global-bend chord mode)."""
+
+    def _capture_messages(
+        self,
+        notes: list[dict[str, Any]],
+        total_duration: float = 1.0,
+        params: dict[str, Any] | None = None,
+    ) -> list[Message]:
+        """Render with a mock plugin and capture MIDI messages."""
+        captured: list[Message] = []
+
+        def fake_plugin_call(messages: list[Message], **kwargs: Any) -> np.ndarray:
+            captured.extend(messages)
+            duration = kwargs.get("duration", 1.0)
+            sr = kwargs.get("sample_rate", 44100)
+            return np.zeros((2, int(duration * sr)), dtype=np.float64)
+
+        fake_plugin = MagicMock()
+        fake_plugin.is_instrument = True
+        fake_plugin.parameters = {}
+        fake_plugin.side_effect = fake_plugin_call
+
+        full_params = {"mpe": False, "tail_seconds": 0.2}
+        if params:
+            full_params.update(params)
+
+        with (
+            patch(
+                "code_musics.engines.surge_xt.has_external_plugin", return_value=True
+            ),
+            patch(
+                "code_musics.engines.surge_xt.load_external_plugin",
+                return_value=fake_plugin,
+            ),
+        ):
+            render_voice(
+                notes=notes,
+                total_duration=total_duration,
+                params=full_params,
+            )
+        return captured
+
+    def test_no_mpe_config_messages(self) -> None:
+        """When mpe=False, MPE configuration RPN messages should NOT be sent."""
+        messages = self._capture_messages(
+            notes=[
+                {
+                    "freq": 440.0,
+                    "start": 0.0,
+                    "duration": 0.5,
+                    "velocity": 0.8,
+                    "amp": 1.0,
+                },
+            ]
+        )
+        # MPE config uses CC 101, 100, 6, 38 on channel 0 at time 0.0
+        # and then on channels 1-15. In global-bend mode, none of these
+        # should be present.
+        rpn_msgs = [
+            m
+            for m in messages
+            if m.type == "control_change" and m.control in (101, 100, 6, 38)
+        ]
+        assert len(rpn_msgs) == 0, (
+            f"Expected no MPE RPN messages in global-bend mode, got {len(rpn_msgs)}"
+        )
+
+    def test_all_notes_on_single_channel(self) -> None:
+        """All note_on/note_off/pitchwheel messages should use channel 0."""
+        f0 = 220.0
+        messages = self._capture_messages(
+            notes=[
+                {
+                    "freq": f0,
+                    "start": 0.0,
+                    "duration": 0.5,
+                    "velocity": 0.8,
+                    "amp": 1.0,
+                },
+                {
+                    "freq": f0 * 5 / 4,
+                    "start": 0.0,
+                    "duration": 0.5,
+                    "velocity": 0.8,
+                    "amp": 1.0,
+                },
+                {
+                    "freq": f0 * 3 / 2,
+                    "start": 0.0,
+                    "duration": 0.5,
+                    "velocity": 0.8,
+                    "amp": 1.0,
+                },
+            ]
+        )
+        note_msgs = [
+            m for m in messages if m.type in ("note_on", "note_off", "pitchwheel")
+        ]
+        channels = {m.channel for m in note_msgs}
+        assert channels == {0}, (
+            f"Expected all messages on channel 0, got channels {channels}"
+        )
+
+    def test_simultaneous_chord_has_one_pitchwheel(self) -> None:
+        """A simultaneous chord should have one pitchwheel message (the shared
+        global bend), not one per note."""
+        f0 = 220.0
+        messages = self._capture_messages(
+            notes=[
+                {
+                    "freq": f0,
+                    "start": 0.0,
+                    "duration": 0.5,
+                    "velocity": 0.8,
+                    "amp": 1.0,
+                },
+                {
+                    "freq": f0 * 5 / 4,
+                    "start": 0.0,
+                    "duration": 0.5,
+                    "velocity": 0.8,
+                    "amp": 1.0,
+                },
+                {
+                    "freq": f0 * 3 / 2,
+                    "start": 0.0,
+                    "duration": 0.5,
+                    "velocity": 0.8,
+                    "amp": 1.0,
+                },
+            ]
+        )
+        # At time 0.0, there should be exactly one pitchwheel message
+        pw_at_start = [
+            m
+            for m in messages
+            if m.type == "pitchwheel" and m.time == pytest.approx(0.0, abs=0.001)
+        ]
+        assert len(pw_at_start) == 1, (
+            f"Expected 1 pitchwheel at t=0.0, got {len(pw_at_start)}"
+        )
+
+    def test_chord_bass_bend_accuracy(self) -> None:
+        """The pitchwheel value for a chord should accurately target the bass freq."""
+        f0 = 220.0
+        messages = self._capture_messages(
+            notes=[
+                {
+                    "freq": f0,
+                    "start": 0.0,
+                    "duration": 0.5,
+                    "velocity": 0.8,
+                    "amp": 1.0,
+                },
+                {
+                    "freq": f0 * 5 / 4,
+                    "start": 0.0,
+                    "duration": 0.5,
+                    "velocity": 0.8,
+                    "amp": 1.0,
+                },
+            ]
+        )
+        # Find the note_on for the bass note and the pitchwheel
+        note_ons = [m for m in messages if m.type == "note_on"]
+        pw_msgs = [m for m in messages if m.type == "pitchwheel"]
+
+        # The bass note_on should be the lowest MIDI note
+        bass_note = min(m.note for m in note_ons)
+        bass_bend = pw_msgs[0].pitch
+
+        reconstructed = _reconstruct_freq(bass_note, bass_bend)
+        error = _cents_error(reconstructed, f0)
+        assert error < _MATH_TOLERANCE_CENTS, (
+            f"Bass accuracy: {reconstructed:.2f} Hz vs {f0:.2f} Hz, "
+            f"error {error:.4f} cents"
+        )
+
+    def test_chord_note_midi_numbers_reflect_intervals(self) -> None:
+        """MIDI note numbers in a chord should approximate the correct intervals."""
+        f0 = 220.0
+        messages = self._capture_messages(
+            notes=[
+                {
+                    "freq": f0,
+                    "start": 0.0,
+                    "duration": 0.5,
+                    "velocity": 0.8,
+                    "amp": 1.0,
+                },
+                {
+                    "freq": f0 * 3 / 2,
+                    "start": 0.0,
+                    "duration": 0.5,
+                    "velocity": 0.8,
+                    "amp": 1.0,
+                },
+            ]
+        )
+        note_ons = sorted(
+            [m for m in messages if m.type == "note_on"],
+            key=lambda m: m.note,
+        )
+        assert len(note_ons) == 2
+        # A perfect fifth is 7 semitones in 12-TET
+        interval = note_ons[1].note - note_ons[0].note
+        assert interval == 7, f"Expected 7 semitone interval for 3/2, got {interval}"
+
+
+class TestGlobalBendChordGlide:
+    """Test chord-to-chord pitch glide in global-bend mode."""
+
+    def _capture_messages(
+        self,
+        notes: list[dict[str, Any]],
+        total_duration: float = 2.0,
+        params: dict[str, Any] | None = None,
+    ) -> list[Message]:
+        captured: list[Message] = []
+
+        def fake_plugin_call(messages: list[Message], **kwargs: Any) -> np.ndarray:
+            captured.extend(messages)
+            duration = kwargs.get("duration", 1.0)
+            sr = kwargs.get("sample_rate", 44100)
+            return np.zeros((2, int(duration * sr)), dtype=np.float64)
+
+        fake_plugin = MagicMock()
+        fake_plugin.is_instrument = True
+        fake_plugin.parameters = {}
+        fake_plugin.side_effect = fake_plugin_call
+
+        full_params: dict[str, Any] = {"mpe": False, "tail_seconds": 0.2}
+        if params:
+            full_params.update(params)
+
+        with (
+            patch(
+                "code_musics.engines.surge_xt.has_external_plugin", return_value=True
+            ),
+            patch(
+                "code_musics.engines.surge_xt.load_external_plugin",
+                return_value=fake_plugin,
+            ),
+        ):
+            render_voice(
+                notes=notes,
+                total_duration=total_duration,
+                params=full_params,
+            )
+        return captured
+
+    def test_glide_messages_between_chords(self) -> None:
+        """Two sequential chords should produce intermediate pitchwheel messages
+        for the chord-to-chord glide."""
+        f0 = 220.0
+        notes = [
+            # Chord 1 at t=0.0
+            {"freq": f0, "start": 0.0, "duration": 1.0, "velocity": 0.8, "amp": 1.0},
+            {
+                "freq": f0 * 5 / 4,
+                "start": 0.0,
+                "duration": 1.0,
+                "velocity": 0.8,
+                "amp": 1.0,
+            },
+            # Chord 2 at t=1.0 (different bass)
+            {
+                "freq": f0 * 3 / 2,
+                "start": 1.0,
+                "duration": 1.0,
+                "velocity": 0.8,
+                "amp": 1.0,
+            },
+            {
+                "freq": f0 * 15 / 8,
+                "start": 1.0,
+                "duration": 1.0,
+                "velocity": 0.8,
+                "amp": 1.0,
+            },
+        ]
+        messages = self._capture_messages(notes, total_duration=2.0)
+
+        pw_msgs = [m for m in messages if m.type == "pitchwheel"]
+        # Should have more than 2 pitchwheel messages (initial + glide intermediates + final)
+        assert len(pw_msgs) > 2, (
+            f"Expected glide intermediates, only got {len(pw_msgs)} pitchwheel msgs"
+        )
+
+        # Glide messages should be between t=1.0 and t=1.0+glide_time
+        glide_msgs = [m for m in pw_msgs if m.time > 1.0]
+        assert len(glide_msgs) > 0, "Expected glide messages after t=1.0"
+
+    def test_glide_trajectory_is_monotonic(self) -> None:
+        """The pitch bend should move monotonically from old chord's reference
+        to new chord's reference during the glide."""
+        f0 = 220.0
+        notes = [
+            # Chord 1: bass at f0 (220 Hz)
+            {"freq": f0, "start": 0.0, "duration": 1.5, "velocity": 0.8, "amp": 1.0},
+            # Chord 2: bass at f0 * 3/2 (330 Hz) -- pitch bend goes up
+            {
+                "freq": f0 * 3 / 2,
+                "start": 1.0,
+                "duration": 1.0,
+                "velocity": 0.8,
+                "amp": 1.0,
+            },
+        ]
+        messages = self._capture_messages(notes, total_duration=2.0)
+
+        pw_msgs = sorted(
+            [m for m in messages if m.type == "pitchwheel"],
+            key=lambda m: m.time,
+        )
+        # Extract glide portion (messages from t=1.0 onward)
+        glide_pw = [m for m in pw_msgs if m.time >= 1.0 - 0.001]
+        assert len(glide_pw) >= 2
+
+        # Pitches should be monotonically non-decreasing (bass is rising)
+        pitches = [m.pitch for m in glide_pw]
+        for i in range(1, len(pitches)):
+            assert pitches[i] >= pitches[i - 1] - 1, (
+                f"Non-monotonic glide at step {i}: "
+                f"pitch {pitches[i]} < {pitches[i - 1]}"
+            )
+
+    def test_no_glide_for_single_chord(self) -> None:
+        """A single chord with no successor should have no glide messages."""
+        f0 = 220.0
+        messages = self._capture_messages(
+            notes=[
+                {
+                    "freq": f0,
+                    "start": 0.0,
+                    "duration": 1.0,
+                    "velocity": 0.8,
+                    "amp": 1.0,
+                },
+                {
+                    "freq": f0 * 5 / 4,
+                    "start": 0.0,
+                    "duration": 1.0,
+                    "velocity": 0.8,
+                    "amp": 1.0,
+                },
+            ],
+            total_duration=1.0,
+        )
+        pw_msgs = [m for m in messages if m.type == "pitchwheel"]
+        # Should have exactly 1 pitchwheel (the initial chord bend)
+        assert len(pw_msgs) == 1, (
+            f"Expected 1 pitchwheel for single chord, got {len(pw_msgs)}"
+        )
+
+    def test_configurable_glide_time(self) -> None:
+        """The global_glide_time param should control glide duration."""
+        f0 = 220.0
+        # Use 7/4 ratio so the second chord's bass has a different bend than
+        # the first (both f0 and f0*2 are exact 12-TET pitches with bend=0,
+        # which would produce no glide).
+        notes = [
+            {"freq": f0, "start": 0.0, "duration": 1.5, "velocity": 0.8, "amp": 1.0},
+            {
+                "freq": f0 * 7 / 4,
+                "start": 1.0,
+                "duration": 1.0,
+                "velocity": 0.8,
+                "amp": 1.0,
+            },
+        ]
+
+        # Short glide
+        msgs_short = self._capture_messages(
+            notes,
+            total_duration=2.0,
+            params={"global_glide_time": 0.1},
+        )
+        pw_short = [m for m in msgs_short if m.type == "pitchwheel" and m.time > 1.0]
+
+        # Long glide
+        msgs_long = self._capture_messages(
+            notes,
+            total_duration=2.0,
+            params={"global_glide_time": 0.8},
+        )
+        pw_long = [m for m in msgs_long if m.type == "pitchwheel" and m.time > 1.0]
+
+        # Longer glide should produce more intermediate messages
+        assert len(pw_long) > len(pw_short), (
+            f"Longer glide ({len(pw_long)} msgs) should have more intermediates "
+            f"than short glide ({len(pw_short)} msgs)"
+        )
+
+    def test_mpe_true_unchanged(self) -> None:
+        """mpe=True should still use per-channel MPE pitch bend (backward compat)."""
+        captured: list[Message] = []
+
+        def fake_plugin_call(messages: list[Message], **kwargs: Any) -> np.ndarray:
+            captured.extend(messages)
+            duration = kwargs.get("duration", 1.0)
+            sr = kwargs.get("sample_rate", 44100)
+            return np.zeros((2, int(duration * sr)), dtype=np.float64)
+
+        fake_plugin = MagicMock()
+        fake_plugin.is_instrument = True
+        fake_plugin.parameters = {}
+        fake_plugin.side_effect = fake_plugin_call
+
+        with (
+            patch(
+                "code_musics.engines.surge_xt.has_external_plugin", return_value=True
+            ),
+            patch(
+                "code_musics.engines.surge_xt.load_external_plugin",
+                return_value=fake_plugin,
+            ),
+        ):
+            render_voice(
+                notes=[
+                    {
+                        "freq": 220.0,
+                        "start": 0.0,
+                        "duration": 0.5,
+                        "velocity": 0.8,
+                        "amp": 1.0,
+                    },
+                    {
+                        "freq": 330.0,
+                        "start": 0.0,
+                        "duration": 0.5,
+                        "velocity": 0.8,
+                        "amp": 1.0,
+                    },
+                ],
+                total_duration=0.5,
+                params={"mpe": True, "tail_seconds": 0.2},
+            )
+
+        # MPE mode: notes should be on different channels
+        note_ons = [m for m in captured if m.type == "note_on"]
+        channels = {m.channel for m in note_ons}
+        assert len(channels) == 2, (
+            f"MPE mode should use separate channels, got {channels}"
         )

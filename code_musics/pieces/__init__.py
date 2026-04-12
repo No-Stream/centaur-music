@@ -25,6 +25,7 @@ from code_musics.pieces.studies import PIECES as _STUDIES_PIECES
 from code_musics.pieces.techno_studies import PIECES as _TECHNO_PIECES
 from code_musics.pieces.texture_studies import PIECES as _TEXTURE_STUDY_PIECES
 from code_musics.pieces.trance_studies import PIECES as _TRANCE_PIECES
+from code_musics.pieces.velvet_wall import PIECES as _VELVET_WALL_PIECES
 from code_musics.pieces.wtc_sketches import PIECES as _WTC_PIECES
 
 PIECES = merge_piece_maps(
@@ -51,6 +52,7 @@ PIECES = merge_piece_maps(
     _STUDIES_PIECES,
     _ORGAN_CHORALE_PIECES,
     _TRANCE_PIECES,
+    _VELVET_WALL_PIECES,
 )
 
 __all__ = ["PIECES"]

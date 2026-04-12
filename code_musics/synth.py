@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import math
 import os
 import sys
 from collections.abc import Callable, Mapping
@@ -3035,6 +3036,10 @@ def _resolve_effect_params(
         preset_map = _SATURATION_PRESETS
     elif effect_kind == "compressor":
         preset_map = _COMPRESSOR_PRESETS
+    elif effect_kind == "phaser":
+        preset_map = _PHASER_PRESETS
+    elif effect_kind == "mod_delay":
+        preset_map = _MOD_DELAY_PRESETS
     else:
         raise ValueError(f"Unsupported preset-bearing effect kind: {effect_kind}")
 
@@ -3105,6 +3110,273 @@ def apply_chorus(
         wet_signal = wet_signal + wet_saturation * np.tanh(1.6 * wet_signal)
 
     blended = ((1.0 - mix) * dry_signal) + (mix * wet_signal)
+    return blended.astype(np.float64)
+
+
+# ---------------------------------------------------------------------------
+# Phaser (ChowPhaser VST3 wrapper)
+# ---------------------------------------------------------------------------
+
+_PHASER_PRESETS: dict[str, dict[str, float]] = {
+    "gentle_sweep": {
+        "rate_hz": 0.15,
+        "depth": 0.4,
+        "feedback": 0.25,
+        "mix": 0.25,
+    },
+    "metallic_shimmer": {
+        "rate_hz": 0.6,
+        "depth": 0.65,
+        "feedback": 0.75,
+        "mix": 0.35,
+    },
+}
+
+
+def apply_phaser(
+    signal: np.ndarray,
+    rate_hz: float = 0.3,
+    depth: float = 0.5,
+    feedback: float = 0.4,
+    mix: float = 0.35,
+    preset: str | None = None,
+) -> np.ndarray:
+    """Apply ChowPhaser stereo phaser effect via VST3.
+
+    Falls back to returning the signal unchanged if the plugin is not installed.
+
+    Parameters
+    ----------
+    rate_hz:  LFO rate in Hz (mapped to the plugin's 0-1 normalized range).
+    depth:    Modulation depth 0-1.
+    feedback: Feedback amount 0-1.
+    mix:      Wet/dry blend 0-1.
+    preset:   Optional preset name from ``_PHASER_PRESETS``.
+    """
+    if preset is not None:
+        if preset not in _PHASER_PRESETS:
+            raise ValueError(f"Unknown phaser preset: {preset!r}")
+        preset_vals = _PHASER_PRESETS[preset]
+        rate_hz = float(preset_vals.get("rate_hz", rate_hz))
+        depth = float(preset_vals.get("depth", depth))
+        feedback = float(preset_vals.get("feedback", feedback))
+        mix = float(preset_vals.get("mix", mix))
+
+    plugin_name = "chow_phaser_stereo"
+    if not has_external_plugin(plugin_name):
+        logger.warning(
+            "ChowPhaser VST3 not found (chow_phaser_stereo). "
+            "Returning signal unchanged. Install ChowPhaser to hear this effect."
+        )
+        return np.asarray(signal, dtype=np.float64)
+
+    if not 0.0 <= mix <= 1.0:
+        raise ValueError("mix must be between 0 and 1")
+
+    dry_signal = _ensure_stereo(signal)
+
+    # ChowPhaser params: lfo_freq (0-16 Hz), lfo_depth (0-0.95),
+    # feedback (0-0.95), modulation (0-1)
+    wet_signal = _apply_plugin_processor(
+        signal,
+        plugin_name=plugin_name,
+        params={
+            "lfo_freq": float(np.clip(rate_hz, 0.0, 16.0)),
+            "lfo_depth": float(np.clip(depth * 0.95, 0.0, 0.95)),
+            "feedback": float(np.clip(feedback * 0.95, 0.0, 0.95)),
+            "modulation": float(np.clip(depth, 0.0, 1.0)),
+        },
+    )
+
+    wet_stereo = _ensure_stereo(wet_signal)
+    blended = (1.0 - mix) * dry_signal + mix * wet_stereo
+    return _match_input_layout(blended.astype(np.float64), signal)
+
+
+# ---------------------------------------------------------------------------
+# Modulated delay (native)
+# ---------------------------------------------------------------------------
+
+_MOD_DELAY_PRESETS: dict[str, dict[str, float]] = {
+    "dream_echo": {
+        "delay_ms": 280.0,
+        "mod_rate_hz": 0.12,
+        "mod_depth_ms": 8.0,
+        "feedback": 0.45,
+        "feedback_lpf_hz": 2800.0,
+        "stereo_offset_deg": 110.0,
+        "mix": 0.3,
+    },
+    "shimmer_slap": {
+        "delay_ms": 120.0,
+        "mod_rate_hz": 0.5,
+        "mod_depth_ms": 3.0,
+        "feedback": 0.25,
+        "feedback_lpf_hz": 6000.0,
+        "stereo_offset_deg": 75.0,
+        "mix": 0.25,
+    },
+    "tape_wander": {
+        "delay_ms": 350.0,
+        "mod_rate_hz": 0.08,
+        "mod_depth_ms": 12.0,
+        "feedback": 0.55,
+        "feedback_lpf_hz": 2200.0,
+        "stereo_offset_deg": 130.0,
+        "mix": 0.35,
+    },
+}
+
+_MAX_FEEDBACK: float = 0.92
+
+
+@numba.njit(cache=True)
+def _mod_delay_channel_loop(
+    input_signal: np.ndarray,
+    buffer_size: int,
+    delay_base_samples: float,
+    mod_depth_samples: float,
+    lfo_omega: float,
+    lfo_phase_offset: float,
+    feedback: float,
+    lpf_alpha: float,
+    sample_rate: int,
+) -> np.ndarray:
+    """Per-channel modulated delay with feedback and lowpass, compiled via Numba.
+
+    Uses cubic Hermite interpolation for the fractional delay read to avoid
+    the high-frequency roll-off that linear interpolation causes when the
+    read position is continuously moving.
+    """
+    n_samples = input_signal.shape[0]
+    output = np.empty(n_samples, dtype=np.float64)
+    delay_buffer = np.zeros(buffer_size, dtype=np.float64)
+    write_pos = 0
+    lpf_state = 0.0
+
+    for i in range(n_samples):
+        lfo_value = math.sin(lfo_omega * i / sample_rate + lfo_phase_offset)
+        current_delay = delay_base_samples + mod_depth_samples * lfo_value
+        current_delay = max(1.0, min(current_delay, buffer_size - 2.0))
+
+        read_pos_float = write_pos - current_delay
+        if read_pos_float < 0.0:
+            read_pos_float += buffer_size
+
+        idx = int(read_pos_float)
+        frac = read_pos_float - idx
+
+        # Cubic Hermite interpolation: four neighboring samples
+        i0 = (idx - 1) % buffer_size
+        i1 = idx % buffer_size
+        i2 = (idx + 1) % buffer_size
+        i3 = (idx + 2) % buffer_size
+
+        y0 = delay_buffer[i0]
+        y1 = delay_buffer[i1]
+        y2 = delay_buffer[i2]
+        y3 = delay_buffer[i3]
+
+        # Hermite basis functions
+        c0 = y1
+        c1 = 0.5 * (y2 - y0)
+        c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3
+        c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2)
+
+        delayed_sample = ((c3 * frac + c2) * frac + c1) * frac + c0
+
+        # One-pole lowpass in feedback path
+        lpf_state = lpf_alpha * delayed_sample + (1.0 - lpf_alpha) * lpf_state
+        filtered_feedback = lpf_state
+
+        # Write to buffer: input + filtered feedback
+        delay_buffer[write_pos] = input_signal[i] + feedback * filtered_feedback
+        output[i] = delayed_sample
+
+        write_pos = (write_pos + 1) % buffer_size
+
+    return output
+
+
+def apply_mod_delay(
+    signal: np.ndarray,
+    delay_ms: float = 200.0,
+    mod_rate_hz: float = 0.2,
+    mod_depth_ms: float = 5.0,
+    feedback: float = 0.35,
+    feedback_lpf_hz: float = 4000.0,
+    stereo_offset_deg: float = 90.0,
+    mix: float = 0.3,
+    preset: str | None = None,
+) -> np.ndarray:
+    """Native modulated delay with filtered feedback and stereo spread.
+
+    A chorus-delay hybrid: longer delay times than chorus, with an LFO-modulated
+    read position and a lowpass filter in the feedback path that darkens repeats.
+
+    Parameters
+    ----------
+    delay_ms:          Base delay time in milliseconds (50-500).
+    mod_rate_hz:       LFO speed in Hz (0.03-3.0).
+    mod_depth_ms:      LFO depth -- how much the delay time swings (0.5-30 ms).
+    feedback:          Feedback amount (0-0.92, hard-clipped).
+    feedback_lpf_hz:   Lowpass cutoff in the feedback path (darkens repeats).
+    stereo_offset_deg: LFO phase offset between L/R for stereo spread.
+    mix:               Wet/dry blend (0 = all dry, 1 = all wet).
+    preset:            Optional preset name from ``_MOD_DELAY_PRESETS``.
+    """
+    if preset is not None:
+        if preset not in _MOD_DELAY_PRESETS:
+            raise ValueError(f"Unknown mod_delay preset: {preset!r}")
+        preset_vals = _MOD_DELAY_PRESETS[preset]
+        delay_ms = float(preset_vals.get("delay_ms", delay_ms))
+        mod_rate_hz = float(preset_vals.get("mod_rate_hz", mod_rate_hz))
+        mod_depth_ms = float(preset_vals.get("mod_depth_ms", mod_depth_ms))
+        feedback = float(preset_vals.get("feedback", feedback))
+        feedback_lpf_hz = float(preset_vals.get("feedback_lpf_hz", feedback_lpf_hz))
+        stereo_offset_deg = float(
+            preset_vals.get("stereo_offset_deg", stereo_offset_deg)
+        )
+        mix = float(preset_vals.get("mix", mix))
+
+    if not 0.0 <= mix <= 1.0:
+        raise ValueError("mix must be between 0 and 1")
+    if delay_ms <= 0:
+        raise ValueError("delay_ms must be positive")
+
+    clamped_feedback = min(float(feedback), _MAX_FEEDBACK)
+
+    dry_signal = _ensure_stereo(signal)
+
+    max_delay_ms = delay_ms + mod_depth_ms + 5.0  # small safety margin
+    buffer_size = int(max_delay_ms * SAMPLE_RATE / 1000.0) + 4  # +4 for cubic interp
+    delay_base_samples = delay_ms * SAMPLE_RATE / 1000.0
+    mod_depth_samples = mod_depth_ms * SAMPLE_RATE / 1000.0
+    lfo_omega = 2.0 * np.pi * mod_rate_hz
+    stereo_phase_rad = np.deg2rad(stereo_offset_deg)
+
+    # One-pole LPF coefficient: alpha = 1 - exp(-2*pi*fc/sr)
+    lpf_alpha = 1.0 - np.exp(-2.0 * np.pi * feedback_lpf_hz / SAMPLE_RATE)
+
+    wet_channels: list[np.ndarray] = []
+    for channel_index in range(2):
+        channel_phase = stereo_phase_rad * channel_index
+        channel_input = np.asarray(dry_signal[channel_index], dtype=np.float64)
+        wet_channel = _mod_delay_channel_loop(
+            channel_input,
+            buffer_size,
+            delay_base_samples,
+            mod_depth_samples,
+            lfo_omega,
+            channel_phase,
+            clamped_feedback,
+            lpf_alpha,
+            SAMPLE_RATE,
+        )
+        wet_channels.append(wet_channel)
+
+    wet_signal = np.stack(wet_channels)
+    blended = (1.0 - mix) * dry_signal + mix * wet_signal
     return blended.astype(np.float64)
 
 
@@ -3836,6 +4108,7 @@ def _resolve_effect_amount_automation(
 
 _PLUGIN_BACKED_EFFECTS: dict[str, str] = {
     "chow_tape": "chow_tape",
+    "phaser": "chow_phaser_stereo",
     "tal_chorus_lx": "tal_chorus_lx",
     "tal_reverb2": "tal_reverb2",
     "dragonfly": "dragonfly_plate",
@@ -3860,6 +4133,8 @@ _SIMPLE_EFFECT_DISPATCH: dict[str, Callable[..., np.ndarray]] = {
     "chow_tape": apply_chow_tape,
     "bricasti": apply_bricasti,
     "chorus": apply_chorus,
+    "mod_delay": apply_mod_delay,
+    "phaser": apply_phaser,
     "tal_chorus_lx": apply_tal_chorus_lx,
     "tal_reverb2": apply_tal_reverb2,
 }
@@ -3921,7 +4196,7 @@ def apply_effect_chain(
     for effect_index, effect in enumerate(effects):
         effect_input = np.asarray(processed, dtype=np.float64)
         params = dict(effect.params)
-        if effect.kind in {"chorus", "compressor", "saturation"}:
+        if effect.kind in {"chorus", "compressor", "mod_delay", "phaser", "saturation"}:
             params = _resolve_effect_params(effect.kind, params)
         effect_amount_automation = _resolve_effect_amount_automation(
             effect=effect,

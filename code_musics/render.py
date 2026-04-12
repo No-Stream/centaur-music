@@ -192,15 +192,12 @@ def render_piece(
                 start_seconds=render_window.render_start_seconds,
                 end_seconds=render_window.render_end_seconds,
             )
-        audio, rendered_stems, effect_analysis = (
-            render_score.render_with_effect_analysis()
+        audio, rendered_stems, send_returns, effect_analysis = (
+            render_score.render_with_effect_analysis(
+                collect_effect_analysis=save_analysis,
+            )
         )
         if rendered_stems:
-            _dry_stems, send_returns, _, _ = (
-                render_score._render_mix_components_internal(
-                    collect_effect_analysis=False
-                )
-            )
             pre_master_mix_inputs = [*rendered_stems.values(), *send_returns.values()]
             pre_master_mix = render_score._stack_signals(pre_master_mix_inputs)
             if render_score.auto_master_gain_stage:

@@ -90,7 +90,281 @@ def _resolve_note_and_bend(freq_hz: float) -> tuple[int, int]:
     return midi_note, bend_value
 
 
-PARAM_CURVE_CHUNK_SECONDS = 0.5
+CHORD_GROUP_TOLERANCE_SECONDS = 0.1  # notes within this window are one chord
+GLIDE_STEP_INTERVAL_SECONDS = 0.005  # 5ms steps (~200 Hz update rate)
+DEFAULT_GLOBAL_GLIDE_TIME_SECONDS = 0.4
+
+
+def _resolve_chord_notes(freqs: list[float]) -> list[tuple[int, int]]:
+    """Compute MIDI note numbers and a shared pitch bend for a chord.
+
+    In global-bend mode all notes share a single pitchwheel value.  The bass
+    (lowest frequency) is used as the reference: its MIDI note and residual
+    pitch bend are computed with full precision.  Every other note gets a MIDI
+    note number chosen so that the shared bend places it as close as possible
+    to its target frequency.
+
+    Returns a list of ``(midi_note, shared_bend)`` tuples, one per input
+    frequency, in the same order as *freqs*.
+    """
+    if not freqs:
+        return []
+
+    sorted_freqs = sorted(enumerate(freqs), key=lambda p: p[1])
+    bass_idx, bass_freq = sorted_freqs[0]
+
+    # Bass note: full-precision pitch bend
+    bass_midi, bass_bend = _resolve_note_and_bend(bass_freq)
+
+    # Global shift in semitones implied by the shared bend
+    global_shift_semitones = (bass_bend / 8191.0) * BEND_RANGE_SEMITONES
+
+    results: list[tuple[int, int] | None] = [None] * len(freqs)
+    results[bass_idx] = (bass_midi, bass_bend)
+
+    for orig_idx, freq in sorted_freqs[1:]:
+        target_semitones = 69.0 + 12.0 * math.log2(freq / 440.0)
+        # What MIDI note, when shifted by global_shift_semitones, hits target?
+        ideal_midi = target_semitones - global_shift_semitones
+        midi_note = int(round(ideal_midi))
+        midi_note = max(0, min(127, midi_note))
+        results[orig_idx] = (midi_note, bass_bend)
+
+    return results  # type: ignore[return-value]
+
+
+def _group_notes_into_chords(
+    notes: list[dict[str, Any]],
+    tolerance: float = CHORD_GROUP_TOLERANCE_SECONDS,
+) -> list[list[dict[str, Any]]]:
+    """Group notes into chord clusters by start time.
+
+    Notes whose start times are within *tolerance* seconds of each other are
+    grouped together.  Returns a list of chord groups sorted by start time.
+    """
+    if not notes:
+        return []
+
+    sorted_notes = sorted(notes, key=lambda n: float(n["start"]))
+    chords: list[list[dict[str, Any]]] = []
+    current_chord: list[dict[str, Any]] = [sorted_notes[0]]
+    chord_start = float(sorted_notes[0]["start"])
+
+    for note in sorted_notes[1:]:
+        note_start = float(note["start"])
+        if note_start - chord_start <= tolerance:
+            current_chord.append(note)
+        else:
+            chords.append(current_chord)
+            current_chord = [note]
+            chord_start = note_start
+
+    chords.append(current_chord)
+    return chords
+
+
+def _build_mpe_note_messages(
+    notes: list[dict[str, Any]], release_padding: float
+) -> list[Message]:
+    """Build per-note MPE MIDI messages (the original MPE path).
+
+    Each note gets its own MIDI channel with independent pitch bend for
+    sub-cent microtonal accuracy.
+    """
+    messages: list[Message] = []
+    channel_free_at = [0.0] * (MAX_MPE_CHANNELS + 1)  # index 0 unused
+
+    for i, note_data in enumerate(notes):
+        freq = float(note_data["freq"])
+        start = float(note_data["start"])
+        duration = float(note_data["duration"])
+        velocity_raw = float(note_data.get("velocity", 0.8))
+        amp = float(note_data.get("amp", 1.0))
+
+        midi_velocity = max(1, min(127, int(round(velocity_raw * amp * 127))))
+        for ch_offset in range(MAX_MPE_CHANNELS):
+            candidate = ((i + ch_offset) % MAX_MPE_CHANNELS) + 1
+            if channel_free_at[candidate] <= start:
+                channel = candidate
+                break
+        else:
+            channel = (i % MAX_MPE_CHANNELS) + 1
+            logger.warning(
+                "MPE channel collision: >%d overlapping notes at t=%.3f "
+                "(release_padding=%.2fs)",
+                MAX_MPE_CHANNELS,
+                start,
+                release_padding,
+            )
+        channel_free_at[channel] = start + duration + release_padding
+
+        midi_note, bend_value = _resolve_note_and_bend(freq)
+
+        # -- Glide support: optionally start at a different pitch and sweep --
+        glide_from = note_data.get("glide_from")
+        initial_bend = bend_value  # default: start at target pitch
+        if glide_from is not None:
+            glide_from_hz = float(glide_from)
+            glide_from_semitones = 69.0 + 12.0 * math.log2(glide_from_hz / 440.0)
+            glide_distance = abs(
+                glide_from_semitones
+                - (midi_note + bend_value / 8191.0 * BEND_RANGE_SEMITONES)
+            )
+            if glide_distance > BEND_RANGE_SEMITONES:
+                logger.warning(
+                    "Glide from %.1f Hz to %.1f Hz spans %.1f semitones, "
+                    "beyond bend range of %.0f -- skipping glide",
+                    glide_from_hz,
+                    freq,
+                    glide_distance,
+                    BEND_RANGE_SEMITONES,
+                )
+                glide_from = None  # fall through to normal non-glide behavior
+            else:
+                initial_bend = _resolve_glide_bend(midi_note, glide_from_hz)
+
+        # Pitch bend BEFORE note-on so the plugin sees the tuning first.
+        messages.append(
+            Message("pitchwheel", channel=channel, pitch=initial_bend, time=start)
+        )
+        messages.append(
+            Message(
+                "note_on",
+                channel=channel,
+                note=midi_note,
+                velocity=midi_velocity,
+                time=start,
+            )
+        )
+
+        # Generate intermediate pitch bend messages for glide
+        if glide_from is not None:
+            glide_time = float(note_data.get("glide_time", duration))
+            glide_time = min(glide_time, duration)
+            num_steps = max(1, int(glide_time / GLIDE_STEP_INTERVAL_SECONDS))
+            for step in range(1, num_steps + 1):
+                t_fraction = step / num_steps
+                t_absolute = start + t_fraction * glide_time
+                intermediate_bend = int(
+                    round(initial_bend + t_fraction * (bend_value - initial_bend))
+                )
+                intermediate_bend = max(-8191, min(8191, intermediate_bend))
+                messages.append(
+                    Message(
+                        "pitchwheel",
+                        channel=channel,
+                        pitch=intermediate_bend,
+                        time=t_absolute,
+                    )
+                )
+
+        messages.append(
+            Message(
+                "note_off",
+                channel=channel,
+                note=midi_note,
+                velocity=0,
+                time=start + duration,
+            )
+        )
+
+    return messages
+
+
+def _build_global_bend_messages(
+    notes: list[dict[str, Any]], glide_time: float
+) -> list[Message]:
+    """Build MIDI messages for global-bend chord mode (mpe=False).
+
+    Groups notes into chords by start time.  Each chord shares a single
+    pitchwheel value derived from its bass (lowest) note.  Non-bass notes get
+    MIDI note numbers chosen relative to the shared bend so that interval
+    structure is preserved (with up to ~50 cent rounding error per non-bass
+    note).
+
+    Between consecutive chord groups, intermediate pitchwheel messages glide
+    the global bend from the old chord's reference to the new chord's over
+    *glide_time* seconds.  All messages use MIDI channel 0.
+    """
+    messages: list[Message] = []
+    chords = _group_notes_into_chords(notes)
+
+    if not chords:
+        return messages
+
+    prev_bend: int | None = None
+
+    for chord_group in chords:
+        freqs = [float(n["freq"]) for n in chord_group]
+        chord_notes = _resolve_chord_notes(freqs)
+        chord_start = float(chord_group[0]["start"])
+        chord_bend = chord_notes[0][1]  # shared bend from bass
+
+        # -- Chord-to-chord glide from previous chord's bend ----------------
+        if prev_bend is not None and prev_bend != chord_bend:
+            # Start the glide from the old bend at the new chord's onset.
+            # The glide sweeps to chord_bend over glide_time seconds.
+            messages.append(
+                Message("pitchwheel", channel=0, pitch=prev_bend, time=chord_start)
+            )
+            num_steps = max(1, int(glide_time / GLIDE_STEP_INTERVAL_SECONDS))
+            for step in range(1, num_steps + 1):
+                t_fraction = step / num_steps
+                t_absolute = chord_start + t_fraction * glide_time
+                intermediate_bend = int(
+                    round(prev_bend + t_fraction * (chord_bend - prev_bend))
+                )
+                intermediate_bend = max(-8191, min(8191, intermediate_bend))
+                messages.append(
+                    Message(
+                        "pitchwheel",
+                        channel=0,
+                        pitch=intermediate_bend,
+                        time=t_absolute,
+                    )
+                )
+        else:
+            # First chord or no bend change: set the target bend directly.
+            messages.append(
+                Message("pitchwheel", channel=0, pitch=chord_bend, time=chord_start)
+            )
+
+        # -- Note-on for every note in this chord --------------------------
+        for note_data, (midi_note, _bend) in zip(chord_group, chord_notes, strict=True):
+            velocity_raw = float(note_data.get("velocity", 0.8))
+            amp = float(note_data.get("amp", 1.0))
+            midi_velocity = max(1, min(127, int(round(velocity_raw * amp * 127))))
+            start = float(note_data["start"])
+            duration = float(note_data["duration"])
+
+            messages.append(
+                Message(
+                    "note_on",
+                    channel=0,
+                    note=midi_note,
+                    velocity=midi_velocity,
+                    time=start,
+                )
+            )
+            messages.append(
+                Message(
+                    "note_off",
+                    channel=0,
+                    note=midi_note,
+                    velocity=0,
+                    time=start + duration,
+                )
+            )
+
+        prev_bend = chord_bend
+
+    return messages
+
+
+PARAM_CURVE_CHUNK_SECONDS = 0.05  # 50ms -- small enough that per-step parameter
+# changes are inaudible.  At 0.5s the steps were clearly audible as 2 Hz beating
+# and timbral jumps, especially on clean (sine-like) voices.
+CROSSFADE_SAMPLES = 128  # ~2.9ms at 44100 Hz -- smooths chunk boundary discontinuities
 
 
 def _interpolate_param_curves(
@@ -253,10 +527,36 @@ def _render_chunked(
 ) -> np.ndarray:
     """Render audio in chunks, updating plugin parameters between chunks.
 
+    .. warning:: **EXPERIMENTAL / BROKEN** -- this function produces audible
+       clicking and popping artifacts at chunk boundaries and should not be
+       used in production pieces.
+
+       The root cause is fundamental: when a plugin parameter changes as a
+       step function between chunks, the plugin's internal DSP state (IIR
+       filter feedback lines, oscillator phase accumulators, delay buffers,
+       etc.) cannot smoothly transition.  The discontinuity is generated
+       *inside* the plugin, so output-level crossfading between chunks does
+       not fix it -- by the time we see the audio, the artifact is already
+       baked in.
+
+       Prefer native post-processing effects with score-time automation
+       instead, which update parameters sample-accurately within a single
+       continuous render pass.
+
+       This code is retained for experimentation (it may be useful with
+       plugins that have smoother internal parameter interpolation, or as a
+       starting point for future improvements) but should not be relied on
+       for finished pieces.
+
     Divides *render_duration* into ``PARAM_CURVE_CHUNK_SECONDS``-long chunks.
     Before each chunk, interpolates *param_curves* at the chunk start time and
     sets the corresponding ``plugin.parameters[name].raw_value``.  MIDI messages
     are filtered per-chunk and time-offset to chunk-relative coordinates.
+
+    To eliminate audible clicks at chunk boundaries (caused by instantaneous
+    parameter jumps), each non-final chunk is rendered with a short overlap
+    tail.  Adjacent chunks are then joined with a linear crossfade over the
+    overlap region.
     """
     chunk_dur = PARAM_CURVE_CHUNK_SECONDS
     num_full_chunks = int(render_duration / chunk_dur)
@@ -280,9 +580,17 @@ def _render_chunked(
                 param_name,
             )
 
+    overlap_samples = min(CROSSFADE_SAMPLES, int(chunk_dur * sample_rate) // 2)
+    overlap_dur = overlap_samples / sample_rate
+
     chunks: list[np.ndarray] = []
-    for chunk_start, this_chunk_dur in chunk_boundaries:
+    for chunk_idx, (chunk_start, this_chunk_dur) in enumerate(chunk_boundaries):
         chunk_end = chunk_start + this_chunk_dur
+        is_last = chunk_idx == len(chunk_boundaries) - 1
+
+        # Non-final chunks render extra overlap samples so we can crossfade
+        # at the boundary with the next chunk.
+        render_dur = this_chunk_dur if is_last else this_chunk_dur + overlap_dur
 
         # Set parameter values for this chunk
         param_values = _interpolate_param_curves(valid_curves, chunk_start)
@@ -303,13 +611,45 @@ def _render_chunked(
         chunk_audio = plugin(
             chunk_messages,
             sample_rate=sample_rate,
-            duration=this_chunk_dur,
+            duration=render_dur,
             num_channels=2,
             buffer_size=buffer_size,
         )
         chunks.append(np.asarray(chunk_audio, dtype=np.float64))
 
-    return np.concatenate(chunks, axis=1)
+    if len(chunks) <= 1:
+        return np.concatenate(chunks, axis=1) if chunks else np.empty((2, 0))
+
+    # Build crossfade ramps once (linear fade, shape broadcastable over channels)
+    fade_out = np.linspace(1.0, 0.0, overlap_samples)[np.newaxis, :]
+    fade_in = 1.0 - fade_out
+
+    # Stitch chunks with crossfade at boundaries.
+    # Non-final chunks were rendered with an overlap tail; we split each chunk
+    # into its nominal body and its overlap tail, crossfade adjacent tails/heads,
+    # and concatenate.
+    parts: list[np.ndarray] = []
+
+    # First chunk: nominal body (exclude overlap tail)
+    parts.append(chunks[0][:, :-overlap_samples])
+
+    for i in range(1, len(chunks)):
+        prev_tail = chunks[i - 1][:, -overlap_samples:]
+        curr_head = chunks[i][:, :overlap_samples]
+        parts.append(prev_tail * fade_out + curr_head * fade_in)
+
+        is_last_chunk = i == len(chunks) - 1
+        if is_last_chunk:
+            # Last chunk has no overlap tail -- take everything after the head
+            if chunks[i].shape[1] > overlap_samples:
+                parts.append(chunks[i][:, overlap_samples:])
+        else:
+            # Intermediate chunk: exclude overlap tail (will be crossfaded next iter)
+            body_end = chunks[i].shape[1] - overlap_samples
+            if body_end > overlap_samples:
+                parts.append(chunks[i][:, overlap_samples:body_end])
+
+    return np.concatenate(parts, axis=1)
 
 
 def render_voice(
@@ -345,9 +685,16 @@ def render_voice(
           note-off so pitch bend from new notes does not bleed into release
           tails (default 1.0)
         - ``mpe`` -- when True (default), send MCM to enable MPE Lower Zone
-          so pitch bend is per-note.  When False, pitch bend is global
-          (scene-level), meaning new notes repitch existing voices -- useful
-          as a creative effect but not for accurate polyphonic tuning.
+          so pitch bend is per-note with sub-cent accuracy.  When False,
+          use global-bend chord mode: notes are grouped into chords by
+          start time, each chord shares a single pitch bend derived from
+          the bass note, and consecutive chords glide smoothly between
+          reference pitches (like a tremolo bar).  Non-bass notes have up
+          to ~50 cent rounding error from MIDI note quantisation; the bass
+          is always perfectly tuned.
+        - ``global_glide_time`` -- seconds for the pitch-bend glide between
+          consecutive chords in global-bend mode (default 0.4).  Only used
+          when ``mpe=False``.
         - ``buffer_size`` -- pedalboard processing block size in samples
           (default 256).  MIDI events are delivered at block boundaries, so
           smaller blocks give finer-grained pitch bend / CC timing.  The
@@ -415,105 +762,13 @@ def render_voice(
     # -- Build MIDI messages -------------------------------------------------
     messages: list[Message] = _build_mpe_config_messages() if use_mpe else []
 
-    # Assign notes to MPE member channels 1-15, preferring a channel whose
-    # previous note's release tail has died away.  Falls back to round-robin
-    # when all 15 channels are occupied (with a warning).
-    channel_free_at = [0.0] * (MAX_MPE_CHANNELS + 1)  # index 0 unused
-    for i, note_data in enumerate(notes):
-        freq = float(note_data["freq"])
-        start = float(note_data["start"])
-        duration = float(note_data["duration"])
-        velocity_raw = float(note_data.get("velocity", 0.8))
-        amp = float(note_data.get("amp", 1.0))
-
-        midi_velocity = max(1, min(127, int(round(velocity_raw * amp * 127))))
-        for ch_offset in range(MAX_MPE_CHANNELS):
-            candidate = ((i + ch_offset) % MAX_MPE_CHANNELS) + 1
-            if channel_free_at[candidate] <= start:
-                channel = candidate
-                break
-        else:
-            channel = (i % MAX_MPE_CHANNELS) + 1
-            logger.warning(
-                "MPE channel collision: >%d overlapping notes at t=%.3f "
-                "(release_padding=%.2fs)",
-                MAX_MPE_CHANNELS,
-                start,
-                release_padding,
-            )
-        channel_free_at[channel] = start + duration + release_padding
-
-        midi_note, bend_value = _resolve_note_and_bend(freq)
-
-        # -- Glide support: optionally start at a different pitch and sweep --
-        glide_from = note_data.get("glide_from")
-        initial_bend = bend_value  # default: start at target pitch
-        if glide_from is not None:
-            glide_from_hz = float(glide_from)
-            glide_from_semitones = 69.0 + 12.0 * math.log2(glide_from_hz / 440.0)
-            glide_distance = abs(
-                glide_from_semitones
-                - (midi_note + bend_value / 8191.0 * BEND_RANGE_SEMITONES)
-            )
-            if glide_distance > BEND_RANGE_SEMITONES:
-                logger.warning(
-                    "Glide from %.1f Hz to %.1f Hz spans %.1f semitones, "
-                    "beyond bend range of %.0f -- skipping glide",
-                    glide_from_hz,
-                    freq,
-                    glide_distance,
-                    BEND_RANGE_SEMITONES,
-                )
-                glide_from = None  # fall through to normal non-glide behavior
-            else:
-                initial_bend = _resolve_glide_bend(midi_note, glide_from_hz)
-
-        # Pitch bend BEFORE note-on so the plugin sees the tuning first.
-        messages.append(
-            Message("pitchwheel", channel=channel, pitch=initial_bend, time=start)
+    if use_mpe:
+        messages.extend(_build_mpe_note_messages(notes, release_padding))
+    else:
+        global_glide_time = float(
+            resolved_params.get("global_glide_time", DEFAULT_GLOBAL_GLIDE_TIME_SECONDS)
         )
-        messages.append(
-            Message(
-                "note_on",
-                channel=channel,
-                note=midi_note,
-                velocity=midi_velocity,
-                time=start,
-            )
-        )
-
-        # Generate intermediate pitch bend messages for glide
-        if glide_from is not None:
-            glide_time = float(note_data.get("glide_time", duration))
-            glide_time = min(glide_time, duration)
-            glide_step_interval = 0.005  # 5ms steps (~200 Hz update rate)
-            num_steps = max(1, int(glide_time / glide_step_interval))
-            for step in range(1, num_steps + 1):
-                t_fraction = step / num_steps
-                t_absolute = start + t_fraction * glide_time
-                # Linear interpolation in bend space
-                intermediate_bend = int(
-                    round(initial_bend + t_fraction * (bend_value - initial_bend))
-                )
-                intermediate_bend = max(-8191, min(8191, intermediate_bend))
-                messages.append(
-                    Message(
-                        "pitchwheel",
-                        channel=channel,
-                        pitch=intermediate_bend,
-                        time=t_absolute,
-                    )
-                )
-
-        messages.append(
-            Message(
-                "note_off",
-                channel=channel,
-                note=midi_note,
-                velocity=0,
-                time=start + duration,
-            )
-        )
+        messages.extend(_build_global_bend_messages(notes, global_glide_time))
 
     # -- CC automation curves --------------------------------------------------
     cc_curves: list[dict[str, Any]] = resolved_params.get("cc_curves", [])
@@ -540,6 +795,11 @@ def render_voice(
     param_curves: list[dict[str, Any]] = resolved_params.get("param_curves", [])
 
     if param_curves:
+        logger.warning(
+            "param_curves is experimental and produces audible artifacts (clicks/pops) "
+            "at chunk boundaries. Prefer native post-processing effects with score-time "
+            "automation instead. See _render_chunked() docstring for details."
+        )
         audio = _render_chunked(
             plugin=plugin,
             messages=messages,

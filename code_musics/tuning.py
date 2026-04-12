@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from fractions import Fraction
 
 _NOTE_NAMES = ("C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B")
 
@@ -206,3 +207,82 @@ def ratio_to_cents(ratio: float) -> float:
     if ratio <= 0:
         raise ValueError("ratio must be positive")
     return 1200.0 * math.log2(ratio)
+
+
+def tenney_height(ratio: float) -> float:
+    """Tenney height of a JI ratio: log2(p * q) where p/q is in lowest terms.
+
+    Lower values indicate more consonant intervals (e.g. 3/2 -> ~2.58, 7/4 -> ~4.81).
+    """
+    if ratio <= 0:
+        raise ValueError("ratio must be positive")
+    frac = Fraction(ratio).limit_denominator(10000)
+    return math.log2(frac.numerator * frac.denominator)
+
+
+def _prime_factors(n: int) -> set[int]:
+    """Return the set of prime factors of a positive integer."""
+    factors: set[int] = set()
+    d = 2
+    while d * d <= n:
+        while n % d == 0:
+            factors.add(d)
+            n //= d
+        d += 1
+    if n > 1:
+        factors.add(n)
+    return factors
+
+
+def _within_prime_limit(n: int, prime_limit: int) -> bool:
+    """Check whether all prime factors of n are <= prime_limit."""
+    if n <= 1:
+        return True
+    return all(p <= prime_limit for p in _prime_factors(n))
+
+
+def enumerate_ji_ratios(
+    low: float,
+    high: float,
+    prime_limit: int = 7,
+    max_height: float = 15.0,
+) -> list[float]:
+    """Enumerate JI ratios in [low, high] within the given prime limit and Tenney height.
+
+    Returns sorted ascending by pitch. Only ratios whose numerator and denominator
+    have all prime factors <= prime_limit are included.
+    """
+    if low > high:
+        raise ValueError("low must be <= high")
+    if prime_limit < 2:
+        raise ValueError("prime_limit must be at least 2")
+
+    max_denom = 128
+    max_term = int(2**max_height) + 1
+
+    seen: set[tuple[int, int]] = set()
+    results: list[float] = []
+
+    for q in range(1, max_denom + 1):
+        if not _within_prime_limit(q, prime_limit):
+            continue
+        p_low = max(1, math.ceil(low * q))
+        p_high = min(max_term, math.floor(high * q))
+        for p in range(p_low, p_high + 1):
+            if not _within_prime_limit(p, prime_limit):
+                continue
+            frac = Fraction(p, q)
+            canonical = (frac.numerator, frac.denominator)
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            ratio_value = p / q
+            if ratio_value < low or ratio_value > high:
+                continue
+            height = math.log2(frac.numerator * frac.denominator)
+            if height > max_height:
+                continue
+            results.append(ratio_value)
+
+    results.sort()
+    return results

@@ -1262,7 +1262,7 @@ def test_render_with_effect_analysis_includes_send_effects() -> None:
     score.add_voice("lead", normalize_lufs=None, sends=[VoiceSend("room", send_db=0.0)])
     score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.3)
 
-    _mix, stems, effect_analysis = score.render_with_effect_analysis()
+    _mix, stems, _send_returns, effect_analysis = score.render_with_effect_analysis()
 
     assert "lead" in stems
     assert "room" in effect_analysis["send_effects"]
@@ -2825,3 +2825,81 @@ class TestPitchMotionGlideTranslation:
         assert nd["glide_from"] == pytest.approx(note_freq * 0.5)
         # glide_duration not set, so defaults to note.duration
         assert nd["glide_time"] == pytest.approx(2.0)
+
+
+# ---------------------------------------------------------------------------
+# Render pipeline optimization regression tests
+# ---------------------------------------------------------------------------
+
+
+def _build_send_bus_score() -> Score:
+    """Build a small score with a send bus for render-path testing."""
+    score = Score(f0=110.0, auto_master_gain_stage=False)
+    score.add_send_bus(
+        "room",
+        effects=[
+            EffectSpec("delay", {"delay_seconds": 0.05, "feedback": 0.2, "mix": 0.5})
+        ],
+    )
+    score.add_voice(
+        "lead",
+        normalize_lufs=None,
+        sends=[VoiceSend("room", send_db=-6.0)],
+    )
+    score.add_note("lead", start=0.0, duration=0.5, partial=4.0, amp=0.4)
+    score.add_note("lead", start=0.3, duration=0.5, partial=6.0, amp=0.3)
+    return score
+
+
+def test_render_with_effect_analysis_send_returns_match_render() -> None:
+    """The send_returns from render_with_effect_analysis should produce the same
+    pre-master mix as a plain Score.render() call."""
+    score = _build_send_bus_score()
+
+    # Path A: render_with_effect_analysis (the path render_piece uses)
+    mix_a, stems_a, send_returns_a, _ = score.render_with_effect_analysis()
+
+    # Path B: plain render (uses _render_mix_components_internal directly)
+    mix_b = score.render()
+
+    np.testing.assert_allclose(mix_a, mix_b, atol=1e-12)
+
+    # send_returns should be non-empty for this score
+    assert len(send_returns_a) == 1
+    assert "room" in send_returns_a
+    assert send_returns_a["room"].size > 0
+
+
+def test_collect_effect_analysis_false_produces_identical_audio() -> None:
+    """Disabling effect analysis collection must not change the rendered audio."""
+    score = Score(f0=110.0, auto_master_gain_stage=False)
+    score.add_send_bus(
+        "room",
+        effects=[
+            EffectSpec("delay", {"delay_seconds": 0.05, "feedback": 0.2, "mix": 0.5})
+        ],
+    )
+    score.add_voice(
+        "lead",
+        normalize_lufs=None,
+        sends=[VoiceSend("room", send_db=-6.0)],
+        effects=[EffectSpec("chorus", {"preset": "juno_subtle"})],
+    )
+    score.add_note("lead", start=0.0, duration=0.5, partial=4.0, amp=0.4)
+
+    mix_with, _, _, analysis_with = score.render_with_effect_analysis(
+        collect_effect_analysis=True,
+    )
+    mix_without, _, _, analysis_without = score.render_with_effect_analysis(
+        collect_effect_analysis=False,
+    )
+
+    np.testing.assert_allclose(mix_with, mix_without, atol=1e-12)
+
+    # With analysis: voice and send diagnostics are populated
+    assert analysis_with["voice_effects"]["lead"]
+    assert analysis_with["send_effects"]["room"]
+
+    # Without analysis: voice and send diagnostics are empty
+    assert not analysis_without["voice_effects"]
+    assert not analysis_without["send_effects"]

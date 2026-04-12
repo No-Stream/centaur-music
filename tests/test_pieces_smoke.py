@@ -31,3 +31,16 @@ def test_score_backed_piece_builds_valid_score(
     assert len(voices_with_notes) > 0, (
         f"{piece_name}: at least one voice should have notes"
     )
+
+
+def test_septimal_bloom_no_param_curves() -> None:
+    """septimal_bloom should use static Surge XT params, not chunked param_curves."""
+    definition = PIECES["septimal_bloom"]
+    assert definition.build_score is not None
+    score = definition.build_score()
+
+    for voice_name, voice in score.voices.items():
+        assert "param_curves" not in voice.synth_defaults, (
+            f"Voice {voice_name!r} still has param_curves -- "
+            "remove chunked automation and use static Surge XT filter cutoffs"
+        )

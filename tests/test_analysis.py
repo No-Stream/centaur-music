@@ -185,7 +185,7 @@ def test_save_analysis_artifacts_writes_manifest_and_plots(tmp_path: Path) -> No
 
     stems = score.render_stems()
     mix = score.render()
-    _mix_with_effects, _stems_with_effects, effect_analysis = (
+    _mix_with_effects, _stems_with_effects, _send_returns, effect_analysis = (
         score.render_with_effect_analysis()
     )
     manifest = save_analysis_artifacts(

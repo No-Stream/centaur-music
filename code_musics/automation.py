@@ -174,14 +174,24 @@ class AutomationSpec:
             value = min(self.clamp_max, value)
         return float(value)
 
-    def sample_many(self, times: np.ndarray) -> np.ndarray:
-        return np.asarray(
-            [
-                self.apply_to_base(base_value=np.nan, time=float(time))
-                for time in np.asarray(times, dtype=np.float64)
-            ],
-            dtype=np.float64,
+    def sample_many_raw(self, times: np.ndarray) -> np.ndarray:
+        """Vectorized sampling — returns raw values without mode application.
+
+        Uses np.searchsorted on ordered, non-overlapping segments for O(n log m)
+        total instead of O(n * m).  Returns default_value for times outside any
+        segment, or NaN if default_value is None.
+        """
+        return _sample_segments_vectorized(
+            self.segments,
+            times,
+            self.default_value,
+            self.clamp_min,
+            self.clamp_max,
         )
+
+    def sample_many(self, times: np.ndarray) -> np.ndarray:
+        """Vectorized sampling with mode applied against NaN base (replace-only legacy path)."""
+        return self.sample_many_raw(times)
 
     def apply_to_base(self, *, base_value: float, time: float) -> float:
         sampled_value = self.sample(time)
@@ -223,24 +233,14 @@ def build_pitch_ratio_trajectory(
     for spec in voice_automation:
         if spec.target.kind != "pitch_ratio":
             continue
-        ratio = np.asarray(
-            [
-                spec.apply_to_base(base_value=float(current), time=float(time))
-                for current, time in zip(ratio, absolute_times, strict=True)
-            ],
-            dtype=np.float64,
-        )
+        sampled = spec.sample_many_raw(absolute_times)
+        ratio = _apply_mode_vectorized(spec.mode, ratio, sampled)
 
     for spec in note_automation:
         if spec.target.kind != "pitch_ratio":
             continue
-        ratio = np.asarray(
-            [
-                spec.apply_to_base(base_value=float(current), time=float(time))
-                for current, time in zip(ratio, local_times, strict=True)
-            ],
-            dtype=np.float64,
-        )
+        sampled = spec.sample_many_raw(local_times)
+        ratio = _apply_mode_vectorized(spec.mode, ratio, sampled)
 
     if np.any(ratio <= 0):
         raise ValueError("pitch_ratio automation must produce strictly positive ratios")
@@ -301,14 +301,89 @@ def apply_control_automation(
     for spec in specs:
         if spec.target.kind != "control" or spec.target.name != target_name:
             continue
-        values = np.asarray(
-            [
-                spec.apply_to_base(base_value=float(current), time=float(time))
-                for current, time in zip(values, resolved_times, strict=True)
-            ],
-            dtype=np.float64,
-        )
+        sampled = spec.sample_many_raw(resolved_times)
+        values = _apply_mode_vectorized(spec.mode, values, sampled)
     return values
+
+
+def _apply_mode_vectorized(
+    mode: AutomationMode, base: np.ndarray, sampled: np.ndarray
+) -> np.ndarray:
+    """Apply automation mode element-wise.  NaN in sampled → keep base value."""
+    valid = ~np.isnan(sampled)
+    result = base.copy()
+    if mode == "replace":
+        result[valid] = sampled[valid]
+    elif mode == "add":
+        result[valid] = base[valid] + sampled[valid]
+    elif mode == "multiply":
+        result[valid] = base[valid] * sampled[valid]
+    return result
+
+
+def _sample_segments_vectorized(
+    segments: tuple[AutomationSegment, ...],
+    times: np.ndarray,
+    default_value: float | None,
+    clamp_min: float | None = None,
+    clamp_max: float | None = None,
+) -> np.ndarray:
+    """Evaluate ordered, non-overlapping segments for an array of times.
+
+    Uses np.searchsorted for O(n log m) total instead of O(n * m).
+    """
+    times = np.asarray(times, dtype=np.float64)
+    n = len(times)
+    default = default_value if default_value is not None else np.nan
+    result = np.full(n, default, dtype=np.float64)
+
+    if not segments:
+        return result
+
+    starts = np.array([s.start for s in segments], dtype=np.float64)
+    ends = np.array([s.end for s in segments], dtype=np.float64)
+
+    # For each time, find the segment whose start is <= time.
+    # searchsorted('right') on starts gives the index of the first start > time,
+    # so idx-1 is the candidate segment.
+    indices = np.searchsorted(starts, times, side="right") - 1
+
+    for seg_idx in range(len(segments)):
+        seg = segments[seg_idx]
+        mask = (
+            (indices == seg_idx) & (times >= starts[seg_idx]) & (times <= ends[seg_idx])
+        )
+        if not np.any(mask):
+            continue
+
+        seg_times = times[mask]
+
+        if seg.shape == "hold":
+            result[mask] = float(seg.value)  # type: ignore[arg-type]
+        elif seg.shape == "linear":
+            progress = (seg_times - seg.start) / (seg.end - seg.start)
+            np.clip(progress, 0.0, 1.0, out=progress)
+            result[mask] = seg.start_value + progress * (  # type: ignore[reportOptionalOperand]
+                seg.end_value - seg.start_value
+            )  # type: ignore[operator]
+        elif seg.shape == "exp":
+            progress = (seg_times - seg.start) / (seg.end - seg.start)
+            np.clip(progress, 0.0, 1.0, out=progress)
+            log_start = np.log(seg.start_value)  # type: ignore[arg-type]
+            log_end = np.log(seg.end_value)  # type: ignore[arg-type]
+            result[mask] = np.exp(log_start + progress * (log_end - log_start))
+        elif seg.shape == "sine_lfo":
+            local_t = seg_times - seg.start
+            result[mask] = seg.offset + seg.depth * np.sin(  # type: ignore[operator]
+                2.0 * np.pi * seg.freq_hz * local_t + seg.phase  # type: ignore[operator]
+            )
+
+    if clamp_min is not None:
+        np.maximum(result, clamp_min, out=result)
+    if clamp_max is not None:
+        np.minimum(result, clamp_max, out=result)
+
+    return result
 
 
 def _segment_contains_time(segment: AutomationSegment, time: float) -> bool:
