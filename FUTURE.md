@@ -144,13 +144,39 @@ Most promising directions:
 
   To some extent we already support this implicitly. Worth expanding?
 
-### Autoresearch, for music
+### Autoresearch, for music — Evaluation Implemented
 
-  Automatically generate pieces and critique them, prune, develop.  
-  Challenging given current-gen agents can't hear, but that's a challenge for this entire project.
-  We could rely on e.g. Gemma4 models which are cheap, could even run locally, and are fully omnimodal. (or gemini 3.x flash/pro)
-  In addition to, or as a dumber approach we could also consider coming up with a template for evaluation of a piece. and a way to transmit a piece as text and have this detailed template passed to LLM judge or judges for evaluation. Obviously, there are a bunch of ways this could go horribly wrong, so we would need to consider creativity, complexity, interestingness, consonance, and so on, so things don't get super degenerate.
-  <https://github.com/karpathy/autoresearch>
+  **Standalone evaluation is implemented** (`make evaluate PIECE=...`).
+  Four LLM judges (Opus 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5) run in
+  parallel via Claude Code headless, scoring each piece across five broad
+  dimensions (Musical Substance 25%, Structure & Form 20%, Texture &
+  Expression 15%, Completeness 10%, Open Subjective 30%).  Judges receive a
+  rich multimodal packet (score snapshot, timeline, analysis manifest,
+  piano-roll/spectrogram/density PNGs).  Scores are aggregated by median with
+  inter-judge agreement tracking.  Results are saved as `eval.json` per piece
+  and appended to `output/eval_log.jsonl` for longitudinal tracking.
+
+  Anti-reward-hacking design: generators receive only an aggregate score plus
+  a brief qualitative synthesis — never the rubric, per-dimension scores, or
+  individual judge responses.  See `code_musics/evaluate.py` and
+  `code_musics/eval_rubric.py`.
+
+  Remaining work toward full autonomous loop:
+
+- **Closed-loop orchestrator**: a composer agent modifies `build_score()`,
+    renders, evaluates, decides keep/discard (git-as-state-machine, inspired
+    by [karpathy/autoresearch](https://github.com/karpathy/autoresearch)),
+    and iterates with only the synthesized feedback.
+- **API judge backends**: Bedrock, OpenRouter, or direct Anthropic API
+    calls for faster invocation and access to non-Anthropic models.
+- **LLM-based feedback synthesis**: replace the current template-based
+    concatenation with a dedicated synthesis pass for more natural prose.
+- **Rubric calibration**: run evaluations on several pieces and tune
+    dimension descriptions, scale anchors, and weights against human taste.
+- **Ranking/comparison mode**: generate N variations of a section, judge
+    all, and rank them.
+- **Audio-capable judges**: feed actual audio (or spectrograms as images)
+    to omnimodal models (Gemini, Gemma4) for judges that can hear.
 
 ### Timbre and mix automation
 

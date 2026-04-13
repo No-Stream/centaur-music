@@ -44,6 +44,10 @@
 - `code_musics/midi_import.py` imports MIDI files into the score model.
 - `code_musics/meter.py` contains the optional high-level musical-time layer:
   `Timeline`, beat/bar helpers, rhythmic values, and bar-aware location math.
+- `code_musics/evaluate.py` is the LLM-based piece evaluation system.  Four
+  judges (Opus 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5) score pieces across
+  five dimensions via Claude Code headless.  `code_musics/eval_rubric.py`
+  defines the rubric, dimensions, and prompt templates.
 - `main.py` is the main entrypoint for listing and rendering pieces.
 
 ## Composition Model
@@ -180,6 +184,9 @@ make compile                       # syntax / bytecode compilation check
 make lint                          # ruff check with bug-finding rules
 make format-check                  # verify formatting without modifying files
 make format                        # ruff format
+make evaluate PIECE=slow_glass     # evaluate a rendered piece with LLM judges
+make evaluate PIECE=slow_glass MODELS=opus  # single model (faster iteration)
+make evaluate-all                  # evaluate all rendered pieces
 make inspire                       # oblique strategy / musical inspiration prompts
 ```
 

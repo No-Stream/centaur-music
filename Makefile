@@ -19,6 +19,7 @@ VISUAL ?= 0
 IMAGE ?= 0
 CONSTRAINT ?= 0
 N ?=
+MODELS ?=
 
 ifeq ($(PLOT),1)
 RENDER_PLOT_FLAG = --plot
@@ -162,6 +163,19 @@ render-sketches:
 .PHONY: render-all
 render-all:
 	$(UV_RUN) python main.py all $(RENDER_PLOT_FLAG)
+
+.PHONY: evaluate
+evaluate:
+ifndef PIECE
+	$(error PIECE is required, for example `make evaluate PIECE=slow_glass`)
+endif
+	$(UV_RUN) python -m code_musics.evaluate $(PIECE) \
+		$(if $(MODELS),--models $(MODELS),)
+
+.PHONY: evaluate-all
+evaluate-all:
+	$(UV_RUN) python -m code_musics.evaluate all \
+		$(if $(MODELS),--models $(MODELS),)
 
 .PHONY: inspire
 inspire:
