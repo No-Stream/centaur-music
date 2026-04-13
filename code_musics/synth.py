@@ -3945,8 +3945,8 @@ _SATURATION_PRESETS: dict[str, dict[str, Any]] = {
     "kick_crunch": {
         "algorithm": "modern",
         "mode": "triode",
-        "drive": 3.7,
-        "mix": 0.56,
+        "drive": 6.0,
+        "mix": 0.62,
         "tone": 0.10,
         "fidelity": 0.26,
         "oversample_factor": 8,
@@ -5159,7 +5159,7 @@ def apply_saturation(
 
 _PREAMP_PRESETS: dict[str, dict[str, Any]] = {
     "neve_warmth": {
-        "drive": 0.35,
+        "drive": 0.5,
         "mix": 0.30,
         "warmth": 0.5,
         "brightness": 0.0,
@@ -5322,32 +5322,45 @@ def apply_preamp(
         )
 
         # --- Step 4: Soft nonlinearity in flux domain ---
-        # Scale flux into the nonlinearity based on drive.  The scaling
-        # factor accounts for the integrator's gain (~1/(2*pi*fc)) so that
-        # the drive parameter maps intuitively: 0.5 = gentle, 1.0 = rich.
-        flux_rms = float(np.sqrt(np.mean(flux**2))) + 1e-12
-        drive_gain = drive * 8.0 / (flux_rms * 2.0 + 1e-12)
-        flux_scaled = flux * drive_gain
+        # Drive scaling referenced to typical musical content (~200 Hz).
+        # The integrator gain at frequency f is ~1/(2*pi*f), so flux at
+        # 200 Hz for a 0.45-peak signal is ~0.00036.  The drive_scale
+        # pushes that into arctan's nonlinear region.  Bass sees higher
+        # flux (1/f) → more saturation, matching real transformer physics.
+        drive_scale = max(drive * 2.0 * np.pi * 200.0 * 1.2, 1e-6)
 
         # DC bias for even-harmonic asymmetry (transformer core asymmetry).
-        # The bias is envelope-scaled so it tracks signal level rather than
-        # adding a static DC offset.
+        # The bias is envelope-scaled so it tracks signal level.
         flux_envelope = _envelope_follower(
-            flux_scaled,
+            flux,
             sample_rate=os_sr,
             attack_ms=5.0,
             release_ms=80.0,
         )
         bias_amount = even_odd * 0.05 * (1.0 + drive)
-        flux_biased = flux_scaled + bias_amount * flux_envelope
+        flux_biased = flux + bias_amount * flux_envelope
 
-        # Scaled arctan: soft clip with a knee that widens gracefully.
-        # The (2/pi) normalization keeps unity gain for small signals.
-        flux_saturated = (2.0 / np.pi) * np.arctan(flux_biased)
+        # Arctan with (2/pi) normalization: generates increasing harmonic
+        # content as drive_scale pushes flux deeper into the nonlinear
+        # region.  Low frequencies see higher flux → more saturation →
+        # real transformer behavior.  Output level is corrected after
+        # differentiation via RMS matching.
+        flux_saturated = (2.0 / np.pi) * np.arctan(
+            (np.pi / 2.0) * drive_scale * flux_biased
+        )
 
         # --- Step 5: Differentiate (flux -> voltage) ---
         # y[n] = (x[n] - x[n-1]) * sr  (Faraday: V = dPhi/dt)
         voltage = np.diff(flux_saturated, prepend=flux_saturated[0]) * os_sr
+
+        # RMS-match voltage output to dry input level.  The arctan
+        # generates increasing harmonics with drive (good) but also
+        # changes the overall gain.  Normalizing here preserves the
+        # harmonic content while ensuring the difference extraction
+        # captures only color, not level change.
+        dry_rms = float(np.sqrt(np.mean(dry_oversampled**2))) + 1e-12
+        voltage_rms = float(np.sqrt(np.mean(voltage**2))) + 1e-12
+        voltage = voltage * (dry_rms / voltage_rms)
 
         # --- Step 6: De-emphasis (invert pre-emphasis) ---
         if pre_emphasis_db > 0.01:

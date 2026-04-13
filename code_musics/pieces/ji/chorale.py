@@ -56,7 +56,7 @@ def build_ji_chorale_score() -> Score:
     A5 = A4 * 2  # 880.00  — tonic, next octave
 
     master_effects: list[EffectSpec] = [
-        EffectSpec("saturation", {"preset": "neve_gentle", "mix": 0.18, "drive": 0.85}),
+        EffectSpec("preamp", {"preset": "neve_warmth"}),
     ]
     if synth.has_external_plugin("lsp_compressor_stereo"):
         master_effects.append(

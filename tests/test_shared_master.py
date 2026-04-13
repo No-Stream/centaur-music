@@ -20,12 +20,13 @@ class TestDefaultMasterEffects:
         for effect in DEFAULT_MASTER_EFFECTS:
             assert isinstance(effect, EffectSpec)
 
-    def test_preamp_fallback_returns_native_saturation(self) -> None:
+    def test_preamp_fallback_returns_native_preamp(self) -> None:
         with patch(
             "code_musics.pieces._shared.has_external_plugin", return_value=False
         ):
             effect = _make_preamp()
-        assert effect.kind == "saturation"
+        assert effect.kind == "preamp"
+        assert effect.params.get("preset") == "neve_warmth"
 
     def test_bus_comp_fallback_returns_native_compressor(self) -> None:
         with patch(

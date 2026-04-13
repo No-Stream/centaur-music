@@ -88,7 +88,7 @@ def build_ji_chorale_v2_score() -> Score:
 
     # ── master effects ────────────────────────────────────────────────────
     master_effects: list[EffectSpec] = [
-        EffectSpec("saturation", {"preset": "neve_gentle", "mix": 0.50, "drive": 1.15}),
+        EffectSpec("preamp", {"preset": "iron_color"}),
     ]
     if synth.has_external_plugin("lsp_compressor_stereo"):
         master_effects.append(

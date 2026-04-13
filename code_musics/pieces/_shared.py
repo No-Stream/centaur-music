@@ -51,10 +51,10 @@ WARM_SATURATION_EFFECT = EffectSpec(
 
 
 def _make_preamp() -> EffectSpec:
-    """Subtle Neve preamp color, or native saturation fallback."""
+    """Subtle Neve preamp color, or native preamp fallback."""
     if has_external_plugin("brit_pre"):
         return EffectSpec("brit_pre", {"gain": 5.0, "output_db": 0.0})
-    return EffectSpec("saturation", {"preset": "neve_gentle"})
+    return EffectSpec("preamp", {"preset": "neve_warmth"})
 
 
 def _make_bus_comp() -> EffectSpec:

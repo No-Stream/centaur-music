@@ -275,6 +275,12 @@ See `FUTURE.md` for way more ideas.
 - The native `saturation` effect defaults to a higher-fidelity two-stage
   analog-style path with optional clean low/high-band preservation; see
   `docs/synth_api.md` for the modern vs legacy behavior and parameter surface.
+- The `preamp` effect provides flux-domain transformer saturation for
+  analog-style warmth. Unlike the `saturation` effect (which uses waveshaping),
+  `preamp` operates in the magnetic flux domain where bass naturally saturates
+  more than treble, producing minimal intermodulation on harmonically rich
+  material. Use `preamp` for gentle warmth/coloring (master bus, subtle voice
+  color); use `saturation` for intentional distortion/drive effects.
 - The `kick_tom` synth engine provides 808/909-style kicks and toms; the intended
   happy path is pairing it with the native drum-oriented compressor/saturation
   presets documented in `docs/synth_api.md`.

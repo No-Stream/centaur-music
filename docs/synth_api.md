@@ -693,6 +693,48 @@ score = Score(
 )
 ```
 
+### `preamp`
+
+Implementation: [code_musics/synth.py](code_musics/synth.py)
+
+Flux-domain transformer saturation modeling real iron-core physics. Unlike
+memoryless waveshaping, this operates in the magnetic flux domain where low
+frequencies naturally saturate more than highs (Faraday's law: V = N·dΦ/dt).
+The result is frequency-dependent harmonic generation with warm, analog
+character and minimal intermodulation on complex material.
+
+**Parameters:**
+
+- `drive` (0.0–2.0+): How hard the transformer core is driven.
+  0.25 = barely there, 0.5 = gentle warmth, 1.0 = rich, 1.5+ = crunchy.
+- `mix` (0.0–1.0): Wet/dry blend. Default 0.30 for subtle bus color.
+- `warmth` (0.0–1.0): Pre-emphasis bass shelf. Higher = more bass enrichment.
+- `brightness` (-1.0–1.0): Post tilt EQ. 0 = neutral.
+- `even_odd` (0.0–1.0): Even vs odd harmonic balance. 0 = odd-dominant,
+  1.0 = even-dominant (transformer-like). Default 0.7.
+- `flux_cutoff_hz`: Leaky integrator corner (default 12 Hz).
+- `harmonic_injection` (0.0–1.0): Parallel Chebyshev harmonic injection amount.
+
+**Presets:**
+
+- `neve_warmth`: Subtle Neve-like transformer color (drive=0.5, mix=0.30).
+  Default for master bus warmth.
+- `iron_color`: Assertive transformer saturation (drive=0.6, mix=0.35).
+- `tube_glow`: Tube-flavored warmth with more odd harmonics (drive=0.5, mix=0.30).
+- `transformer_drive`: Driven transformer, approaching distortion (drive=1.2, mix=0.50).
+
+Example:
+
+```python
+score = Score(
+    f0=110.0,
+    master_effects=[
+        EffectSpec("preamp", {"preset": "neve_warmth"}),
+        EffectSpec("reverb", {"room_size": 0.65, "damping": 0.45, "wet_level": 0.22}),
+    ],
+)
+```
+
 ### `chow_tape`
 
 Implementation: [code_musics/synth.py](code_musics/synth.py)

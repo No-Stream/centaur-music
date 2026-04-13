@@ -207,9 +207,7 @@ def build_septimal_changes_score() -> Score:
                 "reverb", {"room_size": 0.62, "damping": 0.48, "wet_level": 0.26}
             ),
             EffectSpec("delay", {"delay_seconds": 0.28, "feedback": 0.14, "mix": 0.09}),
-            EffectSpec(
-                "saturation", {"preset": "neve_gentle", "mix": 0.18, "drive": 1.08}
-            ),
+            EffectSpec("preamp", {"preset": "neve_warmth"}),
         ],
     )
 
