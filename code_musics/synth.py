@@ -19,7 +19,7 @@ import numba
 import numpy as np
 import pedalboard
 import soundfile as sf
-from scipy.signal import butter, resample_poly, sosfilt, tf2sos
+from scipy.signal import butter, lfilter, resample_poly, sosfilt, tf2sos
 
 from code_musics.automation import apply_control_automation
 from code_musics.engines._dsp_utils import classify_thd, compute_signal_thd
@@ -4167,6 +4167,8 @@ def _resolve_effect_params(
         preset_map = _BYOD_PRESETS
     elif effect_kind == "chow_centaur":
         preset_map = _CHOW_CENTAUR_PRESETS
+    elif effect_kind == "preamp":
+        preset_map = _PREAMP_PRESETS
     else:
         raise ValueError(f"Unsupported preset-bearing effect kind: {effect_kind}")
 
@@ -5151,6 +5153,334 @@ def apply_saturation(
     )
 
 
+# ---------------------------------------------------------------------------
+# Preamp: flux-domain transformer saturation
+# ---------------------------------------------------------------------------
+
+_PREAMP_PRESETS: dict[str, dict[str, Any]] = {
+    "neve_warmth": {
+        "drive": 0.35,
+        "mix": 0.30,
+        "warmth": 0.5,
+        "brightness": 0.0,
+        "even_odd": 0.7,
+        "harmonic_injection": 0.5,
+    },
+    "iron_color": {
+        "drive": 0.6,
+        "mix": 0.35,
+        "warmth": 0.55,
+        "brightness": 0.0,
+        "even_odd": 0.65,
+        "harmonic_injection": 0.55,
+    },
+    "tube_glow": {
+        "drive": 0.5,
+        "mix": 0.30,
+        "warmth": 0.4,
+        "brightness": 0.0,
+        "even_odd": 0.55,
+        "harmonic_injection": 0.6,
+    },
+    "transformer_drive": {
+        "drive": 1.2,
+        "mix": 0.50,
+        "warmth": 0.6,
+        "brightness": 0.0,
+        "even_odd": 0.75,
+        "harmonic_injection": 0.65,
+    },
+}
+
+
+def apply_preamp(
+    signal: np.ndarray,
+    *,
+    drive: float = 0.35,
+    mix: float = 0.30,
+    warmth: float = 0.5,
+    brightness: float = 0.0,
+    even_odd: float = 0.7,
+    flux_cutoff_hz: float = 12.0,
+    harmonic_injection: float = 0.5,
+    oversample_factor: int = 4,
+    compensation_mode: str = "auto",
+    preset: str | None = None,
+    sample_rate: int = SAMPLE_RATE,
+    return_analysis: bool = False,
+) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
+    """Flux-domain transformer saturation modeling real iron-core physics.
+
+    Unlike memoryless waveshaping, this operates in the magnetic flux domain
+    where low frequencies naturally saturate more than highs (V = N * dPhi/dt).
+    The result is frequency-dependent harmonic generation with a warm,
+    analog character and minimal intermodulation on complex material.
+
+    Parameters
+    ----------
+    signal:
+        Mono or stereo input audio.
+    drive:
+        How hard the transformer core is driven. 0.25 = barely there,
+        0.5 = gentle warmth, 1.0 = rich, 1.5+ = crunchy.
+    mix:
+        Wet/dry blend (0.0--1.0). Default 0.30 for subtle bus color.
+    warmth:
+        Pre-emphasis bass shelf amount (0.0--1.0). Higher values enrich
+        low-frequency harmonics by boosting bass into the nonlinearity.
+    brightness:
+        Post-processing tilt EQ (-1.0 to 1.0). 0 = neutral, positive =
+        brighter, negative = darker.
+    even_odd:
+        Balance of even vs odd harmonics (0.0--1.0). 0 = odd-dominant
+        (symmetric saturation), 1.0 = even-dominant (asymmetric, like a
+        real transformer). Default 0.7.
+    flux_cutoff_hz:
+        Leaky integrator corner frequency for voltage-to-flux conversion.
+        Lower = more bass-focused saturation, higher = broader. Default 12 Hz.
+    harmonic_injection:
+        Amount of parallel Chebyshev harmonic injection (0.0--1.0).
+        Adds controlled 2nd/3rd/4th harmonics scaled by signal envelope.
+    oversample_factor:
+        Internal oversampling for the flux-domain processing path.
+    compensation_mode:
+        Loudness compensation: ``"auto"``/``"lufs"``/``"rms"``/``"none"``.
+    preset:
+        Optional named preset (``"neve_warmth"``, ``"iron_color"``,
+        ``"tube_glow"``, ``"transformer_drive"``).
+    sample_rate:
+        Audio sample rate.
+    return_analysis:
+        When True, return ``(signal, analysis_dict)`` with THD and metrics.
+    """
+    if preset is not None:
+        resolved = _resolve_effect_params("preamp", {"preset": preset})
+        if "drive" not in resolved or drive != 0.35:
+            resolved["drive"] = drive
+        if "mix" not in resolved or mix != 0.30:
+            resolved["mix"] = mix
+        if "warmth" not in resolved or warmth != 0.5:
+            resolved["warmth"] = warmth
+        if "brightness" not in resolved or brightness != 0.0:
+            resolved["brightness"] = brightness
+        if "even_odd" not in resolved or even_odd != 0.7:
+            resolved["even_odd"] = even_odd
+        if "harmonic_injection" not in resolved or harmonic_injection != 0.5:
+            resolved["harmonic_injection"] = harmonic_injection
+        drive = float(resolved.get("drive", drive))
+        mix = float(resolved.get("mix", mix))
+        warmth = float(resolved.get("warmth", warmth))
+        brightness = float(resolved.get("brightness", brightness))
+        even_odd = float(resolved.get("even_odd", even_odd))
+        harmonic_injection = float(
+            resolved.get("harmonic_injection", harmonic_injection)
+        )
+
+    if not 0.0 <= mix <= 1.0:
+        raise ValueError("mix must be between 0 and 1")
+    if drive < 0.0:
+        raise ValueError("drive must be non-negative")
+    if oversample_factor < 1:
+        raise ValueError("oversample_factor must be at least 1")
+
+    input_signal = np.asarray(signal, dtype=np.float64)
+
+    def _process_channel(channel: np.ndarray) -> np.ndarray:
+        dry_channel = np.asarray(channel, dtype=np.float64)
+        os_sr = sample_rate * oversample_factor
+
+        # --- Step 1: Oversample ---
+        if oversample_factor > 1:
+            oversampled = resample_poly(dry_channel, oversample_factor, 1)
+        else:
+            oversampled = dry_channel.copy()
+        dry_oversampled = oversampled.copy()
+
+        # --- Step 2: Pre-emphasis (gentle bass shelf boost) ---
+        # Models transformer coupling impedance: bass gets slightly more
+        # energy into the core, matching real iron behavior.
+        pre_emphasis_db = warmth * 3.0
+        if pre_emphasis_db > 0.01:
+            pre_sos = tf2sos(
+                *_design_low_shelf_biquad(
+                    sample_rate=os_sr,
+                    center_hz=200.0,
+                    q=0.5,
+                    gain_db=pre_emphasis_db,
+                )
+            )
+            oversampled = np.asarray(sosfilt(pre_sos, oversampled), dtype=np.float64)
+
+        # --- Step 3: Leaky integrator (voltage -> flux domain) ---
+        # Phi[n] = leak * Phi[n-1] + x[n] / sr
+        # This is a 1st-order IIR lowpass: implements Faraday's law where
+        # flux is the integral of voltage, with a DC-preventing leak term.
+        leak = float(np.exp(-2.0 * np.pi * flux_cutoff_hz / os_sr))
+        flux = np.asarray(
+            lfilter([1.0 / os_sr], [1.0, -leak], oversampled),
+            dtype=np.float64,
+        )
+
+        # --- Step 4: Soft nonlinearity in flux domain ---
+        # Scale flux into the nonlinearity based on drive.  The scaling
+        # factor accounts for the integrator's gain (~1/(2*pi*fc)) so that
+        # the drive parameter maps intuitively: 0.5 = gentle, 1.0 = rich.
+        flux_rms = float(np.sqrt(np.mean(flux**2))) + 1e-12
+        drive_gain = drive * 8.0 / (flux_rms * 2.0 + 1e-12)
+        flux_scaled = flux * drive_gain
+
+        # DC bias for even-harmonic asymmetry (transformer core asymmetry).
+        # The bias is envelope-scaled so it tracks signal level rather than
+        # adding a static DC offset.
+        flux_envelope = _envelope_follower(
+            flux_scaled,
+            sample_rate=os_sr,
+            attack_ms=5.0,
+            release_ms=80.0,
+        )
+        bias_amount = even_odd * 0.05 * (1.0 + drive)
+        flux_biased = flux_scaled + bias_amount * flux_envelope
+
+        # Scaled arctan: soft clip with a knee that widens gracefully.
+        # The (2/pi) normalization keeps unity gain for small signals.
+        flux_saturated = (2.0 / np.pi) * np.arctan(flux_biased)
+
+        # --- Step 5: Differentiate (flux -> voltage) ---
+        # y[n] = (x[n] - x[n-1]) * sr  (Faraday: V = dPhi/dt)
+        voltage = np.diff(flux_saturated, prepend=flux_saturated[0]) * os_sr
+
+        # --- Step 6: De-emphasis (invert pre-emphasis) ---
+        if pre_emphasis_db > 0.01:
+            de_sos = tf2sos(
+                *_design_low_shelf_biquad(
+                    sample_rate=os_sr,
+                    center_hz=200.0,
+                    q=0.5,
+                    gain_db=-pre_emphasis_db,
+                )
+            )
+            voltage = np.asarray(sosfilt(de_sos, voltage), dtype=np.float64)
+
+        # --- Step 7: Extract harmonic difference ---
+        # Work with the difference signal (wet - dry) to preserve the
+        # original content's phase and tonality, mixing back only the
+        # coloration the transformer added.
+        flux_color = voltage - dry_oversampled
+
+        # --- Step 8: Filter difference ---
+        # LP ~12kHz: remove ultrasonic artifacts from differentiation.
+        # HP ~20Hz: remove DC / sub-bass drift from integration residue.
+        flux_color = lowpass(flux_color, cutoff_hz=12_000.0, sample_rate=os_sr, order=2)
+        flux_color = highpass(flux_color, cutoff_hz=20.0, sample_rate=os_sr, order=1)
+
+        # --- Step 9: Downsample ---
+        if oversample_factor > 1:
+            flux_color = resample_poly(flux_color, 1, oversample_factor)
+        flux_color = np.asarray(flux_color[: dry_channel.shape[-1]], dtype=np.float64)
+
+        # --- Step 10: Parallel Chebyshev harmonic injection ---
+        # Adds controlled harmonics without the intermod cascade that
+        # plagues memoryless waveshaping on polyphonic material.  Each
+        # Chebyshev polynomial generates a single harmonic order cleanly.
+        chebyshev_color = np.zeros_like(dry_channel)
+        if harmonic_injection > 0.0:
+            env = _envelope_follower(
+                dry_channel,
+                sample_rate=sample_rate,
+                attack_ms=8.0,
+                release_ms=120.0,
+            )
+            # Normalize signal for Chebyshev polynomials (need |x| <= 1)
+            peak = float(np.max(np.abs(dry_channel))) + 1e-12
+            x_norm = dry_channel / peak
+
+            # T2(x) = 2x^2 - 1  (2nd harmonic / octave)
+            t2 = 2.0 * x_norm**2 - 1.0
+            # T3(x) = 4x^3 - 3x  (3rd harmonic / octave + fifth)
+            t3 = 4.0 * x_norm**3 - 3.0 * x_norm
+            # T4(x) = 8x^4 - 8x^2 + 1  (4th harmonic / two octaves)
+            t4 = 8.0 * x_norm**4 - 8.0 * x_norm**2 + 1.0
+
+            # Weight even harmonics by even_odd, odd by (1 - even_odd).
+            # Scale by envelope so harmonics track dynamics naturally.
+            injection_scale = harmonic_injection * drive * 0.12
+            h2_weight = even_odd * 0.6
+            h3_weight = (1.0 - even_odd) * 0.4
+            h4_weight = even_odd * 0.2
+            chebyshev_color = (
+                injection_scale
+                * env
+                * (h2_weight * t2 + h3_weight * t3 + h4_weight * t4)
+            )
+            # Remove DC introduced by even-order Chebyshev terms
+            chebyshev_color = _dc_block(
+                chebyshev_color, sample_rate=sample_rate, cutoff_hz=15.0
+            )
+
+        return flux_color + chebyshev_color
+
+    # --- Process per-channel, mix, compensate ---
+    wet_difference = _apply_per_channel(input_signal, _process_channel)
+    blended = input_signal + mix * wet_difference
+
+    # Post-processing brightness tilt
+    if brightness != 0.0:
+        tilt_db = brightness * 2.5
+        blended = _apply_per_channel(
+            blended,
+            lambda ch: _apply_tilt_eq(
+                ch, sample_rate=sample_rate, tilt_db=tilt_db, pivot_hz=2_500.0
+            ),
+        )
+
+    compensated_signal, compensation_mode_used, compensation_gain_db = (
+        _apply_saturation_compensation(
+            blended,
+            reference_signal=input_signal,
+            sample_rate=sample_rate,
+            compensation_mode=compensation_mode,
+        )
+    )
+    processed_signal = np.asarray(compensated_signal, dtype=np.float64)
+
+    if not return_analysis:
+        return processed_signal
+
+    thd_pct, thd_character = _saturation_thd(
+        lambda x: cast(
+            np.ndarray,
+            apply_preamp(
+                x,
+                drive=drive,
+                mix=1.0,
+                warmth=warmth,
+                brightness=0.0,
+                even_odd=even_odd,
+                flux_cutoff_hz=flux_cutoff_hz,
+                harmonic_injection=harmonic_injection,
+                oversample_factor=oversample_factor,
+                compensation_mode="none",
+                sample_rate=sample_rate,
+                return_analysis=False,
+            ),
+        )
+    )
+    analysis: dict[str, float | int | str] = {
+        "algorithm": "flux_transformer",
+        "drive": round(float(drive), 2),
+        "mix": round(float(mix), 2),
+        "warmth": round(float(warmth), 2),
+        "even_odd": round(float(even_odd), 2),
+        "harmonic_injection": round(float(harmonic_injection), 2),
+        "dc_offset": round(float(np.mean(to_mono_reference(processed_signal))), 6),
+        "thd_pct": thd_pct,
+        "thd_character": thd_character,
+        "compensation_mode_used": compensation_mode_used,
+        "compensation_gain_db": round(float(compensation_gain_db), 2),
+    }
+    return processed_signal, analysis
+
+
 _SUPPORTED_EFFECT_AMOUNT_AUTOMATION_TARGETS = {"mix", "wet", "wet_level"}
 
 
@@ -5373,6 +5703,7 @@ def apply_effect_chain(
             "mod_delay",
             "phaser",
             "saturation",
+            "preamp",
             "airwindows",
             "byod",
             "chow_centaur",
@@ -5445,6 +5776,37 @@ def apply_effect_chain(
                     wet_signal = cast(
                         np.ndarray, apply_saturation(processed, **wet_params)
                     )
+                processed = _blend_signals(effect_input, wet_signal, amount_curve)
+        elif effect.kind == "preamp":
+            if effect_amount_automation is None and return_analysis:
+                processed_signal, preamp_metrics = cast(
+                    tuple[np.ndarray, dict[str, float | int | str]],
+                    apply_preamp(
+                        processed,
+                        **params,
+                        return_analysis=True,
+                    ),
+                )
+                processed = processed_signal
+                native_metrics = preamp_metrics
+            elif effect_amount_automation is None:
+                processed = cast(np.ndarray, apply_preamp(processed, **params))
+            else:
+                target_name, amount_curve = effect_amount_automation
+                wet_params = dict(params)
+                wet_params[target_name] = 1.0
+                if return_analysis:
+                    wet_signal, preamp_metrics = cast(
+                        tuple[np.ndarray, dict[str, float | int | str]],
+                        apply_preamp(
+                            processed,
+                            **wet_params,
+                            return_analysis=True,
+                        ),
+                    )
+                    native_metrics = preamp_metrics
+                else:
+                    wet_signal = cast(np.ndarray, apply_preamp(processed, **wet_params))
                 processed = _blend_signals(effect_input, wet_signal, amount_curve)
         elif effect.kind == "eq":
             processed = apply_eq(processed, **params)

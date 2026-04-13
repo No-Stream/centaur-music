@@ -4,18 +4,12 @@ from __future__ import annotations
 
 from code_musics.pieces._shared import SOFT_REVERB_EFFECT
 from code_musics.pieces.registry import PieceDefinition
-from code_musics.score import EffectSpec, Score
+from code_musics.score import Score
 
 
 def build_arpeggios_sketch() -> Score:
     """Sparse high-partial melody drifting downward — simple and tender."""
-    score = Score(
-        f0=55.0,
-        master_effects=[
-            EffectSpec("saturation", {"preset": "neve_gentle"}),
-            EffectSpec("compressor", {"preset": "master_glue"}),
-        ],
-    )
+    score = Score(f0=55.0, master_effects=[SOFT_REVERB_EFFECT])
     score.add_voice(
         "drone",
         synth_defaults={

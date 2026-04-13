@@ -50,6 +50,7 @@ EffectKind = Literal[
     "chorus",
     "mod_delay",
     "saturation",
+    "preamp",
     "eq",
     "compressor",
     "phaser",

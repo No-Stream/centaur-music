@@ -35,3 +35,4 @@ report/*
 .DS_Store
 
 midi_references/*
+scratch/*

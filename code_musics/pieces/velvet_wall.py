@@ -27,6 +27,8 @@ saturation).  Master bus has tape saturation for glue.
 from __future__ import annotations
 
 from code_musics.automation import AutomationSegment, AutomationSpec, AutomationTarget
+from code_musics.generative.cloud import stochastic_cloud
+from code_musics.generative.tone_pool import TonePool
 from code_musics.humanize import (
     EnvelopeHumanizeSpec,
     TimingHumanizeSpec,
@@ -455,6 +457,45 @@ def _setup_voices(score: Score) -> None:
         mix_db=-8.0,
         pan=0.25,
         sends=[hall_send_drowned],
+    )
+
+    # -- keys: piano punctuation in the dissolve — mortal against eternal ------
+    score.add_voice(
+        "keys",
+        synth_defaults={
+            "engine": "piano",
+            "preset": "septimal",
+            "decay_base": 4.5,
+            "soundboard_color": 0.50,
+            "soundboard_brightness": 0.45,
+            "attack": 0.003,
+            "sustain_level": 1.0,
+            "release": 0.3,
+        },
+        envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog"),
+        velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
+        normalize_lufs=-22.0,
+        mix_db=-4.0,
+        pan=0.10,
+        sends=[hall_send],
+    )
+
+    # -- shimmer: stochastic high-register sparkle, dissolves into reverb ------
+    score.add_voice(
+        "shimmer",
+        synth_defaults={
+            "engine": "additive",
+            "n_harmonics": 4,
+            "harmonic_rolloff": 0.30,
+            "attack": 0.3,
+            "decay": 0.5,
+            "sustain_level": 0.60,
+            "release": 4.0,
+        },
+        normalize_lufs=-28.0,
+        mix_db=-10.0,
+        pan=0.0,
+        sends=[VoiceSend(target="hall", send_db=-4.0)],
     )
 
 
@@ -911,6 +952,53 @@ def _write_wall(score: Score) -> None:
         "ghost", partial=5 / 2, start=190.0, duration=18.0, amp_db=-15, velocity=0.40
     )
 
+    # -- Stochastic shimmer: high-register sparkle through the wall --------------
+    shimmer_pool = TonePool.weighted(
+        {
+            2.0: 5.0,
+            4.0: 4.0,  # octaves — safest
+            3.0: 3.5,
+            6.0: 2.5,  # fifths
+            5 / 2: 2.0,
+            5.0: 1.5,  # major 3rds
+            7 / 2: 1.0,
+            7.0: 0.5,  # septimal — rare color
+        }
+    )
+
+    wall_shimmer = stochastic_cloud(
+        tones=shimmer_pool,
+        duration=36.0,
+        density=[(0.0, 0.2), (0.5, 0.35), (1.0, 0.25)],
+        amp_db_range=(-18.0, -14.0),
+        note_dur_range=(2.0, 5.0),
+        pitch_kind="partial",
+        seed=77,
+    )
+    score.add_phrase("shimmer", wall_shimmer, start=105.0)
+
+    climax_shimmer = stochastic_cloud(
+        tones=shimmer_pool,
+        duration=35.0,
+        density=[(0.0, 0.4), (0.4, 0.8), (0.7, 0.7), (1.0, 0.3)],
+        amp_db_range=(-16.0, -12.0),
+        note_dur_range=(1.5, 4.0),
+        pitch_kind="partial",
+        seed=78,
+    )
+    score.add_phrase("shimmer", climax_shimmer, start=155.0)
+
+    dissolve_shimmer = stochastic_cloud(
+        tones=shimmer_pool,
+        duration=50.0,
+        density=[(0.0, 0.3), (0.3, 0.2), (0.7, 0.1), (1.0, 0.05)],
+        amp_db_range=(-18.0, -14.0),
+        note_dur_range=(3.0, 6.0),
+        pitch_kind="partial",
+        seed=79,
+    )
+    score.add_phrase("shimmer", dissolve_shimmer, start=210.0)
+
     # -- Transition to dissolve: melody reaches one last time -------------------
     _m(score, 195.0, 4.0, 1.5, amp_db=-6, vel=0.85)  # A4, highest point
     _m(score, 197.0, 7 / 2, 2.0, amp_db=-6, vel=0.82, glide_from=4.0)
@@ -1021,6 +1109,36 @@ def _write_dissolve(score: Score) -> None:
     _m(score, 240.0, 3 / 2, 2.0, amp_db=-8, vel=0.68)  # pull toward fifth
     _m(score, 243.0, 2.0, 2.0, amp_db=-9, vel=0.62)
     _m(score, 246.0, 5 / 4, 1.5, amp_db=-10, vel=0.58)
+
+    # -- Piano punctuation: sparse, decaying notes against the pad wash ---------
+    # Physical, mortal sounds in the eternal wash. Not a melody — moments.
+    score.add_note(
+        "keys", partial=5 / 4, start=214.0, duration=5.0, amp_db=-8, velocity=0.68
+    )
+    score.add_note(
+        "keys", partial=3 / 2, start=219.0, duration=4.0, amp_db=-9, velocity=0.62
+    )
+    score.add_note(
+        "keys", partial=2.0, start=224.0, duration=4.5, amp_db=-8, velocity=0.65
+    )
+    score.add_note(
+        "keys",
+        partial=3 / 2,
+        start=229.0,
+        duration=5.0,
+        amp_db=-9,
+        velocity=0.60,
+        pitch_motion=PitchMotionSpec.ratio_glide(start_ratio=8 / 7, end_ratio=3 / 2),
+    )
+    score.add_note(
+        "keys", partial=5 / 4, start=238.0, duration=4.0, amp_db=-10, velocity=0.55
+    )
+    score.add_note(
+        "keys", partial=7 / 4, start=246.0, duration=5.0, amp_db=-10, velocity=0.52
+    )
+    score.add_note(
+        "keys", partial=3 / 2, start=256.0, duration=6.0, amp_db=-10, velocity=0.50
+    )
 
     # -- Ghost melody: the memory — denser than before -------------------------
     score.add_note(
