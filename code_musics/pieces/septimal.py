@@ -801,32 +801,32 @@ def build_otonal_utonal_mirror_expanded_score() -> Score:
 PIECES: dict[str, PieceDefinition] = {
     "interval_demo": PieceDefinition(
         name="interval_demo",
-        output_name="01_interval_demo.wav",
+        output_name="01_interval_demo",
         render_audio=render_interval_demo,
     ),
     "chord_4567": PieceDefinition(
         name="chord_4567",
-        output_name="02_chord_4567.wav",
+        output_name="02_chord_4567",
         build_score=build_chord_4567_score,
     ),
     "harmonic_drift": PieceDefinition(
         name="harmonic_drift",
-        output_name="03_harmonic_drift.wav",
+        output_name="03_harmonic_drift",
         build_score=build_harmonic_drift_score,
     ),
     "harmonic_window": PieceDefinition(
         name="harmonic_window",
-        output_name="04_harmonic_window.wav",
+        output_name="04_harmonic_window",
         build_score=build_harmonic_window_score,
     ),
     "otonal_utonal_mirror": PieceDefinition(
         name="otonal_utonal_mirror",
-        output_name="05_otonal_utonal_mirror.wav",
+        output_name="05_otonal_utonal_mirror",
         build_score=build_otonal_utonal_mirror_score,
     ),
     "otonal_utonal_mirror_expanded": PieceDefinition(
         name="otonal_utonal_mirror_expanded",
-        output_name="06_otonal_utonal_mirror_expanded.wav",
+        output_name="06_otonal_utonal_mirror_expanded",
         build_score=build_otonal_utonal_mirror_expanded_score,
     ),
 }

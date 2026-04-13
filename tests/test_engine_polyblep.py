@@ -3,31 +3,21 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from code_musics.engines.polyblep import render
 from code_musics.engines.registry import render_note_signal
 
 
 class TestPolyBLEPSmoke:
-    def test_smoke_saw(self) -> None:
+    @pytest.mark.parametrize("waveform", ["saw", "square", "sine", "triangle"])
+    def test_smoke_waveform(self, waveform: str) -> None:
         signal = render(
             freq=110.0,
             duration=0.25,
             amp=0.8,
             sample_rate=44100,
-            params={"waveform": "saw"},
-        )
-        assert len(signal) == int(0.25 * 44100)
-        assert np.all(np.isfinite(signal))
-        assert np.max(np.abs(signal)) > 0
-
-    def test_smoke_square(self) -> None:
-        signal = render(
-            freq=110.0,
-            duration=0.25,
-            amp=0.8,
-            sample_rate=44100,
-            params={"waveform": "square"},
+            params={"waveform": waveform},
         )
         assert len(signal) == int(0.25 * 44100)
         assert np.all(np.isfinite(signal))
@@ -106,7 +96,7 @@ class TestPolyBLEPSpectral:
         base_params = {
             "waveform": "saw",
             "cutoff_hz": 1_200.0,
-            "resonance": 0.18,
+            "resonance_q": 2.74,
             "filter_env_amount": 0.3,
         }
         lowpass = render(
@@ -145,7 +135,7 @@ class TestPolyBLEPSpectral:
             params={
                 "waveform": "saw",
                 "cutoff_hz": 900.0,
-                "resonance": 0.25,
+                "resonance_q": 3.53,
                 "filter_drive": 0.0,
             },
         )
@@ -157,7 +147,7 @@ class TestPolyBLEPSpectral:
             params={
                 "waveform": "saw",
                 "cutoff_hz": 900.0,
-                "resonance": 0.25,
+                "resonance_q": 3.53,
                 "filter_drive": 0.8,
             },
         )
@@ -229,7 +219,7 @@ class TestPolyBLEPStability:
             params={
                 "waveform": "square",
                 "cutoff_hz": 140.0,
-                "resonance": 2.0,
+                "resonance_q": 23.29,
                 "filter_drive": 0.6,
                 "filter_mode": "lowpass",
                 "filter_env_amount": 0.2,
@@ -251,7 +241,7 @@ class TestPolyBLEPDeterminism:
             params={
                 "waveform": "saw",
                 "cutoff_hz": 2000.0,
-                "resonance": 0.1,
+                "resonance_q": 1.84,
                 "filter_drive": 0.2,
                 "filter_mode": "lowpass",
             },

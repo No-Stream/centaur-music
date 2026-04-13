@@ -148,12 +148,12 @@ def build_arpeggios_cross_sketch() -> Score:
 PIECES: dict[str, PieceDefinition] = {
     "sketch_arpeggios": PieceDefinition(
         name="sketch_arpeggios",
-        output_name="09_sketch_arpeggios.wav",
+        output_name="09_sketch_arpeggios",
         build_score=build_arpeggios_sketch,
     ),
     "sketch_arpeggios_cross": PieceDefinition(
         name="sketch_arpeggios_cross",
-        output_name="13_sketch_arpeggios_cross.wav",
+        output_name="13_sketch_arpeggios_cross",
         build_score=build_arpeggios_cross_sketch,
     ),
 }

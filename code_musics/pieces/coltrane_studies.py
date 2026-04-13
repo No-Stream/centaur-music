@@ -207,9 +207,7 @@ def build_septimal_changes_score() -> Score:
                 "reverb", {"room_size": 0.62, "damping": 0.48, "wet_level": 0.26}
             ),
             EffectSpec("delay", {"delay_seconds": 0.28, "feedback": 0.14, "mix": 0.09}),
-            EffectSpec(
-                "saturation", {"preset": "neve_gentle", "mix": 0.18, "drive": 1.08}
-            ),
+            EffectSpec("preamp", {"preset": "neve_warmth"}),
         ],
     )
 
@@ -464,17 +462,17 @@ def build_giant_steps_15edo_score() -> Score:
 PIECES: dict[str, PieceDefinition] = {
     "ji_spiral_steps": PieceDefinition(
         name="ji_spiral_steps",
-        output_name="20_ji_spiral_steps.wav",
+        output_name="20_ji_spiral_steps",
         build_score=build_ji_spiral_steps_score,
     ),
     "septimal_changes": PieceDefinition(
         name="septimal_changes",
-        output_name="21_septimal_changes.wav",
+        output_name="21_septimal_changes",
         build_score=build_septimal_changes_score,
     ),
     "giant_steps_15edo": PieceDefinition(
         name="giant_steps_15edo",
-        output_name="22_giant_steps_15edo.wav",
+        output_name="22_giant_steps_15edo",
         build_score=build_giant_steps_15edo_score,
     ),
 }

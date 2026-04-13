@@ -249,7 +249,7 @@ def build_crystal_canon_score() -> Score:
 PIECES: dict[str, PieceDefinition] = {
     "crystal_canon": PieceDefinition(
         name="crystal_canon",
-        output_name="30_crystal_canon.wav",
+        output_name="30_crystal_canon",
         build_score=build_crystal_canon_score,
     ),
 }

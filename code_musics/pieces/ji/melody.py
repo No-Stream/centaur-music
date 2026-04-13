@@ -124,7 +124,7 @@ def build_ji_melody_score() -> Score:
 PIECES: dict[str, PieceDefinition] = {
     "ji_melody": PieceDefinition(
         name="ji_melody",
-        output_name="18_ji_melody.wav",
+        output_name="18_ji_melody",
         build_score=build_ji_melody_score,
     )
 }

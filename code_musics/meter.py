@@ -227,9 +227,7 @@ class Timeline:
             return absolute_beats * self.seconds_per_beat
 
         unit_beats = self.swing_unit_beats
-        if unit_beats is None:
-            return absolute_beats * self.seconds_per_beat
-
+        assert unit_beats is not None  # guaranteed: swing is not None here
         warped_beats = self._warp_beats_within_units(
             absolute_beats,
             unit_beats=unit_beats,
@@ -243,9 +241,7 @@ class Timeline:
             return warped_beats
 
         unit_beats = self.swing_unit_beats
-        if unit_beats is None:
-            return warped_beats
-
+        assert unit_beats is not None  # guaranteed: swing is not None here
         return self._unwarp_beats_within_units(
             warped_beats,
             unit_beats=unit_beats,

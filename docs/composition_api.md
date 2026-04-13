@@ -5,7 +5,7 @@ core `Score` / `Phrase` / `NoteEvent` model.
 
 For the concrete score-domain reference covering `Score`, `Voice`, `NoteEvent`,
 `Phrase`, and render-time expression semantics, see
-[docs/score_api.md](/home/jan/workspace/code-musics/docs/score_api.md).
+[docs/score_api.md](docs/score_api.md).
 
 The composition layer is phrase-first and xen-friendly:
 
@@ -19,15 +19,15 @@ so the underlying render model is still seconds-based.
 
 ## Where This Is Used
 
-- [code_musics/composition.py](/home/jan/workspace/code-musics/code_musics/composition.py)
-- [code_musics/pitch_motion.py](/home/jan/workspace/code-musics/code_musics/pitch_motion.py)
-- [code_musics/score.py](/home/jan/workspace/code-musics/code_musics/score.py)
+- [code_musics/composition.py](code_musics/composition.py)
+- [code_musics/pitch_motion.py](code_musics/pitch_motion.py)
+- [code_musics/score.py](code_musics/score.py)
 
 ## Core Types
 
 This doc touches a few nearby score-expression controls for context, but the
 detailed score-domain reference now lives in
-[docs/score_api.md](/home/jan/workspace/code-musics/docs/score_api.md).
+[docs/score_api.md](docs/score_api.md).
 
 Nearby topics that matter when using the composition helpers:
 
@@ -334,10 +334,12 @@ How to think about the parameters:
 - `follow_strength` controls how tightly voices move together
 - `voice_spread_ms` adds per-voice separation
 - `micro_jitter_ms` adds small note-level randomness
-- `chord_spread_ms` offsets notes that start together so simultaneities are not perfectly vertical
+- `chord_spread_ms` offsets notes that start together so simultaneities
+  are not perfectly vertical
 
 Use this when the whole score should feel performed rather than grid-perfect.
-Do not use it as a substitute for writing actual rubato or changing the written rhythm.
+Do not use it as a substitute for writing actual rubato or changing the
+written rhythm.
 
 Example:
 
@@ -604,7 +606,8 @@ Rough starting ranges for note-level balances:
 - bass lines and pedals: around `-16 dB` to `-10 dB`
 - leads: around `-20 dB` to `-12 dB`
 - inner voices and pads: around `-24 dB` to `-16 dB`
-- bright percussion or punctuation: often quieter in sustain, but transient material may still need `-14 dB` to `-8 dB`
+- bright percussion or punctuation: often quieter in sustain, but
+  transient material may still need `-14 dB` to `-8 dB`
 
 These are only starting points. Apparent loudness depends strongly on spectrum,
 envelope, register, and density. In practice, low sustained parts often need more
@@ -621,7 +624,8 @@ Recommended default mental model:
 - leave most notes around `velocity=1.0`
 - use roughly `0.85` to `0.95` for softer notes
 - use roughly `1.05` to `1.2` for accents
-- avoid treating velocity like a substitute for all gain staging; use `amp_db` for the larger balance decisions
+- avoid treating velocity like a substitute for all gain staging;
+  use `amp_db` for the larger balance decisions
 
 By default, resolved velocity affects loudness through `velocity_db_per_unit`
 on the voice. It can also affect timbre when `velocity_to_params` is configured.
@@ -724,3 +728,264 @@ phrase = line(
     ),
 )
 ```
+
+## Generative Composition Helpers
+
+The `code_musics.generative` package provides algorithmic and stochastic
+composition tools. All generators work in ratio space, are deterministic when
+seeded, and produce standard `Phrase`, `RhythmCell`, or raw ratio lists that
+plug directly into the existing composition and score surfaces.
+
+### `TonePool`
+
+Weighted pitch pool for stochastic pitch selection. Ratios are frequency ratios
+(e.g. `1.0`, `1.25`, `1.5` for a 4:5:6 triad); weights are normalized to sum
+to 1.0.
+
+Constructors:
+
+- `TonePool.uniform(ratios)` -- equal weight for every ratio
+- `TonePool.weighted({ratio: weight, ...})` -- auto-normalized from a mapping
+- `TonePool.from_harmonics([4, 5, 6, 7])` -- harmonic partial numbers, uniform
+  weights, ratios derived as `partial / min(partials)`
+
+Drawing:
+
+- `pool.draw(n, seed=0, replace=True)` -- draw `n` ratios according to weights
+- `pool.draw_one(rng=rng)` -- draw a single ratio using an external
+  `random.Random` instance (used internally by other generators)
+
+```python
+from code_musics.generative import TonePool
+
+pool = TonePool.from_harmonics([4, 5, 6, 7])
+ratios = pool.draw(16, seed=42)
+
+# weighted toward the root and fifth
+pool = TonePool.weighted({1.0: 3, 5/4: 1, 3/2: 2, 7/4: 1})
+```
+
+### Euclidean Rhythm
+
+Bjorklund's algorithm distributes `hits` onsets as evenly as possible across
+`steps`. Three entry points at different levels of abstraction:
+
+**`euclidean_pattern(hits, steps, rotation=0)`**
+
+Returns a `tuple[bool, ...]` onset mask.
+
+**`euclidean_rhythm(hits, steps, span=0.25, rotation=0)`**
+
+Converts the pattern into a `RhythmCell`. Silent steps are absorbed into the
+preceding sounding step's span. Returns `None` when `hits` is 0.
+
+**`euclidean_line(tones, hits, steps, span=0.25, rotation=0, ...)`**
+
+Builds a complete `Phrase` by cycling `tones` through the sounding positions of
+a euclidean rhythm. Accepts `pitch_kind`, `amp`/`amp_db`, `gate`, `synth`, and
+an optional `HarmonicContext` for ratio resolution.
+
+```python
+from code_musics.generative import euclidean_line, euclidean_rhythm
+
+rhythm = euclidean_rhythm(5, 8, span=0.25)
+
+phrase = euclidean_line(
+    tones=[1.0, 5/4, 3/2],
+    hits=5,
+    steps=8,
+    span=0.25,
+    amp_db=-14.0,
+)
+```
+
+### `prob_gate`
+
+Probabilistically filters notes from an existing phrase, preserving original
+timing. Notes that survive the gate keep their position; removed notes leave
+silence.
+
+```python
+prob_gate(
+    phrase,
+    density=0.7,        # base survival probability [0, 1]
+    accent_bias=0.0,    # bias toward keeping louder notes [0, 1]
+    position_weights=None,  # per-step weight cycle (e.g. [1, 0.5, 0.8, 0.5])
+    seed=0,
+)
+```
+
+- `density` is the base probability that any note survives.
+- `accent_bias > 0` makes louder notes more likely to survive.
+- `position_weights` applies a cyclic per-position multiplier to the survival
+  probability, useful for emphasizing downbeats or specific metric positions.
+
+```python
+from code_musics.generative import prob_gate
+
+sparse = prob_gate(phrase, density=0.5, accent_bias=0.3, seed=7)
+```
+
+### `RatioMarkov`
+
+Markov chain over JI ratios with configurable order (memory depth).
+
+Constructors:
+
+- `RatioMarkov.from_transitions({src: {dst: weight, ...}, ...})` -- order-1
+  chain from a simple source-to-target mapping; weights are auto-normalized
+- `RatioMarkov.from_table({(s1, s2): {dst: weight}, ...}, order=2)` --
+  higher-order chain from explicit state tuples
+- `RatioMarkov.from_phrase(phrase, order=1, context=None)` -- learn transition
+  probabilities from an existing phrase's pitch content
+
+Generation:
+
+- `chain.generate(n, start=None, seed=0)` -- produce `n` ratios; `start` can
+  be a single ratio or a tuple matching the chain order
+- `chain.to_phrase(n, rhythm, seed=0, start=None, context=None, **line_kwargs)`
+  -- generate ratios and build a `Phrase` directly
+
+When the chain reaches a state with no defined transitions, it picks a random
+known state and continues.
+
+```python
+from code_musics.generative import RatioMarkov
+
+chain = RatioMarkov.from_transitions({
+    1.0:  {5/4: 2, 3/2: 1},
+    5/4:  {3/2: 1, 1.0: 1},
+    3/2:  {1.0: 2, 7/4: 1},
+    7/4:  {1.0: 1},
+})
+
+ratios = chain.generate(32, seed=11)
+phrase = chain.to_phrase(16, rhythm=(0.25,), seed=11, amp_db=-16.0)
+```
+
+### `TuringMachine`
+
+Shift-register sequencer inspired by the Music Thing Turing Machine module.
+A binary register of configurable length loops through tone selections;
+`flip_probability` controls how much the register mutates each step.
+
+- `flip_probability=0.0` produces a fixed loop with period `length`
+- Small values introduce gradual mutations
+- `flip_probability=1.0` is fully random
+
+```python
+TuringMachine(
+    length=8,              # register length in bits
+    flip_probability=0.0,  # mutation rate [0, 1]
+    tones=...,             # TonePool or Sequence[float]
+    seed=0,
+)
+```
+
+- `tm.generate(n)` -- produce `n` ratios
+- `tm.to_phrase(n, rhythm, context=None, **line_kwargs)` -- generate and build
+  a `Phrase`
+
+```python
+from code_musics.generative import TonePool, TuringMachine
+
+pool = TonePool.from_harmonics([4, 5, 6, 7, 9, 11])
+tm = TuringMachine(length=6, flip_probability=0.05, tones=pool, seed=3)
+phrase = tm.to_phrase(32, rhythm=(0.25,), amp_db=-16.0)
+```
+
+### `LatticeWalker`
+
+Random walk on the JI prime-factor lattice. Each step moves one unit along a
+randomly chosen prime axis (default: 3, 5, 7), with optional gravitational pull
+toward the origin (1/1). Ratios are octave-reduced by default.
+
+```python
+LatticeWalker(
+    axes=(3, 5, 7),       # prime axes to walk
+    step_weights=None,     # {prime: weight} bias toward certain axes
+    gravity=0.0,           # pull toward 1/1 [0, 1]
+    max_distance=3,        # max exponent magnitude per axis
+    octave_reduce=True,    # keep ratios in [1, 2)
+    seed=0,
+)
+```
+
+- `walker.walk(n, start=None)` -- produce `n` ratios; `start` is an optional
+  `{prime: exponent}` dict
+- `walker.to_phrase(n, rhythm, context=None, start=None, **line_kwargs)` --
+  walk and build a `Phrase`
+
+With `gravity=0` the walk is unbiased and can drift far from the origin. Higher
+gravity values make the walk orbit closer to 1/1, which tends to produce more
+consonant sequences.
+
+```python
+from code_musics.generative import LatticeWalker
+
+walker = LatticeWalker(
+    axes=(3, 5, 7),
+    gravity=0.3,
+    max_distance=2,
+    seed=5,
+)
+phrase = walker.to_phrase(24, rhythm=(0.5, 0.25, 0.25), amp_db=-18.0)
+```
+
+### `stochastic_cloud`
+
+Generates a cloud of stochastic notes as a `Phrase`. Note start times, pitches,
+durations, and amplitudes are all drawn randomly within specified ranges.
+
+```python
+stochastic_cloud(
+    tones=...,                          # TonePool or Sequence[float]
+    duration=10.0,                      # total cloud duration in seconds
+    density=5.0,                        # notes per second (float), or
+                                        # density breakpoints (see below)
+    amp_db_range=(-18.0, -6.0),         # uniform random amp_db range
+    note_dur_range=(0.1, 0.5),          # uniform random note duration range
+    pitch_kind="partial",               # "partial" or "freq"
+    context=None,                       # optional HarmonicContext
+    seed=0,
+    synth=None,                         # optional per-note synth overrides
+)
+```
+
+When `density` is a float, it means notes per second (total count =
+`density * duration`). When `density` is a sequence of `(time_fraction, rate)`
+breakpoints, the density varies over time via piecewise-linear interpolation.
+Breakpoints must start at fraction `0.0` and end at `1.0`.
+
+```python
+from code_musics.generative import TonePool, stochastic_cloud
+
+pool = TonePool.from_harmonics([4, 5, 6, 7, 9])
+
+# constant density
+cloud = stochastic_cloud(tones=pool, duration=8.0, density=4.0, seed=1)
+
+# time-varying density: sparse start, dense middle, sparse end
+cloud = stochastic_cloud(
+    tones=pool,
+    duration=12.0,
+    density=[(0.0, 1.0), (0.4, 8.0), (0.7, 8.0), (1.0, 1.0)],
+    seed=2,
+    amp_db_range=(-20.0, -10.0),
+)
+```
+
+### Common Patterns
+
+All generators are deterministic for a given `seed`. Changing the seed produces
+a different but reproducible result. This makes generative output stable across
+renders while still allowing exploration by trying different seeds.
+
+Most generators accept a `HarmonicContext` for ratio resolution. When a context
+is provided, ratios are resolved against the context tonic as absolute
+frequencies. Without a context, ratios are treated as partials relative to
+`Score.f0`.
+
+Generators that produce `Phrase` objects work with the full existing composition
+surface: `Score.add_phrase(...)`, `concat(...)`, `overlay(...)`,
+`Phrase.transformed(...)`, and all placement transforms.

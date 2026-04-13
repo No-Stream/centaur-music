@@ -59,17 +59,21 @@ def test_analyze_audio_warns_for_clipping_and_low_active_level() -> None:
 
 def test_analyze_audio_reports_bright_modulated_artifact_risks() -> None:
     sample_rate = 44_100
-    duration = 2.0
+    duration = 4.0
     time = np.arange(int(sample_rate * duration), dtype=np.float64) / sample_rate
-    modulation = 0.52 + 0.46 * np.sin(2.0 * np.pi * 8.0 * time)
-    signal = modulation * np.sin(2.0 * np.pi * 5_200.0 * time)
+    # Power-2 modulation at 8 Hz produces ~23 dB depth, clearing the 18 dB
+    # warning threshold and the 4 Hz frequency floor.
+    modulation = np.power(
+        np.maximum(0.001, 0.5 + 0.5 * np.sin(2.0 * np.pi * 8.0 * time)), 2.0
+    )
+    signal = 0.8 * modulation * np.sin(2.0 * np.pi * 5_200.0 * time)
 
     analysis = analyze_audio(signal, sample_rate=sample_rate)
     risk_codes = {risk.code for risk in analysis.artifact_risks}
 
     assert "bright_spectral_centroid" in risk_codes
     assert "strong_amplitude_modulation" in risk_codes
-    assert analysis.amplitude_modulation_depth_db >= 12.0
+    assert analysis.amplitude_modulation_depth_db >= 18.0
     assert analysis.dominant_amplitude_modulation_hz >= 7.0
     amplitude_modulation_risk = next(
         risk
@@ -181,7 +185,7 @@ def test_save_analysis_artifacts_writes_manifest_and_plots(tmp_path: Path) -> No
 
     stems = score.render_stems()
     mix = score.render()
-    _mix_with_effects, _stems_with_effects, effect_analysis = (
+    _mix_with_effects, _stems_with_effects, _send_returns, effect_analysis = (
         score.render_with_effect_analysis()
     )
     manifest = save_analysis_artifacts(
@@ -290,7 +294,7 @@ def test_save_analysis_artifacts_records_artifact_risk_report(tmp_path: Path) ->
             "engine": "polyblep",
             "waveform": "triangle",
             "cutoff_hz": 3_600.0,
-            "resonance": 0.12,
+            "resonance_q": 2.06,
             "filter_env_amount": 0.95,
             "filter_drive": 0.09,
             "attack": 0.05,
@@ -340,7 +344,7 @@ def test_save_analysis_artifacts_records_artifact_risk_report(tmp_path: Path) ->
             "engine": "polyblep",
             "waveform": "triangle",
             "cutoff_hz": 2_200.0,
-            "resonance": 0.07,
+            "resonance_q": 1.50,
             "filter_env_amount": 0.18,
             "filter_drive": 0.04,
             "attack": 0.05,
@@ -525,3 +529,91 @@ def test_compare_analysis_manifests_reports_mix_and_score_deltas(
     assert comparison["score_delta"]["peak_simultaneous_notes"] == -1.0
     assert comparison["voice_delta"]["lead"]["spectral_centroid_hz"] == 150.0
     assert comparison_path.exists()
+
+
+def test_analyze_audio_reports_thd_for_clean_sine() -> None:
+    sample_rate = 44_100
+    duration = 2.0
+    time = np.arange(int(sample_rate * duration), dtype=np.float64) / sample_rate
+    clean_sine = 0.5 * np.sin(2.0 * np.pi * 440.0 * time)
+
+    analysis = analyze_audio(clean_sine, sample_rate=sample_rate)
+
+    assert analysis.thd_pct < 2.0
+    assert analysis.thd_character in ("clean", "subtle_warmth")
+    assert all(risk.code != "harmonic_distortion" for risk in analysis.artifact_risks)
+
+
+def test_analyze_audio_reports_thd_for_distorted_signal() -> None:
+    sample_rate = 44_100
+    duration = 2.0
+    time = np.arange(int(sample_rate * duration), dtype=np.float64) / sample_rate
+    sine = 0.9 * np.sin(2.0 * np.pi * 220.0 * time)
+    distorted = np.clip(sine * 5.0, -1.0, 1.0)
+
+    analysis = analyze_audio(distorted, sample_rate=sample_rate)
+
+    # THD measurement still works — high THD is correctly detected as metadata.
+    assert analysis.thd_pct >= 15.0
+    assert analysis.thd_character in ("distortion", "fuzz")
+    # But absolute THD no longer fires artifact risk warnings (false positive on
+    # harmonically rich timbres like saw waves).
+    risk_codes = {risk.code for risk in analysis.artifact_risks}
+    assert "harmonic_distortion" not in risk_codes
+
+
+def test_analyze_audio_does_not_flag_saw_wave_thd() -> None:
+    sample_rate = 44_100
+    duration = 2.0
+    time = np.arange(int(sample_rate * duration), dtype=np.float64) / sample_rate
+    # Band-limited saw wave: first 20 harmonics at 220 Hz.
+    saw = np.zeros_like(time)
+    for harmonic in range(1, 21):
+        saw += (
+            ((-1.0) ** (harmonic + 1))
+            / harmonic
+            * np.sin(2.0 * np.pi * 220.0 * harmonic * time)
+        )
+    saw *= 0.5 / np.max(np.abs(saw))  # normalize to 0.5 peak
+
+    analysis = analyze_audio(saw, sample_rate=sample_rate)
+
+    assert analysis.thd_pct >= 10.0
+    risk_codes = {risk.code for risk in analysis.artifact_risks}
+    assert "harmonic_distortion" not in risk_codes
+
+
+def test_save_analysis_artifacts_flags_mastering_introduced_thd(
+    tmp_path: Path,
+) -> None:
+    sample_rate = 44_100
+    duration = 2.0
+    time = np.arange(int(sample_rate * duration), dtype=np.float64) / sample_rate
+    pre_master = 0.3 * np.sin(2.0 * np.pi * 220.0 * time)
+    post_master = np.clip(pre_master * 5.0, -1.0, 1.0)
+
+    manifest = save_analysis_artifacts(
+        output_prefix=tmp_path / "thd_delta",
+        mix_signal=post_master,
+        pre_master_mix_signal=pre_master,
+        pre_export_mix_signal=post_master,
+        sample_rate=sample_rate,
+    )
+
+    mix_risk_codes = {risk["code"] for risk in manifest["artifact_risk"]["mix"]}
+    assert "harmonic_distortion" in mix_risk_codes
+
+
+def test_analyze_audio_does_not_flag_rhythmic_pattern_as_modulation_artifact() -> None:
+    sample_rate = 44_100
+    duration = 4.0
+    time = np.arange(int(sample_rate * duration), dtype=np.float64) / sample_rate
+    # ~3.33 Hz square-ish envelope (below 4 Hz floor): eighth notes at ~100 BPM.
+    envelope = 0.5 * (1.0 + np.sign(np.sin(2.0 * np.pi * 3.33 * time)))
+    signal = envelope * 0.4 * np.sin(2.0 * np.pi * 440.0 * time)
+
+    analysis = analyze_audio(signal, sample_rate=sample_rate)
+
+    assert analysis.dominant_amplitude_modulation_hz < 4.0
+    risk_codes = {risk.code for risk in analysis.artifact_risks}
+    assert "strong_amplitude_modulation" not in risk_codes

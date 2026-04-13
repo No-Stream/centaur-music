@@ -1,6 +1,7 @@
 """Score abstraction tests."""
 
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -209,6 +210,44 @@ def test_control_automation_target_validation() -> None:
         AutomationTarget(kind="control", name="feedback")
 
 
+def test_synth_automation_params_accepted() -> None:
+    """All supported synth params should be accepted by AutomationTarget."""
+    expected_params = [
+        "attack",
+        "brightness",
+        "brightness_tilt",
+        "click_amount",
+        "cutoff_hz",
+        "decay",
+        "drive_ratio",
+        "feedback",
+        "filter_drive",
+        "filter_env_amount",
+        "filter_env_decay",
+        "hammer_hardness",
+        "hammer_noise",
+        "index_decay",
+        "mod_index",
+        "noise_amount",
+        "osc2_detune_cents",
+        "osc2_level",
+        "overtone_amount",
+        "release",
+        "resonance_q",
+        "soundboard_color",
+        "sustain_level",
+    ]
+    for param_name in expected_params:
+        target = AutomationTarget(kind="synth", name=param_name)
+        assert target.kind == "synth"
+        assert target.name == param_name
+
+
+def test_synth_automation_rejects_unsupported_param() -> None:
+    with pytest.raises(ValueError, match="Unsupported synth automation target"):
+        AutomationTarget(kind="synth", name="waveform")
+
+
 def test_render_overlapping_voices_returns_audio() -> None:
     score = Score(f0=55.0)
     score.add_note("a", start=0.0, duration=1.0, partial=4, amp=0.3)
@@ -245,7 +284,7 @@ def test_voice_max_polyphony_one_truncates_previous_note() -> None:
         duration=0.3,
         freq=55.0,
         amp=0.2,
-        synth={"release": 0.0},
+        synth={"release": 0.005},
     )
     manually_truncated.add_note("bass", start=0.3, duration=0.4, freq=82.5, amp=0.2)
 
@@ -686,7 +725,7 @@ def test_plugin_effect_sets_named_plugin_parameters(
             return signal
 
     fake_plugin = FakePlugin()
-    monkeypatch.setattr(synth, "_load_external_plugin", lambda **_: fake_plugin)
+    monkeypatch.setattr(synth, "load_external_plugin", lambda **_: fake_plugin)
     signal = 0.5 * np.sin(
         np.linspace(0.0, 2.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
     )
@@ -720,7 +759,7 @@ def test_plugin_effect_analysis_reports_inactive_stage(
             assert sample_rate == synth.SAMPLE_RATE
             return signal
 
-    monkeypatch.setattr(synth, "_load_external_plugin", lambda **_: FakePlugin())
+    monkeypatch.setattr(synth, "load_external_plugin", lambda **_: FakePlugin())
     signal = 0.5 * np.sin(
         np.linspace(0.0, 2.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
     )
@@ -750,7 +789,7 @@ def test_plugin_effect_rejects_unknown_parameter(
         def __call__(self, signal: np.ndarray, sample_rate: int) -> np.ndarray:
             return signal
 
-    monkeypatch.setattr(synth, "_load_external_plugin", lambda **_: FakePlugin())
+    monkeypatch.setattr(synth, "load_external_plugin", lambda **_: FakePlugin())
     signal = np.sin(np.linspace(0.0, 2.0 * np.pi, 1024, endpoint=False))
 
     with pytest.raises(ValueError, match="no parameter"):
@@ -811,7 +850,7 @@ def test_tal_reverb_uses_shared_plugin_backend(
             return signal
 
     fake_plugin = FakePlugin()
-    monkeypatch.setattr(synth, "_load_external_plugin", lambda **_: fake_plugin)
+    monkeypatch.setattr(synth, "load_external_plugin", lambda **_: fake_plugin)
     signal = np.sin(np.linspace(0.0, 2.0 * np.pi, 1024, endpoint=False))
 
     processed = synth.apply_tal_reverb2(
@@ -1223,7 +1262,7 @@ def test_render_with_effect_analysis_includes_send_effects() -> None:
     score.add_voice("lead", normalize_lufs=None, sends=[VoiceSend("room", send_db=0.0)])
     score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.3)
 
-    _mix, stems, effect_analysis = score.render_with_effect_analysis()
+    _mix, stems, _send_returns, effect_analysis = score.render_with_effect_analysis()
 
     assert "lead" in stems
     assert "room" in effect_analysis["send_effects"]
@@ -1349,7 +1388,7 @@ def test_true_peak_estimation_uses_loudest_stereo_channel() -> None:
     assert true_peak == pytest.approx(0.8, rel=1e-3)
 
 
-def test_finalize_master_raises_when_lsp_limiter_is_unavailable(
+def test_finalize_master_falls_back_when_lsp_limiter_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(synth, "has_external_plugin", lambda plugin_name: False)
@@ -1357,8 +1396,10 @@ def test_finalize_master_raises_when_lsp_limiter_is_unavailable(
         np.linspace(0.0, 4.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
     )
 
-    with pytest.raises(FileNotFoundError, match="LSP limiter"):
-        synth.finalize_master(signal, sample_rate=synth.SAMPLE_RATE)
+    result = synth.finalize_master(signal, sample_rate=synth.SAMPLE_RATE)
+    assert isinstance(result, synth.MasteringResult)
+    assert np.isfinite(result.integrated_lufs)
+    assert np.isfinite(result.true_peak_dbfs)
 
 
 def test_finalize_master_targets_lufs_and_true_peak_with_limiter(
@@ -2072,7 +2113,7 @@ def test_render_piece_writes_audio_and_plot(tmp_path: Path) -> None:
     assert audio_path.exists()
     assert result.version_audio_path is not None
     assert result.version_audio_path.exists()
-    assert "versions/chord_4567/" in str(result.version_audio_path)
+    assert "chord_4567/versions/" in str(result.version_audio_path)
     assert plot_path is not None
     assert plot_path.exists()
     assert result.version_plot_path is not None
@@ -2361,7 +2402,7 @@ def test_polyblep_resonance_q_overrides_resonance() -> None:
         "bass",
         synth_defaults={
             "engine": "polyblep",
-            "params": {"waveform": "saw", "cutoff_hz": 800.0, "resonance": 0.5},
+            "params": {"waveform": "saw", "cutoff_hz": 800.0, "resonance_q": 6.35},
         },
     )
     score_res.add_note("bass", start=0.0, duration=0.5, freq=110.0, amp_db=-6.0)
@@ -2435,3 +2476,430 @@ def test_saturation_thd_reported_via_effect_chain() -> None:
     metrics = effect_analysis[0].metrics
     assert "thd_pct" in metrics
     assert "thd_character" in metrics
+
+
+def test_effect_analysis_includes_signal_thd_metrics() -> None:
+    """Every effect stage should report input/output THD and delta."""
+    t = np.arange(synth.SAMPLE_RATE, dtype=np.float64) / synth.SAMPLE_RATE
+    signal = 0.5 * np.sin(2.0 * np.pi * 220.0 * t)
+
+    _processed, effect_analysis = synth.apply_effect_chain(
+        signal,
+        [EffectSpec("saturation", {"drive": 2.0, "mix": 0.6})],
+        return_analysis=True,
+    )
+
+    metrics = effect_analysis[0].metrics
+    assert "input_thd_pct" in metrics
+    assert "output_thd_pct" in metrics
+    assert "thd_delta_pct" in metrics
+    assert "input_thd_character" in metrics
+    assert "output_thd_character" in metrics
+    # A sine input should have very low input THD.
+    assert float(metrics["input_thd_pct"]) < 2.0
+    # Saturation should raise THD.
+    assert float(metrics["output_thd_pct"]) > float(metrics["input_thd_pct"])
+    assert float(metrics["thd_delta_pct"]) > 0.0
+
+
+def test_aggressive_saturation_triggers_thd_warning() -> None:
+    """Heavy saturation should trigger the effect_introduced_distortion warning."""
+    t = np.arange(synth.SAMPLE_RATE, dtype=np.float64) / synth.SAMPLE_RATE
+    signal = 0.7 * np.sin(2.0 * np.pi * 220.0 * t)
+
+    _processed, effect_analysis = synth.apply_effect_chain(
+        signal,
+        [EffectSpec("saturation", {"drive": 6.0, "mix": 1.0})],
+        return_analysis=True,
+    )
+
+    warning_codes = {w.code for w in effect_analysis[0].warnings}
+    assert "effect_introduced_distortion" in warning_codes
+
+
+def test_gentle_saturation_does_not_trigger_thd_warning() -> None:
+    """Mild saturation should not fire the distortion warning."""
+    t = np.arange(synth.SAMPLE_RATE, dtype=np.float64) / synth.SAMPLE_RATE
+    signal = 0.3 * np.sin(2.0 * np.pi * 220.0 * t)
+
+    _processed, effect_analysis = synth.apply_effect_chain(
+        signal,
+        [EffectSpec("saturation", {"drive": 1.2, "mix": 0.3})],
+        return_analysis=True,
+    )
+
+    warning_codes = {w.code for w in effect_analysis[0].warnings}
+    assert "effect_introduced_distortion" not in warning_codes
+
+
+class TestMasterBusDiagnosticLogging:
+    """Verify that the master bus signal chain emits diagnostic log messages."""
+
+    @staticmethod
+    def _build_simple_score() -> Score:
+        score = Score(f0=55.0)
+        score.add_voice("pad", synth_defaults={"engine": "additive"})
+        score.add_note("pad", start=0.0, duration=0.5, partial=4, amp_db=-6.0)
+        return score
+
+    def test_score_render_logs_pre_master_peak(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        score = self._build_simple_score()
+        with caplog.at_level(logging.INFO, logger="code_musics.score"):
+            score.render()
+        pre_master_messages = [
+            r.message for r in caplog.records if "pre-processing" in r.message
+        ]
+        assert len(pre_master_messages) == 1
+        assert "dBFS" in pre_master_messages[0]
+
+    def test_score_render_logs_post_gain_stage_peak(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        score = self._build_simple_score()
+        with caplog.at_level(logging.INFO, logger="code_musics.score"):
+            score.render()
+        post_stage_messages = [
+            r.message for r in caplog.records if "auto gain stage" in r.message.lower()
+        ]
+        assert len(post_stage_messages) == 1
+        assert "dBFS" in post_stage_messages[0]
+
+    def test_score_render_logs_ceiling_warning_when_peak_exceeds_threshold(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        score = Score(f0=55.0, auto_master_gain_stage=False)
+        score.add_voice(
+            "loud", synth_defaults={"engine": "additive"}, normalize_lufs=None
+        )
+        for i in range(20):
+            score.add_note("loud", start=0.0, duration=0.5, partial=4 + i, amp=1.0)
+        with caplog.at_level(logging.WARNING, logger="code_musics.score"):
+            score.render()
+        ceiling_messages = [
+            r.message for r in caplog.records if "ceiling activated" in r.message
+        ]
+        assert len(ceiling_messages) == 1
+        assert "attenuated" in ceiling_messages[0]
+
+    def test_score_render_no_ceiling_warning_for_quiet_mix(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        score = self._build_simple_score()
+        with caplog.at_level(logging.WARNING, logger="code_musics.score"):
+            score.render()
+        ceiling_messages = [
+            r.message for r in caplog.records if "ceiling activated" in r.message
+        ]
+        assert len(ceiling_messages) == 0
+
+
+class TestGainStageDiagnosticLogging:
+    """Verify that gain_stage_for_master_bus emits diagnostic log messages."""
+
+    def test_gain_stage_logs_decision(self, caplog: pytest.LogCaptureFixture) -> None:
+        signal = 0.1 * np.sin(
+            np.linspace(0.0, 2.0 * np.pi * 440.0, synth.SAMPLE_RATE, endpoint=False)
+        )
+        with caplog.at_level(logging.INFO, logger="code_musics.synth"):
+            synth.gain_stage_for_master_bus(signal, sample_rate=synth.SAMPLE_RATE)
+        gain_messages = [
+            r.message for r in caplog.records if "gain stage" in r.message.lower()
+        ]
+        assert len(gain_messages) >= 1
+        msg = gain_messages[0]
+        assert "input LUFS" in msg or "current LUFS" in msg
+        assert "applied" in msg.lower()
+
+
+class TestFinalizeMasterDiagnosticLogging:
+    """Verify that finalize_master emits diagnostic log messages."""
+
+    def test_finalize_master_logs_limiter_input_gain(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        signal = 0.3 * np.sin(
+            np.linspace(0.0, 2.0 * np.pi * 440.0, synth.SAMPLE_RATE * 2, endpoint=False)
+        )
+        with caplog.at_level(logging.INFO, logger="code_musics.synth"):
+            synth.finalize_master(signal, sample_rate=synth.SAMPLE_RATE)
+        limiter_messages = [
+            r.message for r in caplog.records if "limiter_input_gain_db" in r.message
+        ]
+        assert len(limiter_messages) >= 1
+
+    def test_finalize_master_logs_convergence_or_immediate(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        signal = 0.3 * np.sin(
+            np.linspace(0.0, 2.0 * np.pi * 440.0, synth.SAMPLE_RATE * 2, endpoint=False)
+        )
+        with caplog.at_level(logging.INFO, logger="code_musics.synth"):
+            result = synth.finalize_master(signal, sample_rate=synth.SAMPLE_RATE)
+        # The loop may converge immediately (no iteration messages) or need
+        # adjustments (iteration messages). Either is valid — verify we get
+        # a final result log regardless.
+        final_messages = [
+            r.message for r in caplog.records if "Mastering final" in r.message
+        ]
+        assert len(final_messages) >= 1
+        assert np.isfinite(result.integrated_lufs)
+
+    def test_finalize_master_logs_final_result(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        signal = 0.3 * np.sin(
+            np.linspace(0.0, 2.0 * np.pi * 440.0, synth.SAMPLE_RATE * 2, endpoint=False)
+        )
+        with caplog.at_level(logging.INFO, logger="code_musics.synth"):
+            synth.finalize_master(signal, sample_rate=synth.SAMPLE_RATE)
+        final_messages = [
+            r.message for r in caplog.records if "final" in r.message.lower()
+        ]
+        assert len(final_messages) >= 1
+        msg = final_messages[0]
+        assert "LUFS" in msg
+        assert "true peak" in msg.lower() or "true_peak" in msg.lower()
+
+
+class TestNativeLimiter:
+    """Tests for the native true-peak lookahead limiter."""
+
+    def test_native_limiter_enforces_ceiling(self) -> None:
+        """Feed a signal with peaks at +6 dBFS, verify output true peak is at or below threshold."""
+        duration_seconds = 0.5
+        num_samples = int(synth.SAMPLE_RATE * duration_seconds)
+        t = np.linspace(
+            0.0, 2.0 * np.pi * 440.0 * duration_seconds, num_samples, endpoint=False
+        )
+        hot_signal = 2.0 * np.sin(t)
+        stereo_hot = np.stack([hot_signal, hot_signal * 0.8])
+
+        threshold_db = -0.5
+        limited = synth.apply_native_limiter(stereo_hot, threshold_db=threshold_db)
+
+        true_peak = synth.estimate_true_peak_amplitude(limited, oversample_factor=4)
+        true_peak_db = synth.amp_to_db(max(true_peak, 1e-12))
+        assert true_peak_db <= threshold_db + 0.1
+
+    def test_native_limiter_transparent_below_threshold(self) -> None:
+        """Feed a signal well below threshold, verify output is approximately identical."""
+        duration_seconds = 0.5
+        num_samples = int(synth.SAMPLE_RATE * duration_seconds)
+        t = np.linspace(
+            0.0, 2.0 * np.pi * 440.0 * duration_seconds, num_samples, endpoint=False
+        )
+        quiet_signal = 0.1 * np.sin(t)
+        stereo_quiet = np.stack([quiet_signal, quiet_signal * 0.9])
+
+        limited = synth.apply_native_limiter(stereo_quiet, threshold_db=-0.5)
+
+        np.testing.assert_allclose(limited, stereo_quiet, atol=1e-3)
+
+    def test_native_limiter_preserves_shape(self) -> None:
+        """Verify mono stays mono, stereo stays stereo, length matches."""
+        num_samples = synth.SAMPLE_RATE
+        mono_signal = 0.5 * np.sin(
+            np.linspace(0.0, 2.0 * np.pi * 440.0, num_samples, endpoint=False)
+        )
+        stereo_signal = np.stack([mono_signal, mono_signal * 0.8])
+
+        mono_limited = synth.apply_native_limiter(mono_signal)
+        stereo_limited = synth.apply_native_limiter(stereo_signal)
+
+        assert mono_limited.ndim == 1
+        assert mono_limited.shape[0] == num_samples
+        assert stereo_limited.ndim == 2
+        assert stereo_limited.shape == (2, num_samples)
+
+    def test_native_limiter_logs_gain_reduction(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify the summary log message appears after processing."""
+        num_samples = int(synth.SAMPLE_RATE * 0.5)
+        t = np.linspace(0.0, 2.0 * np.pi * 440.0 * 0.5, num_samples, endpoint=False)
+        hot_signal = 2.0 * np.sin(t)
+
+        with caplog.at_level(logging.INFO, logger="code_musics.synth"):
+            synth.apply_native_limiter(hot_signal, threshold_db=-0.5)
+
+        limiter_messages = [
+            r.message for r in caplog.records if "limiter" in r.message.lower()
+        ]
+        assert len(limiter_messages) >= 1
+        msg = limiter_messages[0]
+        assert "gain reduction" in msg.lower() or "gr" in msg.lower()
+
+
+class TestPitchMotionGlideTranslation:
+    """Verify PitchMotionSpec translates to correct glide params for instrument engines."""
+
+    @staticmethod
+    def _fake_render_voice(
+        captured: list[list[dict]],
+    ):  # noqa: ANN205
+        """Return a callable that captures note dicts passed to surge_xt.render_voice."""
+
+        def fake(
+            *, notes: list[dict], total_duration: float, sample_rate: int, params: dict
+        ) -> np.ndarray:
+            captured.append(notes)
+            n_samples = int(total_duration * sample_rate)
+            return np.zeros((2, n_samples), dtype=np.float64)
+
+        return fake
+
+    def test_linear_bend_produces_glide_params(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """linear_bend should swap freq/glide_from so the engine glides TO the target."""
+        import code_musics.engines.surge_xt as surge_xt_mod
+
+        captured: list[list[dict]] = []
+        monkeypatch.setattr(
+            surge_xt_mod, "render_voice", self._fake_render_voice(captured)
+        )
+
+        f0 = 100.0
+        score = Score(f0=f0, auto_master_gain_stage=False)
+        score.add_voice(
+            "lead",
+            synth_defaults={"engine": "surge_xt"},
+            normalize_lufs=None,
+        )
+        score.add_note(
+            "lead",
+            start=0.0,
+            duration=1.0,
+            partial=4,
+            pitch_motion=PitchMotionSpec.linear_bend(target_partial=6.0),
+        )
+        score.render()
+
+        assert len(captured) == 1
+        note_dicts = captured[0]
+        assert len(note_dicts) == 1
+        nd = note_dicts[0]
+
+        note_freq = f0 * 4  # 400 Hz
+        target_freq = f0 * 6  # 600 Hz
+        assert nd["freq"] == pytest.approx(target_freq)
+        assert nd["glide_from"] == pytest.approx(note_freq)
+        assert nd["glide_time"] == pytest.approx(1.0)
+
+    def test_ratio_glide_produces_glide_params(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ratio_glide should compute start/end freqs from ratios."""
+        import code_musics.engines.surge_xt as surge_xt_mod
+
+        captured: list[list[dict]] = []
+        monkeypatch.setattr(
+            surge_xt_mod, "render_voice", self._fake_render_voice(captured)
+        )
+
+        f0 = 100.0
+        score = Score(f0=f0, auto_master_gain_stage=False)
+        score.add_voice(
+            "lead",
+            synth_defaults={"engine": "surge_xt"},
+            normalize_lufs=None,
+        )
+        score.add_note(
+            "lead",
+            start=0.0,
+            duration=2.0,
+            partial=4,
+            pitch_motion=PitchMotionSpec.ratio_glide(start_ratio=0.5, end_ratio=1.5),
+        )
+        score.render()
+
+        assert len(captured) == 1
+        note_dicts = captured[0]
+        assert len(note_dicts) == 1
+        nd = note_dicts[0]
+
+        note_freq = f0 * 4  # 400 Hz
+        assert nd["freq"] == pytest.approx(note_freq * 1.5)
+        assert nd["glide_from"] == pytest.approx(note_freq * 0.5)
+        # glide_duration not set, so defaults to note.duration
+        assert nd["glide_time"] == pytest.approx(2.0)
+
+
+# ---------------------------------------------------------------------------
+# Render pipeline optimization regression tests
+# ---------------------------------------------------------------------------
+
+
+def _build_send_bus_score() -> Score:
+    """Build a small score with a send bus for render-path testing."""
+    score = Score(f0=110.0, auto_master_gain_stage=False)
+    score.add_send_bus(
+        "room",
+        effects=[
+            EffectSpec("delay", {"delay_seconds": 0.05, "feedback": 0.2, "mix": 0.5})
+        ],
+    )
+    score.add_voice(
+        "lead",
+        normalize_lufs=None,
+        sends=[VoiceSend("room", send_db=-6.0)],
+    )
+    score.add_note("lead", start=0.0, duration=0.5, partial=4.0, amp=0.4)
+    score.add_note("lead", start=0.3, duration=0.5, partial=6.0, amp=0.3)
+    return score
+
+
+def test_render_with_effect_analysis_send_returns_match_render() -> None:
+    """The send_returns from render_with_effect_analysis should produce the same
+    pre-master mix as a plain Score.render() call."""
+    score = _build_send_bus_score()
+
+    # Path A: render_with_effect_analysis (the path render_piece uses)
+    mix_a, stems_a, send_returns_a, _ = score.render_with_effect_analysis()
+
+    # Path B: plain render (uses _render_mix_components_internal directly)
+    mix_b = score.render()
+
+    np.testing.assert_allclose(mix_a, mix_b, atol=1e-12)
+
+    # send_returns should be non-empty for this score
+    assert len(send_returns_a) == 1
+    assert "room" in send_returns_a
+    assert send_returns_a["room"].size > 0
+
+
+def test_collect_effect_analysis_false_produces_identical_audio() -> None:
+    """Disabling effect analysis collection must not change the rendered audio."""
+    score = Score(f0=110.0, auto_master_gain_stage=False)
+    score.add_send_bus(
+        "room",
+        effects=[
+            EffectSpec("delay", {"delay_seconds": 0.05, "feedback": 0.2, "mix": 0.5})
+        ],
+    )
+    score.add_voice(
+        "lead",
+        normalize_lufs=None,
+        sends=[VoiceSend("room", send_db=-6.0)],
+        effects=[EffectSpec("chorus", {"preset": "juno_subtle"})],
+    )
+    score.add_note("lead", start=0.0, duration=0.5, partial=4.0, amp=0.4)
+
+    mix_with, _, _, analysis_with = score.render_with_effect_analysis(
+        collect_effect_analysis=True,
+    )
+    mix_without, _, _, analysis_without = score.render_with_effect_analysis(
+        collect_effect_analysis=False,
+    )
+
+    np.testing.assert_allclose(mix_with, mix_without, atol=1e-12)
+
+    # With analysis: voice and send diagnostics are populated
+    assert analysis_with["voice_effects"]["lead"]
+    assert analysis_with["send_effects"]["room"]
+
+    # Without analysis: voice and send diagnostics are empty
+    assert not analysis_without["voice_effects"]
+    assert not analysis_without["send_effects"]

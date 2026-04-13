@@ -2,7 +2,8 @@
 
 PYTHONPATH_PREFIX = PYTHONPATH=.
 UV_CACHE_DIR ?= $(CURDIR)/.uv-cache
-UV_RUN = UV_CACHE_DIR=$(UV_CACHE_DIR) MPLBACKEND=Agg $(PYTHONPATH_PREFIX) uv run
+BRICASTI_IR_DIR ?= $(CURDIR)/irs/bricasti
+UV_RUN = UV_CACHE_DIR=$(UV_CACHE_DIR) BRICASTI_IR_DIR=$(BRICASTI_IR_DIR) MPLBACKEND=Agg $(PYTHONPATH_PREFIX) uv run
 PIECE ?=
 PLOT ?= 1
 AT ?=
@@ -10,6 +11,7 @@ WINDOW ?= 8
 START ?=
 DUR ?=
 MIDI_FORMATS ?=
+ANALYSIS ?= 1
 TESTS ?= tests
 OBLIQUE ?= 0
 MUSICAL ?= 0
@@ -17,11 +19,18 @@ VISUAL ?= 0
 IMAGE ?= 0
 CONSTRAINT ?= 0
 N ?=
+MODELS ?=
 
 ifeq ($(PLOT),1)
 RENDER_PLOT_FLAG = --plot
 else
 RENDER_PLOT_FLAG =
+endif
+
+ifeq ($(ANALYSIS),0)
+RENDER_ANALYSIS_FLAG = --no-analysis
+else
+RENDER_ANALYSIS_FLAG =
 endif
 
 ifneq ($(strip $(MIDI_FORMATS)),)
@@ -74,7 +83,7 @@ render:
 ifndef PIECE
 	$(error PIECE is required, for example `make render PIECE=harmonic_window`)
 endif
-	$(UV_RUN) python main.py $(PIECE) $(RENDER_PLOT_FLAG)
+	$(UV_RUN) python main.py $(PIECE) $(RENDER_PLOT_FLAG) $(RENDER_ANALYSIS_FLAG)
 
 .PHONY: inspect
 inspect:
@@ -154,6 +163,19 @@ render-sketches:
 .PHONY: render-all
 render-all:
 	$(UV_RUN) python main.py all $(RENDER_PLOT_FLAG)
+
+.PHONY: evaluate
+evaluate:
+ifndef PIECE
+	$(error PIECE is required, for example `make evaluate PIECE=slow_glass`)
+endif
+	$(UV_RUN) python -m code_musics.evaluate $(PIECE) \
+		$(if $(MODELS),--models $(MODELS),)
+
+.PHONY: evaluate-all
+evaluate-all:
+	$(UV_RUN) python -m code_musics.evaluate all \
+		$(if $(MODELS),--models $(MODELS),)
 
 .PHONY: inspire
 inspire:

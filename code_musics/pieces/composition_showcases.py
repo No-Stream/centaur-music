@@ -581,22 +581,22 @@ def build_septimal_imitation_score() -> Score:
 PIECES: dict[str, PieceDefinition] = {
     "sketch_articulation_study": PieceDefinition(
         name="sketch_articulation_study",
-        output_name="20_sketch_articulation_study.wav",
+        output_name="20_sketch_articulation_study",
         build_score=build_articulation_study_sketch,
     ),
     "composition_tools_showcase": PieceDefinition(
         name="composition_tools_showcase",
-        output_name="21_composition_tools_showcase.wav",
+        output_name="21_composition_tools_showcase",
         build_score=build_composition_tools_showcase_score,
     ),
     "composition_tools_consonant": PieceDefinition(
         name="composition_tools_consonant",
-        output_name="22_composition_tools_consonant.wav",
+        output_name="22_composition_tools_consonant",
         build_score=build_composition_tools_consonant_score,
     ),
     "septimal_imitation": PieceDefinition(
         name="septimal_imitation",
-        output_name="23_septimal_imitation.wav",
+        output_name="23_septimal_imitation",
         build_score=build_septimal_imitation_score,
     ),
 }

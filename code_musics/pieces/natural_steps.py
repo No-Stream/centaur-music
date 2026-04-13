@@ -515,7 +515,7 @@ def build_natural_steps_score() -> Score:
 PIECES: dict[str, PieceDefinition] = {
     "natural_steps": PieceDefinition(
         name="natural_steps",
-        output_name="29_natural_steps.wav",
+        output_name="29_natural_steps",
         build_score=build_natural_steps_score,
     ),
 }

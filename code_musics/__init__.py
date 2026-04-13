@@ -21,6 +21,7 @@ from code_musics.composition import (
     staccato,
     voiced_ratio_chord,
 )
+from code_musics.generative import TonePool
 from code_musics.humanize import (
     DriftSpec,
     EnvelopeHumanizeSpec,
@@ -50,6 +51,7 @@ __all__ = [
     "S",
     "Timeline",
     "TimingHumanizeSpec",
+    "TonePool",
     "SwingSpec",
     "VelocityHumanizeSpec",
     "VelocityParamMap",

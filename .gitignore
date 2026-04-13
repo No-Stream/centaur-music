@@ -16,6 +16,9 @@ wheels/
 # Local configs
 .claude
 
+# Desloppify local state
+.desloppify/
+
 # Image diagnostics - useful but a bit large
 *.png
 *.vst*
@@ -27,3 +30,9 @@ output/versions/comma_rain/mellow_02_comma_rain__20260319-033409
 output/versions/harmonic_arpeggios/mellow_03_harmonic_arpeggios__20260319-033431
 output/versions/septimal_lullaby/mellow_01_septimal_lullaby__20260319-033346
 output/versions/utonal_elegy/mellow_04_utonal_elegy__20260319-033452
+
+report/*
+.DS_Store
+
+midi_references/*
+scratch/*

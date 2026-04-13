@@ -10,7 +10,7 @@ The repo is no longer at the "basic scaffolding" stage. We already have:
   `overlay`, `echo`, `sequence`, `canon`, `voiced_ratio_chord`, and
   `progression`
 - multiple synth engines with presets: additive, FM, filtered-stack, polyBLEP,
-  and noise/percussion
+  noise/percussion, organ, piano, harpsichord, kick_tom, and surge_xt
 - render-time expression surfaces including note `velocity`, note
   `pitch_motion`, score-level timing humanization, voice-level envelope and
   velocity humanization, velocity-to-parameter mapping, and score/note
@@ -63,20 +63,29 @@ Most valuable next helpers:
 - overlap, beating, density, and register summaries that better flag when a
   texture has become too static, too crowded, or too continuously drony
 
+### Chord smearing and loveless-adjacent ideas
+
+- on loveless, shields uses repitching to create smearing, ambiguity, reaching, yearning. let's capture some of this.
+- so on a guitar, fragmented chords + global pitch bend (tremolo)
+- interfaces between multiple voices, layering, collaboration
+- relatively simple progressions
+- seconds, sus2/sus4 unresolving, add9, etc.
+- octave duplication of notes for size
+- stereo, chorus, etc., but as bonuses, the core is the score
+- possibly: out of sync, polyrhythmic, weird drums
+- stacked saturation and warmth
+
 ### Creative composition helpers
+
 - riemann
-- random notes in a scale
-- turing machines
-- probability gates + add proba into composition helpers as a first-class citizen
-- euclidean rytms + synths (not just rhythms)
-- probability dists (well PMFs) over notes in a scale
-- markov processes / markov chains - with and without memory
 
 ### Additive Synthesis Specifically
-  Additive lets us not assume traditional harmonic structure. 
+
+  Additive lets us not assume traditional harmonic structure.
   e.g. we can have harmonics of just intervals, not e.g. simple sawtooth harmonics
   this should unlock some interesting creative opportunities.
-  for example - 
+  for example -
+
   1. Bell / mallet / metal / glass / struck-material sounds
   These are already naturally inharmonic or quasi-inharmonic, so they pair beautifully with unusual tunings. Xenharmonic music often feels more convincing when the timbre does not keep insisting on a standard harmonic ladder.
   2. Drones and spectral harmony
@@ -86,17 +95,23 @@ Most valuable next helpers:
   4. Timbre-harmony fusion
   You can make a chord whose note frequencies and internal overtone structures are both drawn from the same ratio world.
   We should consider how to do this with a clean, musical interface that encourages sane defaults and easy programming, and modularity.
-  Remaining work after the new explicit spectral-partial additive voice:
-  - richer stereo-from-spectrum tools so different partial groups can occupy subtly different widths/positions
-  - automatic register-aware darkening / brightness limiting so high notes do not get brittle and low notes do not get muddy
-  - controlled inharmonic stretch and physical-object style detuning beyond the current gentle upper-partial drift
-  - deeper programmable per-partial envelopes and modulation, once the simple onset/sustain morph proves musically useful
-  - a broader role-oriented preset family for spectral additive voices, beyond the first JI / septimal / 11-limit / utonal set
-  _implemented some of this, should revise this section_
+  Explicit spectral partial sets, onset-to-sustain spectral morphing, and the
+  first JI/septimal/11-limit/utonal role-oriented presets are all implemented.
+  Remaining work:
 
-### MIDI Export
+- richer stereo-from-spectrum tools so different partial groups can occupy subtly different widths/positions
+- automatic register-aware darkening / brightness limiting so high notes do not get brittle and low notes do not get muddy
+- controlled inharmonic stretch and physical-object style detuning beyond the current gentle upper-partial drift
+- deeper programmable per-partial envelopes and modulation beyond the current onset/sustain morph
+- a broader role-oriented preset family expanding beyond the current JI / septimal / 11-limit / utonal set
 
-- see email note to self. plan around mostly scl/tun + Oddsound w/ polyphonic bend for extra synth compatibility
+### MIDI Export — Implemented
+
+MIDI export is implemented with per-voice stems and shared tuning files
+(Scala/TUN/KBM). See `docs/midi_export.md` for the full surface.
+
+Remaining follow-up: `pitch_motion` and `pitch_ratio` automation are not yet
+exported to MIDI.
 
 ### Sound design and synthesis direction
 
@@ -129,10 +144,39 @@ Most promising directions:
 
   To some extent we already support this implicitly. Worth expanding?
 
-### Autoresearch, for music
+### Autoresearch, for music — Evaluation Implemented
 
-  Automatically generate pieces and critique them, prune, develop.  
-  Challenging given current-gen agents can't hear, but that's a challenge for this entire project.
+  **Standalone evaluation is implemented** (`make evaluate PIECE=...`).
+  Four LLM judges (Opus 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5) run in
+  parallel via Claude Code headless, scoring each piece across five broad
+  dimensions (Musical Substance 25%, Structure & Form 20%, Texture &
+  Expression 15%, Completeness 10%, Open Subjective 30%).  Judges receive a
+  rich multimodal packet (score snapshot, timeline, analysis manifest,
+  piano-roll/spectrogram/density PNGs).  Scores are aggregated by median with
+  inter-judge agreement tracking.  Results are saved as `eval.json` per piece
+  and appended to `output/eval_log.jsonl` for longitudinal tracking.
+
+  Anti-reward-hacking design: generators receive only an aggregate score plus
+  a brief qualitative synthesis — never the rubric, per-dimension scores, or
+  individual judge responses.  See `code_musics/evaluate.py` and
+  `code_musics/eval_rubric.py`.
+
+  Remaining work toward full autonomous loop:
+
+- **Closed-loop orchestrator**: a composer agent modifies `build_score()`,
+    renders, evaluates, decides keep/discard (git-as-state-machine, inspired
+    by [karpathy/autoresearch](https://github.com/karpathy/autoresearch)),
+    and iterates with only the synthesized feedback.
+- **API judge backends**: Bedrock, OpenRouter, or direct Anthropic API
+    calls for faster invocation and access to non-Anthropic models.
+- **LLM-based feedback synthesis**: replace the current template-based
+    concatenation with a dedicated synthesis pass for more natural prose.
+- **Rubric calibration**: run evaluations on several pieces and tune
+    dimension descriptions, scale anchors, and weights against human taste.
+- **Ranking/comparison mode**: generate N variations of a section, judge
+    all, and rank them.
+- **Audio-capable judges**: feed actual audio (or spectrograms as images)
+    to omnimodal models (Gemini, Gemma4) for judges that can hear.
 
 ### Timbre and mix automation
 
@@ -140,13 +184,13 @@ Most promising directions:
 
   Useful next steps:
 
-  - extend automation beyond the current synth-param and `pitch_ratio` targets
+- extend automation beyond the current synth-param and `pitch_ratio` targets
     into pan, gain, effect wetness, and plugin parameters
-  - phrase-level timbre gestures so sounds can evolve musically without low-level
+- phrase-level timbre gestures so sounds can evolve musically without low-level
     automation plumbing in every piece
-  - more reusable automation idioms for opening, darkening, widening, blooming,
+- more reusable automation idioms for opening, darkening, widening, blooming,
     and settling
-  - stronger analysis feedback so we can verify whether a sound actually opens,
+- stronger analysis feedback so we can verify whether a sound actually opens,
     softens, or narrows the way intended
 
 ### Utonal, subharmonic, and drift-based harmony
@@ -156,51 +200,111 @@ Most promising directions:
 
   Most interesting directions:
 
-  - darker subharmonic passages that feel structurally intentional, not just novel
-  - stronger overtone / undertone contrasts inside a single form
-  - phrase-level recontextualization helpers that make comma drift and local tonic
+- darker subharmonic passages that feel structurally intentional, not just novel
+- stronger overtone / undertone contrasts inside a single form
+- phrase-level recontextualization helpers that make comma drift and local tonic
     reinterpretation easier to write as normal music
-  - voice-leading idioms that stay elegant while harmonic context shifts
+- voice-leading idioms that stay elegant while harmonic context shifts
 
 ### Trance, progressive house
+
   fun genres to explore alt tunings in, since they're so reliant on harmony
   let's get slightly cheesy
 
 ### Colundi-ish Scale
-  ```
-  ! colundi_ji_core.scl
-  !
-  Approximate Colundi-inspired 7-note JI scale
-  7
-  !
-  11/10
-  19/16
-  4/3
-  3/2
-  49/30
-  7/4
-  2/1
-  ```
 
-### Organs!
-  Organs sound great, are fundamentally additive ish, should be alt-tuning friendly are huge in Bach.
-  Let's try making some organ models and playing them!
+See the Colundi scale definition in `AGENTS.md`. Interesting exploration
+territory for a piece — the 11-limit and septimal intervals (11/10, 49/30,
+7/4) pair well with the additive engine's xenharmonic presets.
+
+### Pianos
+
+  **Modal piano implemented.** The `piano` engine now uses modal synthesis with
+  physical hammer-string interaction: a nonlinear contact model
+  (`F = K * max(delta, 0)^p`) excites a bank of second-order resonators, so
+  velocity naturally shapes timbre through the hammer physics. Two-phase
+  rendering (Numba JIT contact + vectorized NumPy decay) keeps it tractable.
+  Supports unison strings with drift, soundboard coloring, body saturation,
+  damper noise, and custom partial ratios for xenharmonic timbre-harmony fusion.
+  Eight presets including a septimal variant.
+
+  The legacy additive piano is still available as `piano_additive`.
+
+  Architecture note: the contact simulation's audio output is NOT used directly
+  (its coherent peak creates extreme crest factors).  Instead, the simulation
+  initializes mode states and the entire audio output comes from the free decay
+  with an 8ms cosine fade-in.  Reintroducing contact audio properly would
+  require bridge/soundboard absorption modeling to tame the coherent peak.
+
+  Known calibration gaps:
+
+- Upper harmonic content is still low (~1.5% energy above 2 kHz vs 5-15% for a
+  real piano).  The 1/k output rolloff + felt filtering + natural 1/ω resonator
+  response triple-dips on high-frequency attenuation.  Fixing this properly
+  requires compensating for the resonator's frequency-dependent response.
+- Unison beating creates ~25 dB AM at ~5 Hz on individual voices.  Real pianos
+  have bridge-mediated coupling that dampens beating over time (double decay).
+  Adding bridge coupling would help.
+- Velocity-dependent timbral variation is subtle — the normalized waveforms
+  for soft vs loud hits are very similar.  The hammer contact does change the
+  mode excitation, but peak normalization partially masks the effect.
+
+  Follow-up ideas for the modal `piano` engine:
+
+- Bridge/soundboard absorption during contact (enables using contact audio
+  in the output for a more realistic attack transient)
+- Sympathetic string resonance (cross-note coupling; requires voice-level
+  awareness so undamped strings can ring in sympathy with active notes)
+- Double decay via bridge coupling (fast initial decay from energy transfer
+  to soundboard, slow secondary decay from residual string energy)
+- Sustain/una corda pedal modeling
+- Feedback delay network (FDN) body model replacing the resonator bank for
+  richer, more realistic soundboard response
+- Bass longitudinal mode enhancement (phantom partials from nonlinear
+  string-bridge coupling in the low register)
+- Register-dependent hammer mass/position (bass hammers are heavier and strike
+  further from the bridge than treble hammers)
+- Frequency compensation for resonator response rolloff (the modal resonators
+  naturally attenuate high-frequency modes by ~1/ω; compensating for this
+  in the input weights would let the felt filtering alone shape the spectrum)
+- Higher-order hammer contact models (wave-digital formulation for improved
+  numerical stability at high stiffness)
+- Soundboard PDE / measured IR convolution for more realistic body resonance
+- Duplex scaling (upper bridge treble resonance adding shimmer to high notes)
+- Multi-axis velocity response (velocity modulates decay, damping,
+  inharmonicity, hammer position simultaneously -- not just loudness and
+  hammer stiffness)
+- Prepared piano extensions (muting, objects on strings -- mute_position,
+  mute_amount, extra inharmonic partial layers from bolts/screws)
+
+  Follow-up ideas for `piano_additive` (legacy engine):
+
+- Register-dependent spectral templates (different partial profiles for
+  bass/mid/treble)
+- Pitch-scaled attack duration (higher notes get proportionally faster attacks)
+- Per-note soundboard coupling
 
 ### Pianoteq
-  I have a Pianoteq license and the Linux package downloaded. We can try setting it up headless. 
+
+  I have a Pianoteq license and the Linux package downloaded. We can try setting it up headless.
   (Pianoteq is famous for microtonal support but we'll need to hack around a bit to hopefully get it running without a DAW.)
+  (Surge XT instrument hosting is now working via pedalboard — the VSTi
+  hosting path is proven. Pianoteq would use the same mechanism.)
 
 ### Co-design scale + synth
-  - Additive synthesis + scale. works great with non-octave scales, e.g. Colundi (since we can omit octave harmonics)
-  - FM, similar story
-  - Physical modeling: we can use physical models with _harmonics that are compatible with our scale_. e.g. Aleksi Perala does very cool xen bells
-  - Granular (not necessarily _great_ for xenharmonic but doesn't have the octave bias of subtractive synths)
+
+- Additive synthesis + scale. works great with non-octave scales, e.g. Colundi (since we can omit octave harmonics)
+- FM, similar story
+- Physical modeling: we can use physical models with _harmonics that are compatible with our scale_. e.g. Aleksi Perala does very cool xen bells
+- Granular (not necessarily _great_ for xenharmonic but doesn't have the octave bias of subtractive synths)
 
 ### Combination Product Set - Harmonic Lattice (Erv Wilson)
-  - cool idea. let's try.
+
+- cool idea. let's try.
 
 ### Non-octave-privileged distortion
-  Traditional distortion/saturation relies on octave-based products. 
+
+  Traditional distortion/saturation relies on octave-based products.
   Could we do something interesting with _other_ multiples?! Aligned with our scale.
 
 ### Better effect integration and routing
@@ -222,7 +326,12 @@ Most promising directions:
 
 #### Filter drive and saturation
 
-I suspect our saturation/warmth native plugin could be better. Currently sounds fuzzy and probably aliased.
+The native saturation effect now uses a two-stage analog-style path with
+optional clean low/high-band preservation and higher-fidelity processing.
+The old fuzzy/aliased behavior is gone. Remaining area to explore: whether
+the current saturation character is musically ideal across all use cases
+(e.g. gentle mix warmth vs aggressive drive vs bass-specific grit), or
+whether additional saturation modes/curves would help.
 
 #### Plugin reliability follow-up
 
@@ -240,6 +349,87 @@ Most valuable next steps:
   mapping bugs
 - decide more explicitly when native effects should be preferred over external
   plugins for stability
+
+### Surge XT Parameter Automation
+
+The `surge_xt` engine is implemented and working for basic rendering (see
+`docs/synth_api.md`). This section describes the follow-up work for
+automating Surge XT's internal parameters over time.
+
+We explored three approaches for automating Surge XT's internal parameters
+(filter cutoff, resonance, etc.) over time during a render:
+
+1. **MIDI CC automation** (`cc_curves` in engine params) — The infrastructure
+   works and sends CC messages during render, but Surge XT's init patch has no
+   CC-to-parameter modulation routing configured. The CCs arrive and are
+   silently ignored. This would work if the loaded patch had modulation routing
+   set up (e.g. CC74 → filter cutoff).
+
+2. **Chunked rendering** (`param_curves` in engine params) — Breaks the render
+   into short segments, updates plugin parameters between chunks, concatenates
+   with crossfade. **Fundamentally broken**: creates clicking/popping artifacts
+   at chunk boundaries because the plugin's internal DSP state (IIR filter
+   feedback, oscillator phase) cannot smoothly transition when parameters change
+   as step functions. Tried crossfade overlap (128 samples) and aggressive chunk
+   reduction (0.5 s down to 0.05 s) — neither fixes it. The artifacts are
+   generated inside the plugin before the output, so output-level crossfading
+   cannot help.
+
+3. **Native post-processing filter** (current workaround) — Render Surge XT
+   with a fixed bright filter, then apply a native lowpass EQ as a voice insert
+   effect with score-time automation. Sample-accurate, zero artifacts. Works for
+   overall brightness control but cannot access the synth's internal filter
+   character (resonance, self-oscillation, nonlinear feedback, etc.).
+
+**Path forward — configure Surge XT's modulation matrix via `raw_state`:**
+
+- Save a preset with CC→cutoff (and other parameter) modulation routing
+  configured, load it via `raw_state`, then use `cc_curves` to drive the
+  parameters via MIDI CC. This keeps the modulation inside the synth where it
+  belongs and gives access to the full filter character.
+- Alternatively, configure a very slow internal LFO (period = piece duration)
+  routed to filter cutoff via the mod matrix. Same challenge of getting the
+  routing into the state blob.
+- Both approaches require either figuring out Surge XT's state format
+  programmatically or using the GUI to configure routing and capturing the
+  resulting state.
+- MTS-ESP (already mentioned elsewhere in this file) would also complement
+  this for dynamic tuning changes without pitch bend.
+
+**Global-glide chord mode** (`mpe=False`):
+
+The `_build_global_bend_messages()` implementation provides correct
+tremolo-bar-style chord glides where the whole harmonic structure slides as a
+unit. The bass note gets perfect pitch; upper voices have up to ~31 cent error
+from MIDI note quantization (musically desirable for a loveless/shoegaze
+aesthetic). Chord-to-chord transitions glide smoothly over a configurable
+duration (default 0.4 s).
+
+### Harpsichord follow-up
+
+Follow-up ideas for the implemented `harpsichord` engine (see `docs/synth_api.md`
+for the current surface):
+
+- Karplus-Strong / waveguide alternative synthesis path (different timbral
+  character, more natural pluck sustain, but harder to integrate custom
+  partial ratios — would need a hybrid approach)
+- Additive synthesis with pluck envelopes (lighter computation, full spectral
+  control, but less physically grounded than the modal approach)
+- Coupling / sympathetic resonance between registers (currently registers are
+  independent; bridge coupling would let them interact)
+- Extended register palette: 16' sub-octave, nasalized/reed-like fantasy stops
+- Buff stop physical modeling (currently approximated with decay/brightness
+  scaling)
+
+### DawDreamer
+
+DawDreamer is a Python DAW framework with full MIDI + instrument hosting,
+Faust DSP compilation, RubberBand time-stretch, and complex routing graphs.
+It is GPLv3 — same license family as pedalboard (already a dep) — but the
+project prefers MIT for its own code, so evaluate carefully before adopting.
+Main value-adds beyond current pedalboard usage: Faust DSP compilation for
+rapid synth/effect prototyping, and CLAP plugin hosting. Consider if/when
+we need capabilities pedalboard cannot provide.
 
 ### Analysis and feedback tooling
 
@@ -270,7 +460,12 @@ look worthwhile:
   root by default or move behind a clearer workspace/output boundary
 
 ### Wavetable engine
+
 - allows unique timbres, somewhat complicated, needs to be done right (aliasing etc)
+
+#### Utonal pieces
+
+We've focused primarily on otonal composition and JI, utonal seems worth exploring.
 
 ---
 
@@ -303,6 +498,19 @@ Possible later additions:
 - more correlated ensemble behavior across voices for specific groove feels
 - selective synth-parameter drift such as cutoff drift or mild oscillator drift
   where it helps rather than muddies tuning clarity
+
+### Deferred generative ideas
+
+Ideas discussed but deferred during the generative toolkit build:
+
+- Combination Product Sets (Erv Wilson) — hexanies, dekanies, eikosanies as
+  harmonic vocabularies feeding TonePool and other generators
+- Comma pump generator — auto-generate chord progressions that drift by a
+  specified comma per cycle
+- Phase process helpers — parameterized Steve Reich-style gradual phase shifting
+- L-systems — Lindenmayer systems mapped to pitch/rhythm for fractal structures
+- Process pipelines — composable generator chaining for combining generators
+- Cellular automata — 1D CA rules mapped to musical parameters
 
 ### Sound-quality refinement
 

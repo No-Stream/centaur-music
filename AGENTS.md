@@ -14,14 +14,40 @@
 - `code_musics/humanize.py` contains timing, envelope, and velocity humanization
   specs plus the drift helpers they build on.
 - `code_musics/engines/` contains the synth engine registry and per-engine renderers.
+  `_mpe_utils.py` contains shared MPE/MIDI utility functions for instrument engines.
 - `code_musics/tuning.py` contains small just-intonation, harmonic-series, utonal,
   and EDO helper functions.
+- `code_musics/generative/` contains algorithmic and stochastic composition
+  tools: TonePool (weighted pitch pools), euclidean rhythms, probability gates,
+  Markov chains, Turing machine sequencers, harmonic lattice walkers, and
+  stochastic cloud generators. All are seeded/deterministic, work in ratio
+  space, and produce standard Phrase/RhythmCell types.
 - `code_musics/pieces/` contains named musical works that can be rendered by the
   registry, including smaller themed study modules plus JI subpackages.
+- `code_musics/composition.py` contains phrase-first composition helpers (`line`,
+  `ratio_line`, `canon`, `progression`, etc.) and the metered-time grid layer.
+- `code_musics/automation.py` contains `AutomationSegment`, `AutomationSpec`, and
+  `AutomationTarget` for score-time parameter motion.
+- `code_musics/pitch_motion.py` contains per-note pitch motion specs (glide,
+  vibrato, bend).
+- `code_musics/smear.py` contains loveless-inspired pitch smearing and textural
+  thickening tools for shoegaze/dream-pop aesthetics.
+- `code_musics/harmonic_drift.py` contains JI-aware consonance-shaped pitch drift
+  trajectories for slow timbral evolution.
 - `code_musics/render.py` is the named-piece orchestration layer.
-- `code_musics/midi_export.py` exports score-backed pieces as shared tuning files plus per-voice MIDI stems.
+- `code_musics/analysis.py` contains render analysis, artifact-risk warnings, and
+  librosa-based visual analysis (mel spectrogram, chromagram, spectral contrast).
+- `code_musics/inspection.py` contains the timestamp inspector for score context.
+- `code_musics/spectra.py` contains spectral profile helpers for the additive engine.
+- `code_musics/midi_export.py` exports score-backed pieces as shared tuning files
+  plus per-voice MIDI stems.
+- `code_musics/midi_import.py` imports MIDI files into the score model.
 - `code_musics/meter.py` contains the optional high-level musical-time layer:
   `Timeline`, beat/bar helpers, rhythmic values, and bar-aware location math.
+- `code_musics/evaluate.py` is the LLM-based piece evaluation system.  Four
+  judges (Opus 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5) score pieces across
+  five dimensions via Claude Code headless.  `code_musics/eval_rubric.py`
+  defines the rubric, dimensions, and prompt templates.
 - `main.py` is the main entrypoint for listing and rendering pieces.
 
 ## Composition Model
@@ -53,7 +79,7 @@
   score, while voice-level humanizers shape envelope and velocity variation.
 - `Voice.synth_defaults` and note-level `synth={...}` overrides accept an `engine`
   name, optional `preset`, and engine-specific params documented in `docs/synth_api.md`.
-- Voices can now enforce `max_polyphony` (including strict mono with `1`) and an
+- Voices can enforce `max_polyphony` (including strict mono with `1`) and an
   optional simple `legato` mode for overlap-driven non-retrigger behavior.
 - `code_musics.composition` includes phrase-first helpers for melodic writing and
   section building. High-level examples: `line(...)` / `ratio_line(...)` for phrase
@@ -66,6 +92,12 @@
   `metered_sections(...)`, and `bar_automation(...)` for bar-aware voice timbre
   arcs that compile back down to the existing seconds-based score model. Full API
   details live in
+  `docs/composition_api.md`.
+- `code_musics.generative` provides algorithmic composition helpers including
+  weighted pitch pools, euclidean rhythms, probability gates, Markov chains,
+  Turing machine sequencers, lattice walkers, and stochastic clouds. All are
+  seeded/deterministic and produce standard `Phrase` or `RhythmCell` objects.
+  Full API details live in the "Generative Composition Helpers" section of
   `docs/composition_api.md`.
 - For detailed score-surface semantics, parameter meanings, and render-order
   behavior, read `docs/score_api.md`.
@@ -94,9 +126,15 @@
 - `master_input_gain_db` trims the summed mix into `Score.master_effects`. Leave it
   at `0.0` by default; reach for it only when you intentionally want to change
   how hard the master bus glue/tone chain is being driven.
-- `Score` now auto-stages the summed post-fader mix into the master bus by
-  default, so voice `mix_db` is mainly for balance rather than manual premaster
-  loudness management.
+- `Score` auto-stages the summed post-fader mix into the master bus by default,
+  so voice `mix_db` is mainly for balance rather than manual premaster loudness
+  management.
+- `code_musics/pieces/_shared.py` exports `DEFAULT_MASTER_EFFECTS` — a
+  plugin-preferred default master chain (BritPre preamp → MJUC Jr vari-mu
+  compression, with native saturation + compressor fallbacks). New pieces
+  can use `master_effects=DEFAULT_MASTER_EFFECTS` for a "sounds finished"
+  baseline. Pieces that define their own `master_effects` fully replace the
+  default — no layering.
 - Use note-level `velocity` for accents and phrasing. By default it affects loudness
   through `velocity_db_per_unit`, and it can also drive synth params through
   `VelocityParamMap`.
@@ -130,6 +168,8 @@ make check                         # alias for make all
 make list                          # list registered pieces
 make render PIECE=harmonic_drift   # render a piece (adds --plot by default)
 make render PIECE=harmonic_drift PLOT=0  # render without plot
+make render PIECE=harmonic_drift ANALYSIS=0  # render without analysis (faster)
+make render PIECE=harmonic_drift PLOT=0 ANALYSIS=0  # fastest iteration render
 make inspect PIECE=ji_chorale AT=2:10    # inspect score context around a timestamp
 make snippet PIECE=ji_chorale AT=2:10 WINDOW=12   # render a centered snippet
 make render-window PIECE=ji_chorale START=130 DUR=12  # render an exact snippet window
@@ -144,6 +184,10 @@ make compile                       # syntax / bytecode compilation check
 make lint                          # ruff check with bug-finding rules
 make format-check                  # verify formatting without modifying files
 make format                        # ruff format
+make evaluate PIECE=slow_glass     # evaluate a rendered piece with LLM judges
+make evaluate PIECE=slow_glass MODELS=opus  # single model (faster iteration)
+make evaluate-all                  # evaluate all rendered pieces
+make inspire                       # oblique strategy / musical inspiration prompts
 ```
 
 If you need to run a one-off Python command, prefix it with `uv run` and set
@@ -191,6 +235,7 @@ making for a better experience for both agent and human.
 
 The project is no longer just about proving that xenharmonic ideas work. Prefer music
 that feels like music: shaped, intentional, and complete, even when it is strange.
+Be ambitious! Use velocity, humanization, frequent and thorough parameter automation, effects, and so on to create rich, complex, alive pieces. Creativity is welcome and mistakes are cheap. Be not afraid!
 
 Current aesthetic center:
 
@@ -206,7 +251,8 @@ Named inspirations already captured in repo notes:
 - Aphex Twin's chaotic and unstable side
 
 If a task is about aesthetic direction, piece planning, or "what should this project
-sound like?", also read `inspirations_and_ideas.md` before making recommendations.
+sound like?", also read the "Loose Inspirations" section at the bottom of this file
+and `FUTURE.md` before making recommendations.
 
 When adding or revising pieces, it is usually better to ask "how do we make this more
 musical?" than "how do we make this weirder?" Weirdness is easy; satisfying form is
@@ -223,31 +269,96 @@ See `FUTURE.md` for way more ideas.
   normal composition surface, not as obscure implementation details.
 - Keep low-level synthesis simple unless a task explicitly calls for DSP changes.
 - Treat effect chains declaratively with `EffectSpec` on voices or the master bus.
-- The additive engine now supports explicit spectral partial sets plus optional
+- The additive engine supports explicit spectral partial sets plus optional
   onset-to-sustain spectral morphing; use that when tuning and timbre should be
   co-designed instead of assuming a plain harmonic ladder.
-- The `polyblep` engine now supports an optional second oscillator via `osc2_*`
+- The `polyblep` engine supports an optional second oscillator via `osc2_*`
   parameters for detuned stacks and sub layers.
-- The native effect chain now includes a minimum-phase multi-band `eq` effect with
+- The native effect chain includes a minimum-phase multi-band `eq` effect with
   ordered highpass, lowpass, bell, and shelf bands for routine tone shaping.
-- The native effect chain also includes a stereo-linked `compressor` effect with
+- The native effect chain includes a stereo-linked `compressor` effect with
   feedforward/feedback modes, detector-path EQ bands, and voice-to-voice
   sidechaining plus lookahead for ducking/glue workflows.
-- The native `saturation` effect now defaults to a higher-fidelity two-stage
+- The native `saturation` effect defaults to a higher-fidelity two-stage
   analog-style path with optional clean low/high-band preservation; see
   `docs/synth_api.md` for the modern vs legacy behavior and parameter surface.
-- There is now a dedicated `kick_tom` synth engine for 808/909-style kicks and
-  toms; the intended happy path is pairing it with the native drum-oriented
-  compressor/saturation presets documented in `docs/synth_api.md`.
-- The `bricasti` convolution wrapper now supports basic wet-return tone shaping
+- The `preamp` effect provides flux-domain transformer saturation for
+  analog-style warmth. Unlike the `saturation` effect (which uses waveshaping),
+  `preamp` operates in the magnetic flux domain where bass naturally saturates
+  more than treble, producing minimal intermodulation on harmonically rich
+  material. Use `preamp` for gentle warmth/coloring (master bus, subtle voice
+  color); use `saturation` for intentional distortion/drive effects.
+- The `kick_tom` synth engine provides 808/909-style kicks and toms; the intended
+  happy path is pairing it with the native drum-oriented compressor/saturation
+  presets documented in `docs/synth_api.md`.
+- The `bricasti` convolution wrapper supports basic wet-return tone shaping
   (`highpass_hz`, `lowpass_hz`, `tilt_db`) for cleaner, darker, or brighter tails.
-- The local Linux environment now has a small plugin palette installed for
+- The local Linux environment has a small plugin palette installed for
   experimentation: `LSP` utilities in `~/.vst` and `~/.lv2`, `Dragonfly Reverb`
   in `~/.vst3` and `~/.lv2`, `TAL-Chorus-LX` and `TAL-Reverb-2` in `~/.vst3`,
   and legacy Linux `Airwindows` VSTs in `~/.vst`.
-- `Chow Tape Model`, `TAL-Chorus-LX`, `TAL-Reverb-2`, and Dragonfly VST3s have
-  already been verified to load through `pedalboard`; prefer those before
-  introducing more bridge-heavy or activation-heavy plugin paths.
+- `Chow Tape Model`, `TAL-Chorus-LX`, `TAL-Reverb-2`, Dragonfly VST3s,
+  `Airwindows Consolidated`, `BYOD`, and `ChowCentaur` have all been verified
+  to load through `pedalboard`.
+- `Airwindows Consolidated` is wrapped via `apply_airwindows()` with algorithm
+  switching (Density, IronOxide5, ToTape6, Tube, Drive, Coils, Channel9, etc.)
+  and named presets. Algorithm selection works by patching the plugin's VST3
+  preset XML. See `docs/synth_api.md` for the full algorithm/parameter table.
+- `BYOD` is wrapped via `apply_byod()` with 40 built-in program presets
+  (Tube Screamer, Centaur, American Sound, Big Muff, RAT, etc.) selectable
+  via the `program` parameter. Parameters change dynamically per program.
+- `ChowCentaur` is wrapped via `apply_chow_centaur()` with gain/treble/level
+  controls and Neural/Traditional modes. At low gain settings it works well
+  as a subtle warmth/color tool.
+- The macOS environment has a broader plugin palette: all ChowDSP plugins
+  (CHOWTapeModel, BYOD, ChowMatrix, ChowCentaur, ChowKick, ChowMultiTool,
+  ChowPhaser), TAL (Chorus-LX, Reverb-2, Reverb-3), Dragonfly (Plate,
+  Room, Hall, Early Reflections), Airwindows Consolidated, and Surge XT.
+  LSP Plugins are Linux-only and unavailable on macOS.
+- Render analysis generates librosa-based visual analysis:
+  mel spectrogram, tuning-aware chromagram (36 bins/octave for JI
+  visibility), spectral contrast, onset envelope, and harmonic-percussive
+  separation balance — all registered in the analysis manifest. These are
+  the primary feedback channel for AI-assisted composition since LLMs
+  cannot hear audio.
+- The `organ` synth engine provides drawbar organ synthesis with tonewheel drift,
+  key click, scanner vibrato/chorus, crosstalk, and per-drawbar harmonic shaping
+  (`tonewheel_shape`). It supports custom drawbar ratio sets for xenharmonic
+  timbre-harmony fusion. Use `engine="organ"` in `synth_defaults`.
+- The `piano` synth engine uses modal synthesis with physical hammer-string
+  interaction (nonlinear contact model, second-order resonator bank). Velocity
+  naturally shapes timbre through the hammer physics. It supports unison strings
+  with drift, soundboard coloring, body saturation, damper noise, and custom
+  partial ratio sets for xenharmonic timbre-harmony fusion. Use
+  `engine="piano"` in `synth_defaults`. The legacy additive piano is available
+  as `engine="piano_additive"`.
+- The `harpsichord` synth engine uses pluck excitation + modal resonator
+  synthesis with multi-register blending (front 8', back 8', 4', lute),
+  per-note spectral morphing, and velocity-driven brightness. It supports
+  custom partial ratio sets for xenharmonic timbre-harmony fusion. Use
+  `engine="harpsichord"` in `synth_defaults`.
+- `Voice` supports engine-agnostic sympathetic resonance via
+  `sympathetic_amount`, `sympathetic_decay`, and `sympathetic_modes`. This
+  adds a resonator bank tuned to active note harmonics, applied after note
+  mixing and before normalization. Works best with harpsichord and piano
+  voices where harmonically related notes reinforce each other.
+- The `surge_xt` instrument engine renders voices through Surge XT via
+  pedalboard's VSTi hosting. It uses MPE-style per-note pitch bend
+  (48-semitone range) for microtonal accuracy. Unlike the native per-note
+  engines, it renders the whole voice at once. Use `engine="surge_xt"` in
+  `synth_defaults`.
+- The `vital` instrument engine renders voices through Vital via
+  pedalboard's VSTi hosting. Same MPE per-note pitch bend approach as
+  surge_xt with sub-cent microtonal accuracy. Vital ignores standard MPE
+  RPN for bend range, so `mpe_enabled` and `pitch_bend_range` are set
+  via the parameter API. Use `engine="vital"` in `synth_defaults`.
+- `code_musics/smear.py` provides loveless-inspired pitch smearing tools:
+  `SmearVoice` for per-voice micro-detuned layering, `SmearChord` for
+  whole-chord tremolo-bar drift, and helpers for building shoegaze/dream-pop
+  textures from score phrases.
+- `code_musics/harmonic_drift.py` provides JI-aware pitch drift automation
+  shaped by consonance — slow, smooth trajectories that weight their path
+  toward harmonically related intervals rather than drifting randomly.
 - Keep plugin notes here high-level. Detailed parameter semantics and any new
   `EffectSpec` integration still belong in `docs/synth_api.md`.
 - If you change score/expression parameters or presets, update the docs in the same
@@ -258,23 +369,26 @@ See `FUTURE.md` for way more ideas.
   across sessions. Keep the mention short and intuitive here, and put the full API
   semantics in `docs/composition_api.md`, `docs/score_api.md`, or
   `docs/synth_api.md` as appropriate.
-- Timestamp inspection is part of the normal workflow now. Prefer the timeline
+- Timestamp inspection is part of the normal workflow. Prefer the timeline
   artifacts and `make inspect` when responding to comments like "2:10 in
   ji_chorale" instead of manually hunting through score code.
-- Snippet rendering is part of the normal workflow for score-backed pieces now.
+- Snippet rendering is part of the normal workflow for score-backed pieces.
   Prefer `make snippet` or `make render-window` when iterating on a local moment
   instead of re-rendering the whole piece.
-- MIDI export now mirrors that workflow for score-backed pieces via shared tuning files plus per-voice stems; prefer `make midi-snippet` or `make midi-window` when iterating on a local passage for DAW work.
-- Score analysis now includes timing-drift diagnostics. Overall drift is fine, but
+- MIDI export mirrors that workflow for score-backed pieces via shared tuning
+  files plus per-voice stems; prefer `make midi-snippet` or `make midi-window` when iterating on a local passage for DAW work.
+- Score analysis includes timing-drift diagnostics. Overall drift is fine, but
   inter-voice spread should stay musically plausible across the piece; keep the
   warning thresholds and artifact details documented under `docs/`.
-- Render analysis now also records effect-chain diagnostics for compressors,
+- Render analysis records effect-chain diagnostics for compressors,
   saturation, and plugin stages so agents can see gain reduction, clipping-like
   density, and "mostly inactive" vs aggressive behavior in the analysis manifest.
-- WAV export logging now reports peak, true-peak, and integrated LUFS at write
+- WAV export logging reports peak, true-peak, and integrated LUFS at write
   time, and warns when an exported master lands suspiciously far below the
   expected ceiling.
-- Render analysis now also emits artifact-risk warnings for suspicious
+- WAV export defaults to 24-bit PCM via `soundfile`. 16-bit (TPDF dithered)
+  and 32-bit float are available via the `bit_depth` parameter on `write_wav()`.
+- Render analysis emits artifact-risk warnings for suspicious
   brightness, modulation, compression/clipping, and risky filter-motion
   parameter combos; when touching those surfaces, update docs and tests in the
   same pass.
@@ -285,8 +399,8 @@ See `FUTURE.md` for way more ideas.
   when changing behavior.
 - If a doc in this repo describes something as future work, verify it against the code
   before repeating it. Several foundational ideas are already implemented.
-- Think carefully about interface design. Imagine you were interacting with devices with 
-  practically no context. What would be intuitive and easy to use? 
+- Think carefully about interface design. Imagine you were interacting with devices with
+  practically no context. What would be intuitive and easy to use?
   Prefer absolute units when possible (like msec for a compressor). For arbitrary knobs,
   use typical, usable ranges: 0-0.25 should be quite subtle, 0.25-0.33 should be clearly audible but
   still somewhat subtle, 0.33-0.66 should be moderate, and 0.66-0.8 should be strong. It's fine
@@ -294,11 +408,19 @@ See `FUTURE.md` for way more ideas.
   For example, a saturation effect might offer gentle mix warmth at 0.2, harmony-compatible warmth at 0.33,
   musical saturation at 0.5, strong but still musical saturation at 0.66, and distortion at 0.8.
 - Effects and voices should be designed considering musicality, not textbook designs.
-  Don't cut corners to save time. 
-  For example, if a distortion plugin would benefit from antialiasing, 
+  Don't cut corners to save time.
+  For example, if a distortion plugin would benefit from antialiasing,
   don't just implement the most naive algo.
 
+## Agent Delegation Policy
+
+Core composition and piece writing should happen in the main agent context for
+creative continuity and direct authorial control. Mechanical work (new engines,
+features, infrastructure, repo improvements, portability fixes) follows the normal
+delegation-to-subagents pattern.
+
 ## Test Philosophy
+
 - Test early and often. Ideally write tests _first_ then code (TDD).  
 - Focus on realistic, e2e tests (smoke, integration).  
 - No need for trivial tests or testing each unexpected edge case. First and foremost, tests should validate that code runs properly, end to end, without major bugs; and they should prevent regressions.
@@ -322,4 +444,35 @@ See `FUTURE.md` for way more ideas.
 - spicy but euphonic chords, creative voicing, voice leading, sevenths and septimal harmony
 - it's fine to explore and fail. we can try a bunch of ideas, and none of them have to work
 - think of music creation like a GAN: we come up with ideas, we see how we like them, and we iterate
-(for more ideas, use `make inspire`)
+- four tet (pretty and euphonic but not cheesy)
+- autechre
+(for more ideas, use `make inspire`; this is an idea generator inspired by Eno's _Oblique Strategies_)
+
+some tuning schemes -
+
+- ji 5-limit
+- ji 7-limit
+- harmonic series
+- colundi
+- otonal
+- meantone and other historical tunings (constraints are good)
+
+```
+! colundi_ji_core.scl
+!
+Approximate Colundi-inspired 7-note JI scale
+7
+!
+11/10
+19/16
+4/3
+3/2
+49/30
+7/4
+2/1
+```
+
+- EDOs/TETs
+- Meantone, well temperaments, and baroque tunings
+- Bohlen Pierce?
+- Other?

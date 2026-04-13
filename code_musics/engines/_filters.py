@@ -2,9 +2,25 @@
 
 from __future__ import annotations
 
+import math
+
+import numba
 import numpy as np
 
 _SUPPORTED_FILTER_MODES = {"lowpass", "bandpass", "highpass", "notch"}
+
+# Integer constants for filter mode selection inside numba-compiled loops.
+_LP: int = 0
+_BP: int = 1
+_HP: int = 2
+_NOTCH: int = 3
+
+_MODE_STR_TO_INT: dict[str, int] = {
+    "lowpass": _LP,
+    "bandpass": _BP,
+    "highpass": _HP,
+    "notch": _NOTCH,
+}
 
 
 def _soft_clip(value: float) -> float:
@@ -25,82 +41,105 @@ def _select_filter_output(
     return low + high
 
 
+@numba.njit(cache=True)
 def _apply_linear_zdf_svf(
     signal: np.ndarray,
-    *,
     cutoff_profile: np.ndarray,
     damping: float,
     sample_rate: int,
-    filter_mode: str,
+    mode_int: int,
+    precomputed_g: float,
 ) -> np.ndarray:
-    """Apply the fully linear ZDF/TPT state-variable filter."""
-    filtered = np.empty_like(signal, dtype=np.float64)
+    """Apply the fully linear ZDF/TPT state-variable filter (numba-compiled)."""
+    n = signal.shape[0]
+    filtered = np.empty(n, dtype=np.float64)
     low_state = 0.0
     band_state = 0.0
+    use_precomputed = precomputed_g >= 0.0
 
-    for index, sample in enumerate(signal):
-        g = np.tan(np.pi * float(cutoff_profile[index]) / sample_rate)
+    for i in range(n):
+        if use_precomputed:
+            g = precomputed_g
+        else:
+            g = math.tan(math.pi * cutoff_profile[i] / sample_rate)
+        sample = signal[i]
         feedback = low_state + damping * band_state
-        high = (float(sample) - feedback) / (1.0 + damping * g + g * g)
+        high = (sample - feedback) / (1.0 + damping * g + g * g)
         band = g * high + band_state
         low = g * band + low_state
         band_state = g * high + band
         low_state = g * band + low
-        filtered[index] = _select_filter_output(
-            filter_mode=filter_mode,
-            low=low,
-            band=band,
-            high=high,
-        )
+
+        if mode_int == _LP:
+            filtered[i] = low
+        elif mode_int == _BP:
+            filtered[i] = band
+        elif mode_int == _HP:
+            filtered[i] = high
+        else:
+            filtered[i] = low + high
 
     return filtered
 
 
+@numba.njit(cache=True)
 def _apply_driven_zdf_svf(
     signal: np.ndarray,
-    *,
     cutoff_profile: np.ndarray,
     damping: float,
     sample_rate: int,
-    filter_mode: str,
+    mode_int: int,
     filter_drive: float,
+    precomputed_g: float,
 ) -> np.ndarray:
-    """Apply a moderated nonlinear ZDF/TPT state-variable filter."""
-    filtered = np.empty_like(signal, dtype=np.float64)
+    """Apply a moderated nonlinear ZDF/TPT state-variable filter (numba-compiled)."""
+    n = signal.shape[0]
+    filtered = np.empty(n, dtype=np.float64)
     low_state = 0.0
     band_state = 0.0
+    use_precomputed = precomputed_g >= 0.0
 
     drive_gain = 1.0 + (2.0 * filter_drive)
     feedback_gain = 1.0 + filter_drive
     output_gain = 1.0 + (0.25 * filter_drive)
     compensation = 1.0 / (1.0 + (0.2 * filter_drive))
 
-    for index, sample in enumerate(signal):
-        g = np.tan(np.pi * float(cutoff_profile[index]) / sample_rate)
-        driven_input = _soft_clip(float(sample) * drive_gain)
-        feedback = _soft_clip((low_state + (damping * band_state)) * feedback_gain)
+    for i in range(n):
+        if use_precomputed:
+            g = precomputed_g
+        else:
+            g = math.tan(math.pi * cutoff_profile[i] / sample_rate)
+        sample = signal[i]
+        driven_input = math.tanh(sample * drive_gain)
+        feedback = math.tanh((low_state + (damping * band_state)) * feedback_gain)
         high = (driven_input - feedback) / (1.0 + (damping * g) + (g * g))
         band = (g * high) + band_state
         low = (g * band) + low_state
         band_state = (g * high) + band
         low_state = (g * band) + low
-        output = _select_filter_output(
-            filter_mode=filter_mode,
-            low=low,
-            band=band,
-            high=high,
-        )
-        filtered[index] = _soft_clip(output * output_gain)
 
-    return filtered * compensation
+        if mode_int == _LP:
+            output = low
+        elif mode_int == _BP:
+            output = band
+        elif mode_int == _HP:
+            output = high
+        else:
+            output = low + high
+
+        filtered[i] = math.tanh(output * output_gain)
+
+    for i in range(n):
+        filtered[i] *= compensation
+
+    return filtered
 
 
 def apply_zdf_svf(
     signal: np.ndarray,
     *,
     cutoff_profile: np.ndarray,
-    resonance: float = 0.0,
-    resonance_q: float | None = None,
+    resonance_q: float = 0.707,
     sample_rate: int,
     filter_mode: str,
     filter_drive: float,
@@ -113,40 +152,46 @@ def apply_zdf_svf(
     Args:
         signal: Input audio array.
         cutoff_profile: Per-sample cutoff frequency in Hz (same length as signal).
-        resonance: Non-negative resonance amount on a 0–1 scale.
-            ``resonance_q`` takes precedence when both are provided.
-        resonance_q: Filter Q as a direct Q value (≥ 0.5). Q=0.707 is Butterworth
-            (no resonance peak). Q=1 is a gentle peak; Q=4+ approaches
-            self-oscillation depending on drive. Preferred over ``resonance``
-            when an explicit Q is known.
+        resonance_q: Filter Q value (>= 0.5). Q=0.707 is Butterworth (no resonance
+            peak). Q=1 is a gentle peak; Q=4+ approaches self-oscillation depending
+            on drive.
         sample_rate: Audio sample rate in Hz.
         filter_mode: One of ``"lowpass"``, ``"bandpass"``, ``"highpass"``, ``"notch"``.
         filter_drive: Non-negative drive amount; 0.0 means fully linear/clean.
     """
-    if resonance_q is not None:
-        q = max(0.5, float(resonance_q))
-    else:
-        resonance_bounded = max(0.0, float(resonance))
-        q = 0.707 + (11.293 * resonance_bounded)
+    q = max(0.5, float(resonance_q))
     damping = 1.0 / q
+    mode_int = _MODE_STR_TO_INT.get(filter_mode, _LP)
+
+    sig = np.asarray(signal, dtype=np.float64)
+    cutoff = np.asarray(cutoff_profile, dtype=np.float64)
+
+    # Pre-compute g when cutoff is constant to avoid per-sample tan() calls.
+    if cutoff.size > 0 and np.all(cutoff == cutoff[0]):
+        precomputed_g = math.tan(math.pi * float(cutoff[0]) / sample_rate)
+    else:
+        precomputed_g = -1.0  # sentinel: compute per-sample
+
     linear_filtered = _apply_linear_zdf_svf(
-        signal,
-        cutoff_profile=cutoff_profile,
-        damping=damping,
-        sample_rate=sample_rate,
-        filter_mode=filter_mode,
+        sig,
+        cutoff,
+        damping,
+        sample_rate,
+        mode_int,
+        precomputed_g,
     )
 
     if filter_drive <= 0.0:
         return linear_filtered
 
     driven_filtered = _apply_driven_zdf_svf(
-        signal,
-        cutoff_profile=cutoff_profile,
-        damping=damping,
-        sample_rate=sample_rate,
-        filter_mode=filter_mode,
-        filter_drive=filter_drive,
+        sig,
+        cutoff,
+        damping,
+        sample_rate,
+        mode_int,
+        filter_drive,
+        precomputed_g,
     )
     drive_blend = 0.75 * (filter_drive**1.3)
     return ((1.0 - drive_blend) * linear_filtered) + (drive_blend * driven_filtered)

@@ -53,6 +53,10 @@ def inspect_piece_timestamp(
         raise ValueError(f"Piece {piece_name} does not expose a Score for inspection")
 
     score = definition.build_score()
+    if definition.study:
+        piece_output_dir = Path(output_dir) / "studies" / piece_name
+    else:
+        piece_output_dir = Path(output_dir) / piece_name
     return inspect_score_timestamp(
         score=score,
         timestamp_seconds=timestamp_seconds,
@@ -60,7 +64,7 @@ def inspect_piece_timestamp(
         window_seconds=window_seconds,
         artifact_paths=_discover_latest_artifacts(
             output_name=definition.output_name,
-            output_dir=output_dir,
+            output_dir=piece_output_dir,
         ),
         piece_name=piece_name,
     )

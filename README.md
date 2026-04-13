@@ -1,65 +1,108 @@
 # centaur musical workstation
 
-Exploring musical collaboration with agentic AI.
+Exploring musical collaboration with agentic AI, focused on tuning systems that
+are awkward to work with in traditional tools — just intonation, harmonic series,
+septimal harmony, and other xenharmonic ideas.
 
-This project focuses on alternative tuning systems, especially just intonation and
-other xenharmonic ideas that are awkward to explore in traditional tools. What can we make together? Can agentic collaboration create new, weird, unique, fresh ideas and let us work in alternate tunings more easily?
+The synths are custom-built to work natively in any tuning. The effects are a mix
+of internal DSP and external plugins (VST3 on macOS and Linux). The composition
+tools are designed for ratio-space thinking rather than retrofitting 12-tone
+assumptions. The AI agent is a co-composer, not just an autocomplete.
 
-Naturally, the synths are custom, to support alternate tunings. The effects are a mix of internal and vst-based (supports Linux VST3s).
+This repo contains both the toolkit and the pieces — sketches, studies, and more
+developed works. Not everything sounds good yet, and that's fine.
 
-This repo contains both the tooling and the pieces; not pruned at all, so most of them will sound aggressively unpleasant and unfinished!
+## What can it do?
 
-## Current shape
+**Compose in just intonation and other xenharmonic tunings.** The score model
+works in frequency ratios, not MIDI note numbers. Phrases, voices, effects, and
+humanization are all tuning-agnostic from the ground up.
 
-- `code_musics/score.py` provides the composition model: `Score`, `Voice`,
-  `Phrase`, `NoteEvent`, and `EffectSpec`.
-- `code_musics/tuning.py` provides small helpers for harmonic-series, JI, utonal,
-  and EDO work.
-- `code_musics/pieces/` contains registered named pieces.
-- `code_musics/render.py` and `main.py` handle listing and rendering pieces.
-- `code_musics/synth.py` contains the lower-level synthesis and effect utilities.
+**11 synth engines** designed for microtonal work: additive (with spectral
+partial control for timbre-harmony fusion), FM, filtered-stack, polyBLEP,
+modal piano, drawbar organ, pluck-excitation harpsichord, 808/909 kick and tom,
+noise percussion, legacy additive piano, and Surge XT via VSTi hosting.
 
-## Project direction
+**Phrase-first composition.** Build motifs with `line()` and `ratio_line()`,
+transform them with `concat`, `overlay`, `echo`, place them with `sequence` and
+`canon`, build harmony with `voiced_ratio_chord` and `progression`. An optional
+metered-time layer adds bar/beat grid helpers and swing.
 
-The current musical center of gravity is:
+**Generative tools.** Weighted pitch pools, euclidean rhythms, probability gates,
+Markov chains, Turing machine sequencers, harmonic lattice walkers, and
+stochastic cloud generators. All seeded and deterministic.
 
-- just intonation
-- harmonic-series writing, including otonal and utonal materials
-- xenharmonic music that can still sound pleasant, lyrical, and structurally like
-  music rather than only like an experiment
-- a wide expressive range, from simple and gentle to strange and chaotic
+**Full MIDI export** with per-voice stems and shared tuning files (Scala, TUN,
+KBM) for loading into external synths and DAWs.
 
+**Render analysis and visual feedback.** Mel spectrograms, tuning-aware
+chromagrams, spectral contrast, artifact-risk warnings, effect-chain diagnostics,
+and timing-drift analysis — the primary feedback channel since LLMs can't hear
+audio.
 
-## Usage
+**60+ registered pieces and studies** across JI, harmonic series, septimal,
+Colundi-inspired, trance, and contrapuntal directions.
 
-List available pieces:
+## Quick start
 
-```bash
-make list
-```
-
-Render a piece:
-
-```bash
-make render PIECE=harmonic_drift
-```
-
-Render a piece and save a piano-roll plot when available:
-
-```bash
-make render PIECE=harmonic_drift
-```
-
-Render a piece without the piano roll:
+Requires [uv](https://docs.astral.sh/uv/) for environment management. Never run
+bare `python` — always use `make` targets or prefix with `uv run`.
 
 ```bash
-make render PIECE=harmonic_drift PLOT=0
+make list                            # see all registered pieces
+make render PIECE=septimal_bloom     # render a piece + piano-roll plot + analysis
+make snippet PIECE=ji_chorale AT=2:10 WINDOW=12   # render a short section
+make inspect PIECE=ji_chorale AT=2:10              # inspect score context
+make midi PIECE=ji_chorale           # export MIDI bundle with tuning files
+make test                            # run the full test suite
+make all                             # format-check + lint + typecheck + tests
+make inspire                         # musical inspiration prompts
 ```
 
-By default, renders now also emit analysis artifacts and a JSON manifest into
-`output/`, alongside the WAV file. Use the CLI directly if you want to disable
-analysis for a render:
+## Musical direction
 
-```bash
-PYTHONPATH=. uv run python main.py harmonic_drift --no-analysis
+The current center of gravity:
+
+- just intonation and harmonic-series writing, including otonal and utonal
+  materials
+- a bias toward pleasant, listenable results without becoming timid or
+  conventional
+- willingness to move between gentle clarity and more chaotic or alien sections
+- full compositions over sketches — form, pacing, arrival, and return
+
+Named inspirations: Bach, Aphex Twin (both the tender side and the chaotic side),
+Burial, My Bloody Valentine, Boards of Canada, Four Tet, Autechre.
+
+## Project structure
+
+```text
+code_musics/           main package
+  score.py             Score / Voice / Phrase / NoteEvent composition model
+  composition.py       phrase-first helpers, metered-time grid layer
+  synth.py             low-level DSP, rendering, and effect helpers
+  engines/             synth engine registry and per-engine renderers
+  generative/          algorithmic composition tools
+  pieces/              named musical works (studies, sketches, full pieces)
+  tuning.py            JI, harmonic series, utonal, EDO helpers
+  humanize.py          timing, envelope, velocity humanization
+  smear.py             loveless-inspired pitch smearing
+  harmonic_drift.py    JI-aware pitch drift trajectories
+  meter.py             Timeline, bar/beat, rhythmic values
+  midi_export.py       MIDI export with tuning files
+  analysis.py          render analysis and visual feedback
+  render.py            named-piece orchestration layer
+docs/                  API reference
+  synth_api.md         engines, presets, effects, parameters
+  score_api.md         score model, render pipeline, expression
+  composition_api.md   composition helpers, generative tools, humanization
+main.py                CLI entrypoint
+FUTURE.md              roadmap and ideas
 ```
+
+## Documentation
+
+- `AGENTS.md` — agent instructions, running commands, musical direction
+- `docs/synth_api.md` — synth engines, presets, and effect chain reference
+- `docs/score_api.md` — score model, render pipeline, expression controls
+- `docs/composition_api.md` — composition helpers, generative tools, humanization
+- `FUTURE.md` — roadmap, ideas, and things to explore

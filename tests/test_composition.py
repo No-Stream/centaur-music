@@ -38,7 +38,7 @@ from code_musics.composition import (
     with_tail_breath,
 )
 from code_musics.meter import B, E, M, Q, S, SwingSpec, Timeline, dotted
-from code_musics.pieces.sketches import (
+from code_musics.pieces.composition_showcases import (
     build_composition_tools_consonant_score,
     build_composition_tools_showcase_score,
 )

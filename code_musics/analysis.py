@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import spectrogram
 
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+
 from code_musics import synth
+from code_musics.engines._dsp_utils import compute_signal_thd
 from code_musics.pieces.registry import PieceSection
 from code_musics.score import Score
 
@@ -89,6 +95,8 @@ class AudioAnalysis:
     tilt_error_db_per_octave: float
     amplitude_modulation_depth_db: float
     dominant_amplitude_modulation_hz: float
+    thd_pct: float
+    thd_character: str
     band_energy_db: dict[str, float]
     warnings: list[str]
     artifact_risks: list[ArtifactRiskWarning]
@@ -146,6 +154,8 @@ def analyze_audio(
             crest_factor_db=0.0,
             spectral_centroid_hz=0.0,
             dominant_frequency_hz=0.0,
+            thd_pct=0.0,
+            thd_character="clean",
             low_high_balance_db=0.0,
             high_band_emphasis_db=0.0,
             spectral_tilt_db_per_octave=0.0,
@@ -192,6 +202,9 @@ def analyze_audio(
 
     spectral_centroid_hz = _spectral_centroid(freqs=freqs, magnitude_db=magnitude_db)
     dominant_frequency_hz = float(freqs[np.argmax(magnitude_db)])
+    thd_pct, thd_character = compute_signal_thd(
+        freqs, magnitude_db, dominant_frequency_hz
+    )
     spectral_tilt = _fit_spectral_tilt(freqs=freqs, magnitude_db=magnitude_db)
     dominant_amplitude_modulation_hz = _dominant_amplitude_modulation_hz(
         mono_signal,
@@ -240,6 +253,8 @@ def analyze_audio(
         crest_factor_db=max(0.0, peak_dbfs - _amplitude_to_db(rms_amplitude)),
         spectral_centroid_hz=spectral_centroid_hz,
         dominant_frequency_hz=dominant_frequency_hz,
+        thd_pct=thd_pct,
+        thd_character=thd_character,
         low_high_balance_db=low_high_balance_db,
         high_band_emphasis_db=high_band_emphasis_db,
         spectral_tilt_db_per_octave=spectral_tilt,
@@ -1131,8 +1146,8 @@ def _build_audio_artifact_risks(
                 tilt_error_db_per_octave=round(tilt_error_db_per_octave, 2),
             )
         )
-    modulation_is_tremolo_like = dominant_amplitude_modulation_hz >= 2.0
-    if amplitude_modulation_depth_db >= 18.0 and modulation_is_tremolo_like:
+    modulation_is_tremolo_like = dominant_amplitude_modulation_hz >= 4.0
+    if amplitude_modulation_depth_db >= 24.0 and modulation_is_tremolo_like:
         risks.append(
             _artifact_risk(
                 severity="severe",
@@ -1148,7 +1163,7 @@ def _build_audio_artifact_risks(
                 ),
             )
         )
-    elif amplitude_modulation_depth_db >= 12.0 and modulation_is_tremolo_like:
+    elif amplitude_modulation_depth_db >= 18.0 and modulation_is_tremolo_like:
         risks.append(
             _artifact_risk(
                 severity="warning",
@@ -1311,6 +1326,38 @@ def _build_artifact_risk_report(
                 )
             )
 
+        thd_delta_pct = (
+            pre_export_mix_analysis.thd_pct - pre_master_mix_analysis.thd_pct
+        )
+        if thd_delta_pct >= 12.0:
+            mix_risks.append(
+                _artifact_risk(
+                    severity="severe",
+                    code="harmonic_distortion",
+                    source="mastering_analysis",
+                    message="master bus processing introduced heavy harmonic distortion",
+                    thd_delta_pct=round(thd_delta_pct, 2),
+                    pre_master_thd_pct=round(pre_master_mix_analysis.thd_pct, 2),
+                    post_master_thd_pct=round(pre_export_mix_analysis.thd_pct, 2),
+                    pre_master_thd_character=pre_master_mix_analysis.thd_character,
+                    post_master_thd_character=pre_export_mix_analysis.thd_character,
+                )
+            )
+        elif thd_delta_pct >= 5.0:
+            mix_risks.append(
+                _artifact_risk(
+                    severity="warning",
+                    code="harmonic_distortion",
+                    source="mastering_analysis",
+                    message="master bus processing added noticeable harmonic distortion",
+                    thd_delta_pct=round(thd_delta_pct, 2),
+                    pre_master_thd_pct=round(pre_master_mix_analysis.thd_pct, 2),
+                    post_master_thd_pct=round(pre_export_mix_analysis.thd_pct, 2),
+                    pre_master_thd_character=pre_master_mix_analysis.thd_character,
+                    post_master_thd_character=pre_export_mix_analysis.thd_character,
+                )
+            )
+
     parameter_surface_risks = (
         _analyze_parameter_surface_risks(score) if score is not None else {}
     )
@@ -1352,7 +1399,14 @@ def _analyze_parameter_surface_risks(
 
         cutoff_values = authored_params.get("cutoff_hz", [])
         filter_env_values = authored_params.get("filter_env_amount", [])
-        resonance_values = authored_params.get("resonance", [])
+        resonance_q_values = authored_params.get("resonance_q", [])
+        # Legacy presets may still author "resonance" on the 0-1 scale; convert
+        # to approximate Q so thresholds are comparable.  Q ≈ 0.5 + 12 * res
+        # gives a rough mapping (res=0 -> Q=0.5, res=0.5 -> Q=6.5, res=1 -> Q=12.5).
+        legacy_resonance_values = authored_params.get("resonance", [])
+        resonance_values = resonance_q_values + [
+            0.5 + 12.0 * v for v in legacy_resonance_values
+        ]
         drive_values = authored_params.get("filter_drive", [])
         note_amp_db_values = authored_params.get("note_amp_db", [])
 
@@ -1410,7 +1464,7 @@ def _analyze_parameter_surface_risks(
         ):
             severity = (
                 "severe"
-                if cutoff_span >= 2_000.0 or drive_max >= 0.08 or resonance_max >= 0.12
+                if cutoff_span >= 2_000.0 or drive_max >= 0.08 or resonance_max >= 2.0
                 else "warning"
             )
             risks.append(
@@ -1445,7 +1499,7 @@ def _analyze_parameter_surface_risks(
                 )
             )
 
-        if drive_max >= 0.08 and filter_env_max >= 0.8 and resonance_max >= 0.1:
+        if drive_max >= 0.08 and filter_env_max >= 0.8 and resonance_max >= 1.8:
             risks.append(
                 _artifact_risk(
                     severity="warning",
@@ -1746,6 +1800,22 @@ def _frame_rms_envelope(
     )
 
 
+def _save_plot(
+    *,
+    path: Path,
+    title: str,
+    render_fn: Callable[[Figure, Axes], None],
+    figsize: tuple[float, float] = (10, 4),
+) -> None:
+    """Shared scaffolding for all analysis plots: create figure, render, save, close."""
+    figure, axis = plt.subplots(figsize=figsize)
+    render_fn(figure, axis)
+    axis.set_title(title)
+    figure.tight_layout()
+    figure.savefig(path, bbox_inches="tight")
+    plt.close(figure)
+
+
 def _save_spectrum_plot(
     *,
     signal: np.ndarray,
@@ -1758,27 +1828,26 @@ def _save_spectrum_plot(
         synth.to_mono_reference(signal),
         sample_rate=sample_rate,
     )
-    figure, axis = plt.subplots(figsize=(10, 4))
-    axis.semilogx(freqs, magnitude_db, linewidth=1.2, label="measured")
 
-    reference_curve = magnitude_db[0] + reference_tilt_db_per_octave * (
-        np.log2(freqs) - np.log2(freqs[0])
-    )
-    axis.semilogx(
-        freqs,
-        reference_curve,
-        linestyle="--",
-        linewidth=1.0,
-        label=f"reference {reference_tilt_db_per_octave:.1f} dB/oct",
-    )
-    axis.set_title(title)
-    axis.set_xlabel("Frequency (Hz)")
-    axis.set_ylabel("Magnitude (dB, relative)")
-    axis.grid(True, which="both", alpha=0.25)
-    axis.legend()
-    figure.tight_layout()
-    figure.savefig(path, bbox_inches="tight")
-    plt.close(figure)
+    def _render(figure: Figure, axis: Axes) -> None:
+        del figure
+        axis.semilogx(freqs, magnitude_db, linewidth=1.2, label="measured")
+        reference_curve = magnitude_db[0] + reference_tilt_db_per_octave * (
+            np.log2(freqs) - np.log2(freqs[0])
+        )
+        axis.semilogx(
+            freqs,
+            reference_curve,
+            linestyle="--",
+            linewidth=1.0,
+            label=f"reference {reference_tilt_db_per_octave:.1f} dB/oct",
+        )
+        axis.set_xlabel("Frequency (Hz)")
+        axis.set_ylabel("Magnitude (dB, relative)")
+        axis.grid(True, which="both", alpha=0.25)
+        axis.legend()
+
+    _save_plot(path=path, title=title, render_fn=_render)
 
 
 def _save_spectrogram_plot(
@@ -1802,16 +1871,15 @@ def _save_spectrogram_plot(
         mode="magnitude",
     )
     spec_db = 20.0 * np.log10(np.maximum(spec, _EPSILON))
-    figure, axis = plt.subplots(figsize=(10, 4))
-    mesh = axis.pcolormesh(times, freqs, spec_db, shading="auto")
-    axis.set_ylim(20.0, min(sample_rate / 2.0, 12_000.0))
-    axis.set_title(title)
-    axis.set_xlabel("Time (seconds)")
-    axis.set_ylabel("Frequency (Hz)")
-    figure.colorbar(mesh, ax=axis, label="Magnitude (dB)")
-    figure.tight_layout()
-    figure.savefig(path, bbox_inches="tight")
-    plt.close(figure)
+
+    def _render(figure: Figure, axis: Axes) -> None:
+        mesh = axis.pcolormesh(times, freqs, spec_db, shading="auto")
+        axis.set_ylim(20.0, min(sample_rate / 2.0, 12_000.0))
+        axis.set_xlabel("Time (seconds)")
+        axis.set_ylabel("Frequency (Hz)")
+        figure.colorbar(mesh, ax=axis, label="Magnitude (dB)")
+
+    _save_plot(path=path, title=title, render_fn=_render)
 
 
 def _save_band_energy_plot(
@@ -1820,27 +1888,26 @@ def _save_band_energy_plot(
     path: Path,
     title: str,
 ) -> None:
-    figure, axis = plt.subplots(figsize=(8, 4))
-    labels = list(band_energy_db)
-    values = [band_energy_db[label] for label in labels]
-    axis.bar(labels, values, color="#4c72b0")
-    axis.set_title(title)
-    axis.set_ylabel("Mean magnitude (dB)")
-    axis.grid(True, axis="y", alpha=0.25)
-    figure.tight_layout()
-    figure.savefig(path, bbox_inches="tight")
-    plt.close(figure)
+    def _render(figure: Figure, axis: Axes) -> None:
+        del figure
+        labels = list(band_energy_db)
+        values = [band_energy_db[label] for label in labels]
+        axis.bar(labels, values, color="#4c72b0")
+        axis.set_ylabel("Mean magnitude (dB)")
+        axis.grid(True, axis="y", alpha=0.25)
+
+    _save_plot(path=path, title=title, render_fn=_render, figsize=(8, 4))
 
 
 def _save_score_density_plot(*, score: Score, path: Path) -> None:
     total_duration = score.total_dur
     if total_duration == 0:
-        figure, axis = plt.subplots(figsize=(10, 4))
-        axis.set_title("Score Density")
-        axis.text(0.5, 0.5, "Empty score", ha="center", va="center")
-        figure.tight_layout()
-        figure.savefig(path, bbox_inches="tight")
-        plt.close(figure)
+
+        def _render_empty(figure: Figure, axis: Axes) -> None:
+            del figure
+            axis.text(0.5, 0.5, "Empty score", ha="center", va="center")
+
+        _save_plot(path=path, title="Score Density", render_fn=_render_empty)
         return
 
     window_seconds = 1.0
@@ -1863,16 +1930,15 @@ def _save_score_density_plot(*, score: Score, path: Path) -> None:
         onset_counts.append(onsets)
         active_counts.append(active)
 
-    figure, axis = plt.subplots(figsize=(10, 4))
-    axis.plot(window_starts, onset_counts, label="attacks / sec", linewidth=1.5)
-    axis.plot(window_starts, active_counts, label="active notes", linewidth=1.5)
-    axis.set_title("Score Density")
-    axis.set_xlabel("Time (seconds)")
-    axis.grid(True, alpha=0.25)
-    axis.legend()
-    figure.tight_layout()
-    figure.savefig(path, bbox_inches="tight")
-    plt.close(figure)
+    def _render(figure: Figure, axis: Axes) -> None:
+        del figure
+        axis.plot(window_starts, onset_counts, label="attacks / sec", linewidth=1.5)
+        axis.plot(window_starts, active_counts, label="active notes", linewidth=1.5)
+        axis.set_xlabel("Time (seconds)")
+        axis.grid(True, alpha=0.25)
+        axis.legend()
+
+    _save_plot(path=path, title="Score Density", render_fn=_render)
 
 
 def _amplitude_to_db(amplitude: float) -> float:

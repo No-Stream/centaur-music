@@ -12,10 +12,10 @@ from code_musics import synth
 from code_musics.synth import (
     ExternalPluginSpec,
     _float_to_int16_pcm,
-    _load_external_plugin,
     _loaded_external_plugins,
     _shape_reverb_return,
     apply_bricasti,
+    load_external_plugin,
 )
 
 
@@ -86,10 +86,10 @@ def test_plugin_cache_key_includes_bundle_plugin_name() -> None:
         _loaded_external_plugins.clear()
 
         mock_get_spec.return_value = spec_compressor
-        got_compressor = _load_external_plugin(plugin_name="fake_compressor")
+        got_compressor = load_external_plugin(plugin_name="fake_compressor")
 
         mock_get_spec.return_value = spec_limiter
-        got_limiter = _load_external_plugin(plugin_name="fake_limiter")
+        got_limiter = load_external_plugin(plugin_name="fake_limiter")
 
     # The two loads must return distinct plugin objects.
     assert got_compressor is not got_limiter, (
@@ -159,7 +159,7 @@ def test_write_wav_logs_peak_and_loudness_diagnostics(
 ) -> None:
     signal = np.array([0.0, 0.1, -0.1, 0.0], dtype=np.float64)
 
-    with patch("code_musics.synth.wavfile.write"):
+    with patch("code_musics.synth.sf.write"):
         caplog.set_level("INFO", logger="code_musics.synth")
         synth.write_wav(tmp_path / "quiet.wav", signal)
 
@@ -173,7 +173,7 @@ def test_apply_plugin_processor_resets_cached_plugin_state() -> None:
     fake_plugin = MagicMock()
     fake_plugin.return_value = np.zeros((2, 8), dtype=np.float32)
 
-    with patch("code_musics.synth._load_external_plugin", return_value=fake_plugin):
+    with patch("code_musics.synth.load_external_plugin", return_value=fake_plugin):
         synth._apply_plugin_processor(
             np.zeros(8, dtype=np.float64),
             plugin_name="tal_chorus_lx",

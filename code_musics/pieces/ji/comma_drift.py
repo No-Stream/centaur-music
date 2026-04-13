@@ -343,7 +343,7 @@ def build_ji_comma_drift_score() -> Score:
 PIECES: dict[str, PieceDefinition] = {
     "ji_comma_drift": PieceDefinition(
         name="ji_comma_drift",
-        output_name="19_ji_comma_drift.wav",
+        output_name="19_ji_comma_drift",
         build_score=build_ji_comma_drift_score,
     )
 }

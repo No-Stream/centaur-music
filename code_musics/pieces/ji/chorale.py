@@ -56,7 +56,7 @@ def build_ji_chorale_score() -> Score:
     A5 = A4 * 2  # 880.00  — tonic, next octave
 
     master_effects: list[EffectSpec] = [
-        EffectSpec("saturation", {"preset": "neve_gentle", "mix": 0.18, "drive": 0.85}),
+        EffectSpec("preamp", {"preset": "neve_warmth"}),
     ]
     if synth.has_external_plugin("lsp_compressor_stereo"):
         master_effects.append(
@@ -112,7 +112,7 @@ def build_ji_chorale_score() -> Score:
             "n_harmonics": 12,
             "cutoff_hz": 900.0,
             "keytrack": 0.1,
-            "resonance": 0.0,
+            "resonance_q": 0.707,
             "filter_env_amount": 0.55,
             "filter_env_decay": 0.70,
             "attack": 0.22,
@@ -149,7 +149,7 @@ def build_ji_chorale_score() -> Score:
             "n_harmonics": 12,
             "cutoff_hz": 1_000.0,
             "keytrack": 0.1,
-            "resonance": 0.08,
+            "resonance_q": 1.61,
             "filter_env_amount": 0.18,
             "filter_env_decay": 0.5,
             "attack": 0.05,
@@ -207,7 +207,7 @@ def build_ji_chorale_score() -> Score:
             "preset": "reed_lead",
             "cutoff_hz": 1_400.0,
             "keytrack": 0.1,
-            "resonance": 0.10,
+            "resonance_q": 1.84,
             "filter_env_amount": 0.95,
             "attack": 0.03,
             "decay": 0.12,
@@ -242,7 +242,7 @@ def build_ji_chorale_score() -> Score:
             "waveform": "triangle",
             "cutoff_hz": 2_200.0,
             "keytrack": 0.1,
-            "resonance": 0.05,
+            "resonance_q": 1.27,
             "filter_env_amount": 0.13,
             "filter_env_decay": 1.0,
             "filter_drive": 0.05,
@@ -288,7 +288,7 @@ def build_ji_chorale_score() -> Score:
         velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
         velocity_to_params={
             "filter_env_amount": VelocityParamMap(min_value=0.30, max_value=0.75),
-            "resonance": VelocityParamMap(min_value=0.04, max_value=0.12),
+            "resonance_q": VelocityParamMap(min_value=1.16, max_value=2.06),
         },
     )
 
@@ -792,7 +792,7 @@ def build_ji_chorale_score() -> Score:
 PIECES: dict[str, PieceDefinition] = {
     "ji_chorale": PieceDefinition(
         name="ji_chorale",
-        output_name="17_ji_chorale.wav",
+        output_name="17_ji_chorale",
         build_score=build_ji_chorale_score,
         sections=(
             PieceSection(label="Prologue", start_seconds=0.0, end_seconds=12.0),

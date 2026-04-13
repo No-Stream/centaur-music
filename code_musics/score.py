@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -18,6 +19,7 @@ from code_musics.automation import (
     has_pitch_ratio_automation,
 )
 from code_musics.engines import (
+    is_instrument_engine,
     normalize_synth_spec,
     render_note_signal,
     resolve_synth_params,
@@ -34,6 +36,31 @@ from code_musics.humanize import (
 )
 from code_musics.pitch_motion import PitchMotionSpec, build_frequency_trajectory
 
+logger: logging.Logger = logging.getLogger(__name__)
+
+_OUTPUT_CEILING_DBFS: float = -0.5
+
+EffectKind = Literal[
+    "gate",
+    "delay",
+    "reverb",
+    "chow_tape",
+    "bricasti",
+    "brit_pre",
+    "chorus",
+    "mod_delay",
+    "saturation",
+    "preamp",
+    "eq",
+    "compressor",
+    "phaser",
+    "tal_chorus_lx",
+    "tal_reverb2",
+    "dragonfly",
+    "mjuc_jr",
+    "plugin",
+]
+
 _UNSET: object = object()  # sentinel distinguishing "not passed" from explicit None
 
 
@@ -41,7 +68,7 @@ _UNSET: object = object()  # sentinel distinguishing "not passed" from explicit 
 class EffectSpec:
     """Declarative effect-chain item."""
 
-    kind: str
+    kind: EffectKind
     params: dict[str, Any] = field(default_factory=dict)
     automation: list[AutomationSpec] = field(default_factory=list)
 
@@ -216,6 +243,7 @@ class Phrase:
                     start=placed_start,
                     duration=scaled_duration,
                     amp=resolved_amp * amp_scale,
+                    amp_db=None,
                     partial=new_partial,
                 )
             )
@@ -275,6 +303,9 @@ class Voice:
     max_polyphony: int | None = None
     legato: bool = False
     pan: float = 0.0
+    sympathetic_amount: float = 0.0
+    sympathetic_decay: float = 2.0
+    sympathetic_modes: int = 8
     automation: list[AutomationSpec] = field(default_factory=list)
     notes: list[NoteEvent] = field(default_factory=list)
 
@@ -351,7 +382,7 @@ class Score:
         synth_defaults: dict[str, Any] | None = None,
         effects: list[EffectSpec] | None = None,
         envelope_humanize: EnvelopeHumanizeSpec | None = None,
-        velocity_humanize: VelocityHumanizeSpec | None = None,
+        velocity_humanize: VelocityHumanizeSpec | None = _UNSET,  # type: ignore[assignment]
         velocity_group: str | None = None,
         velocity_to_params: dict[str, VelocityParamMap] | None = None,
         velocity_db_per_unit: float = 12.0,
@@ -363,6 +394,9 @@ class Score:
         max_polyphony: int | None = None,
         legato: bool = False,
         pan: float = 0.0,
+        sympathetic_amount: float = 0.0,
+        sympathetic_decay: float = 2.0,
+        sympathetic_modes: int = 8,
         automation: list[AutomationSpec] | None = None,
     ) -> Voice:
         """Add or replace a named voice definition."""
@@ -390,6 +424,8 @@ class Score:
             raise ValueError("normalize_peak_db must be finite when provided")
         if max_polyphony is not None and max_polyphony < 1:
             raise ValueError("max_polyphony must be >= 1 when provided")
+        if velocity_humanize is _UNSET:
+            velocity_humanize = VelocityHumanizeSpec()
         resolved_sends = list(sends or [])
         self._validate_voice_sends(resolved_sends)
         voice = Voice(
@@ -397,11 +433,7 @@ class Score:
             synth_defaults=dict(synth_defaults or {}),
             effects=list(effects or []),
             envelope_humanize=envelope_humanize,
-            velocity_humanize=(
-                VelocityHumanizeSpec()
-                if velocity_humanize is None
-                else velocity_humanize
-            ),
+            velocity_humanize=velocity_humanize,
             velocity_group=velocity_group,
             velocity_to_params=dict(velocity_to_params or {}),
             velocity_db_per_unit=velocity_db_per_unit,
@@ -413,6 +445,9 @@ class Score:
             max_polyphony=max_polyphony,
             legato=legato,
             pan=pan,
+            sympathetic_amount=sympathetic_amount,
+            sympathetic_decay=sympathetic_decay,
+            sympathetic_modes=sympathetic_modes,
             automation=list(automation or []),
         )
         self.voices[name] = voice
@@ -445,7 +480,7 @@ class Score:
             self.send_buses[existing_index] = send_bus
         return send_bus
 
-    def get_voice(self, name: str) -> Voice:
+    def get_or_create_voice(self, name: str) -> Voice:
         """Get or create a voice with no defaults."""
         if name not in self.voices:
             self.voices[name] = Voice(name=name)
@@ -481,7 +516,7 @@ class Score:
             pitch_motion=pitch_motion,
             automation=list(automation) if automation is not None else None,
         )
-        self.get_voice(voice_name).notes.append(note)
+        self.get_or_create_voice(voice_name).notes.append(note)
         return note
 
     def add_phrase(
@@ -503,7 +538,7 @@ class Score:
             amp_scale=amp_scale,
             reverse=reverse,
         )
-        voice = self.get_voice(voice_name)
+        voice = self.get_or_create_voice(voice_name)
         voice.notes.extend(placed_notes)
         return placed_notes
 
@@ -526,19 +561,29 @@ class Score:
         if not mix_inputs:
             return np.zeros(0)
         mix = self._stack_signals(mix_inputs)
+        pre_peak = float(np.max(np.abs(mix))) if mix.size > 0 else 0.0
+        pre_peak_db = 20.0 * np.log10(max(pre_peak, 1e-12))
+        logger.info(f"Master bus pre-processing: peak {pre_peak_db:.2f} dBFS")
         return self._apply_master_bus_processing(mix)
 
     def render_with_effect_analysis(
         self,
-    ) -> tuple[np.ndarray, dict[str, np.ndarray], dict[str, Any]]:
+        *,
+        collect_effect_analysis: bool = True,
+    ) -> tuple[
+        np.ndarray, dict[str, np.ndarray], dict[str, np.ndarray], dict[str, Any]
+    ]:
         """Render the score plus per-effect diagnostics for agents and analysis."""
         stems, send_returns, voice_effects, send_effects = (
-            self._render_mix_components_internal(collect_effect_analysis=True)
+            self._render_mix_components_internal(
+                collect_effect_analysis=collect_effect_analysis
+            )
         )
         mix_inputs = [*stems.values(), *send_returns.values()]
         if not mix_inputs:
             return (
                 np.zeros(0),
+                {},
                 {},
                 {"mix_effects": [], "voice_effects": {}, "send_effects": {}},
             )
@@ -547,13 +592,14 @@ class Score:
         mix_effects: list[synth.EffectAnalysisEntry] = []
         mix = self._apply_master_bus_processing(
             mix,
-            collect_effect_analysis=True,
+            collect_effect_analysis=collect_effect_analysis,
             mix_effects=mix_effects,
         )
 
         return (
             mix,
             stems,
+            send_returns,
             {
                 "mix_effects": [entry.to_dict() for entry in mix_effects],
                 "voice_effects": {
@@ -768,6 +814,23 @@ class Score:
         timing_offsets: dict[tuple[str, int], float],
         velocity_multipliers: dict[tuple[str, int], float],
     ) -> np.ndarray:
+        # External instrument engines (e.g. Surge XT, Vital) render the whole
+        # voice at once instead of note-by-note, so dispatch early before the
+        # per-note loop.
+        synth_defaults = normalize_synth_spec(voice.synth_defaults)
+        resolved_defaults = resolve_synth_params(synth_defaults)
+        engine_name = str(resolved_defaults.get("engine", "additive"))
+
+        if is_instrument_engine(engine_name):
+            return self._render_voice_via_instrument(
+                voice_name=voice_name,
+                voice=voice,
+                timing_offsets=timing_offsets,
+                velocity_multipliers=velocity_multipliers,
+                engine_params=resolved_defaults,
+                engine_name=engine_name,
+            )
+
         voice_signals: list[np.ndarray] = []
         prepared_notes = self._prepare_voice_notes(
             voice_name=voice_name,
@@ -819,6 +882,220 @@ class Score:
             return np.zeros(0)
 
         voice_mix = self._stack_signals(voice_signals)
+        if voice.sympathetic_amount > 0:
+            voice_mix = self._apply_sympathetic_resonance(
+                voice_mix, voice, prepared_notes
+            )
+        return self._normalize_voice_signal(voice_mix, voice)
+
+    def _apply_sympathetic_resonance(
+        self,
+        voice_mix: np.ndarray,
+        voice: Voice,
+        prepared_notes: list[PreparedVoiceNote],
+    ) -> np.ndarray:
+        """Add sympathetic resonance by exciting resonant modes from the voice signal.
+
+        For each note, computes harmonic mode frequencies, measures how much
+        energy the voice signal contains at each mode via windowed correlation,
+        then synthesizes decaying sinusoids at those frequencies scaled by the
+        measured excitation.  This is unconditionally numerically stable (no
+        recursive filters).
+        """
+        if voice.sympathetic_amount <= 0 or not prepared_notes:
+            return voice_mix
+
+        nyquist = self.sample_rate * 0.45
+        max_resonators = 64
+
+        mode_entries: list[tuple[float, float, float]] = []
+        for pn in prepared_notes:
+            note_dur = pn.effective_hold_duration + pn.effective_release
+            for k in range(1, voice.sympathetic_modes + 1):
+                mode_freq = pn.note_freq * k
+                if mode_freq >= nyquist:
+                    break
+                mode_entries.append((mode_freq, pn.humanized_start, note_dur))
+
+        if not mode_entries:
+            return voice_mix
+
+        mode_entries.sort(key=lambda x: x[0])
+        deduped: list[tuple[float, float, float]] = []
+        for freq, start, dur in mode_entries:
+            if deduped and abs(freq - deduped[-1][0]) / deduped[-1][0] < 0.01:
+                existing_freq, existing_start, existing_dur = deduped[-1]
+                deduped[-1] = (
+                    existing_freq,
+                    min(existing_start, start),
+                    max(existing_dur, dur),
+                )
+            else:
+                deduped.append((freq, start, dur))
+
+        if len(deduped) > max_resonators:
+            deduped = deduped[:max_resonators]
+
+        n_samples = len(voice_mix)
+        sr = self.sample_rate
+        voice_mix_f64 = (
+            voice_mix.astype(np.float64) if voice_mix.dtype != np.float64 else voice_mix
+        )
+        t_all = np.arange(n_samples, dtype=np.float64) / sr
+        decay_tau = max(voice.sympathetic_decay, 0.01)
+
+        # Phase 1: measure excitation per mode (loop over segments, not full arrays)
+        excited: list[tuple[float, int, float]] = []
+        for mode_freq, note_start, note_dur in deduped:
+            start_sample = max(0, int(note_start * sr))
+            end_sample = min(n_samples, int((note_start + note_dur) * sr))
+            if end_sample <= start_sample:
+                continue
+            segment = voice_mix_f64[start_sample:end_sample]
+            ref_sin = np.sin(2.0 * np.pi * mode_freq * t_all[start_sample:end_sample])
+            excitation = abs(np.dot(segment, ref_sin) / len(segment)) * 2.0
+
+            if excitation < 1e-12:
+                continue
+            excited.append((mode_freq, start_sample, excitation))
+
+        if not excited:
+            return voice_mix
+
+        # Phase 2: batch resonator synthesis
+        freqs_arr = np.array([e[0] for e in excited], dtype=np.float64)
+        starts_arr = np.array([e[1] for e in excited], dtype=np.float64)
+        excitations = np.array([e[2] for e in excited], dtype=np.float64)
+
+        r_count = len(freqs_arr)
+        chunk_threshold = 50_000_000
+
+        if r_count * n_samples <= chunk_threshold:
+            t_2d = t_all[np.newaxis, :]
+            phase = 2.0 * np.pi * freqs_arr[:, np.newaxis] * t_2d
+            start_times = starts_arr[:, np.newaxis] / sr
+            offsets = t_2d - start_times
+            ring_env = np.where(offsets >= 0, np.exp(-offsets / decay_tau), 0.0)
+            resonance_sum = np.sum(
+                excitations[:, np.newaxis] * np.sin(phase) * ring_env, axis=0
+            )
+        else:
+            resonance_sum = np.zeros(n_samples, dtype=np.float64)
+            chunk_size = max(1, chunk_threshold // r_count)
+            for chunk_start in range(0, n_samples, chunk_size):
+                chunk_end = min(chunk_start + chunk_size, n_samples)
+                t_chunk = t_all[np.newaxis, chunk_start:chunk_end]
+                phase_chunk = 2.0 * np.pi * freqs_arr[:, np.newaxis] * t_chunk
+                start_times = starts_arr[:, np.newaxis] / sr
+                offsets_chunk = t_chunk - start_times
+                ring_env_chunk = np.where(
+                    offsets_chunk >= 0, np.exp(-offsets_chunk / decay_tau), 0.0
+                )
+                resonance_sum[chunk_start:chunk_end] = np.sum(
+                    excitations[:, np.newaxis] * np.sin(phase_chunk) * ring_env_chunk,
+                    axis=0,
+                )
+
+        sum_peak = float(np.max(np.abs(resonance_sum)))
+        input_peak = float(np.max(np.abs(voice_mix)))
+        if sum_peak > 0 and input_peak > 0:
+            resonance_sum = resonance_sum * (input_peak / sum_peak)
+        return voice_mix + resonance_sum * voice.sympathetic_amount
+
+    def _render_voice_via_instrument(
+        self,
+        *,
+        voice_name: str,
+        voice: Voice,
+        timing_offsets: dict[tuple[str, int], float],
+        velocity_multipliers: dict[tuple[str, int], float],
+        engine_params: dict[str, Any],
+        engine_name: str,
+    ) -> np.ndarray:
+        """Render a voice through an external instrument plugin (e.g. Surge XT, Vital).
+
+        Instead of iterating notes and calling ``render_note_signal`` per note,
+        this builds a list of note dicts and delegates to the engine's
+        ``render_voice`` entry point which drives the plugin with MIDI.
+        """
+        import importlib  # noqa: PLC0415
+
+        if voice.sympathetic_amount > 0:
+            logger.warning(
+                "sympathetic_amount=%.2f on instrument-engine voice %r ignored "
+                "(sympathetic resonance only applies to native per-note engines)",
+                voice.sympathetic_amount,
+                voice_name,
+            )
+
+        engine_module = importlib.import_module(f"code_musics.engines.{engine_name}")
+
+        note_dicts: list[dict[str, Any]] = []
+        for note_index, note in enumerate(voice.notes):
+            note_freq = self._resolve_freq(note)
+            humanized_start = max(
+                0.0,
+                note.start + timing_offsets.get((voice_name, note_index), 0.0),
+            )
+            resolved_velocity = float(
+                np.clip(
+                    note.velocity
+                    * velocity_multipliers.get((voice_name, note_index), 1.0),
+                    0.05,
+                    2.0,
+                )
+            )
+            note_amp = self._resolve_note_amp(
+                note=note,
+                resolved_velocity=resolved_velocity,
+                velocity_db_per_unit=voice.velocity_db_per_unit,
+            )
+            note_dict: dict[str, Any] = {
+                "freq": note_freq,
+                "start": humanized_start,
+                "duration": note.duration,
+                "velocity": resolved_velocity,
+                "amp": note_amp,
+            }
+
+            # Translate score-level PitchMotionSpec into engine-level glide params
+            if note.pitch_motion is not None:
+                motion = note.pitch_motion
+                if motion.kind == "linear_bend":
+                    target_freq = motion.target_frequency(score_f0=self.f0)
+                    # linear_bend: note starts at note_freq, bends toward target.
+                    # Engine glide: note starts at glide_from, bends toward freq.
+                    note_dict["freq"] = target_freq
+                    note_dict["glide_from"] = note_freq
+                    note_dict["glide_time"] = note.duration
+                elif motion.kind == "ratio_glide":
+                    start_ratio = float(motion.params.get("start_ratio", 1.0))
+                    end_ratio = float(motion.params.get("end_ratio", 1.0))
+                    note_dict["freq"] = note_freq * end_ratio
+                    note_dict["glide_from"] = note_freq * start_ratio
+                    note_dict["glide_time"] = float(
+                        motion.params.get("glide_duration", note.duration)
+                    )
+
+            note_dicts.append(note_dict)
+
+        if not note_dicts:
+            return np.zeros(0)
+
+        max_end = max(n["start"] + n["duration"] for n in note_dicts)
+        voice_mix = engine_module.render_voice(
+            notes=note_dicts,
+            total_duration=max_end,
+            sample_rate=self.sample_rate,
+            params=engine_params,
+        )
+
+        return self._normalize_voice_signal(voice_mix, voice)
+
+    def _normalize_voice_signal(
+        self, voice_mix: np.ndarray, voice: Voice
+    ) -> np.ndarray:
+        """Apply LUFS or peak normalization to a rendered voice signal."""
         if voice.normalize_lufs is not None:
             voice_mix = synth.normalize_to_lufs(
                 voice_mix,
@@ -996,10 +1273,11 @@ class Score:
                     + stolen_note.effective_hold_duration
                     + stolen_note.effective_release
                 ) > current_start
+                _STEAL_RELEASE_S = 0.005  # 5 ms micro-release prevents click
                 stolen_note.effective_hold_duration = max(
                     0.0, current_start - stolen_note.humanized_start
                 )
-                stolen_note.effective_release = 0.0
+                stolen_note.effective_release = _STEAL_RELEASE_S
                 active_notes.remove(stolen_note)
                 if legato and max_polyphony == 1 and overlap:
                     prepared_note.effective_attack = 0.0
@@ -1260,6 +1538,12 @@ class Score:
                 target_lufs=self.master_bus_target_lufs,
                 max_true_peak_dbfs=self.master_bus_max_true_peak_dbfs,
             )
+            post_stage_peak = (
+                float(np.max(np.abs(processed_mix))) if processed_mix.size > 0 else 0.0
+            )
+            logger.info(
+                f"Master auto gain stage: peak {20.0 * np.log10(max(post_stage_peak, 1e-12)):.2f} dBFS"
+            )
         if self.master_input_gain_db != 0.0:
             processed_mix = processed_mix * synth.db_to_amp(self.master_input_gain_db)
         if self.master_effects:
@@ -1289,17 +1573,24 @@ class Score:
         # Transparent output ceiling: only reduces gain if the signal exceeds
         # -0.5 dBFS (~0.944), so normal mixes are untouched but accidental
         # overloads cannot hard-clip the final output.
-        ceiling = 0.944
+        ceiling = synth.db_to_amp(_OUTPUT_CEILING_DBFS)
         peak = float(np.max(np.abs(processed_mix))) if processed_mix.size > 0 else 0.0
         if peak > ceiling:
+            attenuation_db = 20.0 * np.log10(ceiling / peak)
+            logger.warning(
+                f"Master output ceiling activated: peak was "
+                f"{20.0 * np.log10(peak):.2f} dBFS, attenuated by "
+                f"{attenuation_db:.2f} dB to {20.0 * np.log10(ceiling):.2f} dBFS"
+            )
             processed_mix = processed_mix * (ceiling / peak)
         return processed_mix
 
     def _resolve_freq(self, note: NoteEvent) -> float:
         if note.freq is not None:
             return note.freq
-        if note.partial is None:
-            raise ValueError("note must provide partial or freq")
+        assert (
+            note.partial is not None
+        )  # NoteEvent invariant: exactly one of partial/freq
         return self.f0 * note.partial
 
     def _signal_times(self, sample_count: int) -> np.ndarray:
