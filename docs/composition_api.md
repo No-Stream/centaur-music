@@ -5,7 +5,7 @@ core `Score` / `Phrase` / `NoteEvent` model.
 
 For the concrete score-domain reference covering `Score`, `Voice`, `NoteEvent`,
 `Phrase`, and render-time expression semantics, see
-[docs/score_api.md](/home/jan/workspace/code-musics/docs/score_api.md).
+[docs/score_api.md](docs/score_api.md).
 
 The composition layer is phrase-first and xen-friendly:
 
@@ -19,15 +19,15 @@ so the underlying render model is still seconds-based.
 
 ## Where This Is Used
 
-- [code_musics/composition.py](/home/jan/workspace/code-musics/code_musics/composition.py)
-- [code_musics/pitch_motion.py](/home/jan/workspace/code-musics/code_musics/pitch_motion.py)
-- [code_musics/score.py](/home/jan/workspace/code-musics/code_musics/score.py)
+- [code_musics/composition.py](code_musics/composition.py)
+- [code_musics/pitch_motion.py](code_musics/pitch_motion.py)
+- [code_musics/score.py](code_musics/score.py)
 
 ## Core Types
 
 This doc touches a few nearby score-expression controls for context, but the
 detailed score-domain reference now lives in
-[docs/score_api.md](/home/jan/workspace/code-musics/docs/score_api.md).
+[docs/score_api.md](docs/score_api.md).
 
 Nearby topics that matter when using the composition helpers:
 
@@ -334,10 +334,12 @@ How to think about the parameters:
 - `follow_strength` controls how tightly voices move together
 - `voice_spread_ms` adds per-voice separation
 - `micro_jitter_ms` adds small note-level randomness
-- `chord_spread_ms` offsets notes that start together so simultaneities are not perfectly vertical
+- `chord_spread_ms` offsets notes that start together so simultaneities
+  are not perfectly vertical
 
 Use this when the whole score should feel performed rather than grid-perfect.
-Do not use it as a substitute for writing actual rubato or changing the written rhythm.
+Do not use it as a substitute for writing actual rubato or changing the
+written rhythm.
 
 Example:
 
@@ -604,7 +606,8 @@ Rough starting ranges for note-level balances:
 - bass lines and pedals: around `-16 dB` to `-10 dB`
 - leads: around `-20 dB` to `-12 dB`
 - inner voices and pads: around `-24 dB` to `-16 dB`
-- bright percussion or punctuation: often quieter in sustain, but transient material may still need `-14 dB` to `-8 dB`
+- bright percussion or punctuation: often quieter in sustain, but
+  transient material may still need `-14 dB` to `-8 dB`
 
 These are only starting points. Apparent loudness depends strongly on spectrum,
 envelope, register, and density. In practice, low sustained parts often need more
@@ -621,7 +624,8 @@ Recommended default mental model:
 - leave most notes around `velocity=1.0`
 - use roughly `0.85` to `0.95` for softer notes
 - use roughly `1.05` to `1.2` for accents
-- avoid treating velocity like a substitute for all gain staging; use `amp_db` for the larger balance decisions
+- avoid treating velocity like a substitute for all gain staging;
+  use `amp_db` for the larger balance decisions
 
 By default, resolved velocity affects loudness through `velocity_db_per_unit`
 on the voice. It can also affect timbre when `velocity_to_params` is configured.

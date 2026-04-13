@@ -1,7 +1,7 @@
 # Score API Reference
 
 This document describes the concrete score-domain API in
-[code_musics/score.py](/home/jan/workspace/code-musics/code_musics/score.py).
+[code_musics/score.py](code_musics/score.py).
 
 If `docs/composition_api.md` is the higher-level phrase/composition layer and
 `docs/synth_api.md` is the engine-facing layer, this file is the middle: the
@@ -9,10 +9,10 @@ actual note, phrase, voice, and score objects that most pieces interact with.
 
 ## Where This Is Used
 
-- [code_musics/score.py](/home/jan/workspace/code-musics/code_musics/score.py)
-- [code_musics/composition.py](/home/jan/workspace/code-musics/code_musics/composition.py)
-- [code_musics/render.py](/home/jan/workspace/code-musics/code_musics/render.py)
-- [code_musics/humanize.py](/home/jan/workspace/code-musics/code_musics/humanize.py)
+- [code_musics/score.py](code_musics/score.py)
+- [code_musics/composition.py](code_musics/composition.py)
+- [code_musics/render.py](code_musics/render.py)
+- [code_musics/humanize.py](code_musics/humanize.py)
 
 ## Mental Model
 
@@ -67,7 +67,7 @@ score = Score(
 ```
 
 For supported effect kinds and parameters, see
-[docs/synth_api.md](/home/jan/workspace/code-musics/docs/synth_api.md).
+[docs/synth_api.md](docs/synth_api.md).
 
 ## `NoteEvent`
 
@@ -420,6 +420,10 @@ Parameters:
 - `max_polyphony`
 - `legato`
 - `pan`
+- `sympathetic_amount` — strength of sympathetic resonance; `0.0` (default) disables it
+- `sympathetic_decay` — decay time in seconds for sympathetic resonator ringing; default `2.0`
+- `sympathetic_modes` — number of harmonic modes per note used as resonator frequencies; default `8`
+- `automation` — voice-level score-time automation specs; default `None`
 
 Important behavior:
 
@@ -731,5 +735,5 @@ Prefer this split when composing:
 
 ## Related Docs
 
-- [docs/composition_api.md](/home/jan/workspace/code-musics/docs/composition_api.md)
-- [docs/synth_api.md](/home/jan/workspace/code-musics/docs/synth_api.md)
+- [docs/composition_api.md](docs/composition_api.md)
+- [docs/synth_api.md](docs/synth_api.md)

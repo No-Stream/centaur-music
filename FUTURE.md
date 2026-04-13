@@ -10,7 +10,7 @@ The repo is no longer at the "basic scaffolding" stage. We already have:
   `overlay`, `echo`, `sequence`, `canon`, `voiced_ratio_chord`, and
   `progression`
 - multiple synth engines with presets: additive, FM, filtered-stack, polyBLEP,
-  and noise/percussion
+  noise/percussion, organ, piano, harpsichord, kick_tom, and surge_xt
 - render-time expression surfaces including note `velocity`, note
   `pitch_motion`, score-level timing humanization, voice-level envelope and
   velocity humanization, velocity-to-parameter mapping, and score/note
@@ -95,18 +95,23 @@ Most valuable next helpers:
   4. Timbre-harmony fusion
   You can make a chord whose note frequencies and internal overtone structures are both drawn from the same ratio world.
   We should consider how to do this with a clean, musical interface that encourages sane defaults and easy programming, and modularity.
-  Remaining work after the new explicit spectral-partial additive voice:
+  Explicit spectral partial sets, onset-to-sustain spectral morphing, and the
+  first JI/septimal/11-limit/utonal role-oriented presets are all implemented.
+  Remaining work:
 
 - richer stereo-from-spectrum tools so different partial groups can occupy subtly different widths/positions
 - automatic register-aware darkening / brightness limiting so high notes do not get brittle and low notes do not get muddy
 - controlled inharmonic stretch and physical-object style detuning beyond the current gentle upper-partial drift
-- deeper programmable per-partial envelopes and modulation, once the simple onset/sustain morph proves musically useful
-- a broader role-oriented preset family for spectral additive voices, beyond the first JI / septimal / 11-limit / utonal set
-  _implemented some of this, should revise this section_
+- deeper programmable per-partial envelopes and modulation beyond the current onset/sustain morph
+- a broader role-oriented preset family expanding beyond the current JI / septimal / 11-limit / utonal set
 
-### MIDI Export
+### MIDI Export — Implemented
 
-- see email note to self. plan around mostly scl/tun + Oddsound w/ polyphonic bend for extra synth compatibility
+MIDI export is implemented with per-voice stems and shared tuning files
+(Scala/TUN/KBM). See `docs/midi_export.md` for the full surface.
+
+Remaining follow-up: `pitch_motion` and `pitch_ratio` automation are not yet
+exported to MIDI.
 
 ### Sound design and synthesis direction
 
@@ -182,20 +187,9 @@ Most promising directions:
 
 ### Colundi-ish Scale
 
-  ```
-  ! colundi_ji_core.scl
-  !
-  Approximate Colundi-inspired 7-note JI scale
-  7
-  !
-  11/10
-  19/16
-  4/3
-  3/2
-  49/30
-  7/4
-  2/1
-  ```
+See the Colundi scale definition in `AGENTS.md`. Interesting exploration
+territory for a piece — the 11-limit and septimal intervals (11/10, 49/30,
+7/4) pair well with the additive engine's xenharmonic presets.
 
 ### Pianos
 
@@ -306,7 +300,12 @@ Most promising directions:
 
 #### Filter drive and saturation
 
-I suspect our saturation/warmth native plugin could be better. Currently sounds fuzzy and probably aliased. (not sure if this is current.)
+The native saturation effect now uses a two-stage analog-style path with
+optional clean low/high-band preservation and higher-fidelity processing.
+The old fuzzy/aliased behavior is gone. Remaining area to explore: whether
+the current saturation character is musically ideal across all use cases
+(e.g. gentle mix warmth vs aggressive drive vs bass-specific grit), or
+whether additional saturation modes/curves would help.
 
 #### Plugin reliability follow-up
 
@@ -326,6 +325,10 @@ Most valuable next steps:
   plugins for stability
 
 ### Surge XT Parameter Automation
+
+The `surge_xt` engine is implemented and working for basic rendering (see
+`docs/synth_api.md`). This section describes the follow-up work for
+automating Surge XT's internal parameters over time.
 
 We explored three approaches for automating Surge XT's internal parameters
 (filter cutoff, resonance, etc.) over time during a render:
@@ -376,15 +379,10 @@ from MIDI note quantization (musically desirable for a loveless/shoegaze
 aesthetic). Chord-to-chord transitions glide smoothly over a configurable
 duration (default 0.4 s).
 
-### Harpsichord — Implemented
+### Harpsichord follow-up
 
-**The `harpsichord` engine is now implemented** with pluck-excitation + modal
-resonator synthesis, four-register blending (front 8', back 8', 4', lute),
-per-note spectral morphing, velocity expression, and custom `partial_ratios`
-for xenharmonic tuning. Seven presets including `septimal` and `glass`.
-Voice-level sympathetic resonance is also available (engine-agnostic).
-
-Follow-up ideas:
+Follow-up ideas for the implemented `harpsichord` engine (see `docs/synth_api.md`
+for the current surface):
 
 - Karplus-Strong / waveguide alternative synthesis path (different timbral
   character, more natural pluck sustain, but harder to integrate custom
@@ -438,6 +436,10 @@ look worthwhile:
 ### Wavetable engine
 
 - allows unique timbres, somewhat complicated, needs to be done right (aliasing etc)
+
+#### Utonal pieces
+
+We've focused primarily on otonal composition and JI, utonal seems worth exploring.
 
 ---
 

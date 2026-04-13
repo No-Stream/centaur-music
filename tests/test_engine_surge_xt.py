@@ -11,12 +11,15 @@ import numpy as np
 import pytest
 from mido import Message
 
-from code_musics.engines.surge_xt import (
+from code_musics.engines._mpe_utils import (
     BEND_RANGE_SEMITONES,
-    _build_cc_messages,
+    build_cc_messages,
+    resolve_chord_notes,
+    resolve_glide_bend,
+    resolve_note_and_bend,
+)
+from code_musics.engines.surge_xt import (
     _interpolate_param_curves,
-    _resolve_glide_bend,
-    _resolve_note_and_bend,
     render_voice,
 )
 from code_musics.synth import has_external_plugin
@@ -83,7 +86,7 @@ class TestResolveNoteAndBend:
             130.8127826502993: 48,
         }
         for freq, expected_note in cases.items():
-            midi_note, bend = _resolve_note_and_bend(freq)
+            midi_note, bend = resolve_note_and_bend(freq)
             assert midi_note == expected_note, (
                 f"{freq} Hz -> note {midi_note}, expected {expected_note}"
             )
@@ -94,7 +97,7 @@ class TestResolveNoteAndBend:
         ratios = [7 / 4, 11 / 8, 13 / 11, 3 / 2, 11 / 10, 5 / 4, 9 / 8, 7 / 6]
         for ratio in ratios:
             target_hz = f0 * ratio
-            midi_note, bend = _resolve_note_and_bend(target_hz)
+            midi_note, bend = resolve_note_and_bend(target_hz)
             reconstructed = _reconstruct_freq(midi_note, bend)
             error_cents = _cents_error(reconstructed, target_hz)
             assert error_cents < _MATH_TOLERANCE_CENTS, (
@@ -105,7 +108,7 @@ class TestResolveNoteAndBend:
     def test_parametric_accuracy_sweep(self) -> None:
         freqs = np.logspace(np.log10(20), np.log10(16000), 200)
         for freq in freqs:
-            midi_note, bend = _resolve_note_and_bend(float(freq))
+            midi_note, bend = resolve_note_and_bend(float(freq))
             reconstructed = _reconstruct_freq(midi_note, bend)
             error_cents = _cents_error(reconstructed, float(freq))
             assert error_cents < _MATH_TOLERANCE_CENTS, (
@@ -117,7 +120,7 @@ class TestResolveNoteAndBend:
         """Frequencies at exact semitone midpoints (where rounding flips)."""
         for base_note in [48, 60, 69, 72, 84]:
             midpoint_freq = 440.0 * (2.0 ** ((base_note + 0.5 - 69) / 12.0))
-            midi_note, bend = _resolve_note_and_bend(midpoint_freq)
+            midi_note, bend = resolve_note_and_bend(midpoint_freq)
             assert midi_note in (base_note, base_note + 1)
             reconstructed = _reconstruct_freq(midi_note, bend)
             error_cents = _cents_error(reconstructed, midpoint_freq)
@@ -127,11 +130,11 @@ class TestResolveNoteAndBend:
 
     def test_extreme_low_freq_raises(self) -> None:
         with pytest.raises(ValueError, match="pitch bend beyond"):
-            _resolve_note_and_bend(0.5)
+            resolve_note_and_bend(0.5)
 
     def test_deterministic(self) -> None:
         freq = 220.0 * 7 / 4
-        results = [_resolve_note_and_bend(freq) for _ in range(100)]
+        results = [resolve_note_and_bend(freq) for _ in range(100)]
         assert all(r == results[0] for r in results)
 
 
@@ -482,8 +485,8 @@ class TestResolveGlideBend:
 
         test_freqs = [220.0, 440.0, 330.0, 220.0 * 7 / 4, 220.0 * 11 / 8]
         for freq in test_freqs:
-            midi_note, expected_bend = _resolve_note_and_bend(freq)
-            glide_bend = _resolve_glide_bend(midi_note, freq)
+            midi_note, expected_bend = resolve_note_and_bend(freq)
+            glide_bend = resolve_glide_bend(midi_note, freq)
             assert glide_bend == expected_bend, (
                 f"{freq} Hz: _resolve_glide_bend gave {glide_bend}, "
                 f"_resolve_note_and_bend gave {expected_bend}"
@@ -493,7 +496,7 @@ class TestResolveGlideBend:
         """Glide bend values should reconstruct to the requested frequency."""
 
         target_freq = 440.0
-        midi_note, _ = _resolve_note_and_bend(target_freq)
+        midi_note, _ = resolve_note_and_bend(target_freq)
 
         glide_freqs = [
             420.0,
@@ -503,7 +506,7 @@ class TestResolveGlideBend:
             target_freq * 9 / 8,
         ]
         for glide_freq in glide_freqs:
-            bend = _resolve_glide_bend(midi_note, glide_freq)
+            bend = resolve_glide_bend(midi_note, glide_freq)
             reconstructed = _reconstruct_freq(midi_note, bend)
             error_cents = _cents_error(reconstructed, glide_freq)
             assert error_cents < _MATH_TOLERANCE_CENTS, (
@@ -515,9 +518,9 @@ class TestResolveGlideBend:
         """Bending up from a note should give positive bend; down gives negative."""
 
         midi_note = 69  # A4 = 440 Hz
-        bend_up = _resolve_glide_bend(midi_note, 460.0)
-        bend_down = _resolve_glide_bend(midi_note, 420.0)
-        bend_exact = _resolve_glide_bend(midi_note, 440.0)
+        bend_up = resolve_glide_bend(midi_note, 460.0)
+        bend_down = resolve_glide_bend(midi_note, 420.0)
+        bend_exact = resolve_glide_bend(midi_note, 440.0)
         assert bend_up > 0, f"bend up should be positive, got {bend_up}"
         assert bend_down < 0, f"bend down should be negative, got {bend_down}"
         assert abs(bend_exact) <= 1, f"exact match should be ~0, got {bend_exact}"
@@ -528,12 +531,12 @@ class TestResolveGlideBend:
         midi_note = 69
         # Way above the bend range -- should clamp to +8191
         very_high = 440.0 * 2.0**5  # 5 octaves up, way beyond 24 semitones
-        bend = _resolve_glide_bend(midi_note, very_high)
+        bend = resolve_glide_bend(midi_note, very_high)
         assert bend == 8191
 
         # Way below -- should clamp to -8191
         very_low = 440.0 * 2.0**-5
-        bend = _resolve_glide_bend(midi_note, very_low)
+        bend = resolve_glide_bend(midi_note, very_low)
         assert bend == -8191
 
 
@@ -1083,7 +1086,7 @@ class TestBuildCcMessages:
                 "points": [(0.0, 0.0), (1.0, 1.0)],
             }
         ]
-        messages = _build_cc_messages(curves, total_duration=1.0)
+        messages = build_cc_messages(curves, total_duration=1.0)
 
         assert len(messages) > 0
         assert all(m.type == "control_change" for m in messages)
@@ -1119,7 +1122,7 @@ class TestBuildCcMessages:
                 "points": [(0.0, 0.0), (1.0, 1.0)],
             },
         ]
-        messages = _build_cc_messages(curves, total_duration=1.0)
+        messages = build_cc_messages(curves, total_duration=1.0)
 
         cc1_msgs = [m for m in messages if m.control == 1]
         cc74_msgs = [m for m in messages if m.control == 74]
@@ -1145,7 +1148,7 @@ class TestBuildCcMessages:
                 "points": [(0.0, 0.75)],
             }
         ]
-        messages = _build_cc_messages(curves, total_duration=2.0)
+        messages = build_cc_messages(curves, total_duration=2.0)
 
         assert len(messages) > 0
         expected_value = int(round(0.75 * 127))
@@ -1166,7 +1169,7 @@ class TestBuildCcMessages:
                 "points": [(0.0, -0.5), (1.0, 1.5)],
             }
         ]
-        messages = _build_cc_messages(curves, total_duration=1.0)
+        messages = build_cc_messages(curves, total_duration=1.0)
 
         values = [m.value for m in messages]
         assert all(0 <= v <= 127 for v in values)
@@ -1177,7 +1180,7 @@ class TestBuildCcMessages:
 
     def test_empty_curves_returns_empty(self) -> None:
         """Empty cc_curves list produces no messages."""
-        assert _build_cc_messages([], total_duration=1.0) == []
+        assert build_cc_messages([], total_duration=1.0) == []
 
     def test_invalid_cc_number_skipped(self, caplog: pytest.LogCaptureFixture) -> None:
         """CC numbers outside 0-127 should be skipped with a warning."""
@@ -1189,7 +1192,7 @@ class TestBuildCcMessages:
             }
         ]
         with caplog.at_level(logging.WARNING, logger="code_musics.engines.surge_xt"):
-            messages = _build_cc_messages(curves, total_duration=1.0)
+            messages = build_cc_messages(curves, total_duration=1.0)
 
         assert len(messages) == 0
         assert any("cc" in r.message.lower() for r in caplog.records)
@@ -1203,7 +1206,7 @@ class TestBuildCcMessages:
                 "points": [(1.0, 1.0), (0.0, 0.0)],  # reverse order
             }
         ]
-        messages = _build_cc_messages(curves, total_duration=1.0)
+        messages = build_cc_messages(curves, total_duration=1.0)
 
         # Should still ramp from 0 to 127
         assert messages[0].value == 0
@@ -1217,7 +1220,7 @@ class TestBuildCcMessages:
                 "points": [(0.0, 0.5)],
             }
         ]
-        messages = _build_cc_messages(curves, total_duration=1.0)
+        messages = build_cc_messages(curves, total_duration=1.0)
         assert all(m.channel == 0 for m in messages)
 
     def test_three_point_curve_shape(self) -> None:
@@ -1229,7 +1232,7 @@ class TestBuildCcMessages:
                 "points": [(0.0, 0.0), (0.5, 1.0), (1.0, 0.0)],
             }
         ]
-        messages = _build_cc_messages(curves, total_duration=1.0)
+        messages = build_cc_messages(curves, total_duration=1.0)
 
         # Find the message closest to the midpoint
         mid_msgs = [m for m in messages if 0.48 <= m.time <= 0.52]
@@ -1867,13 +1870,12 @@ class TestRenderVoiceParamCurves:
 class TestGlobalBendChordMath:
     """Pure math tests for _resolve_chord_notes helper."""
 
-    def test_single_note_matches_resolve_note_and_bend(self) -> None:
+    def test_single_note_matchesresolve_note_and_bend(self) -> None:
         """A single-note chord should produce the same result as _resolve_note_and_bend."""
-        from code_musics.engines.surge_xt import _resolve_chord_notes
 
         freq = 220.0 * 7 / 4  # 385 Hz, septimal seventh
-        midi_note, bend = _resolve_note_and_bend(freq)
-        chord_notes = _resolve_chord_notes([freq])
+        midi_note, bend = resolve_note_and_bend(freq)
+        chord_notes = resolve_chord_notes([freq])
         assert len(chord_notes) == 1
         assert chord_notes[0][0] == midi_note
         # The bass bend should match exactly
@@ -1883,11 +1885,10 @@ class TestGlobalBendChordMath:
 
     def test_bass_note_perfectly_tuned(self) -> None:
         """The bass note of a chord should be tuned to within pitch-bend resolution."""
-        from code_musics.engines.surge_xt import _resolve_chord_notes
 
         f0 = 220.0
         freqs = [f0, f0 * 5 / 4, f0 * 3 / 2]  # root, maj third, fifth
-        chord_notes = _resolve_chord_notes(freqs)
+        chord_notes = resolve_chord_notes(freqs)
         # chord_notes returns list of (midi_note, bend) tuples
         # The first (bass) note shares the global bend
         bass_midi, bass_bend = chord_notes[0]
@@ -1899,11 +1900,10 @@ class TestGlobalBendChordMath:
 
     def test_all_notes_share_same_bend(self) -> None:
         """All notes in a chord share the same global pitch bend value."""
-        from code_musics.engines.surge_xt import _resolve_chord_notes
 
         f0 = 110.0
         freqs = [f0, f0 * 5 / 4, f0 * 3 / 2, f0 * 7 / 4]
-        chord_notes = _resolve_chord_notes(freqs)
+        chord_notes = resolve_chord_notes(freqs)
         bends = [bend for _, bend in chord_notes]
         assert all(b == bends[0] for b in bends), (
             f"All notes should share the same bend, got {bends}"
@@ -1911,11 +1911,10 @@ class TestGlobalBendChordMath:
 
     def test_non_bass_notes_have_bounded_error(self) -> None:
         """Non-bass notes should have bounded error (at most 50 cents from rounding)."""
-        from code_musics.engines.surge_xt import _resolve_chord_notes
 
         f0 = 220.0
         freqs = [f0, f0 * 5 / 4, f0 * 3 / 2, f0 * 7 / 4]
-        chord_notes = _resolve_chord_notes(freqs)
+        chord_notes = resolve_chord_notes(freqs)
         global_bend = chord_notes[0][1]
         for i, (midi_note, bend) in enumerate(chord_notes):
             assert bend == global_bend
@@ -1928,7 +1927,6 @@ class TestGlobalBendChordMath:
 
     def test_common_ji_intervals_reasonable_error(self) -> None:
         """Common JI intervals should have small enough error for musical use."""
-        from code_musics.engines.surge_xt import _resolve_chord_notes
 
         f0 = 220.0
         # Test specific intervals and their known 12-TET deviations
@@ -1939,7 +1937,7 @@ class TestGlobalBendChordMath:
         ]
         for target_freq, expected_max_error in test_cases:
             freqs = [f0, target_freq]
-            chord_notes = _resolve_chord_notes(freqs)
+            chord_notes = resolve_chord_notes(freqs)
             midi_note, bend = chord_notes[1]
             reconstructed = _reconstruct_freq(midi_note, bend)
             error = _cents_error(reconstructed, target_freq)
@@ -1950,18 +1948,16 @@ class TestGlobalBendChordMath:
 
     def test_unison_notes_identical(self) -> None:
         """Two notes at the same frequency should get the same MIDI note."""
-        from code_musics.engines.surge_xt import _resolve_chord_notes
 
         freq = 440.0
-        chord_notes = _resolve_chord_notes([freq, freq])
+        chord_notes = resolve_chord_notes([freq, freq])
         assert chord_notes[0] == chord_notes[1]
 
     def test_octave_notes_12_apart(self) -> None:
         """Notes an octave apart should differ by exactly 12 MIDI notes."""
-        from code_musics.engines.surge_xt import _resolve_chord_notes
 
         f0 = 220.0
-        chord_notes = _resolve_chord_notes([f0, f0 * 2])
+        chord_notes = resolve_chord_notes([f0, f0 * 2])
         midi_low, _ = chord_notes[0]
         midi_high, _ = chord_notes[1]
         assert midi_high - midi_low == 12

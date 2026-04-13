@@ -23,6 +23,19 @@ from code_musics.spectra import ratio_spectrum, stretched_spectrum
 
 EngineRenderer = Callable[..., np.ndarray]
 
+_INSTRUMENT_ENGINES: set[str] = {"surge_xt", "vital"}
+
+
+def register_instrument_engine(name: str) -> None:
+    """Register an engine name as an instrument (whole-voice) engine."""
+    _INSTRUMENT_ENGINES.add(name)
+
+
+def is_instrument_engine(name: str) -> bool:
+    """Return whether *name* is a registered instrument engine."""
+    return name in _INSTRUMENT_ENGINES
+
+
 _ENGINES: dict[str, EngineRenderer] = {
     "additive": additive.render,
     "fm": fm.render,

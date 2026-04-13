@@ -6,7 +6,10 @@ import ctypes
 import logging
 import math
 import os
+import re
+import struct
 import sys
+import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -898,8 +901,93 @@ _PLUGIN_SPECS: dict[str, ExternalPluginSpec] = {
         name="tal_reverb3",
         path=Path.home() / ".vst3" / "TAL-Reverb-3.vst3",
     ),
+    "valhalla_supermassive": ExternalPluginSpec(
+        name="valhalla_supermassive",
+        path=Path.home() / ".vst3" / "ValhallaSupermassive.vst3",
+    ),
+    "valhalla_freq_echo": ExternalPluginSpec(
+        name="valhalla_freq_echo",
+        path=Path.home() / ".vst3" / "ValhallaFreqEcho.vst3",
+    ),
+    "valhalla_space_mod": ExternalPluginSpec(
+        name="valhalla_space_mod",
+        path=Path.home() / ".vst3" / "ValhallaSpaceModulator.vst3",
+    ),
+    "tdr_kotelnikov": ExternalPluginSpec(
+        name="tdr_kotelnikov",
+        path=Path.home() / ".vst3" / "TDR Kotelnikov.vst3",
+    ),
+    "mjuc_jr": ExternalPluginSpec(
+        name="mjuc_jr",
+        path=Path.home() / ".vst3" / "MJUCjr.vst3",
+    ),
+    "ivgi": ExternalPluginSpec(
+        name="ivgi",
+        path=Path.home() / ".vst3" / "IVGI2.vst3",
+    ),
+    "fetish": ExternalPluginSpec(
+        name="fetish",
+        path=Path.home() / ".vst3" / "FETish.vst3",
+    ),
+    "lala": ExternalPluginSpec(
+        name="lala",
+        path=Path.home() / ".vst3" / "LALA.vst3",
+    ),
+    "brit_channel": ExternalPluginSpec(
+        name="brit_channel",
+        path=Path.home() / ".vst3" / "BritChannel.vst3",
+    ),
+    "rare_se": ExternalPluginSpec(
+        name="rare_se",
+        path=Path.home() / ".vst3" / "RareSE.vst3",
+    ),
+    "brit_pre": ExternalPluginSpec(
+        name="brit_pre",
+        path=Path.home() / ".vst3" / "BritPre.vst3",
+    ),
+    "britpressor": ExternalPluginSpec(
+        name="britpressor",
+        path=Path.home() / ".vst3" / "Britpressor.vst3",
+    ),
+    "distox": ExternalPluginSpec(
+        name="distox",
+        path=Path.home() / ".vst3" / "Distox.vst3",
+    ),
+    "fet_drive": ExternalPluginSpec(
+        name="fet_drive",
+        path=Path.home() / ".vst3" / "FetDrive.vst3",
+    ),
+    "kolin": ExternalPluginSpec(
+        name="kolin",
+        path=Path.home() / ".vst3" / "Kolin.vst3",
+    ),
+    "laea": ExternalPluginSpec(
+        name="laea",
+        path=Path.home() / ".vst3" / "LAEA.vst3",
+    ),
+    "merica": ExternalPluginSpec(
+        name="merica",
+        path=Path.home() / ".vst3" / "MERICA.vst3",
+    ),
+    "prebox": ExternalPluginSpec(
+        name="prebox",
+        path=Path.home() / ".vst3" / "PreBOX.vst3",
+    ),
+    "tuba": ExternalPluginSpec(
+        name="tuba",
+        path=Path.home() / ".vst3" / "TUBA.vst3",
+    ),
+    "vital": ExternalPluginSpec(
+        name="vital",
+        path=Path.home() / ".vst3" / "Vital.vst3",
+    ),
+    "surge_xt_fx": ExternalPluginSpec(
+        name="surge_xt_fx",
+        path=Path.home() / ".vst3" / "Surge XT Effects.vst3",
+    ),
 }
 _loaded_external_plugins: dict[tuple[str, str, Path, str | None], Any] = {}
+_airwindows_base_preset: bytes | None = None
 
 
 def _normalize_plugin_path(path: str | Path) -> Path:
@@ -2345,6 +2433,958 @@ def apply_chow_tape(
     )
 
 
+# ---------------------------------------------------------------------------
+# Airwindows Consolidated
+# ---------------------------------------------------------------------------
+
+
+def _switch_airwindows_algorithm(plugin: Any, algorithm: str) -> None:
+    """Switch the Airwindows Consolidated plugin to a named algorithm.
+
+    The plugin stores its current algorithm in VST3 preset XML.  To switch we
+    grab the preset bytes, patch the ``currentProcessorName`` attribute and
+    reset the ten generic ``awp_0``..``awp_9`` knobs to 0.5, write the result
+    to a temporary ``.vstpreset`` file, then ``load_preset`` it back.
+    """
+    global _airwindows_base_preset  # noqa: PLW0603
+
+    preset_data: bytes = plugin.preset_data
+    if _airwindows_base_preset is None:
+        _airwindows_base_preset = preset_data
+
+    # --- Parse the VST3 preset container ---
+    # Header: "VST3"(4) | version(u32 LE) | classID(32 ASCII) | state_size(u64 LE)
+    header_size = 48
+    if len(preset_data) < header_size:
+        raise ValueError("Airwindows preset_data too short to contain a VST3 header")
+
+    state_data = preset_data[header_size:]
+    state_str = state_data.decode("latin-1")
+
+    xml_start = state_str.find("<?xml")
+    if xml_start == -1:
+        raise ValueError("Could not locate XML block in Airwindows preset state")
+
+    xml_end = state_str.find("/>", xml_start)
+    if xml_end == -1:
+        raise ValueError("Could not locate XML end in Airwindows preset state")
+    xml_end += 2  # include the "/>"
+
+    old_xml = state_str[xml_start:xml_end]
+
+    # Patch the algorithm name
+    new_xml = re.sub(
+        r'currentProcessorName="[^"]*"',
+        f'currentProcessorName="{algorithm}"',
+        old_xml,
+    )
+    # Reset awp_0..awp_9 to 0.5
+    for i in range(10):
+        new_xml = re.sub(rf'awp_{i}="[^"]*"', f'awp_{i}="0.5"', new_xml)
+
+    # Rebuild state bytes
+    new_state_str = state_str[:xml_start] + new_xml + state_str[xml_end:]
+    new_state_bytes = new_state_str.encode("latin-1")
+
+    # Rebuild the full preset with updated state_size
+    header_prefix = preset_data[:40]  # magic + version + classID
+    new_state_size = struct.pack("<Q", len(new_state_bytes))
+    new_preset = header_prefix + new_state_size + new_state_bytes
+
+    fd, tmp_path = tempfile.mkstemp(suffix=".vstpreset")
+    try:
+        os.write(fd, new_preset)
+        os.close(fd)
+        plugin.load_preset(tmp_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+def _configure_airwindows(plugin: Any, params: dict[str, Any]) -> None:
+    """Custom configurer for Airwindows Consolidated.
+
+    Extracts the ``algorithm`` key, switches the plugin to that algorithm,
+    then applies any remaining parameter overrides as plugin attributes.
+    """
+    algorithm = params.pop("algorithm", "Density")
+    _switch_airwindows_algorithm(plugin, algorithm)
+
+    input_level = params.pop("input_level", None)
+    output_level = params.pop("output_level", None)
+    if input_level is not None:
+        plugin.input_level = float(input_level)
+    if output_level is not None:
+        plugin.output_level = float(output_level)
+
+    for key, value in params.items():
+        setattr(plugin, key, value)
+
+
+def apply_airwindows(
+    signal: np.ndarray,
+    algorithm: str = "Density",
+    *,
+    input_level: float = 0.0,
+    output_level: float = 0.0,
+    **algo_params: float,
+) -> np.ndarray:
+    """Apply an Airwindows Consolidated algorithm to a mono or stereo signal.
+
+    Parameters
+    ----------
+    algorithm:    Algorithm name (e.g. ``"Density"``, ``"ToTape6"``, ``"Tube"``).
+    input_level:  Input trim in dB.
+    output_level: Output trim in dB.
+    **algo_params: Algorithm-specific parameters set as plugin attributes after
+                   the algorithm switch.
+    """
+    merged: dict[str, Any] = {
+        "algorithm": algorithm,
+        "input_level": input_level,
+        "output_level": output_level,
+        **algo_params,
+    }
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="airwindows",
+        params=merged,
+        configurer=_configure_airwindows,
+    )
+
+
+# ---------------------------------------------------------------------------
+# BYOD (Build Your Own Distortion)
+# ---------------------------------------------------------------------------
+
+
+def _configure_byod(plugin: Any, params: dict[str, Any]) -> None:
+    """Custom configurer for BYOD — sets program first, then params."""
+    program = params.pop("program", "Tube Screamer")
+    plugin.program = program
+
+    for key, value in params.items():
+        setattr(plugin, key, value)
+
+
+def apply_byod(
+    signal: np.ndarray,
+    program: str = "Tube Screamer",
+    *,
+    in_gain: float = 0.0,
+    out_gain: float = 0.0,
+    dry_wet: float = 100.0,
+    mode: str = "Stereo",
+    **program_params: float | str | bool,
+) -> np.ndarray:
+    """Apply the BYOD multi-effect distortion/overdrive pedal.
+
+    Parameters
+    ----------
+    program:        Preset program name (e.g. ``"Tube Screamer"``, ``"Centaur"``).
+    in_gain:        Input gain in dB.
+    out_gain:       Output gain in dB.
+    dry_wet:        Dry/wet blend 0–100 (percent).
+    mode:           Processing mode — ``"Stereo"`` or ``"Mono"``.
+    **program_params: Additional program-specific parameters set as plugin
+                      attributes after the program switch.
+    """
+    merged: dict[str, Any] = {
+        "program": program,
+        "in_gain": in_gain,
+        "out_gain": out_gain,
+        "dry_wet": dry_wet,
+        "mode": mode,
+        **program_params,
+    }
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="byod",
+        params=merged,
+        configurer=_configure_byod,
+    )
+
+
+# ---------------------------------------------------------------------------
+# ChowCentaur (Klon overdrive)
+# ---------------------------------------------------------------------------
+
+
+def apply_chow_centaur(
+    signal: np.ndarray,
+    gain: float = 0.3,
+    treble: float = 0.5,
+    level: float = 0.7,
+    mode: str = "Neural",
+) -> np.ndarray:
+    """Apply the ChowCentaur Klon-style overdrive.
+
+    Parameters
+    ----------
+    gain:   Drive amount 0–1.
+    treble: Treble/tone control 0–1.
+    level:  Output level 0–1.
+    mode:   Model mode — ``"Neural"`` or ``"Traditional"``.
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="chow_centaur",
+        params={
+            "gain": float(gain),
+            "treble": float(treble),
+            "level": float(level),
+            "mode": mode,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Valhalla Supermassive (reverb / delay / shimmer)
+# ---------------------------------------------------------------------------
+
+
+def apply_valhalla_supermassive(
+    signal: np.ndarray,
+    mix: float = 50.0,
+    delay_ms: float = 300.0,
+    feedback: float = 50.0,
+    density: float = 0.0,
+    width: float = 100.0,
+    low_cut: float = 10.0,
+    high_cut: float = 20000.0,
+    mod_rate: float = 0.5,
+    mod_depth: float = 0.0,
+) -> np.ndarray:
+    """Apply Valhalla Supermassive reverb/delay.
+
+    Parameters
+    ----------
+    mix:       Dry/wet blend 0–100 (percent).
+    delay_ms:  Delay time in milliseconds.
+    feedback:  Feedback amount 0–100.
+    density:   Density control 0–100.
+    width:     Stereo width 0–100.
+    low_cut:   Low-cut filter frequency in Hz.
+    high_cut:  High-cut filter frequency in Hz.
+    mod_rate:  Modulation rate in Hz.
+    mod_depth: Modulation depth 0–100.
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="valhalla_supermassive",
+        params={
+            "mix": float(mix),
+            "delay_ms": float(delay_ms),
+            "feedback": float(feedback),
+            "density": float(density),
+            "width": float(width),
+            "lowcut": float(low_cut),
+            "highcut": float(high_cut),
+            "modrate": float(mod_rate),
+            "moddepth": float(mod_depth),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Valhalla FreqEcho (frequency-shifting delay)
+# ---------------------------------------------------------------------------
+
+
+def apply_valhalla_freq_echo(
+    signal: np.ndarray,
+    mix: float = 50.0,
+    shift: float = 0.0,
+    delay: float = 0.01,
+    feedback: float = 50.0,
+    low_cut: float = 200.0,
+    high_cut: float = 5000.0,
+) -> np.ndarray:
+    """Apply Valhalla FreqEcho frequency-shifting delay.
+
+    Parameters
+    ----------
+    mix:      Dry/wet blend 0–100 (percent).
+    shift:    Frequency shift amount (semitones or plugin units).
+    delay:    Delay time (seconds or plugin units).
+    feedback: Feedback amount 0–100.
+    low_cut:  Low-cut filter frequency in Hz.
+    high_cut: High-cut filter frequency in Hz.
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="valhalla_freq_echo",
+        params={
+            "wetdry": float(mix),
+            "shift": float(shift),
+            "delay": float(delay),
+            "feedback": float(feedback),
+            "lowcut": float(low_cut),
+            "highcut": float(high_cut),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Valhalla Space Modulator (flanging / modulation)
+# ---------------------------------------------------------------------------
+
+
+def apply_valhalla_space_mod(
+    signal: np.ndarray,
+    mix: float = 50.0,
+    rate: float = 0.1,
+    depth: float = 10.0,
+    feedback: float = 0.0,
+) -> np.ndarray:
+    """Apply Valhalla SpaceModulator flanging/modulation effect.
+
+    Parameters
+    ----------
+    mix:      Dry/wet blend 0–100 (percent).
+    rate:     Modulation rate in Hz.
+    depth:    Modulation depth 0–100.
+    feedback: Feedback amount 0–100.
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="valhalla_space_mod",
+        params={
+            "wetdry": float(mix),
+            "rate": float(rate),
+            "depth": float(depth),
+            "feedback": float(feedback),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# TDR Kotelnikov (transparent mastering compressor)
+# ---------------------------------------------------------------------------
+
+
+def apply_tdr_kotelnikov(
+    signal: np.ndarray,
+    threshold_db: float = 0.0,
+    ratio: float = 2.0,
+    attack_ms: float = 6.0,
+    release_rms_ms: float = 220.0,
+    makeup_db: float = 0.0,
+    soft_knee_db: float = 1.0,
+    peak_crest_db: float = 3.0,
+    dry_wet: float = 0.0,
+) -> np.ndarray:
+    """Apply TDR Kotelnikov transparent compressor.
+
+    Parameters
+    ----------
+    threshold_db:   Compression threshold in dB.
+    ratio:          Compression ratio (e.g. 2.0 = 2:1).
+    attack_ms:      Attack time in milliseconds.
+    release_rms_ms: RMS release time in milliseconds.
+    makeup_db:      Makeup gain in dB.
+    soft_knee_db:   Soft knee width in dB.
+    peak_crest_db:  Peak/crest balance in dB.
+    dry_wet:        Dry/wet mix — 0 = fully compressed, higher = more dry.
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="tdr_kotelnikov",
+        params={
+            "threshold_db": float(threshold_db),
+            "ratio": float(ratio),
+            "attack_ms": float(attack_ms),
+            "release_rms_ms": float(release_rms_ms),
+            "makeup_db": float(makeup_db),
+            "soft_knee_db": float(soft_knee_db),
+            "peak_crest_db": float(peak_crest_db),
+            "dry_wet": float(dry_wet),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# MJUCjr (vari-mu compressor)
+# ---------------------------------------------------------------------------
+
+
+def apply_mjuc_jr(
+    signal: np.ndarray,
+    compress: float = 0.0,
+    makeup: float = 0.0,
+    timing: str = "slow",
+) -> np.ndarray:
+    """Apply MJUCjr vari-mu compressor.
+
+    Parameters
+    ----------
+    compress: Compression amount in dB (0–48).
+    makeup:   Makeup gain in dB (0–48).
+    timing:   Timing mode — ``"slow"`` or ``"fast"``.
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="mjuc_jr",
+        params={
+            "compress": float(compress),
+            "makeup": float(makeup),
+            "timing": timing,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# FETish (1176-style FET compressor)
+# ---------------------------------------------------------------------------
+
+
+def apply_fetish(
+    signal: np.ndarray,
+    input_db: float = -20.0,
+    output_db: float = 0.0,
+    attack_us: float = 500.0,
+    release_ms: float = 400.0,
+    ratio: float = 4.0,
+    mix: float = 100.0,
+    hpf_hz: float = 20.0,
+) -> np.ndarray:
+    """Apply FETish 1176-style FET compressor.
+
+    Parameters
+    ----------
+    input_db:   Input level in dB.
+    output_db:  Output level in dB.
+    attack_us:  Attack time in microseconds.
+    release_ms: Release time in milliseconds.
+    ratio:      Compression ratio (e.g. 4.0 = 4:1).
+    mix:        Dry/wet blend 0–100 (percent).
+    hpf_hz:     Sidechain high-pass filter frequency in Hz.
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="fetish",
+        params={
+            "input_db": float(input_db),
+            "output_db": float(output_db),
+            "attack_us": float(attack_us),
+            "release_ms": float(release_ms),
+            "ratio": float(ratio),
+            "mix": float(mix),
+            "hpf_hz": float(hpf_hz),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# LALA (LA-2A-style optical compressor)
+# ---------------------------------------------------------------------------
+
+
+def apply_lala(
+    signal: np.ndarray,
+    gain: float = 30.0,
+    peak_reduction: float = 0.0,
+    hf: float = 100.0,
+    mode: float = 1.0,
+) -> np.ndarray:
+    """Apply LALA LA-2A-style optical compressor.
+
+    Parameters
+    ----------
+    gain:           Output gain 0–100.
+    peak_reduction: Peak reduction (compression depth) 0–100.
+    hf:             High-frequency tilt control 0–100.
+    mode:           Operating mode — 1.0 = compress, other values = limit.
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="lala",
+        params={
+            "gain": float(gain),
+            "peak_reduction": float(peak_reduction),
+            "hf": float(hf),
+            "mode": float(mode),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# IVGI (saturation / distortion)
+# ---------------------------------------------------------------------------
+
+
+def apply_ivgi(
+    signal: np.ndarray,
+    drive: float = 0.0,
+    trim: float = 0.0,
+    output: float = 0.0,
+    asymmetry: float = 5.0,
+    freq_response: float = 0.0,
+) -> np.ndarray:
+    """Apply IVGI saturation/distortion.
+
+    Parameters
+    ----------
+    drive:         Drive amount (0–10).
+    trim:          Input trim (0–10).
+    output:        Output level (0–10).
+    asymmetry:     Asymmetry control (0–10).
+    freq_response: Frequency response tilt (0–10).
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="ivgi",
+        params={
+            "drive": float(drive),
+            "trim": float(trim),
+            "output": float(output),
+            "asymmetry": float(asymmetry),
+            "freqresponse": float(freq_response),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# BritChannel (Neve 1073 channel strip)
+# ---------------------------------------------------------------------------
+
+
+def apply_brit_channel(
+    signal: np.ndarray,
+    preamp_gain_db: float = 0.0,
+    output_trim_db: float = 0.0,
+    highpass: str = "OFF",
+    low_freq: str = "OFF",
+    low_gain_db: float = 0.0,
+    mid_freq: str = "OFF",
+    mid_gain_db: float = 0.0,
+    high_gain_db: float = 0.0,
+) -> np.ndarray:
+    """Apply BritChannel Neve 1073-style channel strip.
+
+    Parameters
+    ----------
+    preamp_gain_db: Preamp gain -24 to 24 dB.
+    output_trim_db: Output trim -24 to 24 dB.
+    highpass:       High-pass filter — "OFF"|"50Hz"|"80Hz"|"160Hz"|"300Hz".
+    low_freq:       Low EQ frequency — "OFF"|"35Hz"|"60Hz"|"110Hz"|"220Hz".
+    low_gain_db:    Low EQ gain -15 to 15 dB.
+    mid_freq:       Mid EQ frequency — "OFF"|".36kHz"|".7kHz"|"1.6kHz"|"3.2kHz"|"4.8kHz"|"7.2kHz".
+    mid_gain_db:    Mid EQ gain -15 to 15 dB.
+    high_gain_db:   High EQ gain -15 to 15 dB.
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="brit_channel",
+        params={
+            "preamp_gain_db": float(preamp_gain_db),
+            "output_trim_db": float(output_trim_db),
+            "highpass": highpass,
+            "low_freq": low_freq,
+            "low_gain_db": float(low_gain_db),
+            "mid_freq": mid_freq,
+            "mid_gain_db": float(mid_gain_db),
+            "high_gain_db": float(high_gain_db),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# BritPre (Neve preamp)
+# ---------------------------------------------------------------------------
+
+
+def apply_brit_pre(
+    signal: np.ndarray,
+    gain: float = 0.0,
+    output_db: float = 0.0,
+    highpass_filter: str = "OFF",
+    lowpass_filter: str = "OFF",
+) -> np.ndarray:
+    """Apply BritPre Neve-style preamp.
+
+    Parameters
+    ----------
+    gain:            Preamp gain in 5 dB steps, -20 to 40 dB.
+    output_db:       Output level -24 to 24 dB.
+    highpass_filter: High-pass — "OFF"|"45Hz"|"70Hz"|"160Hz"|"360Hz".
+    lowpass_filter:  Low-pass — "OFF"|"8kHz"|"6kHz"|"4kHz"|"2kHz".
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="brit_pre",
+        params={
+            "gain": float(gain),
+            "output_db": float(output_db),
+            "highpass_filter": highpass_filter,
+            "lowpass_filter": lowpass_filter,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Britpressor (Neve 2254 compressor/limiter)
+# ---------------------------------------------------------------------------
+
+
+def apply_britpressor(
+    signal: np.ndarray,
+    compressor_threshold: float = 10.0,
+    ratio: str = "3:1",
+    gain: float = 0.0,
+    mix: str = "0/100",
+    compressor_recovery_time: str = "400ms",
+    limit_level: float = 15.0,
+    level_recovery_time: str = "100ms",
+    high: float = 0.0,
+    mid: float = 0.0,
+    high_pass_filter: str = "OFF",
+) -> np.ndarray:
+    """Apply Britpressor Neve 2254-style compressor/limiter.
+
+    Parameters
+    ----------
+    compressor_threshold: Threshold -20 to 10 dB.
+    ratio:                Ratio — "1.5:1"|"2:1"|"3:1"|"4:1"|"6:1".
+    gain:                 Makeup gain 0 to 20 dB.
+    mix:                  Dry/wet blend (dry/wet) — 23 steps from "100/0" to "0/100".
+    compressor_recovery_time: Recovery — "100ms"|"400ms"|"800ms"|"1500ms"|"Auto-1"|"Auto-2".
+    limit_level:          Limiter level 4 to 15.
+    level_recovery_time:  Limiter recovery — "50ms"|"100ms"|"200ms"|"800ms"|"Auto-1"|"Auto-2".
+    high:                 High EQ -6 to 6 dB (discrete 3 dB steps).
+    mid:                  Mid EQ -6 to 6 dB (discrete 3 dB steps).
+    high_pass_filter:     Sidechain HPF — "OFF"|"50Hz"|"80Hz"|"160Hz"|"360Hz".
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="britpressor",
+        params={
+            "compressor_threshold": float(compressor_threshold),
+            "ratio": ratio,
+            "gain": float(gain),
+            "mix": mix,
+            "compressor_recovery_time": compressor_recovery_time,
+            "limit_level": float(limit_level),
+            "level_recovery_time": level_recovery_time,
+            "high": float(high),
+            "mid": float(mid),
+            "high_pass_filter": high_pass_filter,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Distox (multi-mode distortion)
+# ---------------------------------------------------------------------------
+
+
+def apply_distox(
+    signal: np.ndarray,
+    input_db: float = 0.0,
+    output_db: float = 0.0,
+    mix: float = 100.0,
+    hpf_hz: float = 5.0,
+    lpf_khz: float = 20.0,
+    mode: str = "Op-Amp 1",
+) -> np.ndarray:
+    """Apply Distox multi-mode distortion.
+
+    Parameters
+    ----------
+    input_db:  Input level -30 to 30 dB.
+    output_db: Output level -30 to 30 dB.
+    mix:       Dry/wet blend 0–100 (percent).
+    hpf_hz:    High-pass filter 5–2000 Hz.
+    lpf_khz:   Low-pass filter 10–20 kHz.
+    mode:      Distortion mode — "Op-Amp 1"|"Op-Amp 2"|"Op-Amp 3"|"Tube 1"|"Tube 2"|"Tube 3"|"Tube 4".
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="distox",
+        params={
+            "input_db": float(input_db),
+            "output_db": float(output_db),
+            "mix": float(mix),
+            "hpf_hz": float(hpf_hz),
+            "lpf_khz": float(lpf_khz),
+            "mode": mode,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# FetDrive (FET saturation)
+# ---------------------------------------------------------------------------
+
+
+def apply_fet_drive(
+    signal: np.ndarray,
+    drive_db: float = 0.0,
+    tone: float = 50.0,
+    output_db: float = 0.0,
+    mix: float = 100.0,
+) -> np.ndarray:
+    """Apply FetDrive FET saturation.
+
+    Parameters
+    ----------
+    drive_db:  Drive amount 0–50 dB.
+    tone:      Tone control 0–100.
+    output_db: Output level -15 to 15 dB.
+    mix:       Dry/wet blend 0–100 (percent).
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="fet_drive",
+        params={
+            "drive_db": float(drive_db),
+            "tone": float(tone),
+            "output_db": float(output_db),
+            "mix": float(mix),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Kolin (SSL-style bus compressor)
+# ---------------------------------------------------------------------------
+
+
+def apply_kolin(
+    signal: np.ndarray,
+    input_db: float = 0.0,
+    output_db: float = 0.0,
+    attack_ms: float = 10.0,
+    release_ms: float = 400.0,
+    mix: float = 100.0,
+    hpf_hz: float = 20.0,
+) -> np.ndarray:
+    """Apply Kolin SSL-style bus compressor.
+
+    Parameters
+    ----------
+    input_db:   Input level 0–40 dB.
+    output_db:  Output level -20 to 20 dB.
+    attack_ms:  Attack time 1–50 ms.
+    release_ms: Release time 100–3000 ms.
+    mix:        Dry/wet blend 0–100 (percent).
+    hpf_hz:     Sidechain high-pass filter 20–500 Hz.
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="kolin",
+        params={
+            "input_db": float(input_db),
+            "output_db": float(output_db),
+            "attack_ms": float(attack_ms),
+            "release_ms": float(release_ms),
+            "mix": float(mix),
+            "hpf_hz": float(hpf_hz),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# LAEA (leveling amplifier / LA-3A style)
+# ---------------------------------------------------------------------------
+
+
+def apply_laea(
+    signal: np.ndarray,
+    gain: float = 0.0,
+    reduction: float = 30.0,
+    mix: float = 100.0,
+    limit: bool = False,
+) -> np.ndarray:
+    """Apply LAEA LA-3A-style leveling amplifier.
+
+    Parameters
+    ----------
+    gain:      Output gain 0–100.
+    reduction: Peak reduction (compression depth) 0–100.
+    mix:       Dry/wet blend 0–100 (percent).
+    limit:     Limiter mode — True for limit, False for compress.
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="laea",
+        params={
+            "gain": float(gain),
+            "reduction": float(reduction),
+            "mix": float(mix),
+            "limit": 1.0 if limit else 0.0,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# MERICA (American EQ)
+# ---------------------------------------------------------------------------
+
+
+def apply_merica(
+    signal: np.ndarray,
+    low_gain_db: float = 0.0,
+    mid_gain_db: float = 0.0,
+    high_gain_db: float = 0.0,
+    low_freq: float = 50.0,
+    mid_freq: float = 400.0,
+    high_freq: float = 5000.0,
+    input_db: float = 0.0,
+    output_db: float = 0.0,
+) -> np.ndarray:
+    """Apply MERICA American-style 3-band EQ.
+
+    Parameters
+    ----------
+    low_gain_db:  Low band gain -12 to 12 dB.
+    mid_gain_db:  Mid band gain -12 to 12 dB.
+    high_gain_db: High band gain -12 to 12 dB.
+    low_freq:     Low band frequency (discrete) — 50|100|200|300|400 Hz.
+    mid_freq:     Mid band frequency (discrete) — 400|800|1600|3000|5000 Hz.
+    high_freq:    High band frequency (discrete) — 5000|7000|10000|12500|15000 Hz.
+    input_db:     Input level -12 to 12 dB.
+    output_db:    Output level -12 to 12 dB.
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="merica",
+        params={
+            "low_gain_db": float(low_gain_db),
+            "mid_gain_db": float(mid_gain_db),
+            "high_gain_db": float(high_gain_db),
+            "low_freq": float(low_freq),
+            "mid_freq": float(mid_freq),
+            "high_freq": float(high_freq),
+            "input_db": float(input_db),
+            "output_db": float(output_db),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# PreBOX (preamp saturation)
+# ---------------------------------------------------------------------------
+
+
+def apply_prebox(
+    signal: np.ndarray,
+    input_db: float = 0.0,
+    output_db: float = 0.0,
+    model: float = 0.0,
+    hpf: float = 0.0,
+    lpf: float = 0.0,
+    agc: str = "AGC On",
+) -> np.ndarray:
+    """Apply PreBOX preamp saturation.
+
+    Parameters
+    ----------
+    input_db:  Input level -24 to 24 dB.
+    output_db: Output level -24 to 24 dB.
+    model:     Preamp model 0–10 (11 discrete models).
+    hpf:       High-pass filter setting 0|1|2|3.
+    lpf:       Low-pass filter setting 0|1.
+    agc:       Auto gain compensation — "AGC Off"|"AGC On".
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="prebox",
+        params={
+            "input_db": float(input_db),
+            "output_db": float(output_db),
+            "model": float(model),
+            "hpf": float(hpf),
+            "lpf": float(lpf),
+            "agc": agc,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# RareSE (Pultec-style EQ)
+# ---------------------------------------------------------------------------
+
+
+def apply_rare_se(
+    signal: np.ndarray,
+    low_boost: float = 0.0,
+    low_atten: float = 0.0,
+    high_boost: float = 0.0,
+    high_atten: float = 0.0,
+    high_bandwidth: float = 10.0,
+    output_db: float = 0.0,
+    low_frequency: float = 60.0,
+    high_frequency: float = 8000.0,
+    high_atten_frequency: float = 20000.0,
+) -> np.ndarray:
+    """Apply RareSE Pultec-style passive EQ (L/M section).
+
+    Parameters
+    ----------
+    low_boost:            Low boost 0–10.
+    low_atten:            Low attenuation 0–10.
+    high_boost:           High boost 0–10.
+    high_atten:           High attenuation 0–10.
+    high_bandwidth:       High boost bandwidth 1–10.
+    output_db:            Output level in dB.
+    low_frequency:        Low band frequency in Hz (20–100).
+    high_frequency:       High boost frequency in Hz (3000–16000).
+    high_atten_frequency: High attenuation frequency in Hz (up to 20000).
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="rare_se",
+        params={
+            "l_m_low_boost": float(low_boost),
+            "l_m_low_atten": float(low_atten),
+            "l_m_high_boost": float(high_boost),
+            "l_m_high_atten": float(high_atten),
+            "l_m_high_bandwidth": float(high_bandwidth),
+            "l_m_output_db": float(output_db),
+            "l_m_low_frequency": float(low_frequency),
+            "l_m_high_freqency": float(high_frequency),
+            "l_m_high_atten_freqency": float(high_atten_frequency),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# TUBA (tube amplifier)
+# ---------------------------------------------------------------------------
+
+
+def apply_tuba(
+    signal: np.ndarray,
+    level: float = 7.0,
+    output_db: float = 0.0,
+    gain: str = "Low Gain",
+    high_gain: float = 0.0,
+    low_gain: float = 0.0,
+) -> np.ndarray:
+    """Apply TUBA tube amplifier.
+
+    Parameters
+    ----------
+    level:     Drive level 1–20.
+    output_db: Output level -96 to 12 dB.
+    gain:      Gain structure — "Low Gain"|"High Gain".
+    high_gain: High EQ -6|0|3|6 dB.
+    low_gain:  Low EQ -6|0|6 dB.
+    """
+    return _apply_plugin_processor(
+        signal,
+        plugin_name="tuba",
+        params={
+            "level": float(level),
+            "output_db": float(output_db),
+            "gain": gain,
+            "high_gain": float(high_gain),
+            "low_gain": float(low_gain),
+        },
+    )
+
+
 def apply_bricasti(
     signal: np.ndarray,
     ir_name: str,
@@ -2853,7 +3893,7 @@ _SATURATION_PRESETS: dict[str, dict[str, Any]] = {
     "tube_warm": {
         "algorithm": "modern",
         "mode": "tube",
-        "drive": 1.18,
+        "drive": 1.0,
         "mix": 0.34,
         "tone": 0.08,
         "fidelity": 0.76,
@@ -2866,8 +3906,8 @@ _SATURATION_PRESETS: dict[str, dict[str, Any]] = {
     "iron_soft": {
         "algorithm": "modern",
         "mode": "iron",
-        "drive": 1.08,
-        "mix": 0.38,
+        "drive": 0.7,
+        "mix": 0.35,
         "tone": -0.06,
         "fidelity": 0.88,
         "oversample_factor": 4,
@@ -2879,20 +3919,20 @@ _SATURATION_PRESETS: dict[str, dict[str, Any]] = {
     "neve_gentle": {
         "algorithm": "modern",
         "mode": "triode",
-        "drive": 1.14,
-        "mix": 0.36,
+        "drive": 0.3,
+        "mix": 0.30,
         "tone": 0.14,
-        "fidelity": 0.72,
+        "fidelity": 0.92,
         "oversample_factor": 4,
         "highpass_hz": 28.0,
-        "preserve_lows_hz": 150.0,
-        "preserve_highs_hz": 6_200.0,
+        "preserve_lows_hz": 120.0,
+        "preserve_highs_hz": 7_000.0,
         "compensation_mode": "auto",
     },
     "kick_weight": {
         "algorithm": "modern",
         "mode": "iron",
-        "drive": 1.36,
+        "drive": 2.7,
         "mix": 0.42,
         "tone": 0.04,
         "fidelity": 0.46,
@@ -2905,7 +3945,7 @@ _SATURATION_PRESETS: dict[str, dict[str, Any]] = {
     "kick_crunch": {
         "algorithm": "modern",
         "mode": "triode",
-        "drive": 1.85,
+        "drive": 3.7,
         "mix": 0.56,
         "tone": 0.10,
         "fidelity": 0.26,
@@ -2918,7 +3958,7 @@ _SATURATION_PRESETS: dict[str, dict[str, Any]] = {
     "tom_thicken": {
         "algorithm": "modern",
         "mode": "iron",
-        "drive": 1.20,
+        "drive": 2.4,
         "mix": 0.32,
         "tone": -0.03,
         "fidelity": 0.62,
@@ -2927,6 +3967,75 @@ _SATURATION_PRESETS: dict[str, dict[str, Any]] = {
         "preserve_lows_hz": 110.0,
         "preserve_highs_hz": 5_000.0,
         "compensation_mode": "rms",
+    },
+}
+
+_AIRWINDOWS_PRESETS: dict[str, dict[str, Any]] = {
+    "density_glue": {
+        "algorithm": "Density",
+        "density": 1.2,
+        "highpass": 0.35,
+        "out_level": 0.5,
+        "dry_wet": 0.6,
+    },
+    "iron_warmth": {
+        "algorithm": "IronOxide5",
+        "input_trim": 0.0,
+        "tape_high": 0.5,
+        "tape_low": 0.5,
+        "flutter": 0.2,
+        "noise": 0.0,
+    },
+    "tape_subtle": {
+        "algorithm": "ToTape6",
+        "input": 0.0,
+        "soften": 0.6,
+        "head_b": 0.5,
+        "flutter": 0.15,
+        "output": 0.0,
+        "dry_wet": 0.7,
+    },
+    "tube_warmth": {
+        "algorithm": "Tube",
+        "tube": 0.4,
+    },
+    "coils_xformer": {
+        "algorithm": "Coils",
+        "saturat": 0.35,
+        "core_dc": 0.0,
+        "dry_wet": 0.7,
+    },
+    "channel_ssl": {
+        "algorithm": "Channel9",
+        "console_type": "SSL",
+        "drive": 80.0,
+        "output": 0.5,
+    },
+    "drive_gentle": {
+        "algorithm": "Drive",
+        "drive": 25.0,
+        "highpass": 0.3,
+        "out_level": 0.5,
+        "dry_wet": 0.5,
+    },
+}
+
+_BYOD_PRESETS: dict[str, dict[str, Any]] = {
+    "tube_screamer": {"program": "Tube Screamer"},
+    "centaur": {"program": "Centaur"},
+    "american": {"program": "American Sound"},
+    "zen_drive": {"program": "ZenDrive"},
+    "king_of_tone": {"program": "King Of Tone"},
+}
+
+_CHOW_CENTAUR_PRESETS: dict[str, dict[str, Any]] = {
+    "subtle_warmth": {"gain": 0.2, "treble": 0.45, "level": 0.75, "mode": "Neural"},
+    "light_edge": {"gain": 0.4, "treble": 0.55, "level": 0.65, "mode": "Neural"},
+    "traditional_clean": {
+        "gain": 0.25,
+        "treble": 0.5,
+        "level": 0.7,
+        "mode": "Traditional",
     },
 }
 
@@ -3016,6 +4125,18 @@ _COMPRESSOR_PRESETS: dict[str, dict[str, float | str | list[dict[str, Any]]]] = 
         "detector_mode": "peak",
         "lookahead_ms": 1.0,
     },
+    "master_glue": {
+        "threshold_db": -26.0,
+        "ratio": 2.0,
+        "attack_ms": 30.0,
+        "release_ms": 200.0,
+        "knee_db": 6.0,
+        "topology": "feedback",
+        "detector_mode": "rms",
+        "detector_bands": [
+            {"kind": "highpass", "cutoff_hz": 80.0, "slope_db_per_oct": 12}
+        ],
+    },
 }
 
 
@@ -3040,6 +4161,12 @@ def _resolve_effect_params(
         preset_map = _PHASER_PRESETS
     elif effect_kind == "mod_delay":
         preset_map = _MOD_DELAY_PRESETS
+    elif effect_kind == "airwindows":
+        preset_map = _AIRWINDOWS_PRESETS
+    elif effect_kind == "byod":
+        preset_map = _BYOD_PRESETS
+    elif effect_kind == "chow_centaur":
+        preset_map = _CHOW_CENTAUR_PRESETS
     else:
         raise ValueError(f"Unsupported preset-bearing effect kind: {effect_kind}")
 
@@ -3711,8 +4838,8 @@ def _apply_saturation_modern(
         "tube": {
             "curve1": "tube",
             "curve2": "tube",
-            "stage1_gain": 1.35,
-            "stage2_gain": 0.78,
+            "stage1_gain": 0.68,
+            "stage2_gain": 0.39,
             "asymmetry": 0.035,
             "even": 0.24,
             "sag": 0.10,
@@ -3723,8 +4850,8 @@ def _apply_saturation_modern(
         "triode": {
             "curve1": "triode",
             "curve2": "tube",
-            "stage1_gain": 1.20,
-            "stage2_gain": 0.92,
+            "stage1_gain": 0.60,
+            "stage2_gain": 0.46,
             "asymmetry": 0.055,
             "even": 0.30,
             "sag": 0.14,
@@ -3735,8 +4862,8 @@ def _apply_saturation_modern(
         "iron": {
             "curve1": "iron",
             "curve2": "tube",
-            "stage1_gain": 1.08,
-            "stage2_gain": 0.62,
+            "stage1_gain": 0.54,
+            "stage2_gain": 0.31,
             "asymmetry": 0.022,
             "even": 0.12,
             "sag": 0.06,
@@ -4112,6 +5239,28 @@ _PLUGIN_BACKED_EFFECTS: dict[str, str] = {
     "tal_chorus_lx": "tal_chorus_lx",
     "tal_reverb2": "tal_reverb2",
     "dragonfly": "dragonfly_plate",
+    "airwindows": "airwindows",
+    "byod": "byod",
+    "chow_centaur": "chow_centaur",
+    "valhalla_supermassive": "valhalla_supermassive",
+    "valhalla_freq_echo": "valhalla_freq_echo",
+    "valhalla_space_mod": "valhalla_space_mod",
+    "tdr_kotelnikov": "tdr_kotelnikov",
+    "mjuc_jr": "mjuc_jr",
+    "fetish": "fetish",
+    "lala": "lala",
+    "ivgi": "ivgi",
+    "brit_channel": "brit_channel",
+    "brit_pre": "brit_pre",
+    "britpressor": "britpressor",
+    "distox": "distox",
+    "fet_drive": "fet_drive",
+    "kolin": "kolin",
+    "laea": "laea",
+    "merica": "merica",
+    "prebox": "prebox",
+    "rare_se": "rare_se",
+    "tuba": "tuba",
 }
 
 
@@ -4137,6 +5286,28 @@ _SIMPLE_EFFECT_DISPATCH: dict[str, Callable[..., np.ndarray]] = {
     "phaser": apply_phaser,
     "tal_chorus_lx": apply_tal_chorus_lx,
     "tal_reverb2": apply_tal_reverb2,
+    "airwindows": apply_airwindows,
+    "byod": apply_byod,
+    "chow_centaur": apply_chow_centaur,
+    "valhalla_supermassive": apply_valhalla_supermassive,
+    "valhalla_freq_echo": apply_valhalla_freq_echo,
+    "valhalla_space_mod": apply_valhalla_space_mod,
+    "tdr_kotelnikov": apply_tdr_kotelnikov,
+    "mjuc_jr": apply_mjuc_jr,
+    "fetish": apply_fetish,
+    "lala": apply_lala,
+    "ivgi": apply_ivgi,
+    "brit_channel": apply_brit_channel,
+    "brit_pre": apply_brit_pre,
+    "britpressor": apply_britpressor,
+    "distox": apply_distox,
+    "fet_drive": apply_fet_drive,
+    "kolin": apply_kolin,
+    "laea": apply_laea,
+    "merica": apply_merica,
+    "prebox": apply_prebox,
+    "rare_se": apply_rare_se,
+    "tuba": apply_tuba,
 }
 
 
@@ -4196,7 +5367,16 @@ def apply_effect_chain(
     for effect_index, effect in enumerate(effects):
         effect_input = np.asarray(processed, dtype=np.float64)
         params = dict(effect.params)
-        if effect.kind in {"chorus", "compressor", "mod_delay", "phaser", "saturation"}:
+        if effect.kind in {
+            "chorus",
+            "compressor",
+            "mod_delay",
+            "phaser",
+            "saturation",
+            "airwindows",
+            "byod",
+            "chow_centaur",
+        }:
             params = _resolve_effect_params(effect.kind, params)
         effect_amount_automation = _resolve_effect_amount_automation(
             effect=effect,

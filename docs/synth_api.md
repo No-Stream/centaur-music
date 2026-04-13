@@ -18,17 +18,19 @@ The rendering path is frequency-first:
 
 ## Where This Is Used
 
-- [code_musics/score.py](/home/jan/workspace/code-musics/code_musics/score.py) merges voice-level and note-level synth params, resolves presets, and dispatches to the requested engine
-- [code_musics/engines/registry.py](/home/jan/workspace/code-musics/code_musics/engines/registry.py) defines the engine registry and preset map
-- [code_musics/engines/additive.py](/home/jan/workspace/code-musics/code_musics/engines/additive.py)
-- [code_musics/engines/fm.py](/home/jan/workspace/code-musics/code_musics/engines/fm.py)
-- [code_musics/engines/filtered_stack.py](/home/jan/workspace/code-musics/code_musics/engines/filtered_stack.py)
-- [code_musics/engines/harpsichord.py](/home/jan/workspace/code-musics/code_musics/engines/harpsichord.py)
-- [code_musics/engines/kick_tom.py](/home/jan/workspace/code-musics/code_musics/engines/kick_tom.py)
-- [code_musics/engines/noise_perc.py](/home/jan/workspace/code-musics/code_musics/engines/noise_perc.py)
-- [code_musics/engines/organ.py](/home/jan/workspace/code-musics/code_musics/engines/organ.py)
-- [code_musics/engines/piano.py](/home/jan/workspace/code-musics/code_musics/engines/piano.py)
-- [code_musics/engines/piano_additive.py](/home/jan/workspace/code-musics/code_musics/engines/piano_additive.py)
+- [code_musics/score.py](code_musics/score.py) merges voice-level and note-level synth params, resolves presets, and dispatches to the requested engine
+- [code_musics/engines/registry.py](code_musics/engines/registry.py) defines the engine registry and preset map
+- [code_musics/engines/additive.py](code_musics/engines/additive.py)
+- [code_musics/engines/fm.py](code_musics/engines/fm.py)
+- [code_musics/engines/filtered_stack.py](code_musics/engines/filtered_stack.py)
+- [code_musics/engines/harpsichord.py](code_musics/engines/harpsichord.py)
+- [code_musics/engines/kick_tom.py](code_musics/engines/kick_tom.py)
+- [code_musics/engines/noise_perc.py](code_musics/engines/noise_perc.py)
+- [code_musics/engines/organ.py](code_musics/engines/organ.py)
+- [code_musics/engines/piano.py](code_musics/engines/piano.py)
+- [code_musics/engines/piano_additive.py](code_musics/engines/piano_additive.py)
+- [code_musics/engines/surge_xt.py](code_musics/engines/surge_xt.py)
+- [code_musics/engines/vital.py](code_musics/engines/vital.py)
 
 ## Canonical Authoring Shape
 
@@ -89,7 +91,7 @@ These are consumed by the score renderer after the engine returns a raw mono sig
 to the renderer's linear `amp` internally. Linear `amp` is still supported, but
 it is less intuitive for balancing voices.
 
-These control the ADSR envelope applied in [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py).
+These control the ADSR envelope applied in [code_musics/synth.py](code_musics/synth.py).
 
 Canonical meanings:
 
@@ -201,7 +203,7 @@ than inventing separate per-engine randomness knobs.
 Pitch motion is score-level note metadata, not an engine preset parameter.
 
 The current motion helpers live in
-[code_musics/pitch_motion.py](/home/jan/workspace/code-musics/code_musics/pitch_motion.py)
+[code_musics/pitch_motion.py](code_musics/pitch_motion.py)
 and attach to `NoteEvent.pitch_motion`.
 
 Supported motion kinds:
@@ -277,6 +279,8 @@ Available engines:
 - `piano`
 - `piano_additive`
 - `polyblep`
+- `surge_xt`
+- `vital`
 
 ## Presets
 
@@ -288,7 +292,7 @@ synth_defaults = {"engine": "filtered_stack", "preset": "warm_pad"}
 
 Available presets:
 
-- `additive`: `soft_pad`, `drone`, `bright_pluck`, `organ`
+- `additive`: `soft_pad`, `drone`, `bright_pluck`, `organ`, `ji_fusion_pad`, `septimal_reed`, `eleven_limit_glass`, `utonal_drone`
 - `fm`: `bell`, `glass_lead`, `metal_bass`, `dx_piano`, `lately_bass`, `fm_clav`, `fm_mallet`, `chorused_ep`
 - `filtered_stack`: `warm_pad`, `reed_lead`, `round_bass`, `saw_pad`, `string_pad`
 - `kick_tom`: `808_hiphop`, `808_house`, `808_tape`, `909_techno`, `909_house`, `909_crunch`, `distorted_hardkick`, `zap_kick`, `round_tom`, `floor_tom`, `electro_tom`, `ring_tom`
@@ -317,7 +321,7 @@ Effects that support presets resolve parameters in this order:
 
 ### `eq`
 
-Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+Implementation: [code_musics/synth.py](code_musics/synth.py)
 
 Native minimum-phase EQ for routine voice and bus tone shaping.
 
@@ -370,7 +374,7 @@ score = Score(
 
 ### `compressor`
 
-Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+Implementation: [code_musics/synth.py](code_musics/synth.py)
 
 Native stereo-linked compressor for glue, stem control, and master-bus shaping.
 It supports both feedforward and feedback topologies and can EQ the
@@ -394,7 +398,7 @@ unusually aggressive.
 Parameters:
 
 - `preset: str`
-  Supported presets: `kick_glue`, `kick_punch`, `tom_control`
+  Supported presets: `kick_glue`, `kick_punch`, `tom_control`, `master_glue`
 - `threshold_db: float`
   Compression threshold in dBFS. Default `-20.0`.
 - `ratio: float`
@@ -447,6 +451,10 @@ Notes:
   more musical than a single fixed release all the way back to zero reduction
 - `lookahead_ms` uses offline lookahead so the rendered output stays sample-aligned
   while the detector can react ahead of fast transients
+- `master_glue` is a gentle vari-mu inspired bus glue preset for the default master
+  chain. Feedback topology, RMS detector, 2:1 ratio, 30 ms attack, 200 ms release,
+  6 dB soft knee, HP sidechain at 80 Hz. Calibrated for ~-24 LUFS input (the auto
+  gain staging target). Average GR ~2–3 dB on typical material.
 
 Example:
 
@@ -476,7 +484,7 @@ score.add_voice(
 
 ### `plugin`
 
-Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+Implementation: [code_musics/synth.py](code_musics/synth.py)
 
 Generic external-plugin effect. Use this when you want to host a plugin directly
 instead of adding a dedicated wrapper kind.
@@ -537,7 +545,7 @@ score = Score(
 
 ### `chorus`
 
-Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+Implementation: [code_musics/synth.py](code_musics/synth.py)
 
 Warm stereo chorus inspired by classic analog/BBD units and intended for subtle
 depth rather than obvious wobble.
@@ -586,25 +594,9 @@ score.add_voice(
 )
 ```
 
-Presets:
-
-- `soft_pad` - mellow harmonic pad with light additive detune.
-- `drone` - slower, darker sustained additive bed.
-- `bright_pluck` - compact harmonic pluck with a brighter attack.
-- `organ` - steady drawbar-ish additive organ with fast attack and minimal decay.
-
-Presets:
-
-- `bell` - bright struck FM bell with a decaying modulation index.
-- `glass_lead` - glassy sustained lead with moderate bite.
-- `metal_bass` - metallic low-register FM bass.
-- `dx_piano` - classic DX-style electric piano gesture with a bright attack and softer sustain.
-- `lately_bass` - punchy FM bass inspired by late-80s / early-90s digital bass presets.
-- `fm_clav` - short, bright FM clavinet-like attack with a dry percussive body.
-
 ### `saturation`
 
-Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+Implementation: [code_musics/synth.py](code_musics/synth.py)
 
 High-fidelity native saturation for tube/iron/preamp-style warmth rather than
 obvious guitar-style distortion. The default engine is a modern two-stage
@@ -703,7 +695,7 @@ score = Score(
 
 ### `chow_tape`
 
-Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+Implementation: [code_musics/synth.py](code_musics/synth.py)
 
 Wrapper around the Chow Tape Model VST3 for tape-style saturation/color.
 
@@ -739,9 +731,174 @@ score = Score(
 )
 ```
 
+### `airwindows`
+
+Implementation: [code_musics/synth.py](code_musics/synth.py)
+
+Wrapper around Airwindows Consolidated, giving access to hundreds of Chris
+Johnson's audio algorithms through a single plugin. Algorithm selection happens
+via internal preset patching — the plugin's parameter names change dynamically
+to match each algorithm.
+
+Parameters:
+
+- `algorithm: str`
+  Algorithm name. Examples: `"Density"`, `"IronOxide5"`, `"ToTape6"`,
+  `"Tube"`, `"Drive"`, `"Coils"`, `"Channel9"`.
+- `input_level: float`
+  Input trim in dB. Default `0.0`.
+- `output_level: float`
+  Output trim in dB. Default `0.0`.
+- `**algo_params`
+  Algorithm-specific parameters passed through as plugin attributes after the
+  algorithm switch.
+
+Presets:
+
+- `density_glue` — Density algorithm, moderate settings for bus glue
+- `iron_warmth` — IronOxide5 tape head saturation for warmth
+- `tape_subtle` — ToTape6 subtle tape emulation
+- `tube_warmth` — Tube algorithm, gentle tube color
+- `coils_xformer` — Coils transformer saturation
+- `channel_ssl` — Channel9 SSL console color
+- `drive_gentle` — Drive algorithm at low settings
+
+Verified algorithms and their parameters:
+
+| Algorithm | Parameters |
+|-----------|-----------|
+| Density | density, highpass, out_level, dry_wet |
+| Drive | drive, highpass, out_level, dry_wet |
+| Tube | tube |
+| Mojo | input |
+| Distortion | input, mode, output, dry_wet |
+| ToTape6 | input, soften, head_b, flutter, output, dry_wet |
+| IronOxide5 | input_trim, tape_high, tape_low, flutter, noise, output_trim, inv_dry_wet |
+| Tape | slam, bump |
+| Coils | saturat, core_dc, dry_wet |
+| Coils2 | saturate, cheapness, dry_wet |
+| Channel9 | console_type, drive, output |
+| Channel8 | console_type, drive, output |
+| Mackity | in_trim, out_pad |
+| MackEQ | trim, hi, lo, gain, dry_wet |
+| Precious | hardns, persnlty, drive, output |
+| UnBox | input, unbox, output |
+| PurestSquish | squish, bassblm, output, dry_wet |
+| ADClip7 | boost, soften, enhance, mode |
+| Capacitor2 | lowpass, highpass, nonlin, dry_wet |
+| Weight | freq, weight |
+| Point | input_trim, point, reaction_speed |
+
+Notes:
+
+- expects `~/.vst3/Airwindows Consolidated.vst3` to be installed
+- algorithm switching works by patching the plugin's VST3 preset XML
+- parameter names are dynamic and change per algorithm
+- the plugin instance is shared (cached), so algorithm switching happens on each call
+
+Example:
+
+```python
+# Direct parameters
+EffectSpec("airwindows", {"algorithm": "Density", "density": 1.3, "dry_wet": 0.7})
+
+# Named preset
+EffectSpec("airwindows", {"preset": "iron_warmth"})
+```
+
+### `byod`
+
+Implementation: [code_musics/synth.py](code_musics/synth.py)
+
+Wrapper around BYOD (Build Your Own Distortion), a modular distortion/overdrive
+pedal from ChowDSP with 40 built-in presets emulating classic pedals and amp
+tones.
+
+Parameters:
+
+- `program: str`
+  Preset program name. Default `"Tube Screamer"`.
+- `in_gain: float`
+  Input gain in dB. Default `0.0`.
+- `out_gain: float`
+  Output gain in dB. Default `0.0`.
+- `dry_wet: float`
+  Dry/wet blend from `0` to `100` (percent). Default `100.0`.
+- `mode: str`
+  Processing mode — `"Stereo"` or `"Mono"`. Default `"Stereo"`.
+- `**program_params`
+  Additional program-specific parameters set as plugin attributes after the
+  program switch. Parameter names change dynamically per program.
+
+Presets:
+
+- `tube_screamer` — Tube Screamer emulation
+- `centaur` — Klon Centaur emulation
+- `american` — American Sound (Fender-like amp tone)
+- `zen_drive` — ZenDrive overdrive
+- `king_of_tone` — King Of Tone overdrive
+
+Available programs: Default, Bass Face, Instant Metal, Modern Hi-Gain,
+Chopped Flange, Laser Cave, Mixed In Modulation, Seasick Phase, American Sound,
+Big Muff (and variants), Centaur, Hot Cakes, Hot Fuzz, King Of Tone,
+MXR Distortion, OctaVerb, RAT, Tube Screamer, Wah Pedal, ZenDrive,
+plus artist-inspired presets (Clapton, Hendrix, Neil Young, Nirvana, etc.)
+and utility presets (Gainful Clipper, Violet Mist).
+
+Notes:
+
+- expects `~/.vst3/BYOD.vst3` to be installed
+- program selection exposes different parameters per preset
+- the internal processing chain is configured by the program, not individually controllable
+
+Example:
+
+```python
+EffectSpec("byod", {"program": "American Sound", "dry_wet": 80.0})
+EffectSpec("byod", {"preset": "tube_screamer"})
+```
+
+### `chow_centaur`
+
+Implementation: [code_musics/synth.py](code_musics/synth.py)
+
+Wrapper around ChowCentaur, a neural-network-modeled Klon Centaur overdrive.
+At low gain settings this works well as a subtle warmth/color tool.
+
+Parameters:
+
+- `gain: float`
+  Drive amount from `0` to `1`. Default `0.3`.
+- `treble: float`
+  Treble/tone control from `0` to `1`. Default `0.5`.
+- `level: float`
+  Output level from `0` to `1`. Default `0.7`.
+- `mode: str`
+  Model mode — `"Neural"` (ML-modeled) or `"Traditional"` (DSP approximation).
+  Default `"Neural"`.
+
+Presets:
+
+- `subtle_warmth` — very low gain, Neural mode, gentle color
+- `light_edge` — moderate gain, slight grit
+- `traditional_clean` — low gain, Traditional mode
+
+Notes:
+
+- expects `~/.vst3/ChowCentaur.vst3` to be installed
+- the Neural mode uses a trained neural network for more accurate Klon emulation
+- at gain below 0.3, this is primarily a color/warmth effect rather than distortion
+
+Example:
+
+```python
+EffectSpec("chow_centaur", {"gain": 0.25, "treble": 0.5, "level": 0.7})
+EffectSpec("chow_centaur", {"preset": "subtle_warmth"})
+```
+
 ### `tal_chorus_lx`
 
-Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+Implementation: [code_musics/synth.py](code_musics/synth.py)
 
 Wrapper around the TAL-Chorus-LX VST3, a Roland Juno-60 BBD chorus emulation.
 
@@ -776,7 +933,7 @@ score.add_voice(
 
 ### `bricasti`
 
-Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+Implementation: [code_musics/synth.py](code_musics/synth.py)
 
 Stereo convolution reverb wrapper around the local Bricasti impulse responses.
 This is the repo's main IR reverb path for more realistic rooms/halls than the
@@ -829,28 +986,9 @@ score.add_voice(
 )
 ```
 
-Presets:
-
-- `bell` - bright struck FM bell with a decaying modulation index.
-- `glass_lead` - glassy sustained lead with moderate bite.
-- `metal_bass` - metallic low-register FM bass.
-- `dx_piano` - classic DX-style electric piano gesture with a bright attack and softer sustain.
-- `lately_bass` - punchy FM bass inspired by late-80s / early-90s digital bass presets.
-- `fm_clav` - short, bright FM clavinet-like attack with a dry percussive body.
-- `fm_mallet` - brighter struck mallet voice with a compact metallic bloom.
-- `chorused_ep` - softer electric-piano core intended to pair well with chorus effects.
-
-Presets:
-
-- `warm_pad` - soft subtractive pad with a gentle opening filter sweep.
-- `reed_lead` - square-based lead with a nasal midrange focus.
-- `round_bass` - triangle-leaning low bass with restrained brightness.
-- `saw_pad` - bread-and-butter saw pad with a slower opening filter and wider harmonic bed.
-- `string_pad` - slower, more orchestral synth-string pad with a gentle top and long release.
-
 ### `tal_reverb2`
 
-Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+Implementation: [code_musics/synth.py](code_musics/synth.py)
 
 Wrapper around TAL-Reverb-2, a vintage-flavored algorithmic reverb with a warm
 plate character.
@@ -882,17 +1020,9 @@ score.add_voice(
 )
 ```
 
-Presets:
-
-- `warm_pad` - soft subtractive pad with a gentle opening filter sweep.
-- `reed_lead` - square-based lead with a nasal midrange focus.
-- `round_bass` - triangle-leaning low bass with restrained brightness.
-- `saw_pad` - bread-and-butter saw pad with a slower opening filter and wider harmonic bed.
-- `string_pad` - slower, more orchestral synth-string pad with a gentle top and long release.
-
 ### `dragonfly`
 
-Implementation: [code_musics/synth.py](/home/jan/workspace/code-musics/code_musics/synth.py)
+Implementation: [code_musics/synth.py](code_musics/synth.py)
 
 Unified wrapper for the Dragonfly Reverb VST3 suite. Selects a plugin variant
 via the `variant` parameter.
@@ -948,7 +1078,7 @@ score.add_voice(
 
 ## `additive`
 
-Implementation: [code_musics/engines/additive.py](/home/jan/workspace/code-musics/code_musics/engines/additive.py)
+Implementation: [code_musics/engines/additive.py](code_musics/engines/additive.py)
 
 Parameters:
 
@@ -1046,7 +1176,7 @@ score.add_voice(
 
 ## `fm`
 
-Implementation: [code_musics/engines/fm.py](/home/jan/workspace/code-musics/code_musics/engines/fm.py)
+Implementation: [code_musics/engines/fm.py](code_musics/engines/fm.py)
 
 Parameters:
 
@@ -1096,7 +1226,7 @@ score.add_voice(
 
 ## `filtered_stack`
 
-Implementation: [code_musics/engines/filtered_stack.py](/home/jan/workspace/code-musics/code_musics/engines/filtered_stack.py)
+Implementation: [code_musics/engines/filtered_stack.py](code_musics/engines/filtered_stack.py)
 
 Parameters:
 
@@ -1165,7 +1295,7 @@ score.add_voice(
 
 ## `harpsichord`
 
-Implementation: [code_musics/engines/harpsichord.py](/home/jan/workspace/code-musics/code_musics/engines/harpsichord.py)
+Implementation: [code_musics/engines/harpsichord.py](code_musics/engines/harpsichord.py)
 
 Pluck-excitation + modal-resonator harpsichord engine. Captures the crisp,
 immediate attack and bright decay of a plucked string while going beyond
@@ -1261,7 +1391,7 @@ score.add_voice(
 
 ## `noise_perc`
 
-Implementation: [code_musics/engines/noise_perc.py](/home/jan/workspace/code-musics/code_musics/engines/noise_perc.py)
+Implementation: [code_musics/engines/noise_perc.py](code_musics/engines/noise_perc.py)
 
 Parameters:
 
@@ -1323,7 +1453,7 @@ score.add_voice(
 
 ## `kick_tom`
 
-Implementation: [code_musics/engines/kick_tom.py](/home/jan/workspace/code-musics/code_musics/engines/kick_tom.py)
+Implementation: [code_musics/engines/kick_tom.py](code_musics/engines/kick_tom.py)
 
 Compact electro-drum voice aimed at 808/909-style kicks, toms, and adjacent
 experimental low-end percussion. The engine owns its internal pitch sweep, so
@@ -1401,7 +1531,7 @@ score.add_voice(
 
 ## `organ`
 
-Implementation: [code_musics/engines/organ.py](/home/jan/workspace/code-musics/code_musics/engines/organ.py)
+Implementation: [code_musics/engines/organ.py](code_musics/engines/organ.py)
 
 Drawbar organ engine covering both Hammond-style tonewheel and pipe organ
 character. Additive synthesis at its core, with drawbar-level mixing, tonewheel
@@ -1464,7 +1594,7 @@ score.add_voice(
 
 ## `piano`
 
-Implementation: [code_musics/engines/piano.py](/home/jan/workspace/code-musics/code_musics/engines/piano.py)
+Implementation: [code_musics/engines/piano.py](code_musics/engines/piano.py)
 
 Modal piano synthesis with physical hammer-string interaction. Each note is
 rendered as a bank of second-order resonators (one per string mode) excited by a
@@ -1541,7 +1671,7 @@ score.add_voice(
 
 ## `piano_additive`
 
-Implementation: [code_musics/engines/piano_additive.py](/home/jan/workspace/code-musics/code_musics/engines/piano_additive.py)
+Implementation: [code_musics/engines/piano_additive.py](code_musics/engines/piano_additive.py)
 
 Legacy additive piano synthesis with physical modeling envelopes. Each note
 renders a set of sinusoidal partials with stretched tuning (inharmonicity),
@@ -1556,7 +1686,7 @@ Use `engine="piano_additive"` in `synth_defaults` to access the legacy engine.
 
 ## `polyblep`
 
-Implementation: [code_musics/engines/polyblep.py](/home/jan/workspace/code-musics/code_musics/engines/polyblep.py)
+Implementation: [code_musics/engines/polyblep.py](code_musics/engines/polyblep.py)
 
 Time-domain bandlimited oscillator using polynomial BLEPs (Bandlimited Step
 functions). Generates waveforms directly rather than summing sine harmonics, so
@@ -1703,6 +1833,228 @@ score.add_voice(
             "filter_drive_ratio": 0.18,
             "filter_env_depth_ratio": 0.6,
             "filter_env_decay_ms": 500.0,
+        },
+    },
+)
+```
+
+## `surge_xt`
+
+Implementation: [code_musics/engines/surge_xt.py](code_musics/engines/surge_xt.py)
+
+External instrument engine that renders voices through Surge XT via pedalboard's
+VSTi hosting. Unlike the native per-note engines, it renders the whole voice at
+once by building a MIDI stream and feeding it to the plugin. Uses MPE-style
+per-note pitch bend with a 48-semitone range (24 semitones up/down) for sub-cent
+microtonal accuracy.
+
+The engine is registered separately from the per-note engine registry because it
+operates at the voice level rather than the note level. The score renderer
+detects `engine="surge_xt"` and delegates the entire voice to
+`surge_xt.render_voice()`.
+
+Parameters:
+
+- `preset_path: str`
+  Path to a `.vstpreset` or `.fxp` file to load before rendering.
+- `raw_state: bytes`
+  Serialised plugin state. Use this to restore a previously captured Surge XT
+  patch state programmatically. Takes effect only when `preset_path` is not set.
+- `surge_params: dict[str, float]`
+  Direct Surge XT parameter overrides. Keys are Surge XT parameter names (e.g.,
+  `a_osc1_type`, `a_filter1_cutoff`); values are raw floats in the plugin's
+  internal range. Applied after preset/state loading. Unknown parameter names
+  are logged as warnings and skipped.
+- `mpe: bool`
+  When `True` (default), sends MCM (MPE Configuration Message) to enable MPE
+  Lower Zone so pitch bend is per-note with sub-cent accuracy. When `False`,
+  uses global-bend chord mode: notes are grouped into chords by start time,
+  each chord shares a single pitch bend derived from the bass note, and
+  consecutive chords glide smoothly between reference pitches (like a tremolo
+  bar). Non-bass notes have up to ~50 cent rounding error from MIDI note
+  quantisation; the bass is always perfectly tuned.
+- `global_glide_time: float`
+  Seconds for the pitch-bend glide between consecutive chords in global-bend
+  mode (default `0.4`). Only used when `mpe=False`.
+- `cc_curves: list[dict[str, Any]]`
+  MIDI CC automation curves. Each entry has `cc` (0--127), optional `channel`
+  (default 0), and `points` (list of `(time_seconds, value_0_to_1)`
+  breakpoints). Breakpoints are linearly interpolated at 10 ms resolution and
+  sent as MIDI CC messages. Use this for expression, mod wheel, or any CC-mapped
+  Surge XT parameter.
+- `tail_seconds: float`
+  Extra render time after last note-off (default `2.0`). Captures release tails
+  and reverb decay from the plugin's internal effects.
+- `release_padding: float`
+  Seconds to keep an MPE channel reserved after note-off so pitch bend from new
+  notes does not bleed into release tails (default `1.0`).
+- `buffer_size: int`
+  Pedalboard processing block size in samples (default `256`). MIDI events are
+  delivered at block boundaries, so smaller blocks give finer-grained pitch bend
+  and CC timing. The pedalboard default of 8192 (~186 ms) produces audible
+  staircase artifacts on pitch glides; 256 (~5.8 ms) matches typical DAW host
+  granularity.
+- `param_curves: list[dict[str, Any]]`
+  **Experimental / broken.** Direct Surge XT parameter automation via chunked
+  rendering. Produces audible clicking and popping at chunk boundaries because
+  the plugin's internal DSP state cannot smoothly transition across parameter
+  steps. Prefer native post-processing effects with score-time automation, or
+  use `cc_curves` for smoother MIDI-rate automation. Retained for
+  experimentation only.
+
+Per-note fields (passed in the notes list, not in params):
+
+- `glide_from: float`
+  Starting frequency in Hz for a per-note pitch sweep toward the note's `freq`.
+  The glide is linear in pitch-bend space at ~200 Hz update rate (5 ms steps).
+  If the glide span exceeds the 24-semitone bend range, a warning is logged and
+  the glide is skipped.
+- `glide_time: float`
+  Duration of the glide in seconds (defaults to the note's full `duration`).
+
+Notes:
+
+- expects `~/.vst3/Surge XT.vst3` to be installed
+- if Surge XT is not found, the voice renders as silence with a warning
+- the engine handles up to 15 simultaneous MPE notes (MIDI channels 1--15);
+  channel collisions are logged as warnings
+- the output is always stereo (2 channels)
+- silent tail after the last note-off is automatically trimmed
+- no presets are defined in the engine registry; sound design is done through
+  Surge XT patches (`preset_path` / `raw_state`) and `surge_params` overrides
+- real-time parameter automation is limited: `cc_curves` provides MIDI-rate
+  control, but continuous parameter sweeps require pre-configured modulation
+  matrix routing inside the Surge XT patch itself
+
+Example:
+
+```python
+score.add_voice(
+    "pad",
+    synth_defaults={
+        "engine": "surge_xt",
+        "params": {
+            "preset_path": "patches/warm_pad.fxp",
+            "tail_seconds": 3.0,
+        },
+    },
+)
+```
+
+Global-bend chord mode example (tremolo-bar-style chord slides):
+
+```python
+score.add_voice(
+    "chords",
+    synth_defaults={
+        "engine": "surge_xt",
+        "params": {
+            "preset_path": "patches/strings.fxp",
+            "mpe": False,
+            "global_glide_time": 0.3,
+        },
+    },
+)
+```
+
+## `vital`
+
+Implementation: [code_musics/engines/vital.py](code_musics/engines/vital.py)
+
+External instrument engine that renders voices through Vital (wavetable synth)
+via pedalboard's VSTi hosting. Same MPE per-note pitch bend approach as
+`surge_xt` for sub-cent microtonal accuracy: each note gets its own MIDI channel
+with independent pitch bend. Uses a 24-semitone bend range (12 semitones
+up/down). Vital ignores standard MPE RPN messages for bend range configuration,
+so `mpe_enabled` and `pitch_bend_range` are set via the parameter API instead.
+
+The engine is registered separately from the per-note engine registry because it
+operates at the voice level rather than the note level. The score renderer
+detects `engine="vital"` and delegates the entire voice to
+`vital.render_voice()`.
+
+Parameters:
+
+- `preset_path: str`
+  Path to a `.vital` preset file to load before rendering.
+- `raw_state: bytes`
+  Serialised plugin state. Use this to restore a previously captured Vital patch
+  state programmatically. Takes effect only when `preset_path` is not set.
+- `vital_params: dict[str, float]`
+  Direct Vital parameter overrides. Keys are Vital parameter names; values are
+  raw floats in the plugin's internal range. Applied after preset/state loading.
+  Unknown parameter names are logged as warnings and skipped.
+- `mpe: bool`
+  When `True` (default), enables MPE per-note pitch bend with sub-cent accuracy.
+  When `False`, uses global-bend chord mode: notes are grouped into chords by
+  start time, each chord shares a single pitch bend derived from the bass note,
+  and consecutive chords glide smoothly between reference pitches. Non-bass
+  notes have up to ~50 cent rounding error from MIDI note quantisation; the bass
+  is always perfectly tuned.
+- `global_glide_time: float`
+  Seconds for the pitch-bend glide between consecutive chords in global-bend
+  mode (default `0.4`). Only used when `mpe=False`.
+- `cc_curves: list[dict[str, Any]]`
+  MIDI CC automation curves. Each entry has `cc` (0--127), optional `channel`
+  (default 0), and `points` (list of `(time_seconds, value_0_to_1)`
+  breakpoints). Breakpoints are linearly interpolated at 10 ms resolution and
+  sent as MIDI CC messages.
+- `tail_seconds: float`
+  Extra render time after last note-off (default `2.0`). Captures release tails
+  and reverb decay from the plugin's internal effects.
+- `release_padding: float`
+  Seconds to keep an MPE channel reserved after note-off so pitch bend from new
+  notes does not bleed into release tails (default `1.0`).
+- `buffer_size: int`
+  Pedalboard processing block size in samples (default `256`). MIDI events are
+  delivered at block boundaries, so smaller blocks give finer-grained pitch bend
+  and CC timing.
+
+Per-note fields (passed in the notes list, not in params):
+
+- `glide_from: float`
+  Starting frequency in Hz for a per-note pitch sweep toward the note's `freq`.
+- `glide_time: float`
+  Duration of the glide in seconds (defaults to the note's full `duration`).
+
+Notes:
+
+- expects `~/.vst3/Vital.vst3` to be installed (symlink to system install)
+- if Vital is not found, the voice renders as silence with a warning
+- the engine handles up to 15 simultaneous MPE notes (MIDI channels 1--15)
+- the output is always stereo (2 channels)
+- silent tail after the last note-off is automatically trimmed
+- no presets are defined in the engine registry; sound design is done through
+  Vital patches (`preset_path` / `raw_state`) and `vital_params` overrides
+- Vital's MPE bend range is configured via `mpe_enabled` and `pitch_bend_range`
+  parameters on the plugin instance, not via MIDI RPN messages
+
+Example:
+
+```python
+score.add_voice(
+    "pad",
+    synth_defaults={
+        "engine": "vital",
+        "params": {
+            "preset_path": "patches/warm_wavetable.vital",
+            "tail_seconds": 3.0,
+        },
+    },
+)
+```
+
+Global-bend chord mode example:
+
+```python
+score.add_voice(
+    "chords",
+    synth_defaults={
+        "engine": "vital",
+        "params": {
+            "preset_path": "patches/keys.vital",
+            "mpe": False,
+            "global_glide_time": 0.3,
         },
     },
 )

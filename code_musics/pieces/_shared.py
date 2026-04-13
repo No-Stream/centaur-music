@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from code_musics.score import EffectSpec
-from code_musics.synth import BRICASTI_IR_DIR
+from code_musics.synth import BRICASTI_IR_DIR, has_external_plugin
 from code_musics.tuning import TuningTable
 
 
@@ -46,5 +46,29 @@ DELAY_EFFECT = EffectSpec(
 )
 WARM_SATURATION_EFFECT = EffectSpec(
     "saturation",
-    {"preset": "tube_warm", "mix": 0.24, "drive": 1.14},
+    {"preset": "tube_warm"},
 )
+
+
+def _make_preamp() -> EffectSpec:
+    """Subtle Neve preamp color, or native saturation fallback."""
+    if has_external_plugin("brit_pre"):
+        return EffectSpec("brit_pre", {"gain": 5.0, "output_db": 0.0})
+    return EffectSpec("saturation", {"preset": "neve_gentle"})
+
+
+def _make_bus_comp() -> EffectSpec:
+    """Gentle vari-mu bus glue, or native compressor fallback."""
+    if has_external_plugin("mjuc_jr"):
+        return EffectSpec(
+            "mjuc_jr",
+            {
+                "compress": 12.0,
+                "makeup": 0.0,
+                "timing": "slow",
+            },
+        )
+    return EffectSpec("compressor", {"preset": "master_glue"})
+
+
+DEFAULT_MASTER_EFFECTS = [_make_preamp(), _make_bus_comp()]

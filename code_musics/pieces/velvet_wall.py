@@ -10,8 +10,8 @@ rough zones, so the pitch motion has harmonic colour rather than just blur.
 Harmonic language: 7-limit JI centred on A2 (110 Hz).
 
 Section I  — Emerge (0:00–1:30): thin melody, gradual thickening, wobble grows
-Section II — Wall   (1:30–3:30): smeared progression, comma drift, max density
-Section III— Dissolve (3:30–4:50): layers peel, melody returns, septimal fade
+Section II — Wall   (1:30–3:30): smeared progression, climax, max density
+Section III— Dissolve (3:30–4:50): layers peel, melody returns, open-fifth resolve
 
 Voice layout:
   - pad_a:   additive, 4 unison voices, 10ct detune, warm JI partials
@@ -27,7 +27,6 @@ saturation).  Master bus has tape saturation for glue.
 from __future__ import annotations
 
 from code_musics.automation import AutomationSegment, AutomationSpec, AutomationTarget
-from code_musics.harmonic_drift import harmonic_drift
 from code_musics.humanize import (
     EnvelopeHumanizeSpec,
     TimingHumanizeSpec,
@@ -72,6 +71,12 @@ DARK = [1.0, 7 / 6, 4 / 3, 8 / 5]
 
 # Suspended — unresolved, yearning
 SUSPENDED = [1.0, 8 / 7, 3 / 2, 7 / 4]
+
+# Wide voicings — root dropped an octave, upper voices spread for spaciousness
+HOME_WIDE = [1 / 2, 5 / 4, 3 / 2, 7 / 2]
+COMMA_WIDE = [1 / 2, 9 / 7, 3 / 2, 12 / 7 * 2]
+DARK_WIDE = [1 / 2, 7 / 6, 4 / 3, 8 / 5 * 2]
+SUSPENDED_WIDE = [1 / 2, 8 / 7, 3 / 2, 7 / 2]
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +270,8 @@ def _setup_voices(score: Score) -> None:
     )
 
     # -- melody: polyblep dual-osc saw, mod_delay for smeared echoes -----------
+    # Filter and detune are automated across the piece for a timbral arc:
+    #   Emerge: warm/muted → Wall: opens up → Climax: brightest → Dissolve: closes
     score.add_voice(
         "melody",
         synth_defaults={
@@ -273,7 +280,7 @@ def _setup_voices(score: Score) -> None:
             "osc2_waveform": "saw",
             "osc2_detune_cents": 6.0,
             "osc2_level": 0.7,
-            "cutoff_hz": 2200.0,
+            "cutoff_hz": 1400.0,
             "resonance_q": 0.08,
             "attack": 0.12,
             "decay": 0.4,
@@ -282,9 +289,132 @@ def _setup_voices(score: Score) -> None:
         },
         effects=[_melody_insert_delay()],
         envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog"),
+        velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
         normalize_lufs=-19.0,
         mix_db=-3.0,
         sends=[hall_send_wet],
+        automation=[
+            AutomationSpec(
+                target=AutomationTarget(kind="synth", name="cutoff_hz"),
+                segments=(
+                    AutomationSegment(
+                        start=0,
+                        end=90,
+                        shape="linear",
+                        start_value=1400,
+                        end_value=1800,
+                    ),
+                    AutomationSegment(
+                        start=90,
+                        end=155,
+                        shape="linear",
+                        start_value=1800,
+                        end_value=3200,
+                    ),
+                    AutomationSegment(
+                        start=155,
+                        end=175,
+                        shape="linear",
+                        start_value=3200,
+                        end_value=4000,
+                    ),
+                    AutomationSegment(
+                        start=175,
+                        end=210,
+                        shape="linear",
+                        start_value=4000,
+                        end_value=2800,
+                    ),
+                    AutomationSegment(
+                        start=210,
+                        end=290,
+                        shape="linear",
+                        start_value=2800,
+                        end_value=1200,
+                    ),
+                ),
+            ),
+            AutomationSpec(
+                target=AutomationTarget(kind="synth", name="osc2_detune_cents"),
+                segments=(
+                    AutomationSegment(start=0, end=90, shape="hold", value=6.0),
+                    AutomationSegment(
+                        start=90,
+                        end=195,
+                        shape="linear",
+                        start_value=6.0,
+                        end_value=14.0,
+                    ),
+                    AutomationSegment(
+                        start=195,
+                        end=290,
+                        shape="linear",
+                        start_value=14.0,
+                        end_value=5.0,
+                    ),
+                ),
+            ),
+        ],
+    )
+
+    # -- tendril: FM engine counter-melody, metallic/bell-like contrast --------
+    # mod_index automated: moderate → metallic at climax → gentle in dissolve
+    score.add_voice(
+        "tendril",
+        synth_defaults={
+            "engine": "fm",
+            "carrier_ratio": 1.0,
+            "mod_ratio": 3.5,  # 7/2 — septimal modulator for inharmonic shimmer
+            "mod_index": 1.8,
+            "index_decay": 0.6,
+            "feedback": 0.08,
+            "attack": 0.08,
+            "decay": 0.5,
+            "sustain_level": 0.60,
+            "release": 1.8,
+        },
+        effects=[
+            EffectSpec(
+                "mod_delay",
+                {
+                    "delay_ms": 220.0,
+                    "mod_rate_hz": 0.12,
+                    "mod_depth_ms": 6.0,
+                    "feedback": 0.30,
+                    "feedback_lpf_hz": 3200.0,
+                    "stereo_offset_deg": 95.0,
+                    "mix": 0.18,
+                },
+            ),
+        ],
+        envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog"),
+        velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
+        normalize_lufs=-20.0,
+        mix_db=-4.0,
+        pan=-0.20,
+        sends=[hall_send_wet],
+        automation=[
+            AutomationSpec(
+                target=AutomationTarget(kind="synth", name="mod_index"),
+                segments=(
+                    AutomationSegment(start=0, end=155, shape="hold", value=1.8),
+                    AutomationSegment(
+                        start=155,
+                        end=185,
+                        shape="linear",
+                        start_value=1.8,
+                        end_value=3.0,
+                    ),
+                    AutomationSegment(
+                        start=185,
+                        end=290,
+                        shape="linear",
+                        start_value=3.0,
+                        end_value=0.8,
+                    ),
+                ),
+            ),
+        ],
     )
 
     # -- bass: additive, simple, anchoring -------------------------------------
@@ -299,6 +429,8 @@ def _setup_voices(score: Score) -> None:
             "sustain_level": 0.90,
             "release": 1.5,
         },
+        envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
+        velocity_humanize=VelocityHumanizeSpec(preset="breathing_ensemble"),
         normalize_lufs=-22.0,
         mix_db=-3.0,
         sends=[hall_send],
@@ -327,12 +459,13 @@ def _setup_voices(score: Score) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Melody helper
+# Melody helpers
 # ---------------------------------------------------------------------------
 
 
-def _m(
+def _note(
     score: Score,
+    voice: str,
     start: float,
     partial: float,
     dur: float,
@@ -340,7 +473,7 @@ def _m(
     vel: float = 0.8,
     glide_from: float | None = None,
 ) -> None:
-    """Write a melody note, optionally with a ratio glide from a nearby partial."""
+    """Write a note to any voice, optionally with a ratio glide."""
     pm = None
     if glide_from is not None:
         gt = min(dur * 0.35, 0.5)
@@ -353,7 +486,7 @@ def _m(
             },
         )
     score.add_note(
-        "melody",
+        voice,
         partial=partial,
         start=start,
         duration=dur,
@@ -361,6 +494,32 @@ def _m(
         velocity=vel,
         pitch_motion=pm,
     )
+
+
+def _m(
+    score: Score,
+    start: float,
+    partial: float,
+    dur: float,
+    amp_db: float = -7.0,
+    vel: float = 0.8,
+    glide_from: float | None = None,
+) -> None:
+    """Write a melody note."""
+    _note(score, "melody", start, partial, dur, amp_db, vel, glide_from)
+
+
+def _t(
+    score: Score,
+    start: float,
+    partial: float,
+    dur: float,
+    amp_db: float = -8.0,
+    vel: float = 0.75,
+    glide_from: float | None = None,
+) -> None:
+    """Write a tendril (counter-melody) note."""
+    _note(score, "tendril", start, partial, dur, amp_db, vel, glide_from)
 
 
 # ---------------------------------------------------------------------------
@@ -514,10 +673,10 @@ def _write_wall(score: Score) -> None:
     # pitch_motion.  The pads get their organic pitch movement from unison
     # detuning (10-14ct), upper_partial_drift, and the phaser/chorus effects.
 
-    # -- Smeared chord progression (90–155s) ------------------------------------
-    # HOME → COMMA → DARK → SUSPENDED → HOME
-    progression_chords = [HOME, COMMA, DARK, SUSPENDED, HOME]
-    progression_durs = [15.0, 18.0, 16.0, 14.0, 12.0]  # total 75s
+    # -- Smeared chord progression (90–141s), wide voicings ----------------------
+    # HOME → COMMA → SUSPENDED → HOME (DARK saved for climax)
+    progression_chords = [HOME_WIDE, COMMA_WIDE, SUSPENDED_WIDE, HOME_WIDE]
+    progression_durs = [15.0, 14.0, 12.0, 10.0]  # total 51s
 
     smeared_phrases = smear_progression(
         progression_chords,
@@ -557,66 +716,18 @@ def _write_wall(score: Score) -> None:
                 pitch_motion=event.pitch_motion,
             )
 
-    # -- Harmonic drift: the comma shift (105–130s) is the centrepiece ----------
-    # During chords 1→2 (HOME→COMMA), the harmonic_drift provides the
-    # JI-aware trajectory.  We apply it as additional voice-level automation
-    # on a held bass chord.
-    drift_lanes = harmonic_drift(
-        start_chord=[1 / 2, 5 / 8, 3 / 4, 7 / 8],  # HOME voiced low
-        end_chord=[1 / 2, 9 / 14, 3 / 4, 6 / 7],  # COMMA voiced low
-        duration=25.0,
-        attraction=0.80,
-        prime_limit=7,
-        wander=0.0,
-        smoothness=0.75,
-        resolution_ms=250.0,  # coarser than default — 25s drift needs ~100 points, not 500
-        seed=13,
-    )
-
-    # Write held bass notes and apply drift automation
-    drift_start = 105.0
-    bass_partials = [1 / 2, 5 / 8, 3 / 4, 7 / 8]
-    for partial in bass_partials:
-        score.add_note(
-            "bass",
-            partial=partial,
-            start=drift_start,
-            duration=25.0,
-            amp_db=-8,
-            velocity=0.65,
-        )
-    # Apply drift automation to bass voice (the lanes control pitch_ratio)
-    for lane in drift_lanes:
-        # Offset the automation times to start at drift_start
-        shifted_segments = tuple(
-            AutomationSegment(
-                start=seg.start + drift_start,
-                end=seg.end + drift_start,
-                shape=seg.shape,
-                start_value=seg.start_value,
-                end_value=seg.end_value,
-            )
-            for seg in lane.segments
-        )
-        shifted_lane = AutomationSpec(
-            target=lane.target,
-            segments=shifted_segments,
-            default_value=lane.default_value,
-            mode=lane.mode,
-        )
-        score.voices["bass"].automation.append(shifted_lane)
-
-    # -- Bass pedal through the rest of the wall --------------------------------
+    # -- Bass pedal through the wall — anchored on root, no drift ----------------
+    # The pads carry all the harmonic motion; the bass stays grounded.
     score.add_note(
         "bass",
         partial=1 / 2,
         start=WALL_START,
-        duration=15.0,
-        amp_db=-10,
-        velocity=0.55,
+        duration=55.0,
+        amp_db=-9,
+        velocity=0.58,
     )
     score.add_note(
-        "bass", partial=1 / 2, start=130.0, duration=80.0, amp_db=-9, velocity=0.58
+        "bass", partial=1 / 2, start=145.0, duration=65.0, amp_db=-9, velocity=0.58
     )
 
     # -- Melody continues through the wall, increasingly buried -----------------
@@ -627,32 +738,112 @@ def _write_wall(score: Score) -> None:
     _m(score, 101.0, 7 / 2, 2.0, amp_db=-7, vel=0.78)
     _m(score, 103.5, 2.0, 1.5, amp_db=-8, vel=0.72)
 
-    # Over COMMA (the drift moment) — melody recedes, let pads dominate
-    _m(score, 108.0, 9 / 7, 2.0, amp_db=-10, vel=0.62)  # the comma-3rd, quieter
+    # Over COMMA (105–119s) — melody recedes, let pads carry the harmonic shift
+    _m(score, 108.0, 9 / 7, 2.0, amp_db=-10, vel=0.62)  # comma-3rd, quieter
     _m(score, 111.0, 3 / 2, 1.0, amp_db=-11, vel=0.58)
     _m(score, 113.0, 12 / 7, 3.0, amp_db=-9, vel=0.65, glide_from=3 / 2)  # comma-7th
     _m(score, 117.0, 2.0, 2.0, amp_db=-10, vel=0.62)
-    _m(score, 120.0, 9 / 7, 1.5, amp_db=-11, vel=0.58)
-    _m(score, 122.0, 1.0, 3.0, amp_db=-10, vel=0.65, glide_from=9 / 7)  # sink to root
 
-    # Over DARK — darker melody, lower register
-    _m(score, 126.0, 7 / 6, 2.5, amp_db=-7, vel=0.75)  # septimal minor 3rd
-    _m(score, 129.0, 4 / 3, 1.5, amp_db=-8, vel=0.72)
-    _m(score, 131.0, 8 / 5, 2.0, amp_db=-7, vel=0.75, glide_from=4 / 3)
-    _m(score, 134.0, 7 / 6, 1.0, amp_db=-9, vel=0.68)
-    _m(score, 135.5, 1.0, 2.5, amp_db=-8, vel=0.72)
+    # Over SUSPENDED (119–131s) — restless, SUSPENDED-consonant intervals
+    _m(score, 119.5, 8 / 7, 2.0, amp_db=-7, vel=0.75)  # septimal major 2nd
+    _m(score, 122.0, 3 / 2, 2.0, amp_db=-6, vel=0.78, glide_from=8 / 7)
+    _m(score, 124.5, 7 / 4, 2.5, amp_db=-7, vel=0.75)
+    _m(score, 127.5, 3 / 2, 1.5, amp_db=-8, vel=0.72)
+    _m(score, 129.5, 1.0, 2.0, amp_db=-9, vel=0.68, glide_from=3 / 2)  # sink to root
 
-    # Over SUSPENDED — restless, unresolved
-    _m(score, 139.0, 8 / 7, 1.5, amp_db=-7, vel=0.78)  # septimal major 2nd
-    _m(score, 141.0, 3 / 2, 2.0, amp_db=-6, vel=0.82, glide_from=8 / 7)
-    _m(score, 143.5, 7 / 4, 3.0, amp_db=-6, vel=0.82)
+    # Over return HOME (131–141s) — melody surfaces briefly, warm
+    _m(score, 131.5, 5 / 4, 2.0, amp_db=-8, vel=0.72)
+    _m(score, 134.0, 3 / 2, 2.5, amp_db=-7, vel=0.75, glide_from=5 / 4)
+    _m(score, 137.0, 7 / 4, 3.0, amp_db=-8, vel=0.70)  # sept 7th, fading into wall
 
-    # Over return HOME — melody buried in the wall, almost lost
-    _m(score, 147.5, 5 / 2, 2.0, amp_db=-9, vel=0.65)
-    _m(score, 150.0, 7 / 2, 4.0, amp_db=-8, vel=0.70, glide_from=5 / 2)
-    _m(score, 155.0, 3.0, 2.0, amp_db=-9, vel=0.65)
+    # -- Tendril counter-melody: interlocked with melody, contrary motion -------
+    # The tendril enters during the HOME chord, moves opposite to the melody.
+    # FM bell-like timbre contrasts with the saw lead.
 
-    # -- Climax: second pass through progression, denser (155–195s) -------------
+    # Over HOME — tendril answers melody's opening phrases in the lower register
+    _t(score, 93.5, 5 / 4, 1.5, amp_db=-9, vel=0.70)  # while melody is on 7/4
+    _t(score, 96.0, 1.0, 1.0, amp_db=-10, vel=0.65)  # melody goes up, tendril goes down
+    _t(score, 97.5, 7 / 6, 0.6, amp_db=-10, vel=0.62)  # quick passing tone
+    _t(score, 98.3, 5 / 4, 2.0, amp_db=-8, vel=0.72, glide_from=7 / 6)
+    _t(score, 101.0, 3 / 2, 1.0, amp_db=-9, vel=0.68)
+    _t(score, 102.5, 7 / 4, 2.0, amp_db=-8, vel=0.72, glide_from=3 / 2)
+
+    # Over COMMA (109–118s) — tendril follows COMMA intervals, no comma clash
+    _t(score, 109.0, 9 / 7, 1.5, amp_db=-10, vel=0.62)  # COMMA third (matches pads)
+    _t(score, 111.5, 12 / 7, 2.0, amp_db=-9, vel=0.65)  # COMMA seventh
+    _t(score, 114.0, 3 / 2, 0.5, amp_db=-11, vel=0.58)  # quick
+    _t(score, 114.8, 9 / 7, 0.4, amp_db=-11, vel=0.55)  # figuration
+    _t(score, 115.5, 1.0, 2.5, amp_db=-10, vel=0.62, glide_from=9 / 7)
+
+    # Over SUSPENDED (120–130s) — tendril in higher register, contrary to melody
+    _t(score, 120.0, 5 / 2, 1.5, amp_db=-8, vel=0.72)
+    _t(score, 122.0, 7 / 2, 1.5, amp_db=-8, vel=0.72, glide_from=5 / 2)
+    _t(score, 124.0, 3.0, 0.5, amp_db=-10, vel=0.62)
+    _t(score, 124.8, 5 / 2, 0.4, amp_db=-10, vel=0.60)
+    _t(score, 125.5, 2.0, 2.0, amp_db=-9, vel=0.65, glide_from=5 / 2)
+
+    # Over return HOME (132–140s) — tendril and melody converge, fading
+    _t(score, 132.0, 3 / 2, 0.8, amp_db=-8, vel=0.75)
+    _t(score, 133.0, 7 / 4, 0.5, amp_db=-9, vel=0.70)
+    _t(score, 133.7, 2.0, 0.4, amp_db=-9, vel=0.68)
+    _t(score, 134.3, 5 / 2, 0.5, amp_db=-8, vel=0.72)
+    _t(score, 135.0, 3.0, 0.4, amp_db=-9, vel=0.68)
+    _t(score, 135.7, 5 / 2, 2.5, amp_db=-9, vel=0.65, glide_from=3.0)  # settle
+
+    # -- HOME arrival: clear consonant anchor before the climax (141–155s) -------
+    for p in HOME:
+        score.add_note(
+            "pad_a", partial=p, start=141.0, duration=14.0, amp_db=-10, velocity=0.62
+        )
+    for p in [1.0, 5 / 4, 3 / 2]:
+        score.add_note(
+            "pad_b", partial=p, start=143.0, duration=12.0, amp_db=-12, velocity=0.55
+        )
+    # Brief melody motif recalling the opening — "we're home"
+    _m(score, 143.0, 2.0, 2.0, amp_db=-8, vel=0.72)
+    _m(score, 145.5, 7 / 4, 2.5, amp_db=-7, vel=0.75)
+    _m(score, 148.5, 3 / 2, 4.0, amp_db=-8, vel=0.70, glide_from=7 / 4)  # settle on 5th
+
+    # -- Climax: faster melody figuration (160-175s) ----------------------------
+    # A rapid 7-limit arpeggio that dissolves into the reverb wash
+    _m(score, 160.0, 5 / 2, 0.5, amp_db=-7, vel=0.85)
+    _m(score, 160.7, 3.0, 0.4, amp_db=-8, vel=0.80)
+    _m(score, 161.3, 7 / 2, 0.5, amp_db=-7, vel=0.85)
+    _m(score, 162.0, 4.0, 0.4, amp_db=-8, vel=0.78)
+    _m(score, 162.6, 7 / 2, 0.5, amp_db=-7, vel=0.82)
+    _m(score, 163.3, 3.0, 0.6, amp_db=-8, vel=0.78)
+    _m(score, 164.2, 5 / 2, 3.0, amp_db=-7, vel=0.80, glide_from=3.0)  # settle
+
+    # Tendril answers with its own rapid descent
+    _t(score, 161.0, 7 / 2, 0.4, amp_db=-8, vel=0.78)
+    _t(score, 161.6, 3.0, 0.4, amp_db=-9, vel=0.75)
+    _t(score, 162.2, 5 / 2, 0.5, amp_db=-8, vel=0.78)
+    _t(score, 162.9, 2.0, 0.4, amp_db=-9, vel=0.75)
+    _t(score, 163.5, 7 / 4, 0.5, amp_db=-8, vel=0.78)
+    _t(score, 164.2, 5 / 4, 0.6, amp_db=-9, vel=0.72)
+    _t(score, 165.0, 1.0, 3.0, amp_db=-8, vel=0.75, glide_from=5 / 4)
+
+    # Melody and tendril interlock at the peak (170-180s)
+    _m(score, 170.0, 7 / 4, 1.5, amp_db=-7, vel=0.82)
+    _t(score, 170.8, 5 / 4, 1.0, amp_db=-8, vel=0.75)
+    _m(score, 172.0, 5 / 2, 0.8, amp_db=-7, vel=0.80)
+    _t(score, 172.5, 7 / 4, 0.8, amp_db=-8, vel=0.72)
+    _m(score, 173.2, 3.0, 2.0, amp_db=-6, vel=0.85, glide_from=5 / 2)
+    _t(score, 174.0, 2.0, 1.5, amp_db=-8, vel=0.72, glide_from=7 / 4)
+    _m(score, 176.0, 7 / 2, 3.0, amp_db=-6, vel=0.82)  # melody's climax note
+    _t(
+        score, 177.0, 3 / 2, 2.5, amp_db=-9, vel=0.68, glide_from=2.0
+    )  # tendril descends
+
+    # Post-climax: both voices slow down and thin
+    _m(score, 180.0, 3.0, 2.0, amp_db=-7, vel=0.78)
+    _t(score, 181.0, 5 / 4, 2.0, amp_db=-9, vel=0.65)
+    _m(score, 183.0, 5 / 2, 2.5, amp_db=-8, vel=0.72)
+    _t(score, 184.0, 7 / 4, 2.0, amp_db=-10, vel=0.60)
+    _m(score, 186.0, 2.0, 3.0, amp_db=-8, vel=0.72)
+    _t(score, 187.0, 1.0, 2.5, amp_db=-10, vel=0.58)  # tendril sinks to root
+
+    # -- Climax pads: second pass through progression, denser (155–195s) --------
     climax_chords = [HOME, DARK, SUSPENDED, HOME]
     climax_durs = [10.0, 12.0, 10.0, 10.0]
     climax_phrases = smear_progression(
@@ -708,7 +899,7 @@ def _write_wall(score: Score) -> None:
         "ghost", partial=5 / 4, start=125.0, duration=25.0, amp_db=-16, velocity=0.38
     )
     score.add_note(
-        "ghost", partial=7 / 6, start=140.0, duration=18.0, amp_db=-16, velocity=0.36
+        "ghost", partial=7 / 4, start=140.0, duration=18.0, amp_db=-16, velocity=0.36
     )
     score.add_note(
         "ghost", partial=3 / 2, start=155.0, duration=30.0, amp_db=-14, velocity=0.42
@@ -782,9 +973,9 @@ def _write_dissolve(score: Score) -> None:
         "pad_a", partial=1.0, start=252.0, duration=33.0, amp_db=-13, velocity=0.45
     )
 
-    # pad_b sustained 7/4 in the final stretch — septimal shimmer persists
+    # pad_b adds 3/2 in the final stretch — reinforces the open-fifth resolution
     score.add_note(
-        "pad_b", partial=7 / 4, start=260.0, duration=22.0, amp_db=-14, velocity=0.45
+        "pad_b", partial=3 / 2, start=268.0, duration=14.0, amp_db=-14, velocity=0.42
     )
 
     # -- Bass holds longer -----------------------------------------------------
@@ -801,24 +992,35 @@ def _write_dissolve(score: Score) -> None:
         "bass", partial=1 / 2, start=250.0, duration=30.0, amp_db=-12, velocity=0.45
     )
 
-    # -- Melody returns, clearer now, echoing the opening -----------------------
+    # -- Melody and tendril return, interlocked, echoing the opening -------------
     _m(score, 212.0, 2.0, 3.0, amp_db=-7, vel=0.78)  # A3 — familiar
+    _t(score, 213.0, 5 / 4, 2.0, amp_db=-10, vel=0.62)  # tendril answers softly
     _m(score, 216.0, 7 / 4, 2.5, amp_db=-7, vel=0.75)  # sept 7th
+    _t(score, 217.0, 3 / 2, 1.5, amp_db=-10, vel=0.60)  # tendril mirrors
     _m(score, 219.5, 3 / 2, 1.5, amp_db=-8, vel=0.72)  # E3
     _m(score, 221.5, 2.0, 3.5, amp_db=-7, vel=0.75, glide_from=3 / 2)  # glide home
+    _t(
+        score, 222.0, 7 / 4, 2.5, amp_db=-10, vel=0.58, glide_from=3 / 2
+    )  # parallel glide
 
-    # Second phrase: inflected by the journey, over the SUSPENDED chord
+    # Second phrase: melody and tendril over the SUSPENDED chord
     _m(score, 226.0, 5 / 2, 2.0, amp_db=-8, vel=0.72)
+    _t(score, 226.5, 7 / 4, 1.5, amp_db=-10, vel=0.60)
     _m(score, 228.5, 7 / 4, 1.5, amp_db=-7, vel=0.75)
+    _t(score, 229.0, 5 / 4, 1.5, amp_db=-11, vel=0.55)
     _m(
         score, 230.5, 7 / 6, 3.0, amp_db=-7, vel=0.75, glide_from=7 / 4
     )  # sept minor 3rd
+    _t(score, 231.0, 1.0, 2.5, amp_db=-11, vel=0.52, glide_from=5 / 4)  # tendril sinks
 
-    # Fragmenting, but not as quiet as before
+    # Fragmenting — tendril fades before melody, gravitating toward HOME
     _m(score, 235.0, 3 / 2, 1.5, amp_db=-8, vel=0.68)
-    _m(score, 237.0, 7 / 4, 4.0, amp_db=-7, vel=0.72)  # one more sept 7th
-    _m(score, 242.0, 2.0, 2.0, amp_db=-9, vel=0.62)
-    _m(score, 245.0, 5 / 4, 1.5, amp_db=-10, vel=0.58)
+    _t(score, 235.5, 7 / 4, 1.5, amp_db=-12, vel=0.48)  # tendril barely there
+    _m(score, 237.0, 7 / 4, 2.5, amp_db=-7, vel=0.72)  # shorter sept 7th
+    _t(score, 238.0, 5 / 4, 2.0, amp_db=-13, vel=0.42)  # tendril's last breath
+    _m(score, 240.0, 3 / 2, 2.0, amp_db=-8, vel=0.68)  # pull toward fifth
+    _m(score, 243.0, 2.0, 2.0, amp_db=-9, vel=0.62)
+    _m(score, 246.0, 5 / 4, 1.5, amp_db=-10, vel=0.58)
 
     # -- Ghost melody: the memory — denser than before -------------------------
     score.add_note(
@@ -828,18 +1030,25 @@ def _write_dissolve(score: Score) -> None:
         "ghost", partial=3 / 2, start=238.0, duration=18.0, amp_db=-16, velocity=0.38
     )
     score.add_note(
-        "ghost", partial=2.0, start=248.0, duration=22.0, amp_db=-15, velocity=0.38
+        "ghost", partial=2.0, start=248.0, duration=14.0, amp_db=-15, velocity=0.38
     )
 
-    # -- Final notes: louder than before, the piece ends warm not vanishing -----
+    # -- Final passage: 7/4 yearns, resolves through 5/4 warmth to open fifth --
     _m(score, 250.0, 2.0, 3.0, amp_db=-10, vel=0.55, glide_from=5 / 4)
 
-    # The last sound: 7/4, present enough to hear, dissolving into reverb tail
-    _m(score, 260.0, 7 / 4, 18.0, amp_db=-12, vel=0.50)
+    # 7/4 hold — the yearning, but it resolves this time
+    _m(score, 255.0, 7 / 4, 10.0, amp_db=-11, vel=0.50)
+    # Resolve: 7/4 glides down to 3/2 (the fifth)
+    _m(score, 265.0, 3 / 2, 10.0, amp_db=-12, vel=0.48, glide_from=7 / 4)
 
-    # Ghost doubles it an octave up — the shimmer persists
+    # pad_b: brief 5/4 warmth during the 7/4 hold, fades before resolution
     score.add_note(
-        "ghost", partial=7 / 2, start=262.0, duration=22.0, amp_db=-16, velocity=0.38
+        "pad_b", partial=5 / 4, start=258.0, duration=10.0, amp_db=-14, velocity=0.42
+    )
+
+    # Ghost: high fifth reinforces the final open-fifth sonority
+    score.add_note(
+        "ghost", partial=3.0, start=262.0, duration=20.0, amp_db=-16, velocity=0.38
     )
 
 

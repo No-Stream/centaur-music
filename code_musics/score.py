@@ -19,6 +19,7 @@ from code_musics.automation import (
     has_pitch_ratio_automation,
 )
 from code_musics.engines import (
+    is_instrument_engine,
     normalize_synth_spec,
     render_note_signal,
     resolve_synth_params,
@@ -45,6 +46,7 @@ EffectKind = Literal[
     "reverb",
     "chow_tape",
     "bricasti",
+    "brit_pre",
     "chorus",
     "mod_delay",
     "saturation",
@@ -54,6 +56,7 @@ EffectKind = Literal[
     "tal_chorus_lx",
     "tal_reverb2",
     "dragonfly",
+    "mjuc_jr",
     "plugin",
 ]
 
@@ -810,19 +813,21 @@ class Score:
         timing_offsets: dict[tuple[str, int], float],
         velocity_multipliers: dict[tuple[str, int], float],
     ) -> np.ndarray:
-        # External instrument engines (e.g. Surge XT) render the whole voice at
-        # once instead of note-by-note, so dispatch early before the per-note loop.
+        # External instrument engines (e.g. Surge XT, Vital) render the whole
+        # voice at once instead of note-by-note, so dispatch early before the
+        # per-note loop.
         synth_defaults = normalize_synth_spec(voice.synth_defaults)
         resolved_defaults = resolve_synth_params(synth_defaults)
         engine_name = str(resolved_defaults.get("engine", "additive"))
 
-        if engine_name == "surge_xt":
+        if is_instrument_engine(engine_name):
             return self._render_voice_via_instrument(
                 voice_name=voice_name,
                 voice=voice,
                 timing_offsets=timing_offsets,
                 velocity_multipliers=velocity_multipliers,
                 engine_params=resolved_defaults,
+                engine_name=engine_name,
             )
 
         voice_signals: list[np.ndarray] = []
@@ -1004,13 +1009,16 @@ class Score:
         timing_offsets: dict[tuple[str, int], float],
         velocity_multipliers: dict[tuple[str, int], float],
         engine_params: dict[str, Any],
+        engine_name: str,
     ) -> np.ndarray:
-        """Render a voice through an external instrument plugin (e.g. Surge XT).
+        """Render a voice through an external instrument plugin (e.g. Surge XT, Vital).
 
         Instead of iterating notes and calling ``render_note_signal`` per note,
         this builds a list of note dicts and delegates to the engine's
         ``render_voice`` entry point which drives the plugin with MIDI.
         """
+        import importlib  # noqa: PLC0415
+
         if voice.sympathetic_amount > 0:
             logger.warning(
                 "sympathetic_amount=%.2f on instrument-engine voice %r ignored "
@@ -1018,7 +1026,8 @@ class Score:
                 voice.sympathetic_amount,
                 voice_name,
             )
-        from code_musics.engines import surge_xt  # noqa: PLC0415
+
+        engine_module = importlib.import_module(f"code_musics.engines.{engine_name}")
 
         note_dicts: list[dict[str, Any]] = []
         for note_index, note in enumerate(voice.notes):
@@ -1073,7 +1082,7 @@ class Score:
             return np.zeros(0)
 
         max_end = max(n["start"] + n["duration"] for n in note_dicts)
-        voice_mix = surge_xt.render_voice(
+        voice_mix = engine_module.render_voice(
             notes=note_dicts,
             total_duration=max_end,
             sample_rate=self.sample_rate,
