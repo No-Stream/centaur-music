@@ -475,7 +475,7 @@ def _ctrl(name: str) -> AutomationTarget:
 def build_pure_states() -> Score:
     """5-limit JI progressive trance — full arrangement with deep automation."""
     score = Score(
-        f0=F0,
+        f0_hz=F0,
         timing_humanize=TimingHumanizeSpec(preset="tight_ensemble", seed=7),
         master_effects=[
             EffectSpec(

@@ -42,7 +42,7 @@ def _track_messages_with_absolute_ticks(
 def test_export_midi_bundle_static_piece_writes_expected_midi_contents(
     tmp_path: Path,
 ) -> None:
-    score = Score(f0=220.0)
+    score = Score(f0_hz=220.0)
     score.add_voice("bass", max_polyphony=1)
     score.add_voice("pad")
     score.add_note("bass", start=0.0, duration=1.0, partial=1.0)
@@ -107,7 +107,7 @@ def test_export_midi_bundle_static_piece_writes_expected_midi_contents(
 def test_export_midi_bundle_dynamic_piece_writes_warning_approx_tuning(
     tmp_path: Path,
 ) -> None:
-    score = Score(f0=220.0)
+    score = Score(f0_hz=220.0)
     score.add_voice("melody", max_polyphony=1)
     for index in range(30):
         cents = float(index * 11.0)
@@ -144,7 +144,7 @@ def test_export_midi_bundle_dynamic_piece_writes_warning_approx_tuning(
 
 
 def test_export_midi_bundle_rejects_pitch_motion(tmp_path: Path) -> None:
-    score = Score(f0=220.0)
+    score = Score(f0_hz=220.0)
     score.add_voice("lead")
     score.add_note(
         "lead",
@@ -165,7 +165,7 @@ def test_export_midi_bundle_rejects_pitch_motion(tmp_path: Path) -> None:
 
 
 def test_export_midi_bundle_rejects_pitch_ratio_automation(tmp_path: Path) -> None:
-    score = Score(f0=220.0)
+    score = Score(f0_hz=220.0)
     score.add_voice(
         "lead",
         automation=[
@@ -199,7 +199,7 @@ def test_export_midi_bundle_rejects_pitch_ratio_automation(tmp_path: Path) -> No
 def test_export_midi_bundle_fails_fast_for_requested_overlapping_mono_export(
     tmp_path: Path,
 ) -> None:
-    score = Score(f0=220.0)
+    score = Score(f0_hz=220.0)
     score.add_voice("pad")
     score.add_note("pad", start=0.0, duration=2.0, partial=5 / 4)
     score.add_note("pad", start=0.5, duration=2.0, partial=3 / 2)
@@ -219,7 +219,7 @@ def test_export_midi_bundle_fails_fast_for_requested_overlapping_mono_export(
 def test_export_midi_bundle_fails_fast_for_requested_channel_overflow(
     tmp_path: Path,
 ) -> None:
-    score = Score(f0=220.0)
+    score = Score(f0_hz=220.0)
     score.add_voice("cluster")
     for index in range(16):
         score.add_note(
@@ -244,7 +244,7 @@ def test_export_midi_bundle_fails_fast_for_requested_channel_overflow(
 def test_export_midi_bundle_selected_formats_allow_large_polyphony(
     tmp_path: Path,
 ) -> None:
-    score = Score(f0=220.0)
+    score = Score(f0_hz=220.0)
     score.add_voice("cluster")
     for index in range(16):
         score.add_note(
@@ -273,7 +273,7 @@ def test_export_midi_bundle_selected_formats_allow_large_polyphony(
 def test_sequential_chords_at_same_tick_do_not_trigger_false_channel_overflow(
     tmp_path: Path,
 ) -> None:
-    score = Score(f0=220.0)
+    score = Score(f0_hz=220.0)
     score.add_voice("chords")
     for index in range(15):
         score.add_note(
@@ -337,7 +337,7 @@ def test_shared_tuning_mapping_wraps_to_next_period_unison() -> None:
 
 def test_collect_stem_notes_clips_window_and_uses_full_score_timing_context() -> None:
     score = Score(
-        f0=220.0,
+        f0_hz=220.0,
         timing_humanize=TimingHumanizeSpec(
             preset="tight_ensemble",
             seed=17,
@@ -373,7 +373,7 @@ def test_export_piece_midi_snippet_uses_snippet_suffix_and_clips_crossing_notes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def build_score() -> Score:
-        score = Score(f0=220.0)
+        score = Score(f0_hz=220.0)
         score.add_voice("lead", max_polyphony=1)
         score.add_note("lead", start=0.0, duration=2.0, partial=1.0)
         score.add_note("lead", start=1.5, duration=1.0, partial=3 / 2)

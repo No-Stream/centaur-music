@@ -11,6 +11,9 @@ WINDOW ?= 8
 START ?=
 DUR ?=
 MIDI_FORMATS ?=
+BIT_DEPTH ?= 24
+DRY ?= 0
+NO_MIX ?= 0
 ANALYSIS ?= 1
 TESTS ?= tests
 OBLIQUE ?= 0
@@ -37,6 +40,18 @@ ifneq ($(strip $(MIDI_FORMATS)),)
 MIDI_FORMATS_FLAG = --midi-formats $(MIDI_FORMATS)
 else
 MIDI_FORMATS_FLAG =
+endif
+
+ifeq ($(DRY),1)
+STEMS_DRY_FLAG = --dry
+else
+STEMS_DRY_FLAG =
+endif
+
+ifeq ($(NO_MIX),1)
+STEMS_NO_MIX_FLAG = --no-mix
+else
+STEMS_NO_MIX_FLAG =
 endif
 
 .PHONY: all
@@ -147,6 +162,36 @@ ifndef DUR
 	$(error DUR is required, for example `make midi-window PIECE=ji_chorale START=130 DUR=12`)
 endif
 	$(UV_RUN) python main.py $(PIECE) --export-midi $(MIDI_FORMATS_FLAG) --window-start "$(START)" --window-dur $(DUR)
+
+.PHONY: stems
+stems:
+ifndef PIECE
+	$(error PIECE is required, for example `make stems PIECE=ji_chorale`)
+endif
+	$(UV_RUN) python main.py $(PIECE) --export-stems --stem-bit-depth $(BIT_DEPTH) $(STEMS_DRY_FLAG) $(STEMS_NO_MIX_FLAG)
+
+.PHONY: stems-snippet
+stems-snippet:
+ifndef PIECE
+	$(error PIECE is required, for example `make stems-snippet PIECE=ji_chorale AT=2:10 WINDOW=12`)
+endif
+ifndef AT
+	$(error AT is required, for example `make stems-snippet PIECE=ji_chorale AT=2:10 WINDOW=12`)
+endif
+	$(UV_RUN) python main.py $(PIECE) --export-stems --stem-bit-depth $(BIT_DEPTH) $(STEMS_DRY_FLAG) $(STEMS_NO_MIX_FLAG) --snippet-at "$(AT)" --snippet-window $(WINDOW)
+
+.PHONY: stems-window
+stems-window:
+ifndef PIECE
+	$(error PIECE is required, for example `make stems-window PIECE=ji_chorale START=130 DUR=12`)
+endif
+ifndef START
+	$(error START is required, for example `make stems-window PIECE=ji_chorale START=130 DUR=12`)
+endif
+ifndef DUR
+	$(error DUR is required, for example `make stems-window PIECE=ji_chorale START=130 DUR=12`)
+endif
+	$(UV_RUN) python main.py $(PIECE) --export-stems --stem-bit-depth $(BIT_DEPTH) $(STEMS_DRY_FLAG) $(STEMS_NO_MIX_FLAG) --window-start "$(START)" --window-dur $(DUR)
 
 .PHONY: render-sketches
 render-sketches:

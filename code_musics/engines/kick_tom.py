@@ -2,10 +2,79 @@
 
 from __future__ import annotations
 
-from hashlib import sha256
+import logging
 from typing import Any
 
+import numba
 import numpy as np
+
+from code_musics.engines._drum_utils import (
+    bandpass_noise,
+    integrated_phase,
+    resolve_velocity_timbre,
+    rng_for_note,
+)
+from code_musics.engines._dsp_utils import fm_modulate
+from code_musics.engines._envelopes import render_envelope
+from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_zdf_svf
+from code_musics.engines._waveshaper import ALGORITHM_NAMES, apply_waveshaper
+
+logger: logging.Logger = logging.getLogger(__name__)
+
+_VALID_BODY_FILTER_MODES = _SUPPORTED_FILTER_MODES - {"notch"}
+_VALID_BODY_MODES = {"oscillator", "resonator"}
+
+
+@numba.njit(cache=True)
+def _resonator_body(
+    excitation: np.ndarray,
+    freq_profile: np.ndarray,
+    q: float,
+    sample_rate: int,
+) -> np.ndarray:
+    """Time-varying 2-pole bandpass resonator for kick/tom body synthesis.
+
+    Implements a biquad bandpass with per-sample coefficient updates from
+    freq_profile, allowing pitch sweep through resonator coefficient
+    modulation rather than oscillator frequency change.
+    """
+    n = excitation.shape[0]
+    out = np.zeros(n, dtype=np.float64)
+    x1 = 0.0
+    x2 = 0.0
+    y1 = 0.0
+    y2 = 0.0
+    two_pi = 2.0 * np.pi
+
+    for i in range(n):
+        w0 = two_pi * freq_profile[i] / sample_rate
+        sin_w0 = np.sin(w0)
+        cos_w0 = np.cos(w0)
+        alpha = sin_w0 / (2.0 * q)
+
+        # Bandpass (constant-0dB-peak) biquad coefficients
+        b0 = alpha
+        b1 = 0.0
+        b2 = -alpha
+        a0 = 1.0 + alpha
+        a1_coeff = -2.0 * cos_w0
+        a2_coeff = 1.0 - alpha
+
+        # Normalize
+        b0 /= a0
+        b2 /= a0
+        a1_coeff /= a0
+        a2_coeff /= a0
+
+        x0 = excitation[i]
+        out[i] = b0 * x0 + b1 * x1 + b2 * x2 - a1_coeff * y1 - a2_coeff * y2
+
+        x2 = x1
+        x1 = x0
+        y2 = y1
+        y1 = out[i]
+
+    return out
 
 
 def render(
@@ -25,30 +94,70 @@ def render(
     if freq <= 0:
         raise ValueError("freq must be positive")
 
-    decay_ms = float(params.get("body_decay_ms", params.get("decay_ms", 260.0)))
+    body_mode = str(params.get("body_mode", "oscillator")).lower()
+    body_decay_s = float(params.get("body_decay", params.get("decay", 0.26)))
     pitch_sweep_amount_ratio = float(params.get("pitch_sweep_amount_ratio", 2.5))
-    pitch_sweep_decay_ms = float(params.get("pitch_sweep_decay_ms", 42.0))
+    pitch_sweep_decay_s = float(params.get("pitch_sweep_decay", 0.042))
     body_wave = str(params.get("body_wave", "sine")).lower()
     body_tone_ratio = float(params.get("body_tone_ratio", 0.16))
     body_punch_ratio = float(params.get("body_punch_ratio", 0.20))
     overtone_amount = float(params.get("overtone_amount", 0.10))
     overtone_ratio = float(params.get("overtone_ratio", 1.9))
-    overtone_decay_ms = float(params.get("overtone_decay_ms", 110.0))
+    overtone_decay_s = float(params.get("overtone_decay", 0.11))
     click_amount = float(params.get("click_amount", 0.08))
-    click_decay_ms = float(params.get("click_decay_ms", 7.0))
+    click_decay_s = float(params.get("click_decay", 0.007))
     click_tone_hz = float(params.get("click_tone_hz", 3_200.0))
     noise_amount = float(params.get("noise_amount", 0.02))
-    noise_decay_ms = float(params.get("noise_decay_ms", 28.0))
+    noise_decay_s = float(params.get("noise_decay", 0.028))
     noise_bandpass_hz = float(params.get("noise_bandpass_hz", 1_100.0))
-    drive_ratio = float(params.get("drive_ratio", 0.10))
-    post_lowpass_hz = float(params.get("post_lowpass_hz", 14_000.0))
 
-    if decay_ms <= 0:
-        raise ValueError("decay_ms must be positive")
+    body_amp_envelope_raw = params.get("body_amp_envelope")
+    pitch_envelope_raw = params.get("pitch_envelope")
+    overtone_amp_envelope_raw = params.get("overtone_amp_envelope")
+
+    body_filter_mode: str | None = params.get("body_filter_mode")
+    body_filter_cutoff_hz = float(params.get("body_filter_cutoff_hz", 2000.0))
+    body_filter_q = float(params.get("body_filter_q", 0.707))
+    body_filter_drive = float(params.get("body_filter_drive", 0.0))
+    body_filter_envelope_raw = params.get("body_filter_envelope")
+
+    # FM body params
+    body_fm_ratio_raw = params.get("body_fm_ratio")
+    body_fm_ratio: float | None = (
+        float(body_fm_ratio_raw) if body_fm_ratio_raw is not None else None
+    )
+    body_fm_index = float(params.get("body_fm_index", 2.0))
+    body_fm_feedback = float(params.get("body_fm_feedback", 0.0))
+    body_fm_index_envelope_raw = params.get("body_fm_index_envelope")
+
+    # Waveshaper body params
+    body_distortion_name: str | None = params.get("body_distortion")
+    body_distortion_drive = float(params.get("body_distortion_drive", 0.5))
+    body_distortion_mix = float(params.get("body_distortion_mix", 1.0))
+    body_distortion_drive_envelope_raw = params.get("body_distortion_drive_envelope")
+
+    # Deprecation warnings for removed internal drive/lowpass stages.
+    if "drive_ratio" in params or "drive" in params:
+        logger.warning(
+            "kick_tom: drive_ratio is deprecated; use EffectSpec('saturation', ...) "
+            "on the voice instead"
+        )
+    if "post_lowpass_hz" in params:
+        logger.warning(
+            "kick_tom: post_lowpass_hz is deprecated; use EffectSpec('eq', ...) "
+            "on the voice instead"
+        )
+
+    if body_mode not in _VALID_BODY_MODES:
+        raise ValueError(
+            f"body_mode must be one of {sorted(_VALID_BODY_MODES)}, got {body_mode!r}"
+        )
+    if body_decay_s <= 0:
+        raise ValueError("body_decay must be positive")
     if pitch_sweep_amount_ratio <= 0:
         raise ValueError("pitch_sweep_amount_ratio must be positive")
-    if pitch_sweep_decay_ms <= 0:
-        raise ValueError("pitch_sweep_decay_ms must be positive")
+    if pitch_sweep_decay_s <= 0:
+        raise ValueError("pitch_sweep_decay must be positive")
     if body_wave not in {"sine", "triangle", "sine_clip"}:
         raise ValueError("body_wave must be 'sine', 'triangle', or 'sine_clip'")
     if not 0.0 <= body_tone_ratio <= 1.0:
@@ -59,69 +168,216 @@ def render(
         raise ValueError("overtone_amount must be non-negative")
     if overtone_ratio <= 0:
         raise ValueError("overtone_ratio must be positive")
-    if overtone_decay_ms <= 0:
-        raise ValueError("overtone_decay_ms must be positive")
+    if overtone_decay_s <= 0:
+        raise ValueError("overtone_decay must be positive")
     if click_amount < 0:
         raise ValueError("click_amount must be non-negative")
-    if click_decay_ms <= 0:
-        raise ValueError("click_decay_ms must be positive")
+    if click_decay_s <= 0:
+        raise ValueError("click_decay must be positive")
     if click_tone_hz <= 0:
         raise ValueError("click_tone_hz must be positive")
     if noise_amount < 0:
         raise ValueError("noise_amount must be non-negative")
-    if noise_decay_ms <= 0:
-        raise ValueError("noise_decay_ms must be positive")
+    if noise_decay_s <= 0:
+        raise ValueError("noise_decay must be positive")
     if noise_bandpass_hz <= 0:
         raise ValueError("noise_bandpass_hz must be positive")
-    if not 0.0 <= drive_ratio <= 1.0:
-        raise ValueError("drive_ratio must be between 0 and 1")
-    if post_lowpass_hz <= 0:
-        raise ValueError("post_lowpass_hz must be positive")
+    if (
+        body_filter_mode is not None
+        and body_filter_mode not in _VALID_BODY_FILTER_MODES
+    ):
+        raise ValueError(
+            f"body_filter_mode must be one of {sorted(_VALID_BODY_FILTER_MODES)} "
+            f"or None, got {body_filter_mode!r}"
+        )
+    if body_filter_cutoff_hz <= 0:
+        raise ValueError("body_filter_cutoff_hz must be positive")
+    if body_filter_q < 0.5:
+        raise ValueError("body_filter_q must be >= 0.5")
+    if body_filter_drive < 0:
+        raise ValueError("body_filter_drive must be non-negative")
+    if body_fm_ratio is not None and body_fm_ratio <= 0:
+        raise ValueError("body_fm_ratio must be positive")
+    if body_fm_index < 0:
+        raise ValueError("body_fm_index must be non-negative")
+    if body_distortion_name is not None and body_distortion_name not in ALGORITHM_NAMES:
+        raise ValueError(
+            f"body_distortion must be one of {sorted(ALGORITHM_NAMES)} "
+            f"or None, got {body_distortion_name!r}"
+        )
+    if not 0.0 <= body_distortion_drive <= 1.0:
+        raise ValueError("body_distortion_drive must be in [0, 1]")
+    if not 0.0 <= body_distortion_mix <= 1.0:
+        raise ValueError("body_distortion_mix must be in [0, 1]")
+
+    # --- velocity-to-timbre scaling ---
+    timbre = resolve_velocity_timbre(amp, params)
+    body_decay_s *= timbre.decay_scale
+    click_tone_hz *= timbre.brightness_scale
+    noise_bandpass_hz *= timbre.brightness_scale
+    if body_fm_ratio is not None:
+        body_fm_index *= timbre.harmonic_scale
+    overtone_amount *= timbre.harmonic_scale
 
     n_samples = int(sample_rate * duration)
     if n_samples == 0:
         return np.zeros(0, dtype=np.float64)
 
     time = np.arange(n_samples, dtype=np.float64) / sample_rate
-    body_decay_seconds = decay_ms / 1000.0
-    sweep_decay_seconds = pitch_sweep_decay_ms / 1000.0
-    overtone_decay_seconds = overtone_decay_ms / 1000.0
-    click_decay_seconds = click_decay_ms / 1000.0
-    noise_decay_seconds = noise_decay_ms / 1000.0
 
     base_freq_profile = _resolve_base_freq_profile(
         freq=freq,
         n_samples=n_samples,
         freq_trajectory=freq_trajectory,
     )
-    sweep_profile = 1.0 + (pitch_sweep_amount_ratio - 1.0) * np.exp(
-        -time / sweep_decay_seconds
-    )
+
+    if pitch_envelope_raw is not None:
+        sweep_profile = render_envelope(
+            pitch_envelope_raw, n_samples, default_value=1.0
+        )
+    else:
+        sweep_profile = 1.0 + (pitch_sweep_amount_ratio - 1.0) * np.exp(
+            -time / pitch_sweep_decay_s
+        )
     freq_profile = base_freq_profile * sweep_profile
 
-    fundamental_phase = _integrated_phase(freq_profile, sample_rate=sample_rate)
-    fundamental = _oscillator(body_wave=body_wave, phase=fundamental_phase)
-    body_env = np.exp(-time / body_decay_seconds)
-    punch_env = 1.0 + body_punch_ratio * np.exp(-time / 0.018)
-    second_harmonic = np.sin(2.0 * fundamental_phase) * np.exp(
-        -time / max(0.02, body_decay_seconds * 0.55)
-    )
-    body = (
-        (((1.0 - body_tone_ratio) * fundamental) + (body_tone_ratio * second_harmonic))
-        * body_env
-        * punch_env
-    )
+    # Body synthesis: resonator mode or oscillator mode
+    if body_mode == "resonator":
+        if body_fm_ratio is not None:
+            logger.warning(
+                "kick_tom: body_fm_ratio is ignored in resonator body_mode; "
+                "FM synthesis is only available in oscillator mode"
+            )
 
-    overtone_phase = _integrated_phase(
+        # Build excitation: short noise impulse shaped by punch envelope
+        rng_exc = rng_for_note(
+            freq=freq,
+            duration=duration,
+            amp=amp,
+            sample_rate=sample_rate,
+            params=params,
+        )
+        impulse_samples = max(1, int(0.001 * sample_rate))
+        excitation = np.zeros(n_samples, dtype=np.float64)
+        impulse_noise = rng_exc.standard_normal(impulse_samples)
+        punch_env_impulse = 1.0 + body_punch_ratio * np.exp(
+            -np.arange(impulse_samples, dtype=np.float64) / (0.001 * sample_rate)
+        )
+        excitation[:impulse_samples] = impulse_noise * punch_env_impulse
+
+        # Compute Q from decay time: higher Q = longer ring
+        early_end = max(1, n_samples // 4)
+        mean_freq = float(np.mean(freq_profile[:early_end]))
+        resonator_q = max(1.0, np.pi * mean_freq * body_decay_s)
+
+        body_signal = _resonator_body(
+            excitation,
+            freq_profile.astype(np.float64),
+            resonator_q,
+            sample_rate,
+        )
+
+        # Apply body amp envelope
+        if body_amp_envelope_raw is not None:
+            body_env = render_envelope(
+                body_amp_envelope_raw, n_samples, default_value=0.0
+            )
+        else:
+            body_env = np.exp(-time / body_decay_s)
+
+        body = body_signal * body_env
+
+    else:
+        # Oscillator mode: FM-modulated or standard oscillator
+        if body_fm_ratio is not None:
+            if body_fm_index_envelope_raw is not None:
+                index_env = render_envelope(
+                    body_fm_index_envelope_raw, n_samples, default_value=1.0
+                )
+            else:
+                index_env = np.exp(-time / 0.05)
+            fundamental = fm_modulate(
+                freq_profile,
+                mod_ratio=body_fm_ratio,
+                mod_index=body_fm_index,
+                sample_rate=sample_rate,
+                feedback=body_fm_feedback,
+                index_envelope=index_env,
+            )
+        else:
+            fundamental_phase = integrated_phase(freq_profile, sample_rate=sample_rate)
+            fundamental = _oscillator(body_wave=body_wave, phase=fundamental_phase)
+
+        if body_amp_envelope_raw is not None:
+            body_env = render_envelope(
+                body_amp_envelope_raw, n_samples, default_value=0.0
+            )
+        else:
+            body_env = np.exp(-time / body_decay_s)
+
+        punch_env = 1.0 + body_punch_ratio * np.exp(-time / 0.018)
+
+        harmonic_phase = integrated_phase(freq_profile, sample_rate=sample_rate)
+        second_harmonic = np.sin(2.0 * harmonic_phase) * np.exp(
+            -time / max(0.02, body_decay_s * 0.55)
+        )
+        body = (
+            (
+                ((1.0 - body_tone_ratio) * fundamental)
+                + (body_tone_ratio * second_harmonic)
+            )
+            * body_env
+            * punch_env
+        )
+
+    # Waveshaper distortion on body (before filter)
+    if body_distortion_name is not None:
+        if body_distortion_drive_envelope_raw is not None:
+            drive_env = render_envelope(
+                body_distortion_drive_envelope_raw, n_samples, default_value=1.0
+            )
+        else:
+            drive_env = None
+        body = apply_waveshaper(
+            body,
+            algorithm=body_distortion_name,
+            drive=body_distortion_drive,
+            drive_envelope=drive_env,
+            mix=body_distortion_mix,
+        )
+
+    if body_filter_mode is not None:
+        if body_filter_envelope_raw is not None:
+            cutoff_profile = render_envelope(
+                body_filter_envelope_raw,
+                n_samples,
+                default_value=body_filter_cutoff_hz,
+            )
+        else:
+            cutoff_profile = np.full(n_samples, body_filter_cutoff_hz)
+        body = apply_zdf_svf(
+            body,
+            cutoff_profile=cutoff_profile,
+            resonance_q=body_filter_q,
+            sample_rate=sample_rate,
+            filter_mode=body_filter_mode,
+            filter_drive=body_filter_drive,
+        )
+
+    overtone_phase = integrated_phase(
         freq_profile * overtone_ratio, sample_rate=sample_rate
     )
-    overtone = (
-        overtone_amount
-        * np.sin(overtone_phase)
-        * np.exp(-time / overtone_decay_seconds)
-    )
 
-    rng = _rng_for_note(
+    if overtone_amp_envelope_raw is not None:
+        overtone_env = render_envelope(
+            overtone_amp_envelope_raw, n_samples, default_value=0.0
+        )
+    else:
+        overtone_env = np.exp(-time / overtone_decay_s)
+
+    overtone = overtone_amount * np.sin(overtone_phase) * overtone_env
+
+    rng = rng_for_note(
         freq=freq,
         duration=duration,
         amp=amp,
@@ -133,7 +389,7 @@ def render(
         n_samples=n_samples,
         sample_rate=sample_rate,
         center_hz=click_tone_hz,
-        decay_seconds=click_decay_seconds,
+        decay_seconds=click_decay_s,
         emphasis=2.4,
     )
     noise = _transient_noise(
@@ -141,17 +397,11 @@ def render(
         n_samples=n_samples,
         sample_rate=sample_rate,
         center_hz=noise_bandpass_hz,
-        decay_seconds=noise_decay_seconds,
+        decay_seconds=noise_decay_s,
         emphasis=1.0,
     )
 
     signal = body + overtone + (click_amount * click) + (noise_amount * noise)
-    signal = _apply_drive(signal, drive_ratio=drive_ratio)
-    signal = _one_pole_lowpass(
-        signal,
-        cutoff_hz=min(post_lowpass_hz, sample_rate * 0.48),
-        sample_rate=sample_rate,
-    )
 
     peak = np.max(np.abs(signal))
     if peak > 1e-9:
@@ -178,11 +428,6 @@ def _resolve_base_freq_profile(
     return resolved
 
 
-def _integrated_phase(freq_profile: np.ndarray, *, sample_rate: int) -> np.ndarray:
-    phase_increment = 2.0 * np.pi * freq_profile / sample_rate
-    return np.cumsum(phase_increment)
-
-
 def _oscillator(*, body_wave: str, phase: np.ndarray) -> np.ndarray:
     if body_wave == "sine":
         return np.sin(phase)
@@ -201,72 +446,8 @@ def _transient_noise(
     emphasis: float,
 ) -> np.ndarray:
     raw = rng.standard_normal(n_samples)
-    shaped = _bandpass_noise(raw, sample_rate=sample_rate, center_hz=center_hz)
+    shaped = bandpass_noise(raw, sample_rate=sample_rate, center_hz=center_hz)
     time = np.arange(n_samples, dtype=np.float64) / sample_rate
     envelope = np.exp(-time / decay_seconds)
     envelope[: max(1, n_samples // 512)] *= emphasis
     return shaped * envelope
-
-
-def _bandpass_noise(
-    signal: np.ndarray,
-    *,
-    sample_rate: int,
-    center_hz: float,
-) -> np.ndarray:
-    nyquist = sample_rate / 2.0
-    bounded_center_hz = float(np.clip(center_hz, 40.0, nyquist * 0.95))
-    width_hz = max(140.0, bounded_center_hz * 0.8)
-    spectrum = np.fft.rfft(signal)
-    freqs = np.fft.rfftfreq(signal.size, d=1.0 / sample_rate)
-    mask = np.exp(-0.5 * ((freqs - bounded_center_hz) / max(1.0, width_hz / 2.7)) ** 2)
-    return np.fft.irfft(spectrum * mask, n=signal.size).real
-
-
-def _apply_drive(signal: np.ndarray, *, drive_ratio: float) -> np.ndarray:
-    drive = 1.0 + (7.0 * drive_ratio)
-    driven = np.tanh(drive * signal)
-    return driven / np.tanh(drive)
-
-
-def _one_pole_lowpass(
-    signal: np.ndarray,
-    *,
-    cutoff_hz: float,
-    sample_rate: int,
-) -> np.ndarray:
-    if cutoff_hz >= sample_rate * 0.49:
-        return signal
-
-    dt = 1.0 / sample_rate
-    rc = 1.0 / (2.0 * np.pi * cutoff_hz)
-    alpha = dt / (rc + dt)
-    filtered = np.empty_like(signal)
-    filtered[0] = alpha * signal[0]
-    for sample_index in range(1, signal.size):
-        filtered[sample_index] = filtered[sample_index - 1] + (
-            alpha * (signal[sample_index] - filtered[sample_index - 1])
-        )
-    return filtered
-
-
-def _rng_for_note(
-    *,
-    freq: float,
-    duration: float,
-    amp: float,
-    sample_rate: int,
-    params: dict[str, Any],
-) -> np.random.Generator:
-    seed_material = repr(
-        (
-            round(freq, 6),
-            round(duration, 6),
-            round(amp, 6),
-            sample_rate,
-            tuple(sorted(params.items())),
-        )
-    ).encode("utf-8")
-    seed_bytes = sha256(seed_material).digest()[:8]
-    seed = int.from_bytes(seed_bytes, byteorder="big", signed=False)
-    return np.random.default_rng(seed)

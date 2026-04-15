@@ -130,7 +130,7 @@ def build_study_euclidean_score() -> Score:
     starts = [i * bar_dur for i in range(repetitions)]
 
     score = Score(
-        f0=F0,
+        f0_hz=F0,
         timing_humanize=TimingHumanizeSpec(preset="tight_ensemble", seed=42),
         send_buses=[
             SendBusSpec(

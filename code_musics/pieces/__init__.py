@@ -1,6 +1,9 @@
 """Piece registry exports."""
 
+from code_musics.pieces.additive_studies import PIECES as _ADDITIVE_STUDY_PIECES
+from code_musics.pieces.amber_room import PIECES as _AMBER_ROOM_PIECES
 from code_musics.pieces.beating_light import PIECES as _BEATING_LIGHT_PIECES
+from code_musics.pieces.bell_pulse import PIECES as _BELL_PULSE_PIECES
 from code_musics.pieces.bwv_846 import PIECES as _BWV_846_PIECES
 from code_musics.pieces.bwv_846_fugue import PIECES as _BWV_846_FUGUE_PIECES
 from code_musics.pieces.coltrane_studies import PIECES as _COLTRANE_PIECES
@@ -14,6 +17,8 @@ from code_musics.pieces.crystal_canon import PIECES as _CRYSTAL_CANON_PIECES
 from code_musics.pieces.effects_showcase import PIECES as _EFFECTS_SHOWCASE_PIECES
 from code_musics.pieces.emergence_reverse import PIECES as _EMERGENCE_REVERSE_PIECES
 from code_musics.pieces.harmonic_studies import PIECES as _HARMONIC_STUDY_PIECES
+from code_musics.pieces.iron_pulse import PIECES as _IRON_PULSE_PIECES
+from code_musics.pieces.iron_pulse_v2 import PIECES as _IRON_PULSE_V2_PIECES
 from code_musics.pieces.ji import PIECES as _JI_PIECES
 from code_musics.pieces.justly_intoned_synth import PIECES as _JUSTLY_INTONED_PIECES
 from code_musics.pieces.mellow_studies import PIECES as _MELLOW_PIECES
@@ -26,9 +31,11 @@ from code_musics.pieces.septimal import PIECES as _SEPTIMAL_PIECES
 from code_musics.pieces.septimal_bloom import PIECES as _SEPTIMAL_BLOOM_PIECES
 from code_musics.pieces.seventh_window import PIECES as _SEVENTH_WINDOW_PIECES
 from code_musics.pieces.slow_glass import PIECES as _SLOW_GLASS_PIECES
+from code_musics.pieces.slow_glass_v2 import PIECES as _SLOW_GLASS_V2_PIECES
 from code_musics.pieces.spectral_passage import PIECES as _SPECTRAL_PASSAGE_PIECES
 from code_musics.pieces.spectral_studies import PIECES as _SPECTRAL_STUDY_PIECES
 from code_musics.pieces.studies import PIECES as _STUDIES_PIECES
+from code_musics.pieces.tape_hymn import PIECES as _TAPE_HYMN_PIECES
 from code_musics.pieces.techno_studies import PIECES as _TECHNO_PIECES
 from code_musics.pieces.texture_studies import PIECES as _TEXTURE_STUDY_PIECES
 from code_musics.pieces.trance_studies import PIECES as _TRANCE_PIECES
@@ -36,12 +43,16 @@ from code_musics.pieces.velvet_wall import PIECES as _VELVET_WALL_PIECES
 from code_musics.pieces.wtc_sketches import PIECES as _WTC_PIECES
 
 PIECES = merge_piece_maps(
+    _ADDITIVE_STUDY_PIECES,
+    _AMBER_ROOM_PIECES,
     _BWV_846_PIECES,
     _BWV_846_FUGUE_PIECES,
     _SEPTIMAL_PIECES,
     _SEPTIMAL_BLOOM_PIECES,
     _COUNTERPOINT_PIECES,
     _HARMONIC_STUDY_PIECES,
+    _IRON_PULSE_PIECES,
+    _IRON_PULSE_V2_PIECES,
     _TEXTURE_STUDY_PIECES,
     _COMPOSITION_SHOWCASE_PIECES,
     _JI_PIECES,
@@ -53,6 +64,7 @@ PIECES = merge_piece_maps(
     _NATURAL_STEPS_PIECES,
     _CRYSTAL_CANON_PIECES,
     _SLOW_GLASS_PIECES,
+    _SLOW_GLASS_V2_PIECES,
     _SPECTRAL_PASSAGE_PIECES,
     _SPECTRAL_STUDY_PIECES,
     _TECHNO_PIECES,
@@ -67,6 +79,8 @@ PIECES = merge_piece_maps(
     _EMERGENCE_REVERSE_PIECES,
     _MIRROR_DIALOGUE_PIECES,
     _SEVENTH_WINDOW_PIECES,
+    _TAPE_HYMN_PIECES,
+    _BELL_PULSE_PIECES,
 )
 
 __all__ = ["PIECES"]

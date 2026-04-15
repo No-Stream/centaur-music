@@ -34,10 +34,7 @@ REGISTER_LENGTH = 8
 TONE_POOL = TonePool.from_harmonics([4, 5, 6, 7, 8, 9, 10, 11])
 
 # Euclidean rhythm: 5 hits in 8 steps — a tresillo-adjacent groove
-_rhythm_maybe = euclidean_rhythm(5, 8, span=STEP_DUR)
-if _rhythm_maybe is None:
-    raise ValueError("euclidean_rhythm(5, 8) must produce hits")
-RHYTHM: RhythmCell = _rhythm_maybe
+RHYTHM = euclidean_rhythm(5, 8, span=STEP_DUR)
 
 # Section durations in pattern repeats
 LOCKED_REPEATS = 4  # 4 full cycles of the 8-step pattern
@@ -53,7 +50,7 @@ DISSOLVE_STEPS = DISSOLVE_REPEATS * STEPS_PER_REPEAT
 def build_score() -> Score:
     """Build the Turing Machine study score."""
     score = Score(
-        f0=F0_HZ,
+        f0_hz=F0_HZ,
         timing_humanize=TimingHumanizeSpec(preset="tight_ensemble"),
         master_effects=[
             EffectSpec(

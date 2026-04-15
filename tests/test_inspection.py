@@ -18,7 +18,7 @@ def test_parse_timestamp_seconds_supports_common_formats() -> None:
 
 
 def test_inspect_score_timestamp_reports_section_and_notes() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_note("bass", start=0.0, duration=4.0, partial=2.0, amp=0.2)
     score.add_note("lead", start=2.0, duration=1.0, partial=6.0, amp=0.2, label="entry")
 

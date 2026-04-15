@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "piece_name": "slow_glass",
+  "output_name": "slow_glass",
+  "sample_rate": 44100,
+  "bit_depth": 24,
+  "dry": false,
+  "total_duration_seconds": 135.5213,
+  "total_samples": 5976488,
+  "voice_stems": [
+    {
+      "name": "bass",
+      "kind": "voice",
+      "path": "voices/bass.wav",
+      "channels": 1,
+      "sample_count": 5976488,
+      "peak_dbfs": -15.25
+    },
+    {
+      "name": "ghost",
+      "kind": "voice",
+      "path": "voices/ghost.wav",
+      "channels": 2,
+      "sample_count": 5976488,
+      "peak_dbfs": -13.18
+    },
+    {
+      "name": "harmony",
+      "kind": "voice",
+      "path": "voices/harmony.wav",
+      "channels": 2,
+      "sample_count": 5976488,
+      "peak_dbfs": -12.73
+    },
+    {
+      "name": "melody",
+      "kind": "voice",
+      "path": "voices/melody.wav",
+      "channels": 1,
+      "sample_count": 5976488,
+      "peak_dbfs": -12.72
+    },
+    {
+      "name": "texture",
+      "kind": "voice",
+      "path": "voices/texture.wav",
+      "channels": 1,
+      "sample_count": 5976488,
+      "peak_dbfs": -18.2
+    }
+  ],
+  "send_stems": [],
+  "mix_path": "mix.wav",
+  "processing_notes": "Voice stems include: normalization, pre_fx_gain, pan, voice effects, mix_db fader. Send stems include: bus summing, bus effects, return_db, bus pan. Stems sum to the pre-master mix (before auto gain staging and master effects). The reference mix includes full mastering.",
+  "stem_gain_db": 0.0,
+  "warnings": []
+}

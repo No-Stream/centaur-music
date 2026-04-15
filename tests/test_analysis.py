@@ -112,7 +112,7 @@ def test_analyze_audio_reports_extreme_compression_artifact_risk() -> None:
 
 
 def test_analyze_score_reports_density_and_ranges() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_note("bass", start=0.0, duration=3.0, partial=2.0, amp=0.2)
     score.add_note("lead", start=0.0, duration=1.0, partial=6.0, amp=0.2)
     score.add_note("lead", start=1.0, duration=1.0, partial=7.0, amp=0.2)
@@ -130,7 +130,7 @@ def test_analyze_score_reports_density_and_ranges() -> None:
 
 def test_analyze_score_reports_timing_drift_stats() -> None:
     score = Score(
-        f0=55.0,
+        f0_hz=55.0,
         timing_humanize=TimingHumanizeSpec(
             preset="loose_late_night",
             ensemble_amount_ms=24.0,
@@ -152,7 +152,7 @@ def test_analyze_score_reports_timing_drift_stats() -> None:
 
 
 def test_build_score_timeline_includes_sections_and_resolved_notes() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_note("bass", start=0.0, duration=1.0, partial=2.0, amp=0.2)
     score.add_note(
         "lead", start=0.5, duration=0.5, partial=6.0, amp=0.2, label="pickup"
@@ -169,7 +169,7 @@ def test_build_score_timeline_includes_sections_and_resolved_notes() -> None:
 
 
 def test_save_analysis_artifacts_writes_manifest_and_plots(tmp_path: Path) -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_send_bus(
         "room",
         effects=[
@@ -287,7 +287,7 @@ def test_save_analysis_artifacts_flags_loudness_jump_with_crest_collapse(
 
 
 def test_save_analysis_artifacts_records_artifact_risk_report(tmp_path: Path) -> None:
-    risky_score = Score(f0=55.0)
+    risky_score = Score(f0_hz=55.0)
     risky_score.add_voice(
         "lead",
         synth_defaults={
@@ -337,7 +337,7 @@ def test_save_analysis_artifacts_records_artifact_risk_report(tmp_path: Path) ->
         == 1
     )
 
-    safe_score = Score(f0=55.0)
+    safe_score = Score(f0_hz=55.0)
     safe_score.add_voice(
         "lead",
         synth_defaults={
@@ -381,7 +381,7 @@ def test_save_analysis_artifacts_records_artifact_risk_report(tmp_path: Path) ->
 def test_save_analysis_artifacts_reports_implausibly_wide_velocity_filter_env_span(
     tmp_path: Path,
 ) -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_voice(
         "lead",
         synth_defaults={

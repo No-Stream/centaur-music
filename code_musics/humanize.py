@@ -63,24 +63,24 @@ _TIMING_PRESETS: dict[str, dict[str, Any]] = {
 _ENVELOPE_PRESETS: dict[str, dict[str, Any]] = {
     "subtle_analog": {
         "drift": {"style": "smooth_noise", "rate_hz": 0.09, "smoothness": 0.75},
-        "attack_amount_pct": 0.08,
-        "decay_amount_pct": 0.06,
-        "sustain_amount_pct": 0.04,
-        "release_amount_pct": 0.08,
+        "attack_amount_frac": 0.08,
+        "decay_amount_frac": 0.06,
+        "sustain_amount_frac": 0.04,
+        "release_amount_frac": 0.08,
     },
     "breathing_pad": {
         "drift": {"style": "smooth_noise", "rate_hz": 0.06, "smoothness": 0.85},
-        "attack_amount_pct": 0.16,
-        "decay_amount_pct": 0.12,
-        "sustain_amount_pct": 0.06,
-        "release_amount_pct": 0.18,
+        "attack_amount_frac": 0.16,
+        "decay_amount_frac": 0.12,
+        "sustain_amount_frac": 0.06,
+        "release_amount_frac": 0.18,
     },
     "loose_pluck": {
         "drift": {"style": "smooth_noise", "rate_hz": 0.12, "smoothness": 0.62},
-        "attack_amount_pct": 0.12,
-        "decay_amount_pct": 0.14,
-        "sustain_amount_pct": 0.05,
-        "release_amount_pct": 0.12,
+        "attack_amount_frac": 0.12,
+        "decay_amount_frac": 0.14,
+        "sustain_amount_frac": 0.05,
+        "release_amount_frac": 0.12,
     },
 }
 
@@ -217,10 +217,10 @@ class EnvelopeHumanizeSpec:
 
     preset: str | None = None
     drift: DriftSpec | None = None
-    attack_amount_pct: float | None = None
-    decay_amount_pct: float | None = None
-    sustain_amount_pct: float | None = None
-    release_amount_pct: float | None = None
+    attack_amount_frac: float | None = None
+    decay_amount_frac: float | None = None
+    sustain_amount_frac: float | None = None
+    release_amount_frac: float | None = None
     seed: int | None = None
 
     def __post_init__(self) -> None:
@@ -230,42 +230,42 @@ class EnvelopeHumanizeSpec:
         preset = _ENVELOPE_PRESETS[preset_name]
 
         drift_value = self.drift or DriftSpec(**preset["drift"])
-        attack_amount_pct = float(
-            preset["attack_amount_pct"]
-            if self.attack_amount_pct is None
-            else self.attack_amount_pct
+        attack_amount_frac = float(
+            preset["attack_amount_frac"]
+            if self.attack_amount_frac is None
+            else self.attack_amount_frac
         )
-        decay_amount_pct = float(
-            preset["decay_amount_pct"]
-            if self.decay_amount_pct is None
-            else self.decay_amount_pct
+        decay_amount_frac = float(
+            preset["decay_amount_frac"]
+            if self.decay_amount_frac is None
+            else self.decay_amount_frac
         )
-        sustain_amount_pct = float(
-            preset["sustain_amount_pct"]
-            if self.sustain_amount_pct is None
-            else self.sustain_amount_pct
+        sustain_amount_frac = float(
+            preset["sustain_amount_frac"]
+            if self.sustain_amount_frac is None
+            else self.sustain_amount_frac
         )
-        release_amount_pct = float(
-            preset["release_amount_pct"]
-            if self.release_amount_pct is None
-            else self.release_amount_pct
+        release_amount_frac = float(
+            preset["release_amount_frac"]
+            if self.release_amount_frac is None
+            else self.release_amount_frac
         )
 
         object.__setattr__(self, "preset", preset_name)
         object.__setattr__(self, "drift", drift_value)
-        object.__setattr__(self, "attack_amount_pct", attack_amount_pct)
-        object.__setattr__(self, "decay_amount_pct", decay_amount_pct)
-        object.__setattr__(self, "sustain_amount_pct", sustain_amount_pct)
-        object.__setattr__(self, "release_amount_pct", release_amount_pct)
+        object.__setattr__(self, "attack_amount_frac", attack_amount_frac)
+        object.__setattr__(self, "decay_amount_frac", decay_amount_frac)
+        object.__setattr__(self, "sustain_amount_frac", sustain_amount_frac)
+        object.__setattr__(self, "release_amount_frac", release_amount_frac)
 
-        if attack_amount_pct < 0:
-            raise ValueError("attack_amount_pct must be non-negative")
-        if decay_amount_pct < 0:
-            raise ValueError("decay_amount_pct must be non-negative")
-        if sustain_amount_pct < 0:
-            raise ValueError("sustain_amount_pct must be non-negative")
-        if release_amount_pct < 0:
-            raise ValueError("release_amount_pct must be non-negative")
+        if attack_amount_frac < 0:
+            raise ValueError("attack_amount_frac must be non-negative")
+        if decay_amount_frac < 0:
+            raise ValueError("decay_amount_frac must be non-negative")
+        if sustain_amount_frac < 0:
+            raise ValueError("sustain_amount_frac must be non-negative")
+        if release_amount_frac < 0:
+            raise ValueError("release_amount_frac must be non-negative")
 
 
 @dataclass(frozen=True)
@@ -461,18 +461,18 @@ def resolve_envelope_params(
     drift = humanize.drift
     if drift is None:
         raise ValueError("drift must be resolved")
-    attack_amount_pct = humanize.attack_amount_pct
-    if attack_amount_pct is None:
-        raise ValueError("attack_amount_pct must be resolved")
-    decay_amount_pct = humanize.decay_amount_pct
-    if decay_amount_pct is None:
-        raise ValueError("decay_amount_pct must be resolved")
-    sustain_amount_pct = humanize.sustain_amount_pct
-    if sustain_amount_pct is None:
-        raise ValueError("sustain_amount_pct must be resolved")
-    release_amount_pct = humanize.release_amount_pct
-    if release_amount_pct is None:
-        raise ValueError("release_amount_pct must be resolved")
+    attack_amount_frac = humanize.attack_amount_frac
+    if attack_amount_frac is None:
+        raise ValueError("attack_amount_frac must be resolved")
+    decay_amount_frac = humanize.decay_amount_frac
+    if decay_amount_frac is None:
+        raise ValueError("decay_amount_frac must be resolved")
+    sustain_amount_frac = humanize.sustain_amount_frac
+    if sustain_amount_frac is None:
+        raise ValueError("sustain_amount_frac must be resolved")
+    release_amount_frac = humanize.release_amount_frac
+    if release_amount_frac is None:
+        raise ValueError("release_amount_frac must be resolved")
 
     shared_seed = _seed_or_default(
         humanize.seed, "envelope", humanize.preset, voice_name
@@ -495,23 +495,23 @@ def resolve_envelope_params(
 
     attack = max(
         0.0,
-        base_attack * (1.0 + (attack_amount_pct * _parameter_curve("attack"))),
+        base_attack * (1.0 + (attack_amount_frac * _parameter_curve("attack"))),
     )
     decay = max(
         0.0,
-        base_decay * (1.0 + (decay_amount_pct * _parameter_curve("decay"))),
+        base_decay * (1.0 + (decay_amount_frac * _parameter_curve("decay"))),
     )
     sustain_level = float(
         np.clip(
             base_sustain_level
-            * (1.0 + (sustain_amount_pct * _parameter_curve("sustain"))),
+            * (1.0 + (sustain_amount_frac * _parameter_curve("sustain"))),
             0.0,
             1.0,
         )
     )
     release = max(
         0.0,
-        base_release * (1.0 + (release_amount_pct * _parameter_curve("release"))),
+        base_release * (1.0 + (release_amount_frac * _parameter_curve("release"))),
     )
     return attack, decay, sustain_level, release
 

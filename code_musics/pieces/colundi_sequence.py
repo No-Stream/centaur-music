@@ -124,7 +124,7 @@ TOTAL_BARS: int = 52
 def build_score() -> Score:
     """Build the Colundi Sequence score."""
     score = Score(
-        f0=F0,
+        f0_hz=F0,
         master_effects=[
             EffectSpec(
                 "compressor",

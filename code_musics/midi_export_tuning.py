@@ -22,7 +22,9 @@ def analyze_tuning(
     spec: MidiBundleExportSpec,
 ) -> TuningAnalysisResult:
     reference_frequency_hz = (
-        score.f0 if spec.reference_frequency_hz is None else spec.reference_frequency_hz
+        score.f0_hz
+        if spec.reference_frequency_hz is None
+        else spec.reference_frequency_hz
     )
     if reference_frequency_hz <= 0:
         raise ValueError("reference_frequency_hz must be positive")

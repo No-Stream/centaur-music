@@ -79,7 +79,7 @@ def build_spectral_kick() -> Score:
     Kick: 909-style, 4-on-the-floor.
     """
     score = Score(
-        f0=F0,
+        f0_hz=F0,
         master_effects=[
             EffectSpec(
                 "compressor",

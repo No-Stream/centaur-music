@@ -67,7 +67,7 @@ _h7_HI = 7.0  # ~G5  770.0 Hz
 def build_score() -> Score:
     """Build the Slow Glass score."""
     score = Score(
-        f0=110.0,
+        f0_hz=110.0,
         timing_humanize=TimingHumanizeSpec(preset="chamber", seed=42),
         master_effects=[
             EffectSpec(

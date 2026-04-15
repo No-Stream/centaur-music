@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -121,7 +122,7 @@ class NoteEvent:
     synth: dict[str, Any] | None = None
     label: str | None = None
     pitch_motion: PitchMotionSpec | None = None
-    automation: list[AutomationSpec] | None = None
+    automation: list[AutomationSpec] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.duration <= 0:
@@ -176,18 +177,58 @@ class Phrase:
     def from_partials(
         cls,
         partials: list[float],
-        note_dur: float,
-        step: float,
+        duration: float | None = None,
+        onset_interval: float | None = None,
+        *,
         amp: float | None = None,
         amp_db: float | None = None,
         velocity: float = 1.0,
         synth_defaults: dict[str, Any] | None = None,
+        # deprecated aliases
+        note_dur: float | None = None,
+        step: float | None = None,
     ) -> Phrase:
-        """Create a phrase from equally spaced harmonic partials."""
+        """Create a phrase from equally spaced harmonic partials.
+
+        Parameters
+        ----------
+        duration : float
+            Duration of each note event in seconds.
+        onset_interval : float
+            Time between successive note onsets in seconds.
+        note_dur : float, optional
+            **Deprecated** — use *duration* instead.
+        step : float, optional
+            **Deprecated** — use *onset_interval* instead.
+        """
+        # Handle deprecated aliases ------------------------------------------------
+        if note_dur is not None:
+            if duration is not None:
+                raise ValueError("Cannot specify both 'note_dur' and 'duration'")
+            warnings.warn(
+                "Phrase.from_partials: 'note_dur' is deprecated, use 'duration'",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            duration = note_dur
+        if step is not None:
+            if onset_interval is not None:
+                raise ValueError("Cannot specify both 'step' and 'onset_interval'")
+            warnings.warn(
+                "Phrase.from_partials: 'step' is deprecated, use 'onset_interval'",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            onset_interval = step
+        if duration is None:
+            raise TypeError("from_partials() requires 'duration'")
+        if onset_interval is None:
+            raise TypeError("from_partials() requires 'onset_interval'")
+        # --------------------------------------------------------------------------
         events = tuple(
             NoteEvent(
-                start=index * step,
-                duration=note_dur,
+                start=index * onset_interval,
+                duration=duration,
                 amp=amp,
                 amp_db=amp_db,
                 velocity=velocity,
@@ -211,6 +252,7 @@ class Phrase:
         start: float = 0.0,
         time_scale: float = 1.0,
         partial_shift: float = 0.0,
+        freq_scale: float = 1.0,
         amp_scale: float = 1.0,
         reverse: bool = False,
     ) -> list[NoteEvent]:
@@ -219,6 +261,8 @@ class Phrase:
             raise ValueError("time_scale must be positive")
         if amp_scale <= 0:
             raise ValueError("amp_scale must be positive")
+        if freq_scale <= 0:
+            raise ValueError("freq_scale must be positive")
 
         transformed_events: list[NoteEvent] = []
         phrase_duration = self.duration
@@ -237,6 +281,9 @@ class Phrase:
             new_partial = (
                 None if event.partial is None else event.partial + partial_shift
             )
+            new_freq = event.freq
+            if new_freq is not None and freq_scale != 1.0:
+                new_freq *= freq_scale
             transformed_events.append(
                 replace(
                     event,
@@ -245,6 +292,7 @@ class Phrase:
                     amp=resolved_amp * amp_scale,
                     amp_db=None,
                     partial=new_partial,
+                    freq=new_freq,
                 )
             )
 
@@ -302,9 +350,10 @@ class Voice:
     normalize_peak_db: float | None = None
     max_polyphony: int | None = None
     legato: bool = False
+    choke_group: str | None = None
     pan: float = 0.0
     sympathetic_amount: float = 0.0
-    sympathetic_decay: float = 2.0
+    sympathetic_decay_s: float = 2.0
     sympathetic_modes: int = 8
     automation: list[AutomationSpec] = field(default_factory=list)
     notes: list[NoteEvent] = field(default_factory=list)
@@ -351,7 +400,7 @@ class PreparedVoiceNote:
 class Score:
     """Top-level composition model and renderer."""
 
-    f0: float
+    f0_hz: float
     sample_rate: int = synth.SAMPLE_RATE
     timing_humanize: TimingHumanizeSpec | None = None
     auto_master_gain_stage: bool = True
@@ -393,9 +442,10 @@ class Score:
         normalize_peak_db: float | None = None,
         max_polyphony: int | None = None,
         legato: bool = False,
+        choke_group: str | None = None,
         pan: float = 0.0,
         sympathetic_amount: float = 0.0,
-        sympathetic_decay: float = 2.0,
+        sympathetic_decay_s: float = 2.0,
         sympathetic_modes: int = 8,
         automation: list[AutomationSpec] | None = None,
     ) -> Voice:
@@ -444,9 +494,10 @@ class Score:
             normalize_peak_db=normalize_peak_db,
             max_polyphony=max_polyphony,
             legato=legato,
+            choke_group=choke_group,
             pan=pan,
             sympathetic_amount=sympathetic_amount,
-            sympathetic_decay=sympathetic_decay,
+            sympathetic_decay_s=sympathetic_decay_s,
             sympathetic_modes=sympathetic_modes,
             automation=list(automation or []),
         )
@@ -514,7 +565,7 @@ class Score:
             synth=dict(synth) if synth is not None else None,
             label=label,
             pitch_motion=pitch_motion,
-            automation=list(automation) if automation is not None else None,
+            automation=list(automation) if automation else [],
         )
         self.get_or_create_voice(voice_name).notes.append(note)
         return note
@@ -529,8 +580,13 @@ class Score:
         partial_shift: float = 0.0,
         amp_scale: float = 1.0,
         reverse: bool = False,
+        synth: dict[str, Any] | None = None,
     ) -> list[NoteEvent]:
-        """Place a phrase on a voice with optional transforms."""
+        """Place a phrase on a voice with optional transforms.
+
+        When *synth* is provided, its entries are merged into each placed note's
+        synth overrides as a base layer — note-level overrides win on conflict.
+        """
         placed_notes = phrase.transformed(
             start=start,
             time_scale=time_scale,
@@ -538,6 +594,15 @@ class Score:
             amp_scale=amp_scale,
             reverse=reverse,
         )
+        if synth is not None:
+            merged_notes: list[NoteEvent] = []
+            for note in placed_notes:
+                if note.synth is not None:
+                    merged = {**synth, **note.synth}
+                else:
+                    merged = dict(synth)
+                merged_notes.append(replace(note, synth=merged))
+            placed_notes = merged_notes
         voice = self.get_or_create_voice(voice_name)
         voice.notes.extend(placed_notes)
         return placed_notes
@@ -554,7 +619,7 @@ class Score:
 
     def render(self) -> np.ndarray:
         """Render the score to mono or stereo audio."""
-        stems, send_returns, _, _ = self._render_mix_components_internal(
+        stems, send_returns, _, _, _ = self._render_mix_components_internal(
             collect_effect_analysis=False
         )
         mix_inputs = [*stems.values(), *send_returns.values()]
@@ -574,7 +639,7 @@ class Score:
         np.ndarray, dict[str, np.ndarray], dict[str, np.ndarray], dict[str, Any]
     ]:
         """Render the score plus per-effect diagnostics for agents and analysis."""
-        stems, send_returns, voice_effects, send_effects = (
+        stems, send_returns, voice_effects, send_effects, _ = (
             self._render_mix_components_internal(
                 collect_effect_analysis=collect_effect_analysis
             )
@@ -643,7 +708,7 @@ class Score:
             else self.total_dur
         )
         return Score(
-            f0=self.f0,
+            f0_hz=self.f0_hz,
             sample_rate=self.sample_rate,
             timing_humanize=self.timing_humanize,
             auto_master_gain_stage=self.auto_master_gain_stage,
@@ -659,7 +724,7 @@ class Score:
 
     def render_stems(self) -> dict[str, np.ndarray]:
         """Render each voice independently before master-bus effects."""
-        rendered_stems, _, _, _ = self._render_mix_components_internal(
+        rendered_stems, _, _, _, _ = self._render_mix_components_internal(
             collect_effect_analysis=False
         )
         return rendered_stems
@@ -668,13 +733,109 @@ class Score:
         self,
     ) -> tuple[dict[str, np.ndarray], dict[str, list[dict[str, Any]]]]:
         """Render stems plus voice-level effect diagnostics."""
-        rendered_stems, _, voice_effects, _ = self._render_mix_components_internal(
+        rendered_stems, _, voice_effects, _, _ = self._render_mix_components_internal(
             collect_effect_analysis=True
         )
         return rendered_stems, {
             voice_name: [entry.to_dict() for entry in entries]
             for voice_name, entries in voice_effects.items()
         }
+
+    def render_for_stem_export(
+        self, *, dry: bool = False
+    ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], np.ndarray]:
+        """Render all components needed for audio stem WAV export.
+
+        Returns (voice_stems, send_returns, mix_audio) where:
+        - voice_stems: wet (post-effects/pan/fader) or dry (post-normalization only)
+        - send_returns: mixed bus returns (empty dict if dry=True)
+        - mix_audio: always the full wet mix with master bus processing
+        """
+        wet_stems, send_returns, _, _, dry_stems = self._render_mix_components_internal(
+            collect_effect_analysis=False
+        )
+        # Build the full wet mix for reference
+        mix_inputs = [*wet_stems.values(), *send_returns.values()]
+        if not mix_inputs:
+            mix = np.zeros(0)
+        else:
+            mix = self._stack_signals(mix_inputs)
+            mix = self._apply_master_bus_processing(mix)
+
+        if dry:
+            return dry_stems, {}, mix
+        return wet_stems, send_returns, mix
+
+    def _apply_choke_groups(
+        self,
+        rendered_voice_bases: dict[str, np.ndarray],
+        timing_offsets: dict[tuple[str, int], float],
+    ) -> None:
+        """Apply choke-group fade-outs across voices that share a group.
+
+        For each choke group, when a note starts in one voice, all other
+        voices in the same group are faded to silence over 10 ms from that
+        onset.  Modifies *rendered_voice_bases* in place.
+        """
+        choke_fade_ms = 10.0
+        groups: dict[str, list[str]] = {}
+        for voice_name, voice in self.voices.items():
+            if voice.choke_group is not None:
+                groups.setdefault(voice.choke_group, []).append(voice_name)
+
+        for group_voices in groups.values():
+            if len(group_voices) < 2:
+                continue
+
+            onsets: list[tuple[float, str]] = []
+            for vn in group_voices:
+                for i, note in enumerate(self.voices[vn].notes):
+                    offset = timing_offsets.get((vn, i), 0.0)
+                    onsets.append((max(0.0, note.start + offset), vn))
+            onsets.sort(key=lambda x: x[0])
+
+            fade_samples = max(1, int(choke_fade_ms / 1000.0 * self.sample_rate))
+
+            # Pre-compute per-voice onset sample sets for finding the "silence
+            # until next own-voice note" boundary after the fade.
+            voice_onset_samples: dict[str, list[int]] = {}
+            for vn in group_voices:
+                sorted_samples = sorted(
+                    int(
+                        (note.start + timing_offsets.get((vn, i), 0.0))
+                        * self.sample_rate
+                    )
+                    for i, note in enumerate(self.voices[vn].notes)
+                )
+                voice_onset_samples[vn] = sorted_samples
+
+            for onset_time, onset_voice in onsets:
+                onset_sample = int(onset_time * self.sample_rate)
+                for vn in group_voices:
+                    if vn == onset_voice:
+                        continue
+                    buf = rendered_voice_bases[vn]
+                    buf_len = buf.shape[-1] if buf.ndim > 1 else buf.shape[0]
+                    if onset_sample >= buf_len:
+                        continue
+                    end = min(onset_sample + fade_samples, buf_len)
+                    fade_len = end - onset_sample
+                    fade = np.linspace(1.0, 0.0, fade_len)
+
+                    # Find next onset of the choked voice after the fade to
+                    # limit the zero region — don't erase future notes.
+                    zero_end = buf_len
+                    for own_onset in voice_onset_samples[vn]:
+                        if own_onset > onset_sample:
+                            zero_end = own_onset
+                            break
+
+                    if buf.ndim == 1:
+                        buf[onset_sample:end] *= fade
+                        buf[end:zero_end] = 0.0
+                    else:
+                        buf[:, onset_sample:end] *= fade[np.newaxis, :]
+                        buf[:, end:zero_end] = 0.0
 
     def _render_mix_components_internal(
         self,
@@ -685,6 +846,7 @@ class Score:
         dict[str, np.ndarray],
         dict[str, list[synth.EffectAnalysisEntry]],
         dict[str, list[synth.EffectAnalysisEntry]],
+        dict[str, np.ndarray],
     ]:
         """Render dry stems, send returns, and optional effect diagnostics."""
         voice_effects: dict[str, list[synth.EffectAnalysisEntry]] = {}
@@ -702,6 +864,8 @@ class Score:
                 timing_offsets=timing_offsets,
                 velocity_multipliers=velocity_multipliers,
             )
+
+        self._apply_choke_groups(rendered_voice_bases, timing_offsets)
 
         processed_voice_outputs: dict[str, np.ndarray] = {}
         for voice_name in self._voice_processing_order():
@@ -731,7 +895,13 @@ class Score:
             send_inputs=send_inputs,
             collect_effect_analysis=collect_effect_analysis,
         )
-        return rendered_stems, send_returns, voice_effects, send_effects
+        # dry_stems: post-normalization, post-choke, pre-effects/pan/fader
+        dry_stems = {
+            name: rendered_voice_bases[name]
+            for name in self.voices
+            if name in rendered_voice_bases and rendered_voice_bases[name].size > 0
+        }
+        return rendered_stems, send_returns, voice_effects, send_effects, dry_stems
 
     def resolve_timing_offsets(self) -> dict[tuple[str, int], float]:
         """Return the deterministic render-time timing offset for each note."""
@@ -784,7 +954,7 @@ class Score:
                 else:
                     if note.freq is None:
                         raise ValueError("note must define partial or freq")
-                    pitch_value = float(note.freq / self.f0)
+                    pitch_value = float(note.freq / self.f0_hz)
                 axis.broken_barh(
                     [(note.start, note.duration)],
                     (base_y + pitch_value, 0.8),
@@ -942,7 +1112,7 @@ class Score:
             voice_mix.astype(np.float64) if voice_mix.dtype != np.float64 else voice_mix
         )
         t_all = np.arange(n_samples, dtype=np.float64) / sr
-        decay_tau = max(voice.sympathetic_decay, 0.01)
+        decay_tau = max(voice.sympathetic_decay_s, 0.01)
 
         # Phase 1: measure excitation per mode (loop over segments, not full arrays)
         excited: list[tuple[float, int, float]] = []
@@ -1062,7 +1232,7 @@ class Score:
             if note.pitch_motion is not None:
                 motion = note.pitch_motion
                 if motion.kind == "linear_bend":
-                    target_freq = motion.target_frequency(score_f0=self.f0)
+                    target_freq = motion.target_frequency(score_f0_hz=self.f0_hz)
                     # linear_bend: note starts at note_freq, bends toward target.
                     # Engine glide: note starts at glide_from, bends toward freq.
                     note_dict["freq"] = target_freq
@@ -1124,6 +1294,7 @@ class Score:
             if note.synth is not None:
                 synth_params.update(normalize_synth_spec(note.synth))
             synth_params = resolve_synth_params(synth_params)
+            synth_params["_voice_name"] = voice_name
             resolved_velocity = float(
                 np.clip(
                     note.velocity
@@ -1138,7 +1309,7 @@ class Score:
                     for param_name, velocity_map in voice.velocity_to_params.items()
                 }
             )
-            note_automation = list(note.automation or [])
+            note_automation = list(note.automation)
             absolute_note_start = self._absolute_note_start(note.start)
             synth_params = apply_synth_automation(
                 params=synth_params,
@@ -1179,7 +1350,7 @@ class Score:
                     duration=note.duration,
                     sample_rate=self.sample_rate,
                     motion=note.pitch_motion,
-                    score_f0=self.f0,
+                    score_f0_hz=self.f0_hz,
                 )
                 release_samples = max(0, total_samples - held_samples)
                 if release_samples > 0:
@@ -1591,7 +1762,7 @@ class Score:
         assert (
             note.partial is not None
         )  # NoteEvent invariant: exactly one of partial/freq
-        return self.f0 * note.partial
+        return self.f0_hz * note.partial
 
     def _signal_times(self, sample_count: int) -> np.ndarray:
         return self.time_origin_seconds + (

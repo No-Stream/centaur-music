@@ -34,7 +34,7 @@ from code_musics.score import (
 
 
 def test_total_duration_is_derived_from_note_endpoints() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_note("a", start=1.0, duration=2.5, partial=4)
     score.add_note("b", start=0.5, duration=5.0, partial=6)
 
@@ -42,7 +42,7 @@ def test_total_duration_is_derived_from_note_endpoints() -> None:
 
 
 def test_phrase_and_direct_note_have_matching_timing() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     phrase = Phrase(events=(NoteEvent(start=0.0, duration=1.2, partial=5, amp=0.4),))
 
     placed = score.add_phrase("lead", phrase, start=3.0)
@@ -54,8 +54,71 @@ def test_phrase_and_direct_note_have_matching_timing() -> None:
     assert placed[0].amp == direct.amp
 
 
+def test_add_phrase_synth_applies_to_all_notes() -> None:
+    score = Score(f0_hz=55.0)
+    phrase = Phrase(
+        events=(
+            NoteEvent(start=0.0, duration=0.5, partial=4),
+            NoteEvent(start=0.5, duration=0.5, partial=5),
+        )
+    )
+
+    placed = score.add_phrase(
+        "lead", phrase, start=0.0, synth={"spectral_gravity": 0.5}
+    )
+
+    assert placed[0].synth == {"spectral_gravity": 0.5}
+    assert placed[1].synth == {"spectral_gravity": 0.5}
+
+
+def test_add_phrase_note_level_synth_wins_over_phrase_level() -> None:
+    score = Score(f0_hz=55.0)
+    phrase = Phrase(
+        events=(
+            NoteEvent(start=0.0, duration=0.5, partial=4, synth={"attack": 0.01}),
+            NoteEvent(
+                start=0.5,
+                duration=0.5,
+                partial=5,
+                synth={"spectral_gravity": 0.9},
+            ),
+        )
+    )
+
+    placed = score.add_phrase(
+        "lead",
+        phrase,
+        start=0.0,
+        synth={"spectral_gravity": 0.5, "decay": 0.2},
+    )
+
+    # Note 0: note-level has attack only, phrase-level fills in the rest
+    assert placed[0].synth == {
+        "spectral_gravity": 0.5,
+        "decay": 0.2,
+        "attack": 0.01,
+    }
+    # Note 1: note-level spectral_gravity=0.9 wins over phrase-level 0.5
+    assert placed[1].synth == {"spectral_gravity": 0.9, "decay": 0.2}
+
+
+def test_add_phrase_synth_none_is_backward_compatible() -> None:
+    score = Score(f0_hz=55.0)
+    phrase = Phrase(
+        events=(
+            NoteEvent(start=0.0, duration=0.5, partial=4),
+            NoteEvent(start=0.5, duration=0.5, partial=5, synth={"attack": 0.01}),
+        )
+    )
+
+    placed = score.add_phrase("lead", phrase, start=0.0, synth=None)
+
+    assert placed[0].synth is None
+    assert placed[1].synth == {"attack": 0.01}
+
+
 def test_note_event_and_add_note_support_amp_db() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     note = NoteEvent(start=0.0, duration=1.0, partial=4.0, amp_db=-12.0)
     placed = score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp_db=-12.0)
 
@@ -81,7 +144,7 @@ def test_note_event_rejects_amp_and_amp_db_together() -> None:
 
 
 def test_phrase_transforms_do_not_mutate_original() -> None:
-    phrase = Phrase.from_partials([4, 5, 6], note_dur=1.0, step=0.8, amp=0.5)
+    phrase = Phrase.from_partials([4, 5, 6], duration=1.0, onset_interval=0.8, amp=0.5)
     original_partials = [event.partial for event in phrase.events]
 
     transformed = phrase.transformed(
@@ -94,7 +157,9 @@ def test_phrase_transforms_do_not_mutate_original() -> None:
 
 
 def test_phrase_from_partials_supports_amp_db() -> None:
-    phrase = Phrase.from_partials([4, 5], note_dur=1.0, step=0.5, amp_db=-18.0)
+    phrase = Phrase.from_partials(
+        [4, 5], duration=1.0, onset_interval=0.5, amp_db=-18.0
+    )
 
     assert [event.amp_db for event in phrase.events] == [-18.0, -18.0]
     assert [event.amp for event in phrase.events] == pytest.approx(
@@ -103,7 +168,9 @@ def test_phrase_from_partials_supports_amp_db() -> None:
 
 
 def test_phrase_from_partials_supports_velocity() -> None:
-    phrase = Phrase.from_partials([4, 5], note_dur=1.0, step=0.5, velocity=0.92)
+    phrase = Phrase.from_partials(
+        [4, 5], duration=1.0, onset_interval=0.5, velocity=0.92
+    )
 
     assert [event.velocity for event in phrase.events] == pytest.approx([0.92, 0.92])
 
@@ -135,6 +202,41 @@ def test_phrase_transform_preserves_velocity() -> None:
     transformed = phrase.transformed(start=2.0, time_scale=1.5, reverse=True)
 
     assert transformed[0].velocity == pytest.approx(0.8)
+
+
+def test_phrase_transform_freq_scale() -> None:
+    phrase = Phrase(
+        events=(
+            NoteEvent(start=0.0, duration=1.0, freq=200.0, amp=0.5),
+            NoteEvent(start=1.0, duration=1.0, freq=300.0, amp=0.5),
+        )
+    )
+
+    transformed = phrase.transformed(freq_scale=1.5)
+
+    assert transformed[0].freq == pytest.approx(300.0)
+    assert transformed[1].freq == pytest.approx(450.0)
+    # partials remain None for freq-based events
+    assert transformed[0].partial is None
+    assert transformed[1].partial is None
+
+
+def test_phrase_transform_freq_scale_ignores_partial_events() -> None:
+    phrase = Phrase(
+        events=(
+            NoteEvent(start=0.0, duration=1.0, partial=4.0, amp=0.5),
+            NoteEvent(start=1.0, duration=1.0, freq=200.0, amp=0.5),
+        )
+    )
+
+    transformed = phrase.transformed(freq_scale=2.0, partial_shift=1.0)
+
+    # partial event gets partial_shift, freq unchanged (None)
+    assert transformed[0].partial == pytest.approx(5.0)
+    assert transformed[0].freq is None
+    # freq event gets freq_scale, partial unchanged (None)
+    assert transformed[1].freq == pytest.approx(400.0)
+    assert transformed[1].partial is None
 
 
 def test_note_event_supports_automation() -> None:
@@ -219,7 +321,6 @@ def test_synth_automation_params_accepted() -> None:
         "click_amount",
         "cutoff_hz",
         "decay",
-        "drive_ratio",
         "feedback",
         "filter_drive",
         "filter_env_amount",
@@ -249,7 +350,7 @@ def test_synth_automation_rejects_unsupported_param() -> None:
 
 
 def test_render_overlapping_voices_returns_audio() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_note("a", start=0.0, duration=1.0, partial=4, amp=0.3)
     score.add_note("b", start=0.5, duration=1.0, partial=5, amp=0.3)
 
@@ -262,20 +363,31 @@ def test_render_overlapping_voices_returns_audio() -> None:
 
 
 def test_voice_max_polyphony_one_truncates_previous_note() -> None:
-    strict_mono = Score(f0=55.0, auto_master_gain_stage=False)
+    # Disable stochastic features so duration-dependent RNG seeds don't
+    # cause divergence between auto-truncated and manually-truncated notes.
+    deterministic_synth = {
+        "engine": "polyblep",
+        "waveform": "saw",
+        "release": 0.12,
+        "cutoff_drift": 0.0,
+        "pitch_drift": 0.0,
+        "analog_jitter": 0.0,
+        "noise_floor": 0.0,
+    }
+    strict_mono = Score(f0_hz=55.0, auto_master_gain_stage=False)
     strict_mono.add_voice(
         "bass",
-        synth_defaults={"engine": "polyblep", "waveform": "saw", "release": 0.12},
+        synth_defaults=deterministic_synth,
         normalize_lufs=None,
         max_polyphony=1,
     )
     strict_mono.add_note("bass", start=0.0, duration=0.6, freq=55.0, amp=0.2)
     strict_mono.add_note("bass", start=0.3, duration=0.4, freq=82.5, amp=0.2)
 
-    manually_truncated = Score(f0=55.0, auto_master_gain_stage=False)
+    manually_truncated = Score(f0_hz=55.0, auto_master_gain_stage=False)
     manually_truncated.add_voice(
         "bass",
-        synth_defaults={"engine": "polyblep", "waveform": "saw", "release": 0.12},
+        synth_defaults=deterministic_synth,
         normalize_lufs=None,
     )
     manually_truncated.add_note(
@@ -292,7 +404,7 @@ def test_voice_max_polyphony_one_truncates_previous_note() -> None:
 
 
 def test_voice_legato_skips_attack_retrigger_when_polyphony_is_one() -> None:
-    retriggered = Score(f0=55.0, auto_master_gain_stage=False)
+    retriggered = Score(f0_hz=55.0, auto_master_gain_stage=False)
     retriggered.add_voice(
         "bass",
         synth_defaults={"engine": "polyblep", "waveform": "saw", "attack": 0.05},
@@ -303,7 +415,7 @@ def test_voice_legato_skips_attack_retrigger_when_polyphony_is_one() -> None:
     retriggered.add_note("bass", start=0.0, duration=0.6, freq=55.0, amp=0.2)
     retriggered.add_note("bass", start=0.3, duration=0.4, freq=82.5, amp=0.2)
 
-    legato = Score(f0=55.0, auto_master_gain_stage=False)
+    legato = Score(f0_hz=55.0, auto_master_gain_stage=False)
     legato.add_voice(
         "bass",
         synth_defaults={"engine": "polyblep", "waveform": "saw", "attack": 0.05},
@@ -328,11 +440,11 @@ def test_voice_legato_skips_attack_retrigger_when_polyphony_is_one() -> None:
 
 
 def test_score_send_bus_adds_shared_return_to_mix() -> None:
-    dry_reference = Score(f0=55.0, auto_master_gain_stage=False)
+    dry_reference = Score(f0_hz=55.0, auto_master_gain_stage=False)
     dry_reference.add_voice("lead", normalize_lufs=None)
     dry_reference.add_note("lead", start=0.0, duration=0.3, partial=4.0, amp=0.2)
 
-    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     score.add_send_bus(
         "slap",
         effects=[
@@ -353,7 +465,7 @@ def test_score_send_bus_adds_shared_return_to_mix() -> None:
 
 
 def test_multiple_voices_can_share_send_bus() -> None:
-    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     score.add_send_bus("room")
     score.add_voice("lead", normalize_lufs=None, sends=[VoiceSend("room", send_db=0.0)])
     score.add_voice("pad", normalize_lufs=None, sends=[VoiceSend("room", send_db=0.0)])
@@ -367,7 +479,7 @@ def test_multiple_voices_can_share_send_bus() -> None:
 
 
 def test_send_bus_supports_non_reverb_effects() -> None:
-    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     score.add_send_bus(
         "width",
         effects=[EffectSpec("chorus", {"preset": "juno_subtle", "mix": 1.0})],
@@ -386,7 +498,7 @@ def test_send_bus_supports_non_reverb_effects() -> None:
 
 
 def test_render_extends_note_past_note_end_for_release_tail() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_voice(
         "lead",
         synth_defaults={
@@ -406,7 +518,7 @@ def test_render_extends_note_past_note_end_for_release_tail() -> None:
 
 
 def test_render_short_note_release_reaches_zero_in_tail() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_voice(
         "lead",
         synth_defaults={
@@ -426,7 +538,7 @@ def test_render_short_note_release_reaches_zero_in_tail() -> None:
 
 
 def test_extract_window_keeps_overlapping_notes_and_shifts_them() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_note("lead", start=1.0, duration=1.5, partial=4.0, amp=0.2)
     score.add_note("lead", start=3.25, duration=0.75, partial=5.0, amp=0.2)
     score.add_note("lead", start=5.0, duration=0.5, partial=6.0, amp=0.2)
@@ -445,7 +557,7 @@ def test_extract_window_keeps_overlapping_notes_and_shifts_them() -> None:
 
 def test_extract_window_preserves_absolute_timing_context() -> None:
     score = Score(
-        f0=55.0,
+        f0_hz=55.0,
         time_origin_seconds=1.5,
         time_reference_total_dur=12.0,
     )
@@ -586,7 +698,7 @@ def test_compressor_effect_analysis_reports_gain_reduction_metrics() -> None:
 
 
 def test_score_voice_compressor_can_sidechain_from_another_voice() -> None:
-    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     score.add_voice(
         "kick",
         normalize_peak_db=-6.0,
@@ -617,7 +729,7 @@ def test_score_voice_compressor_can_sidechain_from_another_voice() -> None:
     rendered_stems = score.render_stems()
     bass_stem = rendered_stems["bass"]
 
-    dry_reference = Score(f0=55.0, auto_master_gain_stage=False)
+    dry_reference = Score(f0_hz=55.0, auto_master_gain_stage=False)
     dry_reference.add_voice("bass", normalize_lufs=None, velocity_humanize=None)
     dry_reference.add_note("bass", start=0.0, duration=0.8, partial=2.0, amp=0.12)
     dry_bass_stem = dry_reference.render_stems()["bass"]
@@ -630,7 +742,7 @@ def test_score_voice_compressor_can_sidechain_from_another_voice() -> None:
 
 
 def test_score_sidechain_processing_is_dependency_order_independent() -> None:
-    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     score.add_voice(
         "pad",
         normalize_lufs=None,
@@ -659,7 +771,7 @@ def test_score_sidechain_processing_is_dependency_order_independent() -> None:
 
 
 def test_score_sidechain_rejects_unknown_source_voice() -> None:
-    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     score.add_voice(
         "bass",
         normalize_lufs=None,
@@ -682,7 +794,7 @@ def test_score_sidechain_rejects_unknown_source_voice() -> None:
 
 
 def test_score_sidechain_cycle_is_rejected() -> None:
-    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     score.add_voice(
         "a",
         normalize_lufs=None,
@@ -870,7 +982,7 @@ def test_tal_reverb_uses_shared_plugin_backend(
 
 
 def test_score_renders_stereo_when_voice_effects_promote_signal() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_voice(
         "lead",
         effects=[EffectSpec("chorus", {"preset": "juno_subtle"})],
@@ -885,7 +997,7 @@ def test_score_renders_stereo_when_voice_effects_promote_signal() -> None:
 
 
 def test_voice_normalize_lufs_raises_quiet_voice_toward_target() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_voice("lead")
     score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
 
@@ -895,7 +1007,7 @@ def test_voice_normalize_lufs_raises_quiet_voice_toward_target() -> None:
         sample_rate=score.sample_rate,
     )
 
-    plain_score = Score(f0=55.0)
+    plain_score = Score(f0_hz=55.0)
     plain_score.add_voice("lead", normalize_lufs=None)
     plain_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
     plain_stem = plain_score.render_stems()["lead"]
@@ -909,18 +1021,18 @@ def test_voice_normalize_lufs_raises_quiet_voice_toward_target() -> None:
 
 
 def test_voice_normalize_lufs_preserves_silence() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_voice("empty", normalize_lufs=-24.0)
 
     assert score.render_stems() == {}
 
 
 def test_voice_normalize_lufs_can_be_disabled() -> None:
-    normalized_score = Score(f0=55.0)
+    normalized_score = Score(f0_hz=55.0)
     normalized_score.add_voice("lead")
     normalized_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
 
-    raw_score = Score(f0=55.0)
+    raw_score = Score(f0_hz=55.0)
     raw_score.add_voice("lead", normalize_lufs=None)
     raw_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
 
@@ -937,11 +1049,11 @@ def test_voice_normalize_lufs_can_be_disabled() -> None:
 
 
 def test_voice_pre_fx_gain_db_increases_stem_level() -> None:
-    neutral_score = Score(f0=55.0)
+    neutral_score = Score(f0_hz=55.0)
     neutral_score.add_voice("lead", normalize_lufs=None)
     neutral_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
 
-    boosted_score = Score(f0=55.0)
+    boosted_score = Score(f0_hz=55.0)
     boosted_score.add_voice("lead", normalize_lufs=None, pre_fx_gain_db=6.0)
     boosted_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
 
@@ -952,7 +1064,7 @@ def test_voice_pre_fx_gain_db_increases_stem_level() -> None:
 
 
 def test_voice_mix_db_applies_after_voice_effects() -> None:
-    base_score = Score(f0=55.0)
+    base_score = Score(f0_hz=55.0)
     base_score.add_voice(
         "lead",
         normalize_lufs=None,
@@ -960,7 +1072,7 @@ def test_voice_mix_db_applies_after_voice_effects() -> None:
     )
     base_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.2)
 
-    lowered_score = Score(f0=55.0)
+    lowered_score = Score(f0_hz=55.0)
     lowered_score.add_voice(
         "lead",
         normalize_lufs=None,
@@ -976,7 +1088,7 @@ def test_voice_mix_db_applies_after_voice_effects() -> None:
 
 
 def test_voice_pan_automation_moves_stereo_image_over_time() -> None:
-    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     score.add_voice(
         "lead",
         normalize_lufs=None,
@@ -1009,7 +1121,7 @@ def test_voice_pan_automation_moves_stereo_image_over_time() -> None:
 
 
 def test_voice_send_is_post_fader() -> None:
-    base_score = Score(f0=55.0, auto_master_gain_stage=False)
+    base_score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     base_score.add_send_bus("room")
     base_score.add_voice(
         "lead",
@@ -1018,7 +1130,7 @@ def test_voice_send_is_post_fader() -> None:
     )
     base_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.2)
 
-    lowered_score = Score(f0=55.0, auto_master_gain_stage=False)
+    lowered_score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     lowered_score.add_send_bus("room")
     lowered_score.add_voice(
         "lead",
@@ -1035,7 +1147,7 @@ def test_voice_send_is_post_fader() -> None:
 
 
 def test_voice_send_uses_post_insert_signal() -> None:
-    base_score = Score(f0=55.0, auto_master_gain_stage=False)
+    base_score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     base_score.add_send_bus("room")
     base_score.add_voice(
         "lead",
@@ -1044,7 +1156,7 @@ def test_voice_send_uses_post_insert_signal() -> None:
     )
     base_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.1)
 
-    boosted_score = Score(f0=55.0, auto_master_gain_stage=False)
+    boosted_score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     boosted_score.add_send_bus("room")
     boosted_score.add_voice(
         "lead",
@@ -1061,7 +1173,7 @@ def test_voice_send_uses_post_insert_signal() -> None:
 
 
 def test_voice_send_db_automation_changes_send_return_level_over_time() -> None:
-    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     score.add_send_bus("room")
     score.add_voice(
         "lead",
@@ -1102,7 +1214,7 @@ def test_voice_send_db_automation_changes_send_return_level_over_time() -> None:
 
 
 def test_send_bus_pan_automation_moves_return_image_over_time() -> None:
-    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     score.add_send_bus(
         "room",
         pan=0.0,
@@ -1138,7 +1250,7 @@ def test_send_bus_pan_automation_moves_return_image_over_time() -> None:
 
 
 def test_effect_mix_automation_changes_insert_wetness_over_time() -> None:
-    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     score.add_voice(
         "lead",
         normalize_lufs=None,
@@ -1165,7 +1277,7 @@ def test_effect_mix_automation_changes_insert_wetness_over_time() -> None:
     )
     score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.2)
 
-    dry_reference = Score(f0=55.0, auto_master_gain_stage=False)
+    dry_reference = Score(f0_hz=55.0, auto_master_gain_stage=False)
     dry_reference.add_voice(
         "lead",
         normalize_lufs=None,
@@ -1197,11 +1309,11 @@ def test_effect_mix_automation_changes_insert_wetness_over_time() -> None:
 
 
 def test_render_stems_excludes_send_returns() -> None:
-    dry_reference = Score(f0=55.0, auto_master_gain_stage=False)
+    dry_reference = Score(f0_hz=55.0, auto_master_gain_stage=False)
     dry_reference.add_voice("lead", normalize_lufs=None)
     dry_reference.add_note("lead", start=0.0, duration=0.25, partial=4.0, amp=0.2)
 
-    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     score.add_send_bus(
         "echo",
         effects=[
@@ -1222,7 +1334,7 @@ def test_render_stems_excludes_send_returns() -> None:
 
 
 def test_add_voice_rejects_non_finite_gain_controls() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
 
     with pytest.raises(ValueError, match="pre_fx_gain_db must be finite"):
         score.add_voice("lead", pre_fx_gain_db=float("inf"))
@@ -1234,12 +1346,12 @@ def test_add_voice_rejects_non_finite_gain_controls() -> None:
 def test_send_bus_validation_rejects_invalid_configs() -> None:
     with pytest.raises(ValueError, match="send bus names must be unique"):
         Score(
-            f0=55.0,
+            f0_hz=55.0,
             send_buses=[SendBusSpec(name="room"), SendBusSpec(name="room")],
         )
 
     with pytest.raises(ValueError, match="voice send target does not exist on score"):
-        Score(f0=55.0).add_voice("lead", sends=[VoiceSend("missing")])
+        Score(f0_hz=55.0).add_voice("lead", sends=[VoiceSend("missing")])
 
     with pytest.raises(ValueError, match="voice send_db must be finite"):
         VoiceSend("room", send_db=float("inf"))
@@ -1249,7 +1361,7 @@ def test_send_bus_validation_rejects_invalid_configs() -> None:
 
 
 def test_render_with_effect_analysis_includes_send_effects() -> None:
-    score = Score(f0=55.0, auto_master_gain_stage=False)
+    score = Score(f0_hz=55.0, auto_master_gain_stage=False)
     score.add_send_bus(
         "room",
         effects=[
@@ -1271,13 +1383,13 @@ def test_render_with_effect_analysis_includes_send_effects() -> None:
 
 def test_score_auto_master_gain_stage_raises_balanced_mix_toward_target() -> None:
     unstaged_score = Score(
-        f0=55.0,
+        f0_hz=55.0,
         auto_master_gain_stage=False,
     )
     unstaged_score.add_voice("lead", mix_db=-18.0)
     unstaged_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
 
-    staged_score = Score(f0=55.0)
+    staged_score = Score(f0_hz=55.0)
     staged_score.add_voice("lead", mix_db=-18.0)
     staged_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.05)
 
@@ -1296,7 +1408,7 @@ def test_score_auto_master_gain_stage_raises_balanced_mix_toward_target() -> Non
 
 def test_score_auto_master_gain_stage_respects_peak_safety_ceiling() -> None:
     score = Score(
-        f0=55.0,
+        f0_hz=55.0,
         master_bus_target_lufs=-12.0,
         master_bus_max_true_peak_dbfs=-10.0,
     )
@@ -1310,12 +1422,14 @@ def test_score_auto_master_gain_stage_respects_peak_safety_ceiling() -> None:
 
 
 def test_score_master_input_gain_db_scales_mix_before_master_effects() -> None:
-    dry_score = Score(f0=55.0, auto_master_gain_stage=False, master_input_gain_db=0.0)
+    dry_score = Score(
+        f0_hz=55.0, auto_master_gain_stage=False, master_input_gain_db=0.0
+    )
     dry_score.add_voice("lead", normalize_lufs=None)
     dry_score.add_note("lead", start=0.0, duration=1.0, partial=4.0, amp=0.1)
 
     boosted_score = Score(
-        f0=55.0,
+        f0_hz=55.0,
         auto_master_gain_stage=False,
         master_input_gain_db=6.0,
     )
@@ -1330,21 +1444,21 @@ def test_score_master_input_gain_db_scales_mix_before_master_effects() -> None:
 
 def test_score_rejects_non_finite_master_input_gain_db() -> None:
     with pytest.raises(ValueError, match="master_input_gain_db must be finite"):
-        Score(f0=55.0, master_input_gain_db=float("inf"))
+        Score(f0_hz=55.0, master_input_gain_db=float("inf"))
 
     with pytest.raises(ValueError, match="master_bus_target_lufs must be finite"):
-        Score(f0=55.0, master_bus_target_lufs=float("nan"))
+        Score(f0_hz=55.0, master_bus_target_lufs=float("nan"))
 
     with pytest.raises(
         ValueError,
         match="master_bus_max_true_peak_dbfs must be finite",
     ):
-        Score(f0=55.0, master_bus_max_true_peak_dbfs=float("inf"))
+        Score(f0_hz=55.0, master_bus_max_true_peak_dbfs=float("inf"))
 
 
 def test_extract_window_preserves_master_input_gain_db() -> None:
     score = Score(
-        f0=55.0,
+        f0_hz=55.0,
         auto_master_gain_stage=False,
         master_bus_target_lufs=-22.0,
         master_bus_max_true_peak_dbfs=-8.0,
@@ -1362,7 +1476,7 @@ def test_extract_window_preserves_master_input_gain_db() -> None:
 
 
 def test_extract_window_preserves_send_buses() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_send_bus("room", return_db=-3.0)
     score.add_voice("lead", sends=[VoiceSend("room", send_db=-6.0)])
     score.add_note("lead", start=1.0, duration=1.0, partial=4.0, amp=0.1)
@@ -1533,7 +1647,7 @@ def test_finalize_master_boosts_to_true_peak_ceiling_when_headroom_remains(
 
 
 def test_voice_pan_promotes_mono_voice_to_stereo() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_voice("lead", pan=0.25)
     score.add_note("lead", start=0.0, duration=1.0, partial=4, amp=0.25)
 
@@ -1545,7 +1659,7 @@ def test_voice_pan_promotes_mono_voice_to_stereo() -> None:
 
 
 def test_add_voice_rejects_out_of_range_pan() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
 
     with pytest.raises(ValueError, match="pan must be between -1 and 1"):
         score.add_voice("lead", pan=1.5)
@@ -1737,8 +1851,8 @@ def test_velocity_humanize_default_preset_stays_subtle() -> None:
 
 def test_score_render_is_deterministic_with_same_humanize_seed() -> None:
     base_timing = TimingHumanizeSpec(seed=12)
-    first = Score(f0=55.0, timing_humanize=base_timing)
-    second = Score(f0=55.0, timing_humanize=base_timing)
+    first = Score(f0_hz=55.0, timing_humanize=base_timing)
+    second = Score(f0_hz=55.0, timing_humanize=base_timing)
     for score in (first, second):
         score.add_voice("lead", envelope_humanize=EnvelopeHumanizeSpec(seed=5))
         score.add_voice("alto")
@@ -1751,8 +1865,8 @@ def test_score_render_is_deterministic_with_same_humanize_seed() -> None:
 
 
 def test_score_render_changes_with_different_humanize_seed() -> None:
-    neutral = Score(f0=55.0, timing_humanize=TimingHumanizeSpec(seed=10))
-    changed = Score(f0=55.0, timing_humanize=TimingHumanizeSpec(seed=11))
+    neutral = Score(f0_hz=55.0, timing_humanize=TimingHumanizeSpec(seed=10))
+    changed = Score(f0_hz=55.0, timing_humanize=TimingHumanizeSpec(seed=11))
     for score in (neutral, changed):
         score.add_voice("lead")
         score.add_note("lead", start=0.0, duration=0.8, partial=4.0, amp=0.2)
@@ -2096,7 +2210,7 @@ def test_kick_punch_preset_compresses_and_recovers() -> None:
 
 
 def test_plot_piano_roll_writes_file(tmp_path: Path) -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_note("a", start=0.0, duration=1.0, partial=4, amp=0.3)
 
     output_path = tmp_path / "roll.png"
@@ -2108,14 +2222,13 @@ def test_plot_piano_roll_writes_file(tmp_path: Path) -> None:
 
 def test_render_piece_writes_audio_and_plot(tmp_path: Path) -> None:
     result = render_piece("chord_4567", output_dir=tmp_path, save_plot=True)
-    audio_path, plot_path = result
 
-    assert audio_path.exists()
+    assert result.audio_path.exists()
     assert result.version_audio_path is not None
     assert result.version_audio_path.exists()
     assert "chord_4567/versions/" in str(result.version_audio_path)
-    assert plot_path is not None
-    assert plot_path.exists()
+    assert result.plot_path is not None
+    assert result.plot_path.exists()
     assert result.version_plot_path is not None
     assert result.version_plot_path.exists()
     assert result.analysis_manifest_path is not None
@@ -2204,12 +2317,11 @@ def test_render_piece_render_audio_surface_writes_audio_and_analysis(
     tmp_path: Path,
 ) -> None:
     result = render_piece("interval_demo", output_dir=tmp_path, save_plot=True)
-    audio_path, plot_path = result
 
-    assert audio_path.exists()
+    assert result.audio_path.exists()
     assert result.version_audio_path is not None
     assert result.version_audio_path.exists()
-    assert plot_path is None
+    assert result.plot_path is None
     assert result.analysis_manifest_path is not None
     assert result.analysis_manifest_path.exists()
     manifest = json.loads(result.analysis_manifest_path.read_text(encoding="utf-8"))
@@ -2232,12 +2344,11 @@ def test_render_piece_effects_showcase_writes_audio_and_analysis(
     tmp_path: Path,
 ) -> None:
     result = render_piece("effects_showcase", output_dir=tmp_path, save_plot=True)
-    audio_path, plot_path = result
 
-    assert audio_path.exists()
+    assert result.audio_path.exists()
     assert result.version_audio_path is not None
     assert result.version_audio_path.exists()
-    assert plot_path is None
+    assert result.plot_path is None
     assert result.analysis_manifest_path is not None
     assert result.analysis_manifest_path.exists()
     render_metadata = json.loads(
@@ -2325,7 +2436,7 @@ def test_noise_perc_noise_decay_defaults_to_pitch_decay() -> None:
     # matches pitch_decay. We verify behavior equivalence by energy comparison.
     sr = 44100
     dur = 0.25
-    pitch_dec = 0.03  # deliberately short so body disappears fast
+    pitch_dec_s = 0.030  # deliberately short so body disappears fast
 
     without_noise_decay = noise_perc.render(
         freq=300.0,
@@ -2334,8 +2445,8 @@ def test_noise_perc_noise_decay_defaults_to_pitch_decay() -> None:
         sample_rate=sr,
         params={
             "noise_mix": 0.95,
-            "pitch_decay": pitch_dec,
-            "tone_decay": 0.05,
+            "pitch_decay": pitch_dec_s,
+            "tone_decay": 0.050,
             "bandpass_ratio": 1.0,
             "click_amount": 0.05,
         },
@@ -2347,9 +2458,9 @@ def test_noise_perc_noise_decay_defaults_to_pitch_decay() -> None:
         sample_rate=sr,
         params={
             "noise_mix": 0.95,
-            "pitch_decay": pitch_dec,
-            "noise_decay": pitch_dec,
-            "tone_decay": 0.05,
+            "pitch_decay": pitch_dec_s,
+            "noise_decay": pitch_dec_s,
+            "tone_decay": 0.050,
             "bandpass_ratio": 1.0,
             "click_amount": 0.05,
         },
@@ -2361,9 +2472,9 @@ def test_noise_perc_noise_decay_defaults_to_pitch_decay() -> None:
         sample_rate=sr,
         params={
             "noise_mix": 0.95,
-            "pitch_decay": pitch_dec,
-            "noise_decay": 0.12,
-            "tone_decay": 0.05,
+            "pitch_decay": pitch_dec_s,
+            "noise_decay": 0.120,
+            "tone_decay": 0.050,
             "bandpass_ratio": 1.0,
             "click_amount": 0.05,
         },
@@ -2387,7 +2498,7 @@ def test_noise_perc_noise_decay_defaults_to_pitch_decay() -> None:
 def test_polyblep_resonance_q_overrides_resonance() -> None:
     """resonance_q=0.707 (Butterworth flat) should produce a less resonant
     filter than resonance=0.5 (~Q=6.4), i.e. no resonant peak."""
-    score_q = Score(f0=55.0)
+    score_q = Score(f0_hz=55.0)
     score_q.add_voice(
         "bass",
         synth_defaults={
@@ -2397,7 +2508,7 @@ def test_polyblep_resonance_q_overrides_resonance() -> None:
     )
     score_q.add_note("bass", start=0.0, duration=0.5, freq=110.0, amp_db=-6.0)
 
-    score_res = Score(f0=55.0)
+    score_res = Score(f0_hz=55.0)
     score_res.add_voice(
         "bass",
         synth_defaults={
@@ -2537,7 +2648,7 @@ class TestMasterBusDiagnosticLogging:
 
     @staticmethod
     def _build_simple_score() -> Score:
-        score = Score(f0=55.0)
+        score = Score(f0_hz=55.0)
         score.add_voice("pad", synth_defaults={"engine": "additive"})
         score.add_note("pad", start=0.0, duration=0.5, partial=4, amp_db=-6.0)
         return score
@@ -2569,7 +2680,7 @@ class TestMasterBusDiagnosticLogging:
     def test_score_render_logs_ceiling_warning_when_peak_exceeds_threshold(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        score = Score(f0=55.0, auto_master_gain_stage=False)
+        score = Score(f0_hz=55.0, auto_master_gain_stage=False)
         score.add_voice(
             "loud", synth_defaults={"engine": "additive"}, normalize_lufs=None
         )
@@ -2762,7 +2873,7 @@ class TestPitchMotionGlideTranslation:
         )
 
         f0 = 100.0
-        score = Score(f0=f0, auto_master_gain_stage=False)
+        score = Score(f0_hz=f0, auto_master_gain_stage=False)
         score.add_voice(
             "lead",
             synth_defaults={"engine": "surge_xt"},
@@ -2800,7 +2911,7 @@ class TestPitchMotionGlideTranslation:
         )
 
         f0 = 100.0
-        score = Score(f0=f0, auto_master_gain_stage=False)
+        score = Score(f0_hz=f0, auto_master_gain_stage=False)
         score.add_voice(
             "lead",
             synth_defaults={"engine": "surge_xt"},
@@ -2834,7 +2945,7 @@ class TestPitchMotionGlideTranslation:
 
 def _build_send_bus_score() -> Score:
     """Build a small score with a send bus for render-path testing."""
-    score = Score(f0=110.0, auto_master_gain_stage=False)
+    score = Score(f0_hz=110.0, auto_master_gain_stage=False)
     score.add_send_bus(
         "room",
         effects=[
@@ -2872,7 +2983,7 @@ def test_render_with_effect_analysis_send_returns_match_render() -> None:
 
 def test_collect_effect_analysis_false_produces_identical_audio() -> None:
     """Disabling effect analysis collection must not change the rendered audio."""
-    score = Score(f0=110.0, auto_master_gain_stage=False)
+    score = Score(f0_hz=110.0, auto_master_gain_stage=False)
     score.add_send_bus(
         "room",
         effects=[

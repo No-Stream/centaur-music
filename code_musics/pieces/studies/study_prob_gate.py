@@ -86,7 +86,7 @@ def build_study_prob_gate_score() -> Score:
     ctx = HarmonicContext(tonic=F0_HZ, name="root")
 
     score = Score(
-        f0=F0_HZ,
+        f0_hz=F0_HZ,
         timing_humanize=TimingHumanizeSpec(preset="chamber"),
         master_effects=[
             EffectSpec(

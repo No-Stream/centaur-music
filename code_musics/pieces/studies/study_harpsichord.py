@@ -51,7 +51,7 @@ R2 = 2 / 1  # A'
 
 def build_study_harpsichord_score() -> Score:
     score = Score(
-        f0=F0_HZ,
+        f0_hz=F0_HZ,
         sample_rate=44_100,
         master_effects=[
             EffectSpec(
@@ -72,7 +72,7 @@ def build_study_harpsichord_score() -> Score:
         normalize_lufs=-21.0,
         pan=-0.2,
         sympathetic_amount=0.15,
-        sympathetic_decay=1.8,
+        sympathetic_decay_s=1.8,
     )
 
     # ── Lower voice — concert, richer with back 8' chorus ──────────
@@ -82,7 +82,7 @@ def build_study_harpsichord_score() -> Score:
         normalize_lufs=-21.0,
         pan=0.2,
         sympathetic_amount=0.15,
-        sympathetic_decay=1.8,
+        sympathetic_decay_s=1.8,
     )
 
     # ── Color voice — glass partials for sustained harmonic shimmer ─
@@ -96,7 +96,7 @@ def build_study_harpsichord_score() -> Score:
         normalize_lufs=-28.0,
         pan=0.0,
         sympathetic_amount=0.2,
-        sympathetic_decay=2.5,
+        sympathetic_decay_s=2.5,
     )
 
     t = 0.0

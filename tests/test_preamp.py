@@ -231,7 +231,7 @@ class TestScoreIntegration:
     """Preamp should work end-to-end through Score rendering."""
 
     def test_score_with_preamp_master_effect_renders(self) -> None:
-        score = Score(f0=220.0)
+        score = Score(f0_hz=220.0)
         phrase = Phrase(
             events=(
                 NoteEvent(start=0.0, duration=0.5, partial=1, amp=0.3),

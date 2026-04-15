@@ -261,6 +261,37 @@ class TestPolyBLEPDeterminism:
             )
 
 
+class TestPolyBLEPFilterEvenHarmonics:
+    def test_filter_even_harmonics_changes_the_sound(self) -> None:
+        """filter_even_harmonics param should be wired through to apply_zdf_svf."""
+        common = {
+            "waveform": "saw",
+            "cutoff_hz": 900.0,
+            "resonance_q": 3.53,
+            "filter_drive": 0.6,
+            "analog_jitter": 0.0,
+            "pitch_drift": 0.0,
+            "cutoff_drift": 0.0,
+            "noise_floor": 0.0,
+        }
+        base = render(
+            freq=110.0,
+            duration=0.4,
+            amp=0.8,
+            sample_rate=44100,
+            params={**common, "filter_even_harmonics": 0.0},
+        )
+        with_even = render(
+            freq=110.0,
+            duration=0.4,
+            amp=0.8,
+            sample_rate=44100,
+            params={**common, "filter_even_harmonics": 0.8},
+        )
+        assert np.isfinite(with_even).all()
+        assert not np.allclose(base, with_even)
+
+
 class TestPolyBLEPRegistry:
     def test_warm_lead_preset_via_registry(self) -> None:
         signal = render_note_signal(

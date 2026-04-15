@@ -6,6 +6,7 @@ from pathlib import Path
 
 import mido
 import pytest
+
 from code_musics.midi_import import MidiImportResult, read_midi
 
 BWV_846_PATH = Path(

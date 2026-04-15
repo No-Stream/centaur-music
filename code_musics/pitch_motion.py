@@ -60,7 +60,7 @@ class PitchMotionSpec:
         *,
         depth_ratio: float = 0.01,
         rate_hz: float = 5.5,
-        phase: float = 0.0,
+        phase_rad: float = 0.0,
     ) -> PitchMotionSpec:
         """Create a small deterministic vibrato around the base frequency."""
         return cls(
@@ -68,7 +68,7 @@ class PitchMotionSpec:
             params={
                 "depth_ratio": depth_ratio,
                 "rate_hz": rate_hz,
-                "phase": phase,
+                "phase_rad": phase_rad,
             },
         )
 
@@ -113,7 +113,7 @@ class PitchMotionSpec:
 
         raise ValueError(f"Unsupported pitch motion kind: {self.kind}")
 
-    def target_frequency(self, score_f0: float) -> float:
+    def target_frequency(self, score_f0_hz: float) -> float:
         """Resolve the target frequency for a bend against the score root."""
         if self.kind != "linear_bend":
             raise ValueError("target_frequency is only valid for linear_bend motion")
@@ -124,11 +124,11 @@ class PitchMotionSpec:
 
         target_partial = self.params.get("target_partial")
         if target_partial is not None:
-            return score_f0 * float(target_partial)
+            return score_f0_hz * float(target_partial)
 
         target_ratio = self.params.get("target_ratio")
         if target_ratio is not None:
-            return score_f0 * float(target_ratio)
+            return score_f0_hz * float(target_ratio)
 
         raise ValueError("linear_bend requires a target pitch")
 
@@ -139,7 +139,7 @@ def build_frequency_trajectory(
     duration: float,
     sample_rate: int,
     motion: PitchMotionSpec,
-    score_f0: float,
+    score_f0_hz: float,
 ) -> np.ndarray:
     """Build a strictly positive per-sample frequency trajectory."""
     if base_freq <= 0:
@@ -154,7 +154,7 @@ def build_frequency_trajectory(
         return np.zeros(0, dtype=np.float64)
 
     if motion.kind == "linear_bend":
-        target_freq = motion.target_frequency(score_f0=score_f0)
+        target_freq = motion.target_frequency(score_f0_hz=score_f0_hz)
         trajectory = np.linspace(base_freq, target_freq, n_samples, endpoint=True)
     elif motion.kind == "ratio_glide":
         start_ratio = float(motion.params.get("start_ratio", 1.0))
@@ -168,7 +168,7 @@ def build_frequency_trajectory(
     elif motion.kind == "vibrato":
         depth_ratio = float(motion.params.get("depth_ratio", 0.0))
         rate_hz = float(motion.params.get("rate_hz", 0.0))
-        phase = float(motion.params.get("phase", 0.0))
+        phase = float(motion.params.get("phase_rad", 0.0))
         time = np.arange(n_samples, dtype=np.float64) / sample_rate
         trajectory = base_freq * (
             1.0 + depth_ratio * np.sin(2.0 * np.pi * rate_hz * time + phase)

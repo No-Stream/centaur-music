@@ -12,7 +12,7 @@ SAMPLE_RATE = 22_050
 
 
 def _make_score(**voice_kwargs: Any) -> Score:  # noqa: ANN401
-    score = Score(f0=220.0, sample_rate=SAMPLE_RATE)
+    score = Score(f0_hz=220.0, sample_rate=SAMPLE_RATE)
     score.add_voice("v", synth_defaults={"engine": "additive"}, **voice_kwargs)
     return score
 
@@ -90,12 +90,12 @@ class TestSympatheticHarmonicRelation:
 
 class TestSympatheticIntegration:
     def test_harpsichord_with_sympathetic(self) -> None:
-        score = Score(f0=220.0, sample_rate=SAMPLE_RATE)
+        score = Score(f0_hz=220.0, sample_rate=SAMPLE_RATE)
         score.add_voice(
             "hpsi",
             synth_defaults={"engine": "harpsichord"},
             sympathetic_amount=0.2,
-            sympathetic_decay=1.5,
+            sympathetic_decay_s=1.5,
             sympathetic_modes=6,
             normalize_lufs=-24.0,
         )
@@ -107,7 +107,7 @@ class TestSympatheticIntegration:
         assert np.max(np.abs(audio)) > 0.0
 
     def test_piano_with_sympathetic(self) -> None:
-        score = Score(f0=220.0, sample_rate=SAMPLE_RATE)
+        score = Score(f0_hz=220.0, sample_rate=SAMPLE_RATE)
         score.add_voice(
             "piano",
             synth_defaults={"engine": "piano"},

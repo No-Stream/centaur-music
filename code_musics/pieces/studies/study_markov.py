@@ -158,7 +158,7 @@ def build_study_markov_score() -> Score:
     """Build the Markov chain generative study."""
 
     score = Score(
-        f0=TONIC_HZ,
+        f0_hz=TONIC_HZ,
         timing_humanize=TimingHumanizeSpec(preset="chamber"),
         master_effects=[SOFT_REVERB_EFFECT],
     )

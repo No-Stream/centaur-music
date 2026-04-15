@@ -52,6 +52,10 @@ If `spans` is shorter than the tone list passed to `line(...)` or
 `ratio_line(...)`, the rhythm cell is cycled to fit. If it is longer than the
 tone list, that is treated as an error.
 
+**Important:** `len(rhythm.spans)` must be `<=` `len(tones)`. The rhythm cycles
+over tones (a shorter rhythm repeats), but tones do NOT cycle over a longer
+rhythm -- that raises a `ValueError`.
+
 - `gates < 1.0` gives clipped/staccato phrasing
 - `gates = 1.0` fills the full span
 - `gates > 1.0` creates overlap and legato smear
@@ -62,21 +66,22 @@ Use `code_musics.meter` when you want musical time rather than raw seconds.
 
 Core APIs:
 
-- `Timeline(bpm=..., meter=(num, den), swing=...)`
+- `Timeline(bpm=..., meter=(num, den), groove=...)`
 - rhythmic values: `W`, `H`, `Q`, `E`, `S`
-- swing helper: `SwingSpec.eighths(...)`, `SwingSpec.sixteenths(...)`
-- helpers: `B(...)`, `M(...)`, `dotted(...)`, `triplet(...)`
+- groove templates: `Groove.eighths_swing(...)`, `Groove.sixteenths_swing(...)`,
+  and named presets like `Groove.dilla_lazy()`
+- helpers: `B(...)`, `M(...)`, `dotted(...)`, `triplet(...)`, `tuplet(...)`
 
 Example:
 
 ```python
 from code_musics.composition import grid_line, grid_sequence
-from code_musics.meter import M, Q, SwingSpec, Timeline
+from code_musics.meter import Groove, M, Q, Timeline
 
 timeline = Timeline(
     bpm=96,
     meter=(4, 4),
-    swing=SwingSpec.eighths(0.62),
+    groove=Groove.eighths_swing(0.62),
 )
 
 motif = grid_line(
@@ -102,8 +107,77 @@ Important conventions:
 - plain numeric durations in the grid helpers are interpreted as beats
 - `B(...)` is a beat span or absolute beat offset from time zero
 - `M(...)` is a bar-position reference where `M(1)` is the first bar start
-- `SwingSpec(..., offbeat_position=0.5)` is accepted as explicit straight feel,
-  though `swing=None` is still the cleaner default
+- `Groove` replaces the earlier `SwingSpec` with a richer per-step model
+
+### `Groove`
+
+`Groove` is the rhythmic feel specification. It stores per-step timing offsets
+and velocity weights, providing a richer model than the earlier `SwingSpec`
+(which only controlled offbeat position).
+
+Fields:
+
+- `subdivision: Literal["eighth", "sixteenth"]`
+- `timing_offsets: tuple[float, ...]` -- per-step timing shift, cycled across
+  the subdivision grid
+- `velocity_weights: tuple[float, ...]` -- per-step velocity multiplier, cycled
+  similarly
+- `name: str` -- optional label for display/debugging
+
+Factory methods:
+
+- `Groove.eighths_swing(amount)` -- eighth-note swing; `amount` is the offbeat
+  position in `[0.5, 1.0)`, default `2/3` (triplet feel)
+- `Groove.sixteenths_swing(amount)` -- sixteenth-note swing, same semantics
+
+Named presets:
+
+- `Groove.mpc_tight()` -- sixteenth-note. Tight MPC-style
+  groove with subtle push on beat 2, slight pull on beat 4.
+- `Groove.dilla_lazy()` -- sixteenth-note. J Dilla-style lazy
+  feel with heavy offbeat drag, quiet ghost notes.
+- `Groove.motown_pocket()` -- eighth-note. Classic Motown
+  pocket with gently pushed offbeats.
+- `Groove.bossa()` -- eighth-note. Bossa nova with anticipated
+  (early) offbeats.
+- `Groove.tr808_swing()` -- sixteenth-note. TR-808-style swing
+  with pushed second sixteenth.
+
+```python
+from code_musics.meter import Groove, Timeline
+
+# Factory swing
+timeline = Timeline(bpm=96, groove=Groove.eighths_swing(0.62))
+
+# Named preset
+timeline = Timeline(bpm=88, groove=Groove.dilla_lazy())
+
+# Custom groove from scratch
+groove = Groove(
+    subdivision="sixteenth",
+    timing_offsets=(0.0, 0.15, 0.0, 0.10),
+    velocity_weights=(1.0, 0.6, 0.8, 0.5),
+)
+timeline = Timeline(bpm=120, groove=groove)
+```
+
+### `tuplet(...)`
+
+General tuplet duration helper for any n-in-the-space-of-m subdivision.
+
+```python
+from code_musics.meter import Q, E, tuplet
+
+# Quintuplet quarter: 5 notes in the space of 4 quarters
+dur = tuplet(5, 4, Q)
+
+# Septuplet eighth: 7 notes in the space of 4 eighths
+dur = tuplet(7, 4, E)
+```
+
+`tuplet(n, in_space_of, value)` returns a `BeatSpan` equal to
+`(in_space_of / n) * value`. Use alongside the existing `triplet(value)` and
+`dotted(value)` helpers.
 
 ### `Timeline`
 
@@ -120,9 +194,9 @@ Useful methods:
 `meter` affects bar length. Beat values are expressed in quarter-note beats, so
 `Q` is always one beat and `meter=(6, 8)` gives a 3-beat bar.
 
-If `swing` is set, `Timeline.position(...)`, `Timeline.at(...)`, and
-`Timeline.locate(...)` use the swung grid. Standalone scalar durations like
-`timeline.duration(Q)` remain straight-time conversions; swing-aware note spans
+If `groove` is set, `Timeline.position(...)`, `Timeline.at(...)`, and
+`Timeline.locate(...)` use the grooved grid. Standalone scalar durations like
+`timeline.duration(Q)` remain straight-time conversions; groove-aware note spans
 are resolved sequence-positionally inside `grid_line(...)` and
 `grid_ratio_line(...)`.
 
@@ -348,7 +422,7 @@ from code_musics.humanize import TimingHumanizeSpec
 from code_musics.score import Score
 
 score = Score(
-    f0=110.0,
+    f0_hz=110.0,
     timing_humanize=TimingHumanizeSpec(
         preset="chamber",
         seed=17,
@@ -364,10 +438,10 @@ Fields:
 
 - `preset`
 - `drift`
-- `attack_amount_pct`
-- `decay_amount_pct`
-- `sustain_amount_pct`
-- `release_amount_pct`
+- `attack_amount_frac`
+- `decay_amount_frac`
+- `sustain_amount_frac`
+- `release_amount_frac`
 - `seed`
 
 Current presets:
@@ -660,6 +734,87 @@ without rewriting the note list.
 
 If you try to use `partial_shift` on a frequency-authored phrase, it raises
 instead of silently doing nothing.
+
+### Rhythmic Phrase Transforms
+
+These transforms operate on a phrase's timing and rhythm structure while
+preserving pitch content. All return new phrases without mutating the source.
+
+**`augment(phrase, factor)`** -- stretch all durations and inter-onset times
+by `factor`. Classical augmentation: `augment(p, 2.0)` doubles all note
+lengths.
+
+**`diminish(phrase, factor)`** -- compress all durations by `factor`.
+`diminish(p, 2.0)` is equivalent to `augment(p, 0.5)`.
+
+**`rhythmic_retrograde(phrase)`** -- reverse the duration/timing order while
+preserving pitch order. If the original is `[Q, E, E, H]` with pitches
+`[A, B, C, D]`, the result is `[H, E, E, Q]` with pitches `[A, B, C, D]`.
+Different from `reverse=True` on `Phrase.transformed()` which reverses both
+pitch and timing.
+
+**`displace(phrase, offset)`** -- shift all note onsets by `offset` seconds.
+Positive values push later, negative values push earlier. Use for creating
+syncopation or off-beat placements.
+
+**`rotate(phrase, steps)`** -- rotate events cyclically. `rotate(p, 1)` moves
+the first event to the end, shifting all others earlier. Preserves total
+span. Negative steps rotate in the opposite direction.
+
+```python
+from code_musics.composition import (
+    augment,
+    diminish,
+    displace,
+    rhythmic_retrograde,
+    rotate,
+)
+
+slow = augment(motif, 2.0)      # half speed
+fast = diminish(motif, 2.0)     # double speed
+flipped = rhythmic_retrograde(motif)  # same pitches, reversed rhythm
+pushed = displace(motif, 0.125)       # syncopated
+spun = rotate(motif, 2)              # cyclic rotation
+```
+
+## Polyrhythm and Cross-Rhythm
+
+These builders create interlocking rhythmic layers from division ratios.
+
+### `polyrhythm(a, b, span)`
+
+Returns two `RhythmCell` objects that divide the same timespan into `a` and
+`b` equal parts. Use them to build two phrases that interlock polyrhythmically.
+
+```python
+from code_musics.composition import polyrhythm
+
+r3, r4 = polyrhythm(3, 4, span=2.0)
+# r3 has 3 equal divisions of 2.0 s
+# r4 has 4 equal divisions of 2.0 s
+```
+
+### `cross_rhythm(layers, span)`
+
+Builds aligned phrases from multiple division layers. Each layer is a tuple of
+`(divisions, tones)` where `divisions` is the number of equal subdivisions and
+`tones` is a sequence of pitches to cycle through. Returns a list of `Phrase`
+objects, one per layer, all spanning the same duration.
+
+```python
+from code_musics.composition import cross_rhythm
+
+phrases = cross_rhythm(
+    layers=[
+        (3, [1.0, 5 / 4, 3 / 2]),   # 3 in the space
+        (4, [2.0, 7 / 4]),           # 4 in the space
+        (5, [1.0]),                   # 5 in the space
+    ],
+    span=4.0,
+    amp_db=-16.0,
+)
+# phrases[0] has 3 events, phrases[1] has 4, phrases[2] has 5
+```
 
 ## Section Helpers
 
@@ -975,6 +1130,171 @@ cloud = stochastic_cloud(
 )
 ```
 
+### Generative Rhythm Tools
+
+These generators produce rhythmic material (RhythmCells and Phrases) from
+algorithmic processes. Like the pitch generators above, all are deterministic
+when seeded.
+
+#### `prob_rhythm(steps, ...)`
+
+Probabilistic rhythm generation with cycling metric weights.
+
+```python
+prob_rhythm(
+    steps,                  # number of grid positions
+    *,
+    onset_weights=0.7,      # per-step onset probability, cycled
+    accent_weights=1.0,     # per-step gate/accent, cycled
+    span=0.25,              # duration per step (seconds)
+    seed=0,
+)
+```
+
+`onset_weights` cycle if shorter than `steps` -- a 4-element list like
+`[1.0, 0.3, 0.5, 0.3]` naturally emphasizes downbeats in a sixteenth grid.
+`accent_weights` set the gate (articulation) of surviving onsets. Returns a
+`RhythmCell` with at least one onset (if the random draw produces zero
+onsets, the first step is forced on).
+
+```python
+from code_musics.generative import prob_rhythm
+
+# Metric-weighted sixteenth pattern
+rhythm = prob_rhythm(
+    16,
+    onset_weights=[1.0, 0.3, 0.6, 0.3],
+    accent_weights=[1.0, 0.7, 0.85, 0.7],
+    span=0.125,
+    seed=42,
+)
+```
+
+#### `AksakPattern`
+
+Additive meter patterns from unequal pulse groups (Balkan, Turkish, etc.).
+Each group produces one span equal to `group_size * pulse`.
+
+Fields:
+
+- `grouping: tuple[int, ...]` -- pulse group sizes, e.g. `(3, 3, 2)`
+- `pulse: float` -- duration of one pulse unit in seconds
+
+Constructors:
+
+- `AksakPattern(grouping=..., pulse=...)` -- direct
+- `AksakPattern.from_timeline(grouping, timeline)` -- derive
+  pulse from a Timeline's sixteenth-note duration
+
+Named presets (all take `pulse` as argument):
+
+- `AksakPattern.balkan_7(pulse)` -- 7/8 as 2+2+3
+- `AksakPattern.turkish_9(pulse)` -- 9/8 as 2+2+2+3 (zeybek)
+- `AksakPattern.take_five(pulse)` -- 5/4 as 3+2 (Brubeck)
+
+Conversion:
+
+- `pattern.to_rhythm()` -- returns a `RhythmCell` with one span
+  per group (each span = group_size * pulse).
+- `pattern.to_pulses(accent_first=True)` -- expands all pulses as
+  individual equal steps. When `accent_first=True`, the first
+  pulse of each group gets `gate=1.0` and inner pulses get
+  `gate=0.7`. When `False`, all pulses get uniform `gate=1.0`.
+
+```python
+from code_musics.generative import AksakPattern
+
+aksak = AksakPattern.balkan_7(pulse=0.15)
+rhythm = aksak.to_rhythm()
+
+# From a timeline
+from code_musics.meter import Timeline
+
+tl = Timeline(bpm=140, meter=(7, 8))
+aksak = AksakPattern.from_timeline((2, 2, 3), tl)
+```
+
+#### `ca_rhythm(rule, steps, ...)` and `ca_rhythm_layers(...)`
+
+1D elementary cellular automata as rhythm generators. A CA evolves a row of
+cells according to a Wolfram rule number (0--255), and one generation's live
+cells become onsets.
+
+**`ca_rhythm(...)`** -- single-layer rhythm from one CA row.
+
+```python
+ca_rhythm(
+    rule,           # Wolfram rule number (0-255)
+    steps,          # width (number of cells / time steps)
+    *,
+    init=None,      # initial state as bit pattern (None = center cell)
+    span=0.25,      # duration per step
+    row=-1,         # which generation (-1 = last)
+    seed=0,         # used when init=None for random init
+)
+```
+
+**`ca_rhythm_layers(...)`** -- multiple rows from the same CA evolution as
+layered rhythm patterns, picking evenly-spaced rows from the history.
+
+```python
+ca_rhythm_layers(
+    rule, steps,
+    *,
+    layers=3,       # number of rhythm layers to extract
+    init=None,
+    span=0.25,
+    seed=0,
+)
+```
+
+```python
+from code_musics.generative import ca_rhythm, ca_rhythm_layers
+
+# Rule 110 -- complex, aperiodic
+rhythm = ca_rhythm(110, 16, span=0.125)
+
+# Multi-layer: 3 related patterns for kick / snare / hat
+layers = ca_rhythm_layers(30, 16, layers=3, span=0.125)
+```
+
+#### `mutate_rhythm(phrase, ...)`
+
+Stochastic variation of an existing phrase's rhythm. Each mutation type
+is independent and controlled by its own probability or amount parameter.
+
+```python
+mutate_rhythm(
+    phrase,
+    *,
+    add_prob=0.0,        # insert ghost note between events
+    drop_prob=0.0,       # remove an event
+    shift_amount=0.0,    # max onset shift in seconds
+    subdivide_prob=0.0,  # split a note into two at midpoint
+    merge_prob=0.0,      # merge with next note (first pitch, combined dur)
+    accent_drift=0.0,    # max velocity change per note
+    seed=0,
+)
+```
+
+Apply repeatedly with different seeds for evolving grooves across sections.
+
+```python
+from code_musics.generative import mutate_rhythm
+
+# Subtle variation
+v1 = mutate_rhythm(groove, shift_amount=0.02, accent_drift=0.1, seed=1)
+
+# More aggressive mutation
+v2 = mutate_rhythm(
+    groove,
+    drop_prob=0.1,
+    subdivide_prob=0.15,
+    shift_amount=0.03,
+    seed=2,
+)
+```
+
 ### Common Patterns
 
 All generators are deterministic for a given `seed`. Changing the seed produces
@@ -984,7 +1304,7 @@ renders while still allowing exploration by trying different seeds.
 Most generators accept a `HarmonicContext` for ratio resolution. When a context
 is provided, ratios are resolved against the context tonic as absolute
 frequencies. Without a context, ratios are treated as partials relative to
-`Score.f0`.
+`Score.f0_hz`.
 
 Generators that produce `Phrase` objects work with the full existing composition
 surface: `Score.add_phrase(...)`, `concat(...)`, `overlay(...)`,

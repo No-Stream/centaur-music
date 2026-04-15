@@ -58,33 +58,128 @@ class MusicalLocation:
 
 
 @dataclass(frozen=True)
-class SwingSpec:
-    """Timing warp for a swung musical grid."""
+class Groove:
+    """Rhythmic feel specification: per-step timing + velocity patterns."""
 
     subdivision: Literal["eighth", "sixteenth"]
-    offbeat_position: float
+    timing_offsets: tuple[float, ...]
+    velocity_weights: tuple[float, ...]
+    name: str = ""
 
     def __post_init__(self) -> None:
         if self.subdivision not in {"eighth", "sixteenth"}:
             raise ValueError("subdivision must be 'eighth' or 'sixteenth'")
-        if (
-            not math.isfinite(self.offbeat_position)
-            or self.offbeat_position < 0.5
-            or self.offbeat_position >= 1.0
-        ):
-            raise ValueError(
-                "offbeat_position must be finite and in the range [0.5, 1.0)"
-            )
+        if not self.timing_offsets:
+            raise ValueError("timing_offsets must be non-empty")
+        if any(not math.isfinite(o) for o in self.timing_offsets):
+            raise ValueError("timing_offsets must all be finite")
+        if any(o <= -1.0 or o >= 1.0 for o in self.timing_offsets):
+            raise ValueError("timing_offsets must all be in the range (-1.0, 1.0)")
+        if not self.velocity_weights:
+            raise ValueError("velocity_weights must be non-empty")
+        if any(not math.isfinite(w) for w in self.velocity_weights):
+            raise ValueError("velocity_weights must all be finite")
+        if any(w <= 0 for w in self.velocity_weights):
+            raise ValueError("velocity_weights must all be positive")
+
+    @property
+    def step_size_beats(self) -> float:
+        """Return the beat span of one groove step."""
+        return 0.5 if self.subdivision == "eighth" else 0.25
+
+    def timing_offset_at(self, step_index: int) -> float:
+        """Return the timing offset for a step index, cycling the pattern."""
+        return self.timing_offsets[step_index % len(self.timing_offsets)]
+
+    def velocity_weight_at(self, step_index: int) -> float:
+        """Return the velocity weight for a step index, cycling the pattern."""
+        return self.velocity_weights[step_index % len(self.velocity_weights)]
+
+    # --- Classic swing factories ---
 
     @classmethod
-    def eighths(cls, offbeat_position: float = 2.0 / 3.0) -> SwingSpec:
-        """Return an eighth-note swing specification."""
-        return cls(subdivision="eighth", offbeat_position=offbeat_position)
+    def eighths_swing(cls, amount: float = 2.0 / 3.0) -> Groove:
+        """Return an eighth-note swing groove.
+
+        *amount* is the offbeat position in [0.5, 1.0).
+        """
+        if not math.isfinite(amount) or amount < 0.5 or amount >= 1.0:
+            raise ValueError("amount must be finite and in [0.5, 1.0)")
+        offset = 2.0 * amount - 1.0
+        return cls(
+            subdivision="eighth",
+            timing_offsets=(0.0, offset),
+            velocity_weights=(1.0, 1.0),
+            name="eighths_swing",
+        )
 
     @classmethod
-    def sixteenths(cls, offbeat_position: float = 2.0 / 3.0) -> SwingSpec:
-        """Return a sixteenth-note swing specification."""
-        return cls(subdivision="sixteenth", offbeat_position=offbeat_position)
+    def sixteenths_swing(cls, amount: float = 2.0 / 3.0) -> Groove:
+        """Return a sixteenth-note swing groove.
+
+        *amount* is the offbeat position in [0.5, 1.0).
+        """
+        if not math.isfinite(amount) or amount < 0.5 or amount >= 1.0:
+            raise ValueError("amount must be finite and in [0.5, 1.0)")
+        offset = 2.0 * amount - 1.0
+        return cls(
+            subdivision="sixteenth",
+            timing_offsets=(0.0, offset),
+            velocity_weights=(1.0, 1.0),
+            name="sixteenths_swing",
+        )
+
+    # --- Named groove presets ---
+
+    @classmethod
+    def mpc_tight(cls) -> Groove:
+        """MPC-style tight sixteenth groove."""
+        return cls(
+            subdivision="sixteenth",
+            timing_offsets=(0.0, 0.10, 0.0, -0.05),
+            velocity_weights=(1.0, 0.65, 0.85, 0.55),
+            name="mpc_tight",
+        )
+
+    @classmethod
+    def dilla_lazy(cls) -> Groove:
+        """J Dilla-style lazy sixteenth groove."""
+        return cls(
+            subdivision="sixteenth",
+            timing_offsets=(0.0, 0.22, 0.05, 0.18),
+            velocity_weights=(1.0, 0.55, 0.9, 0.5),
+            name="dilla_lazy",
+        )
+
+    @classmethod
+    def motown_pocket(cls) -> Groove:
+        """Motown-style eighth-note pocket groove."""
+        return cls(
+            subdivision="eighth",
+            timing_offsets=(0.0, 0.15),
+            velocity_weights=(1.0, 0.7),
+            name="motown_pocket",
+        )
+
+    @classmethod
+    def bossa(cls) -> Groove:
+        """Bossa nova eighth-note groove with anticipated offbeats."""
+        return cls(
+            subdivision="eighth",
+            timing_offsets=(0.0, -0.08),
+            velocity_weights=(1.0, 0.85),
+            name="bossa",
+        )
+
+    @classmethod
+    def tr808_swing(cls) -> Groove:
+        """TR-808-style sixteenth swing groove."""
+        return cls(
+            subdivision="sixteenth",
+            timing_offsets=(0.0, 0.25, 0.0, 0.0),
+            velocity_weights=(1.0, 0.6, 0.75, 0.5),
+            name="tr808_swing",
+        )
 
 
 type DurationLike = float | BeatValue | BeatSpan
@@ -117,6 +212,18 @@ def triplet(value: DurationLike) -> BeatSpan:
     return BeatSpan(_coerce_duration_beats(value) * (2.0 / 3.0))
 
 
+def tuplet(n: int, in_space_of: int, value: DurationLike) -> BeatSpan:
+    """Duration of one note in an n:m tuplet.
+
+    tuplet(5, 4, Q) -> one quintuplet quarter (4/5 of Q)
+    tuplet(7, 4, E) -> one septuplet eighth (4/7 of E)
+    """
+    if n <= 0 or in_space_of <= 0:
+        raise ValueError("tuplet counts must be positive")
+    base_beats = _coerce_duration_beats(value)
+    return BeatSpan(base_beats * in_space_of / n)
+
+
 @dataclass(frozen=True)
 class Timeline:
     """Single-tempo musical timeline for high-level authoring."""
@@ -124,7 +231,7 @@ class Timeline:
     bpm: float
     meter: tuple[int, int] = (4, 4)
     pickup_beats: float = 0.0
-    swing: SwingSpec | None = None
+    groove: Groove | None = None
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.bpm) or self.bpm <= 0:
@@ -149,10 +256,6 @@ class Timeline:
         numerator, denominator = self.meter
         return numerator * (4.0 / denominator)
 
-    def beats(self, value: DurationLike) -> float:
-        """Resolve a beat-relative duration into seconds."""
-        return _coerce_duration_beats(value) * self.seconds_per_beat
-
     def measures(self, value: float) -> float:
         """Resolve a measure span into seconds."""
         if not math.isfinite(value) or value < 0:
@@ -160,8 +263,8 @@ class Timeline:
         return value * self.beats_per_bar * self.seconds_per_beat
 
     def duration(self, value: DurationLike) -> float:
-        """Alias for converting a beat-relative duration into seconds."""
-        return self.beats(value)
+        """Resolve a beat-relative duration into seconds."""
+        return _coerce_duration_beats(value) * self.seconds_per_beat
 
     def at(self, *, bar: int, beat: float = 0.0) -> float:
         """Return the second offset for a bar/beat location."""
@@ -213,80 +316,42 @@ class Timeline:
             seconds=seconds,
         )
 
-    @property
-    def swing_unit_beats(self) -> float | None:
-        """Return the beat span of one swing unit, if swing is enabled."""
-        if self.swing is None:
-            return None
-        if self.swing.subdivision == "eighth":
-            return 1.0
-        return 0.5
-
     def _beats_to_seconds(self, absolute_beats: float) -> float:
-        if self.swing is None:
+        if self.groove is None:
             return absolute_beats * self.seconds_per_beat
-
-        unit_beats = self.swing_unit_beats
-        assert unit_beats is not None  # guaranteed: swing is not None here
-        warped_beats = self._warp_beats_within_units(
-            absolute_beats,
-            unit_beats=unit_beats,
-            offbeat_position=self.swing.offbeat_position,
-        )
-        return warped_beats * self.seconds_per_beat
+        step_size = self.groove.step_size_beats
+        step_float = absolute_beats / step_size
+        step_index = math.floor(step_float)
+        phase = step_float - step_index
+        o_i = self.groove.timing_offset_at(step_index)
+        o_next = self.groove.timing_offset_at(step_index + 1)
+        warped_steps = step_index + o_i + phase * (1.0 + o_next - o_i)
+        return warped_steps * step_size * self.seconds_per_beat
 
     def _seconds_to_beats(self, seconds: float) -> float:
         warped_beats = seconds / self.seconds_per_beat
-        if self.swing is None:
+        if self.groove is None:
             return warped_beats
-
-        unit_beats = self.swing_unit_beats
-        assert unit_beats is not None  # guaranteed: swing is not None here
-        return self._unwarp_beats_within_units(
-            warped_beats,
-            unit_beats=unit_beats,
-            offbeat_position=self.swing.offbeat_position,
+        step_size = self.groove.step_size_beats
+        warped_steps = warped_beats / step_size
+        step_index = math.floor(warped_steps)
+        for candidate in (step_index, step_index - 1, step_index + 1):
+            if candidate < 0:
+                continue
+            o_i = self.groove.timing_offset_at(candidate)
+            o_next = self.groove.timing_offset_at(candidate + 1)
+            warped_start = candidate + o_i
+            warped_end = candidate + 1 + o_next
+            if warped_start <= warped_steps < warped_end or (
+                candidate == 0 and warped_steps < warped_end
+            ):
+                span = warped_end - warped_start
+                phase = (warped_steps - warped_start) / span if span > 0 else 0.0
+                return (candidate + phase) * step_size
+        raise ValueError(
+            f"groove warp inversion failed for {seconds:.6f}s "
+            f"(warped_steps={warped_steps:.6f})"
         )
-
-    @staticmethod
-    def _warp_beats_within_units(
-        absolute_beats: float,
-        *,
-        unit_beats: float,
-        offbeat_position: float,
-    ) -> float:
-        unit_index = math.floor(absolute_beats / unit_beats)
-        phase = (absolute_beats - (unit_index * unit_beats)) / unit_beats
-
-        if phase <= 0.5:
-            warped_phase = phase * (offbeat_position / 0.5)
-        else:
-            warped_phase = offbeat_position + (
-                ((phase - 0.5) / 0.5) * (1.0 - offbeat_position)
-            )
-        return (unit_index + warped_phase) * unit_beats
-
-    @staticmethod
-    def _unwarp_beats_within_units(
-        warped_beats: float,
-        *,
-        unit_beats: float,
-        offbeat_position: float,
-    ) -> float:
-        unit_index = math.floor(warped_beats / unit_beats)
-        warped_phase = (warped_beats - (unit_index * unit_beats)) / unit_beats
-
-        if warped_phase <= offbeat_position:
-            phase = (
-                0.0
-                if offbeat_position == 0.0
-                else warped_phase * (0.5 / offbeat_position)
-            )
-        else:
-            phase = 0.5 + (
-                ((warped_phase - offbeat_position) / (1.0 - offbeat_position)) * 0.5
-            )
-        return (unit_index + phase) * unit_beats
 
 
 def _coerce_duration_beats(value: DurationLike) -> float:
@@ -303,16 +368,17 @@ __all__ = [
     "BeatValue",
     "DurationLike",
     "E",
+    "Groove",
     "H",
     "M",
     "MeasurePosition",
     "MusicalLocation",
     "Q",
     "S",
-    "SwingSpec",
     "Timeline",
     "TimePointLike",
     "W",
     "dotted",
     "triplet",
+    "tuplet",
 ]

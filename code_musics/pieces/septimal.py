@@ -35,7 +35,7 @@ def render_interval_demo() -> np.ndarray:
     segments: list[np.ndarray] = []
 
     for name, ratio in intervals:
-        score = Score(f0=ROOT)
+        score = Score(f0_hz=ROOT)
         score.add_voice(
             "drone",
             synth_defaults={
@@ -64,7 +64,7 @@ def render_interval_demo() -> np.ndarray:
 
 def build_chord_4567_score() -> Score:
     """Build the 4:5:6:7 chord buildup score."""
-    score = Score(f0=ROOT)
+    score = Score(f0_hz=ROOT)
     ratios = [4 / 4, 5 / 4, 6 / 4, 7 / 4]
     names = ["4 - root", "5 - major third", "6 - perfect fifth", "7 - harmonic seventh"]
     entry_offsets = [0.0, 3.0, 6.0, 9.0]
@@ -94,7 +94,7 @@ def build_chord_4567_score() -> Score:
 def build_harmonic_drift_score() -> Score:
     """Build the large-form septimal piece using phrases and direct notes."""
     score = Score(
-        f0=55.0,
+        f0_hz=55.0,
         master_effects=[
             EffectSpec("delay", {"delay_seconds": 0.38, "feedback": 0.28, "mix": 0.22}),
             EffectSpec("bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.35}),
@@ -137,8 +137,8 @@ def build_harmonic_drift_score() -> Score:
 
     ascending_phrase = Phrase.from_partials(
         [8, 9, 11, 12, 14],
-        note_dur=1.6,
-        step=1.6 * 0.85,
+        duration=1.6,
+        onset_interval=1.6 * 0.85,
         amp=0.45,
         synth_defaults={
             "harmonic_rolloff": 0.35,
@@ -152,8 +152,8 @@ def build_harmonic_drift_score() -> Score:
 
     weird_main_phrase = Phrase.from_partials(
         [14, 13, 11, 13, 14, 11, 13],
-        note_dur=2.4,
-        step=2.4 * 0.80,
+        duration=2.4,
+        onset_interval=2.4 * 0.80,
         amp=0.38,
         synth_defaults={
             "harmonic_rolloff": 0.3,
@@ -168,8 +168,8 @@ def build_harmonic_drift_score() -> Score:
 
     high_phrase = Phrase.from_partials(
         [16, 17, 19, 18, 17, 16, 19, 17],
-        note_dur=2.0,
-        step=2.0 * 0.75,
+        duration=2.0,
+        onset_interval=2.0 * 0.75,
         amp=0.22,
         synth_defaults={
             "harmonic_rolloff": 0.25,
@@ -184,8 +184,8 @@ def build_harmonic_drift_score() -> Score:
 
     descent_phrase = Phrase.from_partials(
         [14, 12, 9, 7],
-        note_dur=2.0,
-        step=2.0 * 0.82,
+        duration=2.0,
+        onset_interval=2.0 * 0.82,
         amp=0.40,
         synth_defaults={
             "harmonic_rolloff": 0.35,
@@ -199,8 +199,8 @@ def build_harmonic_drift_score() -> Score:
 
     canon_phrase = Phrase.from_partials(
         [4, 5, 6, 7, 6, 5, 6, 7, 6, 5, 4],
-        note_dur=1.6,
-        step=1.6 * 0.78,
+        duration=1.6,
+        onset_interval=1.6 * 0.78,
         amp=0.42,
         synth_defaults={
             "harmonic_rolloff": 0.38,
@@ -229,8 +229,8 @@ def build_harmonic_drift_score() -> Score:
 
     call_phrase = Phrase.from_partials(
         [5, 7, 6, 5],
-        note_dur=1.2,
-        step=1.2 * 0.80,
+        duration=1.2,
+        onset_interval=1.2 * 0.80,
         amp=0.38,
         synth_defaults={
             "harmonic_rolloff": 0.36,
@@ -242,8 +242,8 @@ def build_harmonic_drift_score() -> Score:
     )
     response_phrase = Phrase.from_partials(
         [8, 7, 6, 4],
-        note_dur=1.2,
-        step=1.2 * 0.80,
+        duration=1.2,
+        onset_interval=1.2 * 0.80,
         amp=0.33,
         synth_defaults={
             "harmonic_rolloff": 0.36,
@@ -261,8 +261,8 @@ def build_harmonic_drift_score() -> Score:
 
     contrary_up = Phrase.from_partials(
         [4, 5, 6, 7, 8, 9, 10, 12, 14],
-        note_dur=1.0,
-        step=1.0 * 0.82,
+        duration=1.0,
+        onset_interval=1.0 * 0.82,
         amp=0.38,
         synth_defaults={
             "harmonic_rolloff": 0.34,
@@ -274,8 +274,8 @@ def build_harmonic_drift_score() -> Score:
     )
     contrary_down = Phrase.from_partials(
         [14, 12, 10, 9, 8, 7, 6, 5, 4],
-        note_dur=1.0,
-        step=1.0 * 0.82,
+        duration=1.0,
+        onset_interval=1.0 * 0.82,
         amp=0.34,
         synth_defaults={
             "harmonic_rolloff": 0.34,
@@ -324,7 +324,7 @@ def build_harmonic_drift_score() -> Score:
 def build_harmonic_window_score() -> Score:
     """Build a study that slides one phrase through harmonic windows."""
     score = Score(
-        f0=55.0,
+        f0_hz=55.0,
         master_effects=[
             EffectSpec("delay", {"delay_seconds": 0.32, "feedback": 0.22, "mix": 0.18}),
             EffectSpec("bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.25}),
@@ -381,8 +381,8 @@ def build_harmonic_window_score() -> Score:
 
     core_phrase = Phrase.from_partials(
         [6, 7, 9, 8, 7],
-        note_dur=1.9,
-        step=1.55,
+        duration=1.9,
+        onset_interval=1.55,
         amp=0.34,
         synth_defaults={
             "harmonic_rolloff": 0.33,
@@ -394,8 +394,8 @@ def build_harmonic_window_score() -> Score:
     )
     echo_phrase = Phrase.from_partials(
         [9, 8, 7, 6],
-        note_dur=1.6,
-        step=1.25,
+        duration=1.6,
+        onset_interval=1.25,
         amp=0.22,
         synth_defaults={
             "harmonic_rolloff": 0.25,
@@ -448,7 +448,7 @@ def build_harmonic_window_score() -> Score:
 def build_otonal_utonal_mirror_score() -> Score:
     """Build a study that mirrors otonal chords with subharmonic answers."""
     score = Score(
-        f0=110.0,
+        f0_hz=110.0,
         master_effects=[
             EffectSpec("delay", {"delay_seconds": 0.28, "feedback": 0.18, "mix": 0.14}),
             EffectSpec("bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.28}),
@@ -518,8 +518,8 @@ def build_otonal_utonal_mirror_score() -> Score:
 
         bridge_phrase = Phrase.from_partials(
             [6, 7, 6, 5, 4],
-            note_dur=0.9,
-            step=0.75,
+            duration=0.9,
+            onset_interval=0.75,
             amp=0.22,
             synth_defaults={
                 "harmonic_rolloff": 0.30,
@@ -538,8 +538,8 @@ def build_otonal_utonal_mirror_score() -> Score:
 
     closing_phrase = Phrase.from_partials(
         [4, 5, 6, 7, 6, 5, 4],
-        note_dur=1.2,
-        step=0.95,
+        duration=1.2,
+        onset_interval=0.95,
         amp=0.20,
         synth_defaults={
             "harmonic_rolloff": 0.28,
@@ -557,7 +557,7 @@ def build_otonal_utonal_mirror_score() -> Score:
 def build_otonal_utonal_mirror_expanded_score() -> Score:
     """Build a longer-form mirror study with clearer harmonic landmarks."""
     score = Score(
-        f0=110.0,
+        f0_hz=110.0,
         master_effects=[
             EffectSpec("delay", {"delay_seconds": 0.30, "feedback": 0.20, "mix": 0.15}),
             EffectSpec("bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.28}),
@@ -627,8 +627,8 @@ def build_otonal_utonal_mirror_expanded_score() -> Score:
 
     bridge_phrase = Phrase.from_partials(
         [5, 6, 7, 6, 5, 4],
-        note_dur=0.9,
-        step=0.74,
+        duration=0.9,
+        onset_interval=0.74,
         amp=0.20,
         synth_defaults={
             "harmonic_rolloff": 0.30,
@@ -640,8 +640,8 @@ def build_otonal_utonal_mirror_expanded_score() -> Score:
     )
     echo_phrase = Phrase.from_partials(
         [8, 7, 6, 5],
-        note_dur=1.0,
-        step=0.80,
+        duration=1.0,
+        onset_interval=0.80,
         amp=0.12,
         synth_defaults={
             "harmonic_rolloff": 0.24,
@@ -653,8 +653,8 @@ def build_otonal_utonal_mirror_expanded_score() -> Score:
     )
     closing_phrase = Phrase.from_partials(
         [4, 5, 6, 7, 8, 7, 6, 5, 4],
-        note_dur=1.05,
-        step=0.84,
+        duration=1.05,
+        onset_interval=0.84,
         amp=0.18,
         synth_defaults={
             "harmonic_rolloff": 0.28,

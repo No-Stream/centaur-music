@@ -18,6 +18,15 @@ from typing import Any
 
 import numpy as np
 
+from code_musics.engines._dsp_utils import (
+    apply_analog_post_processing,
+    apply_note_jitter,
+    apply_voice_card,
+    build_cutoff_drift,
+    build_drift,
+    extract_analog_params,
+    rng_for_note,
+)
 from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_zdf_svf
 
 
@@ -35,17 +44,10 @@ def _polyblep_triangle(
     """
     square = _polyblep_square(phase, phase_inc, cumphase, pulse_width=0.5)
 
-    # Integrate via cumulative sum, scaled so that the integral of a unit square
-    # at frequency f has peak amplitude ~1/(2f) in samples → we want unit amplitude.
-    # Dividing by sample_rate converts from sample-domain to seconds-domain;
-    # the resulting triangle has amplitude proportional to 1/freq, so we
-    # normalize afterward.
     triangle = np.cumsum(square) / sample_rate
 
-    # DC-block: remove any accumulated offset from the running sum
     triangle -= triangle.mean()
 
-    # Peak-normalize to match saw/square amplitude range (~1.0)
     peak = np.max(np.abs(triangle))
     if peak > 1e-9:
         triangle /= peak
@@ -75,6 +77,7 @@ def render(
     osc2_pulse_width = float(params.get("osc2_pulse_width", pulse_width))
     osc2_detune_cents = float(params.get("osc2_detune_cents", 0.0))
     osc2_semitones = float(params.get("osc2_semitones", 0.0))
+    osc2_spread_power = float(params.get("osc2_spread_power", 1.0))
     cutoff_hz = float(params.get("cutoff_hz", 3000.0))
     keytrack = float(params.get("keytrack", 0.0))
     reference_freq_hz = float(params.get("reference_freq_hz", 220.0))
@@ -83,6 +86,13 @@ def render(
     filter_env_decay = float(params.get("filter_env_decay", 0.18))
     filter_mode = str(params.get("filter_mode", "lowpass")).lower()
     filter_drive = float(params.get("filter_drive", 0.0))
+    filter_even_harmonics = float(params.get("filter_even_harmonics", 0.0))
+    analog = extract_analog_params(params)
+    pitch_drift = analog["pitch_drift"]
+    analog_jitter = analog["analog_jitter"]
+    noise_floor_level = analog["noise_floor"]
+    drift_rate_hz = analog["drift_rate_hz"]
+    cutoff_drift_amount = analog["cutoff_drift"]
 
     if cutoff_hz <= 0:
         raise ValueError("cutoff_hz must be positive")
@@ -127,21 +137,60 @@ def render(
     else:
         freq_profile = np.full(n_samples, freq, dtype=np.float64)
 
+    # --- Analog character: RNG, jitter, drift ---
+    rng = rng_for_note(
+        freq=freq,
+        duration=duration,
+        amp=amp,
+        sample_rate=sample_rate,
+        params=params,
+    )
+    # Voice card calibration — persistent per-voice character
+    freq_profile, amp, cutoff_hz = apply_voice_card(
+        params,
+        voice_card_amount=analog["voice_card"],
+        freq_profile=freq_profile,
+        amp=amp,
+        cutoff_hz=cutoff_hz,
+    )
+
+    jittered = apply_note_jitter(params, rng, analog_jitter)
+    cutoff_hz = float(jittered.get("cutoff_hz", cutoff_hz))
+    resonance_q = float(jittered.get("resonance_q", resonance_q))
+    filter_env_decay = float(jittered.get("filter_env_decay", filter_env_decay))
+    start_phase = float(jittered.get("_phase_offset", 0.0))
+    amp_jitter_db = float(jittered.get("_amp_jitter_db", 0.0))
+
+    if pitch_drift > 0:
+        drift_multiplier = build_drift(
+            n_samples=n_samples,
+            drift_amount=pitch_drift,
+            drift_rate_hz=drift_rate_hz,
+            duration=duration,
+            phase_offset=start_phase,
+            rng=rng,
+        )
+        freq_profile = freq_profile * drift_multiplier
+
     raw_signal = _render_oscillator(
         waveform=waveform,
         pulse_width=pulse_width,
         freq_profile=freq_profile,
         sample_rate=sample_rate,
+        start_phase=start_phase,
     )
     if osc2_level > 0.0:
+        # Power-scaled detune: power>1 clusters near center, power<1 spreads evenly
+        effective_detune = osc2_detune_cents * pow(0.5, osc2_spread_power - 1.0)
         osc2_ratio = float(2.0 ** (osc2_semitones / 12.0)) * float(
-            2.0 ** (osc2_detune_cents / 1200.0)
+            2.0 ** (effective_detune / 1200.0)
         )
         osc2_signal = _render_oscillator(
             waveform=osc2_waveform,
             pulse_width=osc2_pulse_width,
             freq_profile=freq_profile * osc2_ratio,
             sample_rate=sample_rate,
+            start_phase=start_phase * 1.618,
         )
         raw_signal = (raw_signal + osc2_level * osc2_signal) / (1.0 + osc2_level)
 
@@ -153,6 +202,25 @@ def render(
     keytracked_cutoff = cutoff_hz * np.power(freq_profile / reference_freq_hz, keytrack)
     cutoff_profile = np.clip(keytracked_cutoff * cutoff_envelope, 20.0, nyquist * 0.98)
 
+    if cutoff_drift_amount > 0:
+        cutoff_rng = rng_for_note(
+            freq=freq,
+            duration=duration,
+            amp=amp,
+            sample_rate=sample_rate,
+            extra_seed="cutoff_drift",
+        )
+        cutoff_modulation = build_cutoff_drift(
+            n_samples,
+            amount_cents=30.0 * cutoff_drift_amount,
+            rate_hz=0.3,
+            rng=cutoff_rng,
+            sample_rate=sample_rate,
+        )
+        cutoff_profile = np.clip(
+            cutoff_profile * cutoff_modulation, 20.0, nyquist * 0.98
+        )
+
     filtered = apply_zdf_svf(
         raw_signal,
         cutoff_profile=cutoff_profile,
@@ -160,9 +228,19 @@ def render(
         sample_rate=sample_rate,
         filter_mode=filter_mode,
         filter_drive=filter_drive,
+        filter_even_harmonics=filter_even_harmonics,
     )
 
-    # Peak-normalize like fm.py (filter sweep causes uneven amplitude)
+    filtered = apply_analog_post_processing(
+        filtered,
+        rng=rng,
+        amp_jitter_db=amp_jitter_db,
+        noise_floor_level=noise_floor_level,
+        sample_rate=sample_rate,
+        n_samples=n_samples,
+    )
+
+    # Peak-normalize (filter sweep causes uneven amplitude)
     peak = np.max(np.abs(filtered))
     if peak > 1e-9:
         filtered /= peak
@@ -176,10 +254,11 @@ def _render_oscillator(
     pulse_width: float,
     freq_profile: np.ndarray,
     sample_rate: int,
+    start_phase: float = 0.0,
 ) -> np.ndarray:
     """Render one PolyBLEP oscillator from a frequency trajectory."""
     phase_inc = freq_profile / sample_rate
-    cumphase = np.cumsum(phase_inc)
+    cumphase = np.cumsum(phase_inc) + start_phase / (2.0 * np.pi)
     phase = cumphase % 1.0
 
     if waveform == "sine":

@@ -14,12 +14,14 @@ AutomationShape = Literal["hold", "linear", "exp", "sine_lfo"]
 _SUPPORTED_SYNTH_AUTOMATION_PARAMS = {
     "attack",
     "attack_brightness",
+    "body_distortion_drive",
+    "body_fm_index",
     "brightness",
     "brightness_tilt",
     "click_amount",
     "cutoff_hz",
     "decay",
-    "drive_ratio",
+    "drift",
     "feedback",
     "filter_drive",
     "filter_env_amount",
@@ -27,6 +29,7 @@ _SUPPORTED_SYNTH_AUTOMATION_PARAMS = {
     "hammer_hardness",
     "hammer_noise",
     "index_decay",
+    "leakage",
     "mod_index",
     "morph_time",
     "noise_amount",
@@ -40,6 +43,8 @@ _SUPPORTED_SYNTH_AUTOMATION_PARAMS = {
     "soundboard_brightness",
     "soundboard_color",
     "sustain_level",
+    "vibrato_chorus",
+    "vibrato_depth",
 }
 
 _SUPPORTED_CONTROL_AUTOMATION_PARAMS = {
@@ -86,7 +91,7 @@ class AutomationSegment:
     end_value: float | None = None
     value: float | None = None
     freq_hz: float | None = None
-    phase: float = 0.0
+    phase_rad: float = 0.0
     depth: float | None = None
     offset: float = 0.0
 
@@ -375,7 +380,7 @@ def _sample_segments_vectorized(
         elif seg.shape == "sine_lfo":
             local_t = seg_times - seg.start
             result[mask] = seg.offset + seg.depth * np.sin(  # type: ignore[operator]
-                2.0 * np.pi * seg.freq_hz * local_t + seg.phase  # type: ignore[operator]
+                2.0 * np.pi * seg.freq_hz * local_t + seg.phase_rad  # type: ignore[operator]
             )
 
     if clamp_min is not None:
@@ -429,7 +434,7 @@ def _sample_segment(segment: AutomationSegment, time: float) -> float:
         return float(
             segment.offset
             + segment.depth
-            * np.sin((2.0 * np.pi * segment.freq_hz * local_time) + segment.phase)
+            * np.sin((2.0 * np.pi * segment.freq_hz * local_time) + segment.phase_rad)
         )
 
     raise ValueError(f"Unsupported automation segment shape: {segment.shape!r}")

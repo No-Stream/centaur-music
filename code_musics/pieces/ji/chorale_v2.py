@@ -124,7 +124,7 @@ def build_ji_chorale_v2_score() -> Score:
 
     # ── score ─────────────────────────────────────────────────────────────
     score = Score(
-        f0=f0,
+        f0_hz=f0,
         timing_humanize=TimingHumanizeSpec(preset="chamber", chord_spread_ms=7.0),
         master_effects=master_effects,
     )
@@ -577,7 +577,7 @@ def build_ji_chorale_v2_score() -> Score:
         freqs = [f for f, _ in notes]
         durs = [d for _, d in notes]
         phrase = grid_line(freqs, durs, timeline=TL, pitch_kind="freq", amp_db=amp_db)
-        phrase = with_synth_ramp(phrase, start=synth_start, end=synth_end)
+        phrase = with_synth_ramp(phrase, start_params=synth_start, end_params=synth_end)
         phrase = replace(
             phrase,
             events=tuple(

@@ -120,7 +120,7 @@ def build_crystal_canon_score() -> Score:
 
     # ── Score ─────────────────────────────────────────────────────────────────
     score = Score(
-        f0=f0,
+        f0_hz=f0,
         master_effects=[
             EffectSpec(
                 "reverb", {"room_size": 0.78, "damping": 0.38, "wet_level": 0.22}

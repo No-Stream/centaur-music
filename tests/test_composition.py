@@ -11,10 +11,14 @@ from code_musics.composition import (
     HarmonicContext,
     MeteredSectionSpec,
     RhythmCell,
+    augment,
     bar_automation,
     build_context_sections,
     canon,
     concat,
+    cross_rhythm,
+    diminish,
+    displace,
     echo,
     grid_canon,
     grid_line,
@@ -26,10 +30,13 @@ from code_musics.composition import (
     overlay,
     place_ratio_chord,
     place_ratio_line,
+    polyrhythm,
     progression,
     ratio_line,
     recontextualize_phrase,
     resolve_ratios,
+    rhythmic_retrograde,
+    rotate,
     sequence,
     staccato,
     voiced_ratio_chord,
@@ -37,13 +44,13 @@ from code_musics.composition import (
     with_synth_ramp,
     with_tail_breath,
 )
-from code_musics.meter import B, E, M, Q, S, SwingSpec, Timeline, dotted
+from code_musics.meter import B, E, Groove, M, Q, S, Timeline, dotted
 from code_musics.pieces.composition_showcases import (
     build_composition_tools_consonant_score,
     build_composition_tools_showcase_score,
 )
 from code_musics.pitch_motion import PitchMotionSpec
-from code_musics.score import Score
+from code_musics.score import Phrase, Score
 
 
 def test_line_builds_expected_starts_durations_and_accents() -> None:
@@ -227,7 +234,7 @@ def test_ratio_line_resolves_local_context_into_frequency_phrase() -> None:
 
 
 def test_place_ratio_helpers_emit_shifted_concrete_notes() -> None:
-    score = Score(f0=220.0)
+    score = Score(f0_hz=220.0)
     section_a, section_b = build_context_sections(
         base_tonic=220.0,
         specs=(
@@ -273,6 +280,43 @@ def test_place_ratio_helpers_emit_shifted_concrete_notes() -> None:
     assert [note.start for note in placed_chord] == pytest.approx([1.5, 1.6])
 
 
+def test_place_ratio_chord_amp_db_and_velocity() -> None:
+    score = Score(f0_hz=220.0)
+    section = build_context_sections(
+        base_tonic=220.0,
+        specs=(ContextSectionSpec(name="a", duration=4.0, tonic_ratio=1.0),),
+    )[0]
+
+    # amp_db path
+    notes_db = place_ratio_chord(
+        score,
+        "pad",
+        section=section,
+        ratios=[1.0, 5 / 4, 3 / 2],
+        duration=2.0,
+        amp_db=-12.0,
+        velocity=0.7,
+    )
+    for note in notes_db:
+        assert note.amp_db == -12.0
+        assert note.amp == pytest.approx(10 ** (-12.0 / 20))
+        assert note.velocity == pytest.approx(0.7)
+
+    # amp path still works and velocity defaults to 1.0
+    notes_amp = place_ratio_chord(
+        score,
+        "pad",
+        section=section,
+        ratios=[1.0, 3 / 2],
+        duration=1.0,
+        amp=0.5,
+    )
+    for note in notes_amp:
+        assert note.amp == pytest.approx(0.5)
+        assert note.amp_db is None
+        assert note.velocity == pytest.approx(1.0)
+
+
 def test_context_drift_helpers_match_manual_ji_comma_drift_frequencies() -> None:
     drifted_section = build_context_sections(
         base_tonic=220.0,
@@ -280,7 +324,7 @@ def test_context_drift_helpers_match_manual_ji_comma_drift_frequencies() -> None
     )[0]
 
     phrase = place_ratio_line(
-        Score(f0=220.0),
+        Score(f0_hz=220.0),
         "melody",
         section=drifted_section,
         tones=[2.0, 9 / 4, 5 / 2],
@@ -431,8 +475,8 @@ def test_with_synth_ramp_interpolates_per_event_params() -> None:
 
     ramped = with_synth_ramp(
         phrase,
-        start={"mod_index": 0.6, "release": 0.25},
-        end={"mod_index": 1.2, "release": 0.7},
+        start_params={"mod_index": 0.6, "release": 0.25},
+        end_params={"mod_index": 1.2, "release": 0.7},
     )
 
     assert ramped.events[0].synth is not None
@@ -488,7 +532,7 @@ def test_recontextualize_phrase_supports_frequency_authored_source_and_validatio
 
 
 def test_sequence_places_repeated_entries_with_context_shift() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     phrase = line(tones=[1.0, 5 / 4], rhythm=(0.5, 0.5), amp=0.2)
     sections = build_context_sections(
         base_tonic=220.0,
@@ -516,7 +560,7 @@ def test_sequence_places_repeated_entries_with_context_shift() -> None:
 
 
 def test_sequence_applies_partial_shift_before_recontextualizing() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     phrase = line(tones=[1.0, 5 / 4], rhythm=(0.5, 0.5), amp=0.2)
     section = build_context_sections(
         base_tonic=220.0,
@@ -536,7 +580,7 @@ def test_sequence_applies_partial_shift_before_recontextualizing() -> None:
 
 
 def test_sequence_supports_reverse_and_time_scale_without_sections() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     phrase = line(tones=[4.0, 5.0], rhythm=(0.5, 1.0), amp=0.2)
 
     placed = sequence(
@@ -555,7 +599,7 @@ def test_sequence_supports_reverse_and_time_scale_without_sections() -> None:
 
 
 def test_sequence_rejects_invalid_lengths_and_negative_start() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     phrase = line(tones=[4.0], rhythm=(0.5,), amp=0.2)
 
     with pytest.raises(ValueError, match="starts must not be empty"):
@@ -579,7 +623,7 @@ def test_sequence_rejects_invalid_lengths_and_negative_start() -> None:
 
 
 def test_canon_places_delayed_entries_across_voices() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     phrase = line(tones=[4.0, 5.0], rhythm=(0.5, 0.5), amp=0.2)
 
     placed = canon(
@@ -600,7 +644,7 @@ def test_canon_places_delayed_entries_across_voices() -> None:
 
 
 def test_canon_supports_repeats_and_scalar_delay_and_rejects_invalid_inputs() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     phrase = line(tones=[4.0], rhythm=(0.5,), amp=0.2)
 
     placed = canon(
@@ -660,7 +704,7 @@ def test_canon_supports_repeats_and_scalar_delay_and_rejects_invalid_inputs() ->
 
 
 def test_grid_sequence_places_entries_from_bar_and_beat_positions() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     phrase = grid_line(
         tones=[4.0, 5.0],
         durations=[Q, Q],
@@ -682,7 +726,7 @@ def test_grid_sequence_places_entries_from_bar_and_beat_positions() -> None:
 
 def test_grid_canon_uses_beat_delays_and_repeat_gap() -> None:
     timeline = Timeline(bpm=120.0)
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     phrase = grid_line(
         tones=[4.0],
         durations=[Q],
@@ -707,7 +751,7 @@ def test_grid_canon_uses_beat_delays_and_repeat_gap() -> None:
 
 def test_grid_helpers_build_renderable_score() -> None:
     timeline = Timeline(bpm=96.0)
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     score.add_voice("lead", synth_defaults={"engine": "additive", "preset": "organ"})
     score.add_voice("answer", synth_defaults={"engine": "additive", "preset": "organ"})
 
@@ -735,7 +779,7 @@ def test_grid_helpers_build_renderable_score() -> None:
 
 
 def test_grid_line_supports_eighth_swing() -> None:
-    timeline = Timeline(bpm=120.0, swing=SwingSpec.eighths(2.0 / 3.0))
+    timeline = Timeline(bpm=120.0, groove=Groove.eighths_swing(2.0 / 3.0))
 
     phrase = grid_line(
         tones=[4.0, 5.0, 6.0, 7.0],
@@ -753,7 +797,7 @@ def test_grid_line_supports_eighth_swing() -> None:
 
 
 def test_grid_line_supports_sixteenth_swing() -> None:
-    timeline = Timeline(bpm=120.0, swing=SwingSpec.sixteenths(2.0 / 3.0))
+    timeline = Timeline(bpm=120.0, groove=Groove.sixteenths_swing(2.0 / 3.0))
 
     phrase = grid_line(
         tones=[4.0, 5.0, 6.0, 7.0],
@@ -771,8 +815,8 @@ def test_grid_line_supports_sixteenth_swing() -> None:
 
 
 def test_grid_sequence_places_swung_offbeat_phrase_entries() -> None:
-    timeline = Timeline(bpm=120.0, swing=SwingSpec.eighths(2.0 / 3.0))
-    score = Score(f0=55.0)
+    timeline = Timeline(bpm=120.0, groove=Groove.eighths_swing(2.0 / 3.0))
+    score = Score(f0_hz=55.0)
     phrase = grid_line(
         tones=[4.0, 5.0],
         durations=[E, E],
@@ -795,8 +839,8 @@ def test_grid_sequence_places_swung_offbeat_phrase_entries() -> None:
 
 
 def test_grid_canon_uses_swung_grid_for_delays_and_repeats() -> None:
-    timeline = Timeline(bpm=120.0, swing=SwingSpec.eighths(2.0 / 3.0))
-    score = Score(f0=55.0)
+    timeline = Timeline(bpm=120.0, groove=Groove.eighths_swing(2.0 / 3.0))
+    score = Score(f0_hz=55.0)
     phrase = grid_line(
         tones=[4.0],
         durations=[E],
@@ -885,7 +929,7 @@ def test_voiced_ratio_chord_supports_drop_voicings() -> None:
 
 
 def test_progression_places_block_and_arpeggio_patterns() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     sections = build_context_sections(
         base_tonic=110.0,
         specs=(
@@ -920,7 +964,7 @@ def test_progression_places_block_and_arpeggio_patterns() -> None:
 
 
 def test_progression_supports_custom_arpeggio_orders() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     sections = build_context_sections(
         base_tonic=110.0,
         specs=(ContextSectionSpec(name="I", duration=1.0),),
@@ -962,7 +1006,7 @@ def test_progression_supports_custom_arpeggio_orders() -> None:
 
 
 def test_progression_supports_pedal_upper_pattern_and_validation() -> None:
-    score = Score(f0=55.0)
+    score = Score(f0_hz=55.0)
     sections = build_context_sections(
         base_tonic=110.0,
         specs=(ContextSectionSpec(name="I", duration=2.0),),
@@ -1048,3 +1092,287 @@ def test_line_rejects_length_mismatch_and_non_positive_values() -> None:
 
     with pytest.raises(ValueError, match="amp or amp_db"):
         line(tones=[4.0], rhythm=(1.0,), amp=0.5, amp_db=-6.0)
+
+
+# --- augment / diminish ---
+
+
+def test_augment_doubles_starts_and_durations() -> None:
+    phrase = line(tones=[4.0, 5.0, 6.0], rhythm=(0.5, 0.75, 1.0), amp=0.3)
+    stretched = augment(phrase, 2.0)
+
+    assert [e.start for e in stretched.events] == pytest.approx([0.0, 1.0, 2.5])
+    assert [e.duration for e in stretched.events] == pytest.approx([1.0, 1.5, 2.0])
+    # Pitches unchanged
+    assert [e.partial for e in stretched.events] == [4.0, 5.0, 6.0]
+
+
+def test_diminish_halves_starts_and_durations() -> None:
+    phrase = line(tones=[4.0, 5.0, 6.0], rhythm=(0.5, 0.75, 1.0), amp=0.3)
+    compressed = diminish(phrase, 2.0)
+
+    assert [e.start for e in compressed.events] == pytest.approx([0.0, 0.25, 0.625])
+    assert [e.duration for e in compressed.events] == pytest.approx([0.25, 0.375, 0.5])
+
+
+def test_augment_identity() -> None:
+    phrase = line(tones=[4.0, 5.0], rhythm=(0.5, 1.0), amp=0.2)
+    same = augment(phrase, 1.0)
+
+    assert [e.start for e in same.events] == [e.start for e in phrase.events]
+    assert [e.duration for e in same.events] == [e.duration for e in phrase.events]
+
+
+def test_augment_empty_phrase() -> None:
+    empty = Phrase(events=())
+    assert augment(empty, 2.0).events == ()
+
+
+def test_augment_rejects_non_positive_factor() -> None:
+    phrase = line(tones=[4.0], rhythm=(1.0,))
+    with pytest.raises(ValueError, match="factor must be positive"):
+        augment(phrase, 0.0)
+    with pytest.raises(ValueError, match="factor must be positive"):
+        augment(phrase, -1.0)
+    with pytest.raises(ValueError, match="factor must be positive"):
+        diminish(phrase, 0.0)
+
+
+def test_augment_scales_beat_timings() -> None:
+    timeline = Timeline(bpm=120.0)
+    phrase = grid_line(
+        tones=[4.0, 5.0],
+        durations=[Q, Q],
+        timeline=timeline,
+        amp=0.2,
+    )
+    stretched = augment(phrase, 2.0)
+
+    assert stretched.beat_timings is not None
+    assert [bt.start_beats for bt in stretched.beat_timings] == pytest.approx(
+        [0.0, 2.0]
+    )
+    assert [bt.duration_beats for bt in stretched.beat_timings] == pytest.approx(
+        [2.0, 2.0]
+    )
+
+
+# --- rhythmic_retrograde ---
+
+
+def test_rhythmic_retrograde_swaps_durations_preserves_pitches() -> None:
+    phrase = line(tones=[4.0, 5.0, 6.0], rhythm=(0.25, 0.5, 1.0), amp=0.3)
+    retro = rhythmic_retrograde(phrase)
+
+    # Pitches stay in original order
+    assert [e.partial for e in retro.events] == [4.0, 5.0, 6.0]
+    # Durations are reversed
+    assert [e.duration for e in retro.events] == pytest.approx([1.0, 0.5, 0.25])
+
+
+def test_rhythmic_retrograde_single_note_is_identity() -> None:
+    phrase = line(tones=[4.0], rhythm=(1.0,), amp=0.2)
+    retro = rhythmic_retrograde(phrase)
+
+    assert retro.events[0].partial == 4.0
+    assert retro.events[0].duration == pytest.approx(1.0)
+
+
+def test_rhythmic_retrograde_empty_phrase() -> None:
+    empty = Phrase(events=())
+    assert rhythmic_retrograde(empty).events == ()
+
+
+# --- displace ---
+
+
+def test_displace_shifts_all_starts() -> None:
+    phrase = line(tones=[4.0, 5.0, 6.0], rhythm=(0.5, 0.5, 0.5), amp=0.2)
+    shifted = displace(phrase, 1.5)
+
+    assert [e.start for e in shifted.events] == pytest.approx([1.5, 2.0, 2.5])
+    # Durations unchanged
+    assert [e.duration for e in shifted.events] == [e.duration for e in phrase.events]
+
+
+def test_displace_negative_offset() -> None:
+    # Start phrase at t=2.0 so negative offset still yields non-negative starts
+    phrase = line(tones=[4.0, 5.0], rhythm=(1.0, 1.0), amp=0.2)
+    shifted_forward = displace(phrase, 2.0)
+    shifted_back = displace(shifted_forward, -0.5)
+
+    assert [e.start for e in shifted_back.events] == pytest.approx([1.5, 2.5])
+
+
+def test_displace_empty_phrase() -> None:
+    empty = Phrase(events=())
+    assert displace(empty, 1.0).events == ()
+
+
+# --- rotate ---
+
+
+def test_rotate_by_one_moves_first_event_to_end() -> None:
+    phrase = line(tones=[4.0, 5.0, 6.0, 7.0], rhythm=(0.5, 0.5, 0.5, 0.5), amp=0.2)
+    rotated = rotate(phrase, 1)
+
+    # Pitches rotated: first event goes to end
+    assert [e.partial for e in rotated.events] == [5.0, 6.0, 7.0, 4.0]
+    # IOIs are preserved cyclically, total span unchanged
+    total_original = phrase.duration
+    total_rotated = rotated.duration
+    assert total_rotated == pytest.approx(total_original)
+
+
+def test_rotate_by_zero_is_identity() -> None:
+    phrase = line(tones=[4.0, 5.0], rhythm=(0.5, 1.0), amp=0.2)
+    rotated = rotate(phrase, 0)
+
+    assert [e.partial for e in rotated.events] == [4.0, 5.0]
+    assert [e.start for e in rotated.events] == [e.start for e in phrase.events]
+
+
+def test_rotate_full_cycle_is_identity() -> None:
+    phrase = line(tones=[4.0, 5.0, 6.0], rhythm=(0.5, 0.5, 0.5), amp=0.2)
+    rotated = rotate(phrase, 3)
+
+    assert [e.partial for e in rotated.events] == [4.0, 5.0, 6.0]
+    assert [e.start for e in rotated.events] == pytest.approx(
+        [e.start for e in phrase.events]
+    )
+
+
+def test_rotate_single_note_is_identity() -> None:
+    phrase = line(tones=[4.0], rhythm=(1.0,), amp=0.2)
+    rotated = rotate(phrase, 1)
+
+    assert [e.partial for e in rotated.events] == [4.0]
+
+
+# --- polyrhythm ---
+
+
+def test_polyrhythm_produces_correct_divisions() -> None:
+    r3, r4 = polyrhythm(3, 4, 1.0)
+
+    assert len(r3.spans) == 3
+    assert len(r4.spans) == 4
+    assert sum(r3.spans) == pytest.approx(1.0)
+    assert sum(r4.spans) == pytest.approx(1.0)
+    # Each span is equal within its cell
+    assert all(s == pytest.approx(1.0 / 3) for s in r3.spans)
+    assert all(s == pytest.approx(0.25) for s in r4.spans)
+
+
+def test_polyrhythm_rejects_non_positive_counts() -> None:
+    with pytest.raises(ValueError, match="division counts must be positive"):
+        polyrhythm(0, 4, 1.0)
+    with pytest.raises(ValueError, match="division counts must be positive"):
+        polyrhythm(3, -1, 1.0)
+
+
+def test_polyrhythm_rejects_non_positive_span() -> None:
+    with pytest.raises(ValueError, match="span must be positive"):
+        polyrhythm(3, 4, 0.0)
+    with pytest.raises(ValueError, match="span must be positive"):
+        polyrhythm(3, 4, -1.0)
+
+
+# --- cross_rhythm ---
+
+
+def test_cross_rhythm_produces_correct_phrases() -> None:
+    phrases = cross_rhythm(
+        layers=[(3, [1.0, 5 / 4, 3 / 2]), (4, [2.0, 7 / 4, 3 / 2, 5 / 3])],
+        span=2.0,
+    )
+
+    assert len(phrases) == 2
+    # First layer: 3 divisions of 2.0s = 3 events
+    assert len(phrases[0].events) == 3
+    assert phrases[0].duration == pytest.approx(2.0)
+    # Second layer: 4 divisions of 2.0s = 4 events
+    assert len(phrases[1].events) == 4
+    assert phrases[1].duration == pytest.approx(2.0)
+
+
+def test_cross_rhythm_rejects_empty_layers() -> None:
+    with pytest.raises(ValueError, match="layers must not be empty"):
+        cross_rhythm(layers=[], span=1.0)
+
+
+def test_cross_rhythm_rejects_non_positive_span() -> None:
+    with pytest.raises(ValueError, match="span must be positive"):
+        cross_rhythm(layers=[(3, [1.0])], span=0.0)
+
+
+def test_cross_rhythm_rejects_non_positive_divisions() -> None:
+    with pytest.raises(ValueError, match="division counts must be positive"):
+        cross_rhythm(layers=[(0, [1.0])], span=1.0)
+
+
+# --- groove velocity weights ---
+
+
+def test_grid_line_applies_groove_velocity_weights() -> None:
+    timeline = Timeline(bpm=120.0, groove=Groove.mpc_tight())
+
+    phrase = grid_line(
+        tones=[4.0, 5.0, 6.0, 7.0],
+        durations=[S, S, S, S],
+        timeline=timeline,
+        amp=0.2,
+    )
+
+    expected_weights = (1.0, 0.65, 0.85, 0.55)
+    for event, weight in zip(phrase.events, expected_weights, strict=True):
+        assert event.velocity == pytest.approx(weight)
+
+
+def test_grid_ratio_line_applies_groove_velocity_weights() -> None:
+    timeline = Timeline(bpm=120.0, groove=Groove.mpc_tight())
+
+    phrase = grid_ratio_line(
+        tones=[1.0, 5 / 4, 3 / 2, 7 / 4],
+        durations=[S, S, S, S],
+        context=HarmonicContext(tonic=220.0),
+        timeline=timeline,
+        amp=0.2,
+    )
+
+    expected_weights = (1.0, 0.65, 0.85, 0.55)
+    for event, weight in zip(phrase.events, expected_weights, strict=True):
+        assert event.velocity == pytest.approx(weight)
+
+
+# --- line() velocity parameter ---
+
+
+def test_line_scalar_velocity() -> None:
+    phrase = line(
+        tones=[4.0, 5.0, 6.0],
+        rhythm=(0.5, 0.5, 0.5),
+        velocity=0.7,
+    )
+
+    for event in phrase.events:
+        assert event.velocity == pytest.approx(0.7)
+
+
+def test_line_per_note_velocity() -> None:
+    phrase = line(
+        tones=[4.0, 5.0, 6.0],
+        rhythm=(0.5, 0.5, 0.5),
+        velocity=[0.5, 0.8, 1.0],
+    )
+
+    assert [event.velocity for event in phrase.events] == pytest.approx([0.5, 0.8, 1.0])
+
+
+def test_line_wrong_length_velocity_raises() -> None:
+    with pytest.raises(ValueError, match="velocity sequence must have the same length"):
+        line(
+            tones=[4.0, 5.0, 6.0],
+            rhythm=(0.5, 0.5, 0.5),
+            velocity=[0.5, 0.8],
+        )

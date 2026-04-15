@@ -24,7 +24,7 @@ def _build_demo_score(
 ) -> Score:
     """Build a short motif that makes effect changes easy to hear."""
     score = Score(
-        f0=55.0,
+        f0_hz=55.0,
         master_effects=list(master_effects or []),
     )
 

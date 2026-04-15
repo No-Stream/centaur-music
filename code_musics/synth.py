@@ -3968,6 +3968,19 @@ _SATURATION_PRESETS: dict[str, dict[str, Any]] = {
         "preserve_highs_hz": 5_000.0,
         "compensation_mode": "rms",
     },
+    "snare_bite": {
+        "algorithm": "modern",
+        "mode": "triode",
+        "drive": 1.8,
+        "mix": 0.35,
+        "tone": 0.06,
+        "fidelity": 0.45,
+        "oversample_factor": 4,
+        "highpass_hz": 30.0,
+        "preserve_lows_hz": 150.0,
+        "preserve_highs_hz": 5_000.0,
+        "compensation_mode": "rms",
+    },
 }
 
 _AIRWINDOWS_PRESETS: dict[str, dict[str, Any]] = {
@@ -4124,6 +4137,54 @@ _COMPRESSOR_PRESETS: dict[str, dict[str, float | str | list[dict[str, Any]]]] = 
         "topology": "feedforward",
         "detector_mode": "peak",
         "lookahead_ms": 1.0,
+    },
+    "snare_punch": {
+        # Fast-attack transient control — lets the initial crack through then clamps.
+        # ~5 dB GR at peak for a snare at -6 dBFS; detector HP keeps low bleed out.
+        "threshold_db": -12.0,
+        "ratio": 3.0,
+        "attack_ms": 4.0,
+        "release_ms": 120.0,
+        "knee_db": 4.0,
+        "makeup_gain_db": 2.5,
+        "mix": 0.88,
+        "topology": "feedforward",
+        "detector_mode": "peak",
+        "detector_bands": [
+            {"kind": "highpass", "cutoff_hz": 100.0, "slope_db_per_oct": 12}
+        ],
+    },
+    "snare_body": {
+        # Slower attack lets the transient fully through; RMS detection smooths
+        # the body sustain for a fatter, more even tail.
+        "threshold_db": -16.0,
+        "ratio": 2.0,
+        "attack_ms": 18.0,
+        "release_ms": 200.0,
+        "knee_db": 6.0,
+        "makeup_gain_db": 1.5,
+        "mix": 0.75,
+        "topology": "feedback",
+        "detector_mode": "rms",
+        "detector_bands": [
+            {"kind": "highpass", "cutoff_hz": 80.0, "slope_db_per_oct": 12}
+        ],
+    },
+    "hat_control": {
+        # Very fast attack tames hi-hat spikes; short release avoids pumping
+        # on rapid 16th-note patterns.
+        "threshold_db": -16.0,
+        "ratio": 2.5,
+        "attack_ms": 2.0,
+        "release_ms": 60.0,
+        "knee_db": 3.0,
+        "makeup_gain_db": 1.0,
+        "mix": 0.85,
+        "topology": "feedforward",
+        "detector_mode": "peak",
+        "detector_bands": [
+            {"kind": "highpass", "cutoff_hz": 200.0, "slope_db_per_oct": 12}
+        ],
     },
     "master_glue": {
         "threshold_db": -26.0,
@@ -5494,6 +5555,31 @@ def apply_preamp(
     return processed_signal, analysis
 
 
+def apply_stereo_width(
+    signal: np.ndarray,
+    width: float = 1.0,
+    *,
+    sample_rate: int = SAMPLE_RATE,
+) -> np.ndarray:
+    """Mid/side stereo width control.
+
+    Parameters
+    ----------
+    signal:
+        Stereo input (2, N).  Mono (1-D) passes through unchanged.
+    width:
+        0.0 = mono, 1.0 = unchanged, 2.0 = exaggerated stereo.
+        Values > 1.0 boost the side signal; values < 1.0 narrow toward mono.
+    """
+    if signal.ndim == 1:
+        return signal  # mono passthrough, nothing to widen
+
+    mid = (signal[0] + signal[1]) * 0.5
+    side = (signal[0] - signal[1]) * 0.5
+    side = side * width
+    return np.array([mid + side, mid - side])
+
+
 _SUPPORTED_EFFECT_AMOUNT_AUTOMATION_TARGETS = {"mix", "wet", "wet_level"}
 
 
@@ -5651,6 +5737,7 @@ _SIMPLE_EFFECT_DISPATCH: dict[str, Callable[..., np.ndarray]] = {
     "prebox": apply_prebox,
     "rare_se": apply_rare_se,
     "tuba": apply_tuba,
+    "stereo_width": apply_stereo_width,
 }
 
 
@@ -5947,6 +6034,7 @@ def write_wav(
     signal: np.ndarray,
     *,
     bit_depth: int = 24,
+    warn_low_peak: bool = True,
 ) -> None:
     """Write mono (1D) or stereo (2, samples) signal to a WAV file.
 
@@ -5986,8 +6074,10 @@ def write_wav(
         level_diagnostics.true_peak_dbfs,
         level_diagnostics.integrated_lufs,
     )
-    if np.isfinite(level_diagnostics.peak_dbfs) and (
-        level_diagnostics.peak_dbfs <= _LOW_EXPORT_PEAK_WARNING_DBFS
+    if (
+        warn_low_peak
+        and np.isfinite(level_diagnostics.peak_dbfs)
+        and (level_diagnostics.peak_dbfs <= _LOW_EXPORT_PEAK_WARNING_DBFS)
     ):
         logger.warning(
             "Export peak is unexpectedly low at %.2f dBFS for %s; "

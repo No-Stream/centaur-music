@@ -6,9 +6,17 @@ from typing import Any
 
 import numpy as np
 
+from code_musics.engines._dsp_utils import (
+    apply_analog_post_processing,
+    apply_note_jitter,
+    apply_voice_card,
+    build_cutoff_drift,
+    build_drift,
+    extract_analog_params,
+    nyquist_fade,
+    rng_for_note,
+)
 from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_zdf_svf
-
-_NYQUIST_FADE_START = 0.85
 
 
 def render(
@@ -37,6 +45,13 @@ def render(
     pulse_width = float(params.get("pulse_width", 0.5))
     filter_mode = str(params.get("filter_mode", "lowpass")).lower()
     filter_drive = float(params.get("filter_drive", 0.0))
+    filter_even_harmonics = float(params.get("filter_even_harmonics", 0.0))
+    analog = extract_analog_params(params)
+    pitch_drift = analog["pitch_drift"]
+    analog_jitter = analog["analog_jitter"]
+    noise_floor_level = analog["noise_floor"]
+    drift_rate_hz = analog["drift_rate_hz"]
+    cutoff_drift_amount = analog["cutoff_drift"]
 
     if n_harmonics < 1:
         raise ValueError("n_harmonics must be at least 1")
@@ -71,6 +86,40 @@ def render(
     else:
         freq_profile = np.full(n_samples, freq, dtype=np.float64)
 
+    # --- Analog character: RNG, jitter, drift ---
+    rng = rng_for_note(
+        freq=freq,
+        duration=duration,
+        amp=amp,
+        sample_rate=sample_rate,
+    )
+    # Voice card calibration — persistent per-voice character
+    freq_profile, amp, cutoff_hz = apply_voice_card(
+        params,
+        voice_card_amount=analog["voice_card"],
+        freq_profile=freq_profile,
+        amp=amp,
+        cutoff_hz=cutoff_hz,
+    )
+
+    jittered = apply_note_jitter(params, rng, analog_jitter)
+    cutoff_hz = float(jittered.get("cutoff_hz", cutoff_hz))
+    resonance_q = float(jittered.get("resonance_q", resonance_q))
+    filter_env_decay = float(jittered.get("filter_env_decay", filter_env_decay))
+    start_phase = float(jittered.get("_phase_offset", 0.0))
+    amp_jitter_db = float(jittered.get("_amp_jitter_db", 0.0))
+
+    if pitch_drift > 0:
+        drift_multiplier = build_drift(
+            n_samples=n_samples,
+            drift_amount=pitch_drift,
+            drift_rate_hz=drift_rate_hz,
+            duration=duration,
+            phase_offset=start_phase,
+            rng=rng,
+        )
+        freq_profile = freq_profile * drift_multiplier
+
     # Build the raw additive signal (unfiltered sum of harmonics).
     signal = np.zeros(n_samples, dtype=np.float64)
     power_estimate = 0.0
@@ -85,17 +134,20 @@ def render(
         if harmonic_weight == 0.0:
             continue
 
-        anti_alias_weight = _nyquist_fade(partial_freq_profile, nyquist_hz)
+        anti_alias_weight = nyquist_fade(partial_freq_profile, nyquist_hz)
         if np.max(anti_alias_weight) <= 0.0:
             continue
 
-        phase = np.cumsum(
-            np.concatenate(
-                [
-                    np.zeros(1, dtype=np.float64),
-                    2.0 * np.pi * partial_freq_profile[:-1] / sample_rate,
-                ]
+        phase = (
+            np.cumsum(
+                np.concatenate(
+                    [
+                        np.zeros(1, dtype=np.float64),
+                        2.0 * np.pi * partial_freq_profile[:-1] / sample_rate,
+                    ]
+                )
             )
+            + start_phase * harmonic_index
         )
         partial_weight = harmonic_weight * anti_alias_weight
         signal += partial_weight * np.sin(phase)
@@ -113,6 +165,25 @@ def render(
         keytracked_cutoff * cutoff_envelope, 20.0, nyquist_hz * 0.98
     )
 
+    if cutoff_drift_amount > 0:
+        cutoff_rng = rng_for_note(
+            freq=freq,
+            duration=duration,
+            amp=amp,
+            sample_rate=sample_rate,
+            extra_seed="cutoff_drift",
+        )
+        cutoff_modulation = build_cutoff_drift(
+            n_samples,
+            amount_cents=30.0 * cutoff_drift_amount,
+            rate_hz=0.3,
+            rng=cutoff_rng,
+            sample_rate=sample_rate,
+        )
+        cutoff_profile = np.clip(
+            cutoff_profile * cutoff_modulation, 20.0, nyquist_hz * 0.98
+        )
+
     filtered = apply_zdf_svf(
         signal,
         cutoff_profile=cutoff_profile,
@@ -120,6 +191,16 @@ def render(
         sample_rate=sample_rate,
         filter_mode=filter_mode,
         filter_drive=filter_drive,
+        filter_even_harmonics=filter_even_harmonics,
+    )
+
+    filtered = apply_analog_post_processing(
+        filtered,
+        rng=rng,
+        amp_jitter_db=amp_jitter_db,
+        noise_floor_level=noise_floor_level,
+        sample_rate=sample_rate,
+        n_samples=n_samples,
     )
 
     # Peak-normalize after filtering (filter sweep causes uneven amplitude).
@@ -147,16 +228,3 @@ def _waveform_weight(waveform: str, harmonic_index: int, pulse_width: float) -> 
         return sign / (harmonic_index * harmonic_index)
 
     raise ValueError(f"Unsupported waveform: {waveform}")
-
-
-def _nyquist_fade(partial_freq_profile: np.ndarray, nyquist_hz: float) -> np.ndarray:
-    """Gently fade the top of the spectrum before Nyquist to avoid brittle edges."""
-    fade_start_hz = nyquist_hz * _NYQUIST_FADE_START
-    if fade_start_hz >= nyquist_hz:
-        return (partial_freq_profile < nyquist_hz).astype(np.float64)
-
-    fade_progress = (partial_freq_profile - fade_start_hz) / (
-        nyquist_hz - fade_start_hz
-    )
-    fade = 1.0 - np.clip(fade_progress, 0.0, 1.0)
-    return np.square(fade)

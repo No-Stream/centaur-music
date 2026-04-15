@@ -97,6 +97,9 @@ def test_fm_render_matches_mathematical_reference() -> None:
             "feedback": 0.0,
             "index_decay": 0.0,
             "index_sustain": 1.0,
+            "pitch_drift": 0.0,
+            "analog_jitter": 0.0,
+            "noise_floor": 0.0,
         },
     )
 

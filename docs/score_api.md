@@ -59,7 +59,7 @@ Example:
 from code_musics.score import EffectSpec, Score
 
 score = Score(
-    f0=110.0,
+    f0_hz=110.0,
     master_effects=[
         EffectSpec("saturation", {"preset": "tube_warm", "mix": 0.2}),
     ],
@@ -101,7 +101,7 @@ Authoring guidance:
 
 - prefer `amp_db` for mix-level choices
 - use `velocity` for note-level accents and phrasing
-- use `partial` when the note should track `Score.f0`
+- use `partial` when the note should track `Score.f0_hz`
 - use `freq` when the note should stay absolute
 - use `synth` for note-local engine overrides or articulation tweaks
 - use `automation` for note-local pitch gestures and explicit param motion
@@ -246,9 +246,10 @@ Fields:
 - `normalize_peak_db`
 - `max_polyphony`
 - `legato`
+- `choke_group`
 - `pan`
 - `sympathetic_amount`
-- `sympathetic_decay`
+- `sympathetic_decay_s`
 - `sympathetic_modes`
 - `automation`
 - `notes`
@@ -262,6 +263,7 @@ Important behavior:
 - `normalize_lufs` defaults to `-24.0`; set to `None` only as a last resort (prefer `normalize_peak_db` for percussive voices)
 - `normalize_peak_db` defaults to `None`; mutually exclusive with `normalize_lufs`
 - `max_polyphony` defaults to `None` (no cap); when provided it must be `>= 1`
+- `choke_group` defaults to `None`; when set, all voices sharing the same string tag form a choke group
 
 Practical interpretation:
 
@@ -272,7 +274,7 @@ Practical interpretation:
 - `velocity_group` links multiple voices into a shared velocity-drift family
 - `velocity_to_params` makes louder/softer notes timbrally different
 - `pre_fx_gain_db` is the voice input trim before voice effects; use it when you want to hit chorus, saturation, compression, or reverb harder or softer without changing the note writing
-- `mix_db` is the voice fader after voice effects and before the master bus — use it **only for mix balance**, not for gain staging; normalization handles gain staging
+- `mix_db` is a **post-fader channel level** (like a mixing console fader), not a wet/dry mix ratio — it controls how loud this voice is in the final stereo bus, in dB, after normalization and voice effects have been applied; defaults to `0.0` (unity gain); use it **only for mix balance**, not for gain staging; for wet/dry control on effects, use effect-level `mix` or `wet` parameters on `EffectSpec` instead
 - `sends` routes the post-fader voice signal into one or more shared send buses
 - `normalize_lufs` applies an integrated-LUFS stem gain trim before `pre_fx_gain_db`, pan, voice effects, and `mix_db`; the default `-24.0` is the right choice for all tonal, melodic, and sustained voices
 - `normalize_peak_db` is the alternative for percussive/transient voices (kicks, toms, noise hits): it normalizes the voice to a target peak level before effects, making compressor thresholds and effect drive predictable regardless of BPM or individual note `amp_db` values — use `-6.0` as the standard target when pairing with the `kick_punch` or `kick_glue` compressor presets
@@ -281,7 +283,7 @@ Practical interpretation:
 - `legato=True` only matters when `max_polyphony=1`: overlapping note transitions skip the new note's attack retrigger, giving a simple mono-legato glide behavior without continuous oscillator state carryover
 - `pan` places the rendered voice in stereo
 - `sympathetic_amount` controls the level of sympathetic resonance added to the voice; `0.0` (default) disables it
-- `sympathetic_decay` sets the decay time in seconds for sympathetic resonator ringing; default `2.0`
+- `sympathetic_decay_s` sets the decay time in seconds for sympathetic resonator ringing; default `2.0`
 - `sympathetic_modes` sets how many harmonic modes per note are used as resonator frequencies; default `8`
 - `automation` adds explicit score-time parameter lanes beyond humanization
 - in phase 1, `Voice.automation` can target synth params, `pitch_ratio`, and
@@ -289,7 +291,7 @@ Practical interpretation:
 
 ### Sympathetic Resonance
 
-`sympathetic_amount`, `sympathetic_decay`, and `sympathetic_modes` control an
+`sympathetic_amount`, `sympathetic_decay_s`, and `sympathetic_modes` control an
 optional resonator bank that adds sympathetic ringing to a voice.
 
 Parameters:
@@ -297,7 +299,7 @@ Parameters:
 - `sympathetic_amount: float = 0.0`
   Level of sympathetic resonance mixed into the voice. `0.0` disables the
   feature entirely.
-- `sympathetic_decay: float = 2.0`
+- `sympathetic_decay_s: float = 2.0`
   Decay time in seconds for each resonator mode.
 - `sympathetic_modes: int = 8`
   Number of harmonic modes per note used as resonator frequencies.
@@ -334,7 +336,7 @@ score.add_voice(
     "harpsichord",
     synth_defaults={"engine": "harpsichord", "preset": "baroque"},
     sympathetic_amount=0.15,
-    sympathetic_decay=2.5,
+    sympathetic_decay_s=2.5,
     sympathetic_modes=6,
 )
 ```
@@ -419,9 +421,10 @@ Parameters:
 - `normalize_peak_db`
 - `max_polyphony`
 - `legato`
+- `choke_group` — optional string tag; voices sharing a choke group cut each other on note onset (see below)
 - `pan`
 - `sympathetic_amount` — strength of sympathetic resonance; `0.0` (default) disables it
-- `sympathetic_decay` — decay time in seconds for sympathetic resonator ringing; default `2.0`
+- `sympathetic_decay_s` — decay time in seconds for sympathetic resonator ringing; default `2.0`
 - `sympathetic_modes` — number of harmonic modes per note used as resonator frequencies; default `8`
 - `automation` — voice-level score-time automation specs; default `None`
 
@@ -431,13 +434,18 @@ Important behavior:
 - `velocity_humanize=None` in the method call currently means "use the default subtle humanizer", not "disable velocity humanization"
 - if you want to disable velocity humanization after a voice exists, set `voice.velocity_humanize = None`
 - `pre_fx_gain_db` defaults to `0.0` and acts like a pre-insert trim
-- `mix_db` defaults to `0.0` and acts like a post-insert voice fader; use it for mix balance only, not gain staging
+- `mix_db` defaults to `0.0` (unity gain) and acts like a post-insert channel fader in dB — it sets how loud the voice is in the final stereo bus; use it for mix balance only, not gain staging; despite the name, it is **not** a wet/dry mix ratio — for effect wet/dry control, use `mix` or `wet` params on `EffectSpec`
 - `sends` defaults to `[]` and routes the post-fader voice into named shared aux buses
 - `normalize_lufs=-24.0` (default) handles gain staging for all tonal voices — leave it at the default and use `mix_db` to balance
 - use `normalize_peak_db=-6.0` for percussive voices (kicks, toms, noise hits) instead of `normalize_lufs`; this gives effects a predictable input level regardless of BPM or note-level `amp_db` variation
 - `normalize_lufs` and `normalize_peak_db` are mutually exclusive
 - `max_polyphony=1` is the strict-mono setting for basses, leads, and other voices where overlap smear is unwanted
 - with `max_polyphony=1`, `legato=True` suppresses the attack retrigger on overlapped note changes
+- `choke_group` assigns the voice to a named choke group; when any voice in the
+  group plays a note, all other voices in the same group are faded out with a
+  10 ms linear ramp at that onset time — the classic use case is open/closed
+  hi-hat pairs where a closed hit silences a ringing open hit
+- `choke_group=None` (default) means the voice is not in any choke group
 
 That second-to-last point is easy to miss and worth being explicit about.
 
@@ -608,7 +616,23 @@ Useful for:
 
 - debugging arrangement balance
 - inspecting per-voice rendering
-- exporting stems later if that becomes a workflow
+- feeding into `export_stem_bundle()` for per-voice WAV export
+
+### `Score.render_for_stem_export(dry=False)`
+
+Renders all components needed for audio stem WAV export in a single pass.
+
+Returns `(voice_stems, send_returns, mix_audio)`:
+
+- `voice_stems: dict[str, np.ndarray]` — wet (post-effects/pan/fader) or dry
+  (post-normalization, pre-effects/pan, mono) depending on the `dry` flag
+- `send_returns: dict[str, np.ndarray]` — mixed bus returns; empty dict if `dry=True`
+- `mix_audio: np.ndarray` — always the full wet mix with master-bus processing
+
+In wet mode, `sum(voice_stems) + sum(send_returns) ≈ pre-master mix`.
+
+Used by `export_stem_bundle()` in `code_musics/stem_export.py`. See
+`make stems PIECE=...` for the CLI workflow.
 
 ### `Score.resolve_timing_offsets()`
 

@@ -104,6 +104,15 @@ Most valuable next helpers:
 - controlled inharmonic stretch and physical-object style detuning beyond the current gentle upper-partial drift
 - deeper programmable per-partial envelopes and modulation beyond the current onset/sustain morph
 - a broader role-oriented preset family expanding beyond the current JI / septimal / 11-limit / utonal set
+- **Vital-style spectral morphs on the existing partial bank** — frequency-domain
+  transforms applied to the additive engine's partials at render time: inharmonic
+  stretch (`pow(stretch, log2(partial_index))`), phase dispersion (quadratic
+  phase offset centered at harmonic 24), amplitude smear (running average across
+  harmonics), Shepard tone wrapping (octave-wrapped harmonic crossfade). These
+  operate on the existing partial data without requiring a wavetable — they're
+  orthogonal to and simpler than the wavetable engine's spectral morphs. Source:
+  Vital WavetableOscillator (the transforms are separable from the wavetable
+  frame machinery).
 
 ### MIDI Export — Implemented
 
@@ -133,16 +142,41 @@ Most promising directions:
 
 ## Medium priority
 
-### Slop, swing, and drift extensions
+### Slop, swing, and drift extensions — Groove Implemented
 
-  Some of this is implemented already through timing, envelope, and velocity
-  humanization; what remains is the more specialized layer.
-  We recently added notes (rather than just time-based) arranging.
-  And we have humanization + imperfection. But we should eventually add swing.
+Timing, envelope, and velocity humanization were already in place.
+**Groove templates are now implemented** in `meter.py`: the `Groove`
+class replaces `SwingSpec` with per-step timing offsets + velocity
+weights, factory swing methods, and named presets (`mpc_tight`,
+`dilla_lazy`, `motown_pocket`, `bossa`, `tr808_swing`). `Timeline`
+accepts `groove=` for grid-aware feel. General `tuplet(n, m, value)`
+is also implemented for quintuplets, septuplets, etc.
 
-### Polyrhythm/polymeter
+Remaining follow-up:
 
-  To some extent we already support this implicitly. Worth expanding?
+- tempo maps and tempo automation (accelerando, ritardando)
+- metric modulation helpers (pivot between related tempi)
+- groove extraction from audio references (analyze a WAV, produce a
+  `Groove` template)
+- per-voice groove offsets (e.g. drums slightly ahead, bass slightly
+  behind)
+
+### Polyrhythm/polymeter — Partially Implemented
+
+`polyrhythm(a, b, span)` and `cross_rhythm(layers, span)` are
+implemented in `composition.py` for building interlocking rhythmic
+layers. Rhythmic phrase transforms (`augment`, `diminish`,
+`rhythmic_retrograde`, `displace`, `rotate`) are also implemented.
+Generative rhythm tools (`prob_rhythm`, `AksakPattern`, `ca_rhythm`,
+`mutate_rhythm`) extend this further.
+
+Remaining follow-up:
+
+- polymeter helpers where voices run in different time signatures
+  simultaneously (current tools handle polyrhythm within a shared
+  span, but not independent meters)
+- metric phasing helpers (Steve Reich-style gradual phase drift
+  between voices)
 
 ### Autoresearch, for music — Evaluation Implemented
 
@@ -192,6 +226,32 @@ Most promising directions:
     and settling
 - stronger analysis feedback so we can verify whether a sound actually opens,
     softens, or narrows the way intended
+
+### Modulation sources and aliveness
+
+Ideas for richer, more organic modulation beyond the current humanization and
+automation surfaces.
+
+- **Lorenz attractor as modulation source** — 3 coupled ODEs (sigma=10, rho=28,
+  beta=8/3), Euler or RK4 integration at control rate (~100-500 Hz). Produces
+  chaotic but smooth 3-output modulation. Non-repeating, organic. Three outputs
+  can modulate different targets with natural correlation (e.g. filter cutoff,
+  pan, send level). Source: Vital's random LFO mode.
+- **Enhanced sample-and-hold with slew limiter** — Buchla 266 "Source of
+  Uncertainty" style. Clock-triggered random values with adjustable one-pole
+  slew for everything from stepped staircase to smooth organic curves.
+- **Envelope follower as general modulation source** — already exists inside
+  saturation and compressor effects but not exposed as a reusable modulation
+  routing target. Would enable sidechain-style cross-voice modulation of
+  filter, pan, send, etc.
+- **Ornstein-Uhlenbeck process as general modulation** — mean-reverting random
+  walk (`dx = theta*(mu-x)*dt + sigma*dW`) that naturally returns to center
+  without hard clamping. Better character than clamped random walk for filter
+  cutoff, pan, etc.
+- **Per-sample oscillator phase noise** — tiny random perturbation to phase
+  accumulator (distinct from pitch drift which is coherent). Simulates real
+  oscillator zero-crossing jitter. Subtler and higher-frequency than existing
+  drift.
 
 ### Utonal, subharmonic, and drift-based harmony
 
@@ -302,6 +362,18 @@ territory for a piece — the 11-limit and septimal intervals (11/10, 49/30,
 
 - cool idea. let's try.
 
+### Tuning-aware effects
+
+- **Tuning-aware chorus** — delay times relative to note period rather than
+  fixed ms, avoiding 12-TET comb filtering artifacts on pure JI intervals.
+  Conventional chorus at fixed delay times can smear or cancel partials
+  that should be clean in JI; scaling delay to the note's period preserves
+  interval purity.
+- **Consonance-shaped unison** — detune spread weighted toward harmonically
+  related intervals rather than symmetric cents. Instead of +/- N cents,
+  detune voices toward nearby ratios (e.g. 3/2, 5/4) so the beating
+  reinforces the harmonic series rather than fighting it.
+
 ### Non-octave-privileged distortion
 
   Traditional distortion/saturation relies on octave-based products.
@@ -324,6 +396,21 @@ Most promising directions:
 - continued plugin-backed EQ / glue / color exploration with a bias toward
   stable Linux-native VST3 or LV2 paths
 
+#### BBD ensemble chorus
+
+6 parallel delay lines with 120-degree LFO phase offsets (the Juno/Dimension D
+secret). Dual-LFO modulation at ~0.18 Hz and ~5.52 Hz. Anti-alias filter cutoff
+tracks clock rate. This is the classic thick-but-clear chorus character that
+plugin chorus approximates but rarely nails. Source: Surge BBDEnsembleEffect.
+
+#### Wavefolders
+
+Linear fold and sine fold as effect-chain waveshapers. `linear_fold:
+|mod(x*drive*0.25+0.75, 1)*-4+2| - 1`, `sine_fold: sin(x*drive*pi)`.
+Different character from saturation — adds harmonics by folding the waveform
+back on itself rather than clipping. Useful for aggressive timbral shaping
+and west-coast-style processing. Source: Vital.
+
 #### Filter drive and saturation
 
 The native saturation effect now uses a two-stage analog-style path with
@@ -332,6 +419,28 @@ The old fuzzy/aliased behavior is gone. Remaining area to explore: whether
 the current saturation character is musically ideal across all use cases
 (e.g. gentle mix warmth vs aggressive drive vs bass-specific grit), or
 whether additional saturation modes/curves would help.
+
+Research finding: Vital uses 7 distinct saturation functions by role —
+`algebraicSat` (barely-there state limiting), `quickTanh` (softer knee),
+`bumpSat` (linear longer, sharper knee), `hardTanh` (clamp with soft
+overflow), etc. Exposing selectable saturation curves/modes rather than a
+single tanh-family shape would let the same effect cover gentle mix warmth,
+musical drive, and aggressive clipping without separate effect types.
+
+#### Analog modeling
+
+Ideas for more convincing analog character across the signal path:
+
+- **Thermal noise injection at specific signal path points** — pre-filter
+  (shapes through filter character), in filter feedback (prevents periodic
+  ringing), in release tail (circuit noise audible as signal fades). Each
+  injection point has different sonic character.
+- **Cross-voice oscillator bleed/crosstalk** — tiny fraction of neighboring
+  voices mixed in, simulating PCB trace coupling in analog polysynths.
+  Subtle but contributes to perceived warmth and ensemble cohesion.
+- **Per-sample oscillator phase noise** — see "Modulation sources and
+  aliveness" above. Distinct from pitch drift; simulates zero-crossing
+  jitter.
 
 #### Plugin reliability follow-up
 
@@ -461,11 +570,67 @@ look worthwhile:
 
 ### Wavetable engine
 
-- allows unique timbres, somewhat complicated, needs to be done right (aliasing etc)
+Allows unique timbres — somewhat complicated, needs to be done right
+(aliasing etc).
+
+Research findings from Vital's `WavetableOscillator`:
+
+- **FFT-domain antialiasing**: store wavetable frames as FFT; at render time,
+  zero bins above Nyquist/f0 before IFFT. This is the clean way to avoid
+  aliasing without oversampling.
+- **Catmull-Rom cubic interpolation** between samples within a frame (better
+  than linear, cheaper than sinc).
+- **Linear crossfade between frames** during morphing (simple, artifact-free).
+- **Spectral morphs operating on frequency-domain frames**: inharmonic stretch
+  (`pow(stretch, log2(partial_index))`), phase dispersion (quadratic phase
+  offset centered at harmonic 24), amplitude smear (running average across
+  harmonics), Shepard tone (octave-wrapped harmonic crossfade). These
+  transforms also apply to the existing additive engine's partial bank — see
+  "Spectral/additive extensions" below.
+
+Source: Vital WavetableOscillator.
+
+### Phase distortion synthesis
+
+Warp the phase trajectory of a sine rather than modulating frequency (like FM).
+Asymmetric triangle modulator shapes phase; distortion depth scales with
+`timbre^2` and inversely with harmonic ratio (self-limiting aliasing). Simpler
+than FM, less aliasing, different character. Good candidate for a lightweight
+engine with strong timbral range.
+
+Source: Mutable Instruments Plaits.
+
+### Waveguide string engine
+
+Recirculating delay line (length = SR/f0) with Hermite cubic fractional delay.
+Two-stage loop filter (FIR brightness + IIR SVF lowpass) for
+frequency-dependent damping. Allpass in series for dispersion (stretches upper
+partials like real stiff strings). Dual detuned strings for beating.
+
+Complementary to the existing modal piano/harpsichord — fundamentally different
+sound (plucked guitar, dulcimer, bowed textures). Waveguides are cheap to run
+and naturally produce rich, evolving sustain that modal synthesis approximates
+with many modes.
+
+Source: Surge StringOscillator + Mutable Instruments Rings.
+
+### Particle/dust engine
+
+Stochastic impulse trains filtered through a resonant bandpass. Between "noise"
+and "pitched." Per-sample: random float vs density threshold triggers impulse
+through resonant BPF. Frequency randomized per block. Good for textural layers,
+transitional material, and percussion-adjacent voices that don't fit conventional
+drum or noise engine models.
+
+Source: Mutable Instruments Plaits particle.h.
 
 #### Utonal pieces
 
 We've focused primarily on otonal composition and JI, utonal seems worth exploring.
+
+### Creative drum voices
+
+Weird, unique, strange, creative drum voices. Think utonic VST or Elektron's OG machinedrum.
 
 ---
 
@@ -491,13 +656,26 @@ Useful later once the current filter palette has settled:
 - more emphasis on musicality (analog influence can be useful but not required)
 - treat this as an additional flavor, not a replacement for the current filter
   path
+- **K35 (Korg35) filter** — two first-order TPT filters in a resonant feedback
+  loop. Grittier, more aggressive resonance than SVF. LP mode:
+  `LPF1 → sum → LPF2 + HPF1(feedback)`. Resonance stabilized by
+  `alpha = 1/(1 - mk*G + mk*G²)`. Source: sst-filters / Surge.
+- **Diode filter** — 4-pole ladder with per-stage feedback injection and 2-pole
+  HP pre-filter. Distinct from Moog-style ladder (asymmetric clipping per
+  stage). Primary tanh at input, drive amplified by resonance. Source: Vital.
+- **Formant filter** — 4x 12dB SVF bandpass in series, 2D bilinear vowel
+  interpolation (4 corner vowels on X/Y axes). Elegant and directly portable
+  to existing SVF infrastructure. Source: Vital.
 
 Possible later additions:
 
-- swing-oriented helpers where it actually serves the music
-- more correlated ensemble behavior across voices for specific groove feels
-- selective synth-parameter drift such as cutoff drift or mild oscillator drift
-  where it helps rather than muddies tuning clarity
+- ~~swing-oriented helpers where it actually serves the music~~ DONE
+  — `Groove` templates with named presets are implemented
+- more correlated ensemble behavior across voices for specific
+  groove feels
+- selective synth-parameter drift such as cutoff drift or mild
+  oscillator drift where it helps rather than muddies tuning
+  clarity
 
 ### Deferred generative ideas
 
@@ -508,9 +686,12 @@ Ideas discussed but deferred during the generative toolkit build:
 - Comma pump generator — auto-generate chord progressions that drift by a
   specified comma per cycle
 - Phase process helpers — parameterized Steve Reich-style gradual phase shifting
-- L-systems — Lindenmayer systems mapped to pitch/rhythm for fractal structures
-- Process pipelines — composable generator chaining for combining generators
-- Cellular automata — 1D CA rules mapped to musical parameters
+- L-systems — Lindenmayer systems mapped to pitch/rhythm for
+  fractal structures
+- Process pipelines — composable generator chaining for combining
+  generators
+- ~~Cellular automata — 1D CA rules mapped to musical parameters~~
+  DONE — `ca_rhythm` and `ca_rhythm_layers` are implemented
 
 ### Sound-quality refinement
 

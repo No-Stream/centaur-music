@@ -13,6 +13,7 @@ from code_musics.midi_export import ALL_STEM_FORMATS, MidiStemFormat
 from code_musics.render import (
     RenderWindow,
     export_piece_midi,
+    export_piece_stems,
     list_pieces,
     render_piece,
 )
@@ -43,6 +44,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Comma-separated MIDI stem formats to export. "
             f"Choices: {', '.join(ALL_STEM_FORMATS)}"
         ),
+    )
+    parser.add_argument(
+        "--export-stems",
+        action="store_true",
+        help="Export audio stem WAVs instead of rendering audio.",
+    )
+    parser.add_argument(
+        "--stem-bit-depth",
+        type=int,
+        default=24,
+        help="Bit depth for stem WAV export (16, 24, or 32).",
+    )
+    parser.add_argument(
+        "--no-mix",
+        action="store_true",
+        help="Omit the reference stereo mix from a stems export.",
+    )
+    parser.add_argument(
+        "--dry",
+        action="store_true",
+        help="Export dry stems (post-normalization, pre-effects/pan).",
     )
     parser.add_argument(
         "--no-analysis",
@@ -159,6 +181,17 @@ def main() -> None:
                 stem_formats=_parse_midi_formats(args.midi_formats),
             )
             logging.info("Saved MIDI bundle manifest to %s", result.manifest_path)
+            continue
+
+        if args.export_stems:
+            stem_result = export_piece_stems(
+                piece_name,
+                render_window=render_window,
+                bit_depth=args.stem_bit_depth,
+                include_mix=not args.no_mix,
+                dry=args.dry,
+            )
+            logging.info("Saved stems bundle to %s", stem_result.bundle_dir)
             continue
 
         result = render_piece(

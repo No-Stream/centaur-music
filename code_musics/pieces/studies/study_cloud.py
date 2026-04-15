@@ -26,7 +26,7 @@ F0_HZ = 55.0
 def build_score() -> Score:
     """Build the stochastic cloud study score."""
     score = Score(
-        f0=F0_HZ,
+        f0_hz=F0_HZ,
         timing_humanize=TimingHumanizeSpec(preset="loose_late_night"),
         master_effects=[
             EffectSpec(

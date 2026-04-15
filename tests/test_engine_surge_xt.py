@@ -251,7 +251,7 @@ class TestScoreIntegration:
     def test_score_renders_surge_xt_voice(self) -> None:
         from code_musics.score import Score
 
-        score = Score(f0=220.0)
+        score = Score(f0_hz=220.0)
         score.add_voice(
             "surge_pad",
             synth_defaults={"engine": "surge_xt", "tail_seconds": 0.5},

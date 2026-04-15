@@ -88,7 +88,7 @@ def build_bwv_846_fugue_score() -> Score:
     logger.info(f"Tuning table:\n{table.describe(root_midi_note=_ROOT_MIDI)}")
 
     score = Score(
-        f0=_F0,
+        f0_hz=_F0,
         master_effects=[REVERB_EFFECT],
     )
 
