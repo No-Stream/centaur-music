@@ -51,6 +51,7 @@ EffectKind = Literal[
     "bricasti",
     "brit_pre",
     "chorus",
+    "bbd_chorus",
     "mod_delay",
     "saturation",
     "preamp",

@@ -103,6 +103,11 @@ def test_new_unit_bearing_aliases_override_legacy_flat_names() -> None:
     ("engine_name", "preset_name"),
     [
         ("additive", "organ"),
+        ("additive", "stiff_piano"),
+        ("additive", "dispersed_pad"),
+        ("additive", "smear_drone"),
+        ("additive", "shepard_bells"),
+        ("additive", "chaos_cloud"),
         ("fm", "dx_piano"),
         ("fm", "lately_bass"),
         ("fm", "fm_clav"),

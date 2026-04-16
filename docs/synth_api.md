@@ -335,7 +335,7 @@ synth_defaults = {"engine": "filtered_stack", "preset": "warm_pad"}
 
 Available presets:
 
-- `additive`: `soft_pad`, `drone`, `bright_pluck`, `organ`, `ji_fusion_pad`, `septimal_reed`, `eleven_limit_glass`, `utonal_drone`, `plucked_ji`, `breathy_flute`, `ancient_bell`, `whispered_chord`, `struck_membrane`, `singing_bowl`, `marimba_bar`, `convolved_bell`, `thick_drone`, `fractal_fifth`, `fractal_septimal`, `vowel_a_pad`, `singing_glass`, `gravity_cloud`, `drifting_to_just`, `living_drone`, `candle_light`
+- `additive`: `soft_pad`, `drone`, `bright_pluck`, `organ`, `ji_fusion_pad`, `septimal_reed`, `eleven_limit_glass`, `utonal_drone`, `plucked_ji`, `breathy_flute`, `ancient_bell`, `whispered_chord`, `struck_membrane`, `singing_bowl`, `marimba_bar`, `convolved_bell`, `thick_drone`, `fractal_fifth`, `fractal_septimal`, `vowel_a_pad`, `singing_glass`, `gravity_cloud`, `drifting_to_just`, `living_drone`, `candle_light`, `brush_breath`, `brush_cymbal`, `stiff_piano`, `dispersed_pad`, `smear_drone`, `shepard_bells`, `chaos_cloud`
 - `fm`: `bell`, `glass_lead`, `metal_bass`, `dx_piano`, `lately_bass`, `fm_clav`, `fm_mallet`, `chorused_ep`
 - `filtered_stack`: `warm_pad`, `reed_lead`, `round_bass`, `saw_pad`, `string_pad`, `analog_strings`
 - `kick_tom`: `808_hiphop`, `808_house`, `808_tape`, `909_techno`, `909_house`, `909_crunch`, `distorted_hardkick`, `zap_kick`, `round_tom`, `floor_tom`, `electro_tom`, `ring_tom`, `gated_808`, `pitch_dive`, `filtered_kick`, `fm_body_kick`, `foldback_kick`, `808_resonant`, `808_resonant_long`, `resonant_tom`, `melodic_resonator`, `kick_bell`
@@ -595,6 +595,79 @@ score = Score(
             },
         )
     ],
+)
+```
+
+### `bbd_chorus`
+
+Implementation: [code_musics/synth.py](code_musics/synth.py)
+
+Juno-faithful native bucket-brigade-style stereo chorus. The signature move
+is **quadrature LFOs** (L at 0, R at 90 degrees) that produce genuine stereo
+decorrelation from a mono input, **cross-feedback** (L -> R and R -> L, never
+self-feedback) that keeps the wet field airy instead of metallic, and pre/post
+bandlimiting that gives the wet path the soft, rolled-off BBD flavor. Unlike
+the `chorus` effect, the wet image is **summed** with the dry signal (not
+crossfaded) — `mix` scales the wet contribution, so the dry signal is always
+fully present.
+
+Prefer this over `chorus` when you want the recognizable Juno-106 / Dimension-D
+character. The older `chorus` effect is a digital LFO chorus and is kept for
+the pieces that already rely on it.
+
+Parameters:
+
+- `preset: str`
+  Supported presets: `juno_i`, `juno_ii`, `juno_i_plus_ii`, `dimension_wide`.
+- `mix: float`
+  Wet level added to dry (0 - 1). Typical musical range is `0.25 - 0.45`.
+  Values above ~0.5 get obvious.
+- `rate_hz: float`
+  LFO rate in Hz. Juno I is 0.51 Hz, Juno II is 0.83 Hz,
+  Dimension-D is ~0.3 Hz.
+- `depth_ms: float`
+  Peak modulation depth around the base delay.
+- `center_delay_ms: float`
+  Base delay time. Juno is ~3 - 5 ms; Dimension-D territory is ~10 ms. Must be
+  greater than `depth_ms` so the delay stays positive at the LFO trough.
+- `cross_feedback: float`
+  L -> R and R -> L recirculation (0 - 0.5). Higher values lock the stereo
+  field; self-feedback is deliberately avoided.
+- `compander_amount: float`
+  Gentle wet-path soft-limiting (0 - 1) that mimics BBD I/O companding without
+  a full expander pair. 0 is bypass; ~0.2 is the Juno default.
+- `pre_lowpass_hz: float`
+  Pre-delay input bandlimit (BBD input filter).
+- `wet_lowpass_hz: float`
+  Post-delay wet lowpass (BBD output filter).
+- `wet_highpass_hz: float`
+  Removes low-end smear from the wet path.
+- `stack_count: int`
+  1 or 2. `2` stacks Juno I and II sections with staggered LFO phases for
+  denser motion.
+
+Notes:
+
+- Promotes mono input to stereo via the quadrature LFOs. Stereo input is
+  preserved per-channel.
+- `juno_i` is the safest subtle default; `juno_ii` is wider and faster;
+  `juno_i_plus_ii` stacks both; `dimension_wide` is for Dimension-D-style
+  longer delays and deeper modulation.
+- Reference: Juno-106 service manual (BBD clock rates, chorus parameters)
+  plus standard BBD chorus topology. Implemented from algorithmic description;
+  no proprietary code was copied.
+
+Example:
+
+```python
+score.add_voice(
+    "pad",
+    synth_defaults={
+        "engine": "filtered_stack",
+        "preset": "warm_pad",
+        "env": {"attack_ms": 400.0, "release_ms": 1400.0},
+    },
+    effects=[EffectSpec("bbd_chorus", {"preset": "juno_i"})],
 )
 ```
 
@@ -1338,6 +1411,62 @@ Parameters:
 - `unison_voices: int`
   Number of detuned additive copies to average together.
 
+Vital-style spectral morphs (re-implemented from algorithmic description; no
+verbatim GPL-3 code). All morphs operate on the per-partial `(ratio, amp)`
+array *before* resynthesis. Defaults leave the spectrum unchanged, so existing
+presets render bit-identically without explicit opt-in.
+
+- `spectral_morph_type: str` (default `"none"`)
+  One of `"none"`, `"inharmonic_scale"`, `"phase_disperse"`, `"smear"`,
+  `"shepard"`, `"random_amplitudes"`. Unknown values raise `ValueError` at
+  render time (fail-fast).
+- `spectral_morph_amount: float` (default `0.0`)
+  Strength of the morph. Reduces to identity at `0.0`. Clamped to `[0, 1]`
+  for `smear`, `shepard`, and `random_amplitudes`; unclamped for
+  `inharmonic_scale` (negative values compress, positive stretch) and
+  `phase_disperse` (typical range 0-0.05).
+- `spectral_morph_shift: float` (default `0.0`)
+  Used by `shepard` as an octave shift for the ghost copy and by
+  `random_amplitudes` as a 0-1 position scrolling through a 16-stage
+  interpolated random mask. Ignored by the other morph types.
+- `spectral_morph_center_k: int` (default `24`)
+  Used by `phase_disperse` to select the partial index where the quadratic
+  phase offset is zero. Vital's default is 24; small harmonic banks usually
+  want values in the 2-8 range.
+- `spectral_morph_seed: int` (default `0`)
+  Used by `random_amplitudes` to select a stable random mask sequence.
+  Deterministic under fixed seed.
+- `sigma_approximation: bool` (default `False`)
+  When `True`, multiplies each partial's amplitude by `sinc(k / (K + 1))`
+  (Lanczos sigma factors) before resynthesis. Reduces Gibbs ringing from
+  hard band-limiting. Strictly better than hard truncation; cheap to enable.
+
+Morph semantics:
+
+- **`inharmonic_scale`** (piano-stiffness / inharmonic drift)
+  `new_ratio[k] = ratio[k] * (1 + amount * log2(k) / log2(k_max))`.
+  The fundamental is unaffected; higher partials shift progressively more.
+  Small positive amounts (0.05-0.2) give piano-plate-like stretch. Larger
+  amounts drift toward bell/gong inharmonicity.
+- **`phase_disperse`** (Vital pad width without chorus)
+  `phase[k] += sin((k - center_k)^2 * amount) * 2*pi`. Quadratic phase
+  offsets across partials create a "spread" waveform with unchanged
+  magnitude spectrum. Typical amounts 0.005-0.03.
+- **`smear`** (pink-shifted amplitude spread)
+  `amp[k+1] = (1-amount)*amp[k+1] + amount*amp[k]*(1 + 0.25/k)`. A
+  first-order running mixer that leaks amplitude into upper partials;
+  creates a softly pink drift of overtones while preserving ratios.
+- **`shepard`** (octave-ghost crossfade)
+  Each partial blends toward the partner at `ratio * 2^shift` (amplitude
+  only in v1). A log-distance gate (~0.25 octaves) prevents wild jumps
+  when no close partner exists. Useful for gently pushing a timbre toward
+  or away from its octave twin.
+- **`random_amplitudes`** (Vital-style stable random mask)
+  Generates 16 seeded random amplitude vectors under `seed` and
+  interpolates between two adjacent stages from `shift in [0, 1]`
+  (wrapped circularly). Deterministic under fixed `seed`; sweep `shift`
+  via automation for evolving timbres.
+
 Notes:
 
 - Omitting the new parameters preserves the old additive behavior closely.
@@ -1348,6 +1477,11 @@ Notes:
 - `attack_partials` only does anything when paired with `spectral_morph_time > 0`.
 - Explicit spectral ratios are relative to the resolved note frequency, not to
   `Score.f0`.
+- When a spectral morph is set and `attack_partials` is also provided, the
+  morph is applied to *both* the sustain and attack partial sets using the
+  same parameters before morph-time crossfading. Ratio-changing morphs
+  (`inharmonic_scale`, `shepard`) therefore preserve the onset/sustain
+  relationship but shift both spectra together.
 
 Helper builders (`code_musics.spectra`):
 
@@ -1402,6 +1536,14 @@ Additive presets:
 - `drifting_to_just` — stretched spectrum gravitating toward harmonic ratios
 - `living_drone` — subtle organic flicker on harmonic partials
 - `candle_light` — strong independent per-partial amplitude wavering
+
+Spectral-morph demo presets (showcase each morph type at musical settings):
+
+- `stiff_piano` — `inharmonic_scale` at 0.08 for piano-like string stiffness
+- `dispersed_pad` — `phase_disperse` at 0.02 center_k=4 for Vital-style pad width
+- `smear_drone` — `smear` at 0.55 pushing harmonic energy into overtones
+- `shepard_bells` — `shepard` at 0.4 shift=1.0 for octave-ghost crossfade
+- `chaos_cloud` — `random_amplitudes` at 0.7 with sigma-approximated spectrum
 
 Example:
 

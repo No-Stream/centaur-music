@@ -311,6 +311,14 @@ See `FUTURE.md` for way more ideas.
 - The additive engine supports explicit spectral partial sets plus optional
   onset-to-sustain spectral morphing; use that when tuning and timbre should be
   co-designed instead of assuming a plain harmonic ladder.
+- The additive engine also supports Vital-style spectral morphs on the partial
+  bank: `inharmonic_scale` (piano-stiffness / inharmonic drift),
+  `phase_disperse` (pad-style spread without chorus), `smear` (pink amplitude
+  leak into overtones), `shepard` (octave-ghost crossfade), and
+  `random_amplitudes` (seeded stable 16-stage random mask). Optional
+  `sigma_approximation=True` applies Lanczos sigma factors to reduce Gibbs
+  ringing. See `docs/synth_api.md` and the `stiff_piano` / `dispersed_pad` /
+  `smear_drone` / `shepard_bells` / `chaos_cloud` demo presets for usage.
 - The `polyblep` engine supports an optional second oscillator via `osc2_*`
   parameters for detuned stacks and sub layers.
 - The `polyblep` and `filtered_stack` engines support `filter_topology="ladder"`
@@ -347,6 +355,12 @@ See `FUTURE.md` for way more ideas.
   more than treble, producing minimal intermodulation on harmonically rich
   material. Use `preamp` for gentle warmth/coloring (master bus, subtle voice
   color); use `saturation` for intentional distortion/drive effects.
+- The native `bbd_chorus` effect is a Juno-faithful BBD-style stereo chorus
+  with quadrature LFOs (true L/R decorrelation from mono input), cross-feedback,
+  BBD-style pre/post bandlimiting, and an optional gentle compander. Presets:
+  `juno_i`, `juno_ii`, `juno_i_plus_ii`, `dimension_wide`. Wet is summed with
+  dry (not crossfaded) — `mix` controls wet level. Prefer this over the older
+  native `chorus` when you want the recognizable Juno-106 / Dimension-D vibe.
 - The `kick_tom` synth engine provides 808/909-style kicks and toms with
   optional multi-point envelopes (body amp, pitch, overtone), per-body ZDF
   SVF filter with envelope-modulated cutoff, FM body synthesis for

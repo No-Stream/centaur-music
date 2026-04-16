@@ -10,6 +10,11 @@ from scipy.signal import butter, sosfilt
 
 from code_musics.engines._dsp_utils import flow_exciter, nyquist_fade, rng_for_note
 from code_musics.engines._envelopes import parse_envelope_points, render_envelope
+from code_musics.engines._spectral_morphs import (
+    MORPH_TYPES,
+    apply_sigma_approximation,
+    apply_spectral_morph,
+)
 from code_musics.spectra import formant_weight, harmonic_spectrum, vowel_formants
 from code_musics.tuning import tenney_height
 
@@ -174,6 +179,43 @@ def render(
         0.0, min(1.0, float(params.get("flicker_correlation", 0.3)))
     )
 
+    # --- Spectral morph params (Vital-style frequency-domain transforms) ---
+    morph_type = str(params.get("spectral_morph_type", "none"))
+    if morph_type not in MORPH_TYPES:
+        raise ValueError(
+            f"Unsupported spectral_morph_type: {morph_type!r}. "
+            f"Expected one of {list(MORPH_TYPES)}."
+        )
+    morph_amount = float(params.get("spectral_morph_amount", 0.0))
+    morph_shift = float(params.get("spectral_morph_shift", 0.0))
+    morph_center_k = int(params.get("spectral_morph_center_k", 24))
+    morph_seed = int(params.get("spectral_morph_seed", 0))
+    sigma_approximation = bool(params.get("sigma_approximation", False))
+
+    if morph_type != "none":
+        sustain_partials = apply_spectral_morph(
+            sustain_partials,
+            morph_type=morph_type,
+            amount=morph_amount,
+            shift=morph_shift,
+            center_k=morph_center_k,
+            seed=morph_seed,
+        )
+        if attack_partials is not None:
+            attack_partials = apply_spectral_morph(
+                attack_partials,
+                morph_type=morph_type,
+                amount=morph_amount,
+                shift=morph_shift,
+                center_k=morph_center_k,
+                seed=morph_seed,
+            )
+
+    if sigma_approximation:
+        sustain_partials = apply_sigma_approximation(sustain_partials)
+        if attack_partials is not None:
+            attack_partials = apply_sigma_approximation(attack_partials)
+
     spectral_partials = _build_spectral_partials(
         sustain_partials=sustain_partials,
         attack_partials=attack_partials,
@@ -222,7 +264,8 @@ def render(
             if np.max(anti_alias_weight) <= 0.0:
                 continue
 
-            phase = np.cumsum(
+            phase_offset = float(partial.get("phase_offset", 0.0))
+            phase = phase_offset + np.cumsum(
                 np.concatenate(
                     [
                         np.zeros(1, dtype=np.float64),
@@ -464,6 +507,21 @@ def _build_spectral_partials(
         if "envelope" in partial
     }
 
+    # Phase offsets from spectral morphs (e.g. phase_disperse). Sustain
+    # takes precedence; the fall-back on attack matches how amps are handled
+    # when only attack_partials carry an entry for a given ratio.
+    phase_map: dict[float, float] = {}
+    for partial in sustain_partials:
+        phase_value = partial.get("phase")
+        if phase_value is not None:
+            phase_map[float(partial["ratio"])] = float(phase_value)
+    if attack_partials is not None:
+        for partial in attack_partials:
+            if float(partial["ratio"]) in phase_map:
+                continue
+            phase_value = partial.get("phase")
+            if phase_value is not None:
+                phase_map[float(partial["ratio"])] = float(phase_value)
     note_progress = np.linspace(0.0, 1.0, n_samples, endpoint=False, dtype=np.float64)
     if spectral_morph_time > 0.0 and attack_partials is not None:
         morph_progress = np.clip(
@@ -544,6 +602,7 @@ def _build_spectral_partials(
             {
                 "ratio": ratio,
                 "amp_trajectory": amp_trajectory.astype(np.float64),
+                "phase_offset": phase_map.get(ratio, 0.0),
             }
         )
     return partials

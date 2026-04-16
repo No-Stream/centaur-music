@@ -503,6 +503,69 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "attack": 0.2,
             "release": 0.4,
         },
+        # Vital-style spectral morph demos.
+        "stiff_piano": {
+            "partials": ratio_spectrum(
+                [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+                [1.0, 0.52, 0.32, 0.22, 0.16, 0.12, 0.09, 0.07],
+            ),
+            "spectral_morph_type": "inharmonic_scale",
+            "spectral_morph_amount": 0.08,
+            "sigma_approximation": True,
+            "attack": 0.005,
+            "decay": 0.3,
+            "sustain_level": 0.55,
+            "release": 0.6,
+        },
+        "dispersed_pad": {
+            "partials": ratio_spectrum(
+                [1.0, 5 / 4, 3 / 2, 7 / 4, 2.0, 9 / 4, 5 / 2, 3.0],
+                [1.0, 0.52, 0.38, 0.3, 0.22, 0.15, 0.12, 0.08],
+            ),
+            "spectral_morph_type": "phase_disperse",
+            "spectral_morph_amount": 0.02,
+            "spectral_morph_center_k": 4,
+            "attack": 0.6,
+            "release": 1.8,
+            "unison_voices": 2,
+            "detune_cents": 3.0,
+        },
+        "smear_drone": {
+            "partials": ratio_spectrum(
+                [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+                [1.0, 0.35, 0.2, 0.12, 0.08, 0.06, 0.05, 0.04],
+            ),
+            "spectral_morph_type": "smear",
+            "spectral_morph_amount": 0.55,
+            "attack": 0.8,
+            "release": 2.4,
+        },
+        "shepard_bells": {
+            "partials": ratio_spectrum(
+                [1.0, 2.0, 4.0, 8.0, 5 / 4, 5 / 2, 5.0, 3 / 2],
+                [1.0, 0.5, 0.25, 0.12, 0.65, 0.32, 0.16, 0.4],
+            ),
+            "spectral_morph_type": "shepard",
+            "spectral_morph_amount": 0.4,
+            "spectral_morph_shift": 1.0,
+            "attack": 0.02,
+            "decay": 0.25,
+            "sustain_level": 0.4,
+            "release": 1.2,
+        },
+        "chaos_cloud": {
+            "partials": ratio_spectrum(
+                [1.0, 9 / 8, 5 / 4, 11 / 8, 3 / 2, 7 / 4, 15 / 8, 2.0],
+                [1.0, 0.5, 0.45, 0.35, 0.4, 0.3, 0.28, 0.25],
+            ),
+            "spectral_morph_type": "random_amplitudes",
+            "spectral_morph_amount": 0.7,
+            "spectral_morph_shift": 0.25,
+            "spectral_morph_seed": 19,
+            "sigma_approximation": True,
+            "attack": 0.5,
+            "release": 1.4,
+        },
     },
     "fm": {
         "bell": {
