@@ -13,7 +13,7 @@ from code_musics.engines._drum_utils import (
     rng_for_note,
 )
 from code_musics.engines._envelopes import render_envelope
-from code_musics.engines._filters import apply_zdf_svf
+from code_musics.engines._filters import apply_filter
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -170,7 +170,7 @@ def render(
             cutoff_profile = np.full(
                 body_length, min(cutoff_hz, sample_rate * 0.4), dtype=np.float64
             )
-            body_noise = apply_zdf_svf(
+            body_noise = apply_filter(
                 body_noise,
                 cutoff_profile=cutoff_profile,
                 resonance_q=tail_filter_q,

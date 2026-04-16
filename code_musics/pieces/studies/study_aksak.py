@@ -67,9 +67,9 @@ PAD_TONES: list[float] = [F0 * r for r in [1 / 1, 5 / 4, 3 / 2]]
 # Synth definitions
 # ---------------------------------------------------------------------------
 
-KICK_SYNTH: dict = {"engine": "kick_tom", "preset": "909_house"}
+KICK_SYNTH: dict = {"engine": "drum_voice", "preset": "909_house"}
 
-METAL_SYNTH: dict = {"engine": "metallic_perc", "preset": "closed_hat"}
+METAL_SYNTH: dict = {"engine": "drum_voice", "preset": "closed_hat"}
 
 BASS_SYNTH: dict = {
     "engine": "polyblep",

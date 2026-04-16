@@ -52,7 +52,7 @@ MELODY_SYNTH: dict = {
 }
 
 TICK_SYNTH: dict = {
-    "engine": "noise_perc",
+    "engine": "drum_voice",
     "preset": "tick",
 }
 

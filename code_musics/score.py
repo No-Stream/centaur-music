@@ -394,6 +394,7 @@ class PreparedVoiceNote:
     effective_hold_duration: float
     effective_attack: float
     effective_release: float
+    vca_nonlinearity: float
 
 
 @dataclass
@@ -1041,6 +1042,7 @@ class Score:
                 release=prepared_note.effective_release,
                 sample_rate=self.sample_rate,
                 hold_duration=prepared_note.effective_hold_duration,
+                vca_nonlinearity=prepared_note.vca_nonlinearity,
             )
             voice_signals.append(
                 synth.at_sample_rate(
@@ -1377,6 +1379,7 @@ class Score:
                     else:
                         freq_trajectory = held_trajectory
 
+            vca_nonlinearity = float(synth_params.get("vca_nonlinearity", 0.0))
             prepared_notes.append(
                 PreparedVoiceNote(
                     note_index=note_index,
@@ -1393,6 +1396,7 @@ class Score:
                     effective_hold_duration=note.duration,
                     effective_attack=attack,
                     effective_release=release,
+                    vca_nonlinearity=vca_nonlinearity,
                 )
             )
         return prepared_notes

@@ -16,6 +16,7 @@ from code_musics.pieces.counterpoint_studies import PIECES as _COUNTERPOINT_PIEC
 from code_musics.pieces.crystal_canon import PIECES as _CRYSTAL_CANON_PIECES
 from code_musics.pieces.effects_showcase import PIECES as _EFFECTS_SHOWCASE_PIECES
 from code_musics.pieces.emergence_reverse import PIECES as _EMERGENCE_REVERSE_PIECES
+from code_musics.pieces.forge import PIECES as _FORGE_PIECES
 from code_musics.pieces.harmonic_studies import PIECES as _HARMONIC_STUDY_PIECES
 from code_musics.pieces.iron_pulse import PIECES as _IRON_PULSE_PIECES
 from code_musics.pieces.iron_pulse_v2 import PIECES as _IRON_PULSE_V2_PIECES
@@ -24,6 +25,7 @@ from code_musics.pieces.justly_intoned_synth import PIECES as _JUSTLY_INTONED_PI
 from code_musics.pieces.mellow_studies import PIECES as _MELLOW_PIECES
 from code_musics.pieces.mirror_dialogue import PIECES as _MIRROR_DIALOGUE_PIECES
 from code_musics.pieces.natural_steps import PIECES as _NATURAL_STEPS_PIECES
+from code_musics.pieces.night_lattice import PIECES as _NIGHT_LATTICE_PIECES
 from code_musics.pieces.organ_passacaglia import PIECES as _ORGAN_CHORALE_PIECES
 from code_musics.pieces.phase_garden import PIECES as _PHASE_GARDEN_PIECES
 from code_musics.pieces.registry import merge_piece_maps
@@ -40,6 +42,7 @@ from code_musics.pieces.techno_studies import PIECES as _TECHNO_PIECES
 from code_musics.pieces.texture_studies import PIECES as _TEXTURE_STUDY_PIECES
 from code_musics.pieces.trance_studies import PIECES as _TRANCE_PIECES
 from code_musics.pieces.velvet_wall import PIECES as _VELVET_WALL_PIECES
+from code_musics.pieces.warming_up import PIECES as _WARMING_UP_PIECES
 from code_musics.pieces.wtc_sketches import PIECES as _WTC_PIECES
 
 PIECES = merge_piece_maps(
@@ -81,6 +84,9 @@ PIECES = merge_piece_maps(
     _SEVENTH_WINDOW_PIECES,
     _TAPE_HYMN_PIECES,
     _BELL_PULSE_PIECES,
+    _NIGHT_LATTICE_PIECES,
+    _WARMING_UP_PIECES,
+    _FORGE_PIECES,
 )
 
 __all__ = ["PIECES"]

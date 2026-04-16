@@ -16,7 +16,7 @@ from code_musics.engines._dsp_utils import (
     nyquist_fade,
     rng_for_note,
 )
-from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_zdf_svf
+from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_filter
 
 
 def render(
@@ -46,6 +46,11 @@ def render(
     filter_mode = str(params.get("filter_mode", "lowpass")).lower()
     filter_drive = float(params.get("filter_drive", 0.0))
     filter_even_harmonics = float(params.get("filter_even_harmonics", 0.0))
+    filter_topology = str(params.get("filter_topology", "svf")).lower()
+    bass_compensation = float(params.get("bass_compensation", 0.0))
+    filter_morph = float(params.get("filter_morph", 0.0))
+    hpf_cutoff_hz = float(params.get("hpf_cutoff_hz", 0.0))
+    hpf_resonance_q = float(params.get("hpf_resonance_q", 0.707))
     analog = extract_analog_params(params)
     pitch_drift = analog["pitch_drift"]
     analog_jitter = analog["analog_jitter"]
@@ -94,9 +99,14 @@ def render(
         sample_rate=sample_rate,
     )
     # Voice card calibration — persistent per-voice character
-    freq_profile, amp, cutoff_hz = apply_voice_card(
+    freq_profile, amp, cutoff_hz, vc_offsets = apply_voice_card(
         params,
-        voice_card_amount=analog["voice_card"],
+        voice_card_spread=analog["voice_card_spread"],
+        pitch_spread=analog["voice_card_pitch_spread"],
+        filter_spread=analog["voice_card_filter_spread"],
+        envelope_spread=analog["voice_card_envelope_spread"],
+        osc_spread=analog["voice_card_osc_spread"],
+        level_spread=analog["voice_card_level_spread"],
         freq_profile=freq_profile,
         amp=amp,
         cutoff_hz=cutoff_hz,
@@ -105,9 +115,22 @@ def render(
     jittered = apply_note_jitter(params, rng, analog_jitter)
     cutoff_hz = float(jittered.get("cutoff_hz", cutoff_hz))
     resonance_q = float(jittered.get("resonance_q", resonance_q))
+    resonance_q = max(
+        0.5, resonance_q * (1.0 + vc_offsets["resonance_offset_pct"] / 100.0)
+    )
     filter_env_decay = float(jittered.get("filter_env_decay", filter_env_decay))
     start_phase = float(jittered.get("_phase_offset", 0.0))
     amp_jitter_db = float(jittered.get("_amp_jitter_db", 0.0))
+
+    attack = float(params.get("attack", 0.04)) * vc_offsets["attack_scale"]
+    release = float(params.get("release", 0.1)) * vc_offsets["release_scale"]
+    _ = attack, release  # available for ADSR when wired
+
+    if waveform == "pulse":
+        pulse_width = min(
+            0.99, max(0.01, pulse_width + vc_offsets["pulse_width_offset"])
+        )
+    drift_rate_hz *= 1.0 + vc_offsets["drift_rate_offset_pct"] / 100.0
 
     if pitch_drift > 0:
         drift_multiplier = build_drift(
@@ -184,7 +207,7 @@ def render(
             cutoff_profile * cutoff_modulation, 20.0, nyquist_hz * 0.98
         )
 
-    filtered = apply_zdf_svf(
+    filtered = apply_filter(
         signal,
         cutoff_profile=cutoff_profile,
         resonance_q=resonance_q,
@@ -192,6 +215,11 @@ def render(
         filter_mode=filter_mode,
         filter_drive=filter_drive,
         filter_even_harmonics=filter_even_harmonics,
+        filter_topology=filter_topology,
+        bass_compensation=bass_compensation,
+        filter_morph=filter_morph,
+        hpf_cutoff_hz=hpf_cutoff_hz,
+        hpf_resonance_q=hpf_resonance_q,
     )
 
     filtered = apply_analog_post_processing(

@@ -52,9 +52,9 @@ TOTAL_DUR = _pos(TOTAL_BARS + 1)
 
 # Bars 1-8: FM kick — harmonically rich metallic attack thinning to clean sub
 _KICK_FM: dict = {
-    "body_fm_ratio": 1.41,
-    "body_fm_index": 3.5,
-    "body_fm_index_envelope": [
+    "tone_fm_ratio": 1.41,
+    "tone_fm_index": 3.5,
+    "tone_fm_index_envelope": [
         {"time": 0.0, "value": 1.0},
         {"time": 0.06, "value": 0.08, "curve": "exponential"},
         {"time": 1.0, "value": 0.0, "curve": "linear"},
@@ -64,10 +64,10 @@ _KICK_FM: dict = {
 # Bars 9-16: FM + lowpass filter sweep (darker body, opens then closes)
 _KICK_FILTERED: dict = {
     **_KICK_FM,
-    "body_filter_mode": "lowpass",
-    "body_filter_cutoff_hz": 1400.0,
-    "body_filter_q": 1.1,
-    "body_filter_envelope": [
+    "filter_mode": "lowpass",
+    "filter_cutoff_hz": 1400.0,
+    "filter_q": 1.1,
+    "filter_envelope": [
         {"time": 0.0, "value": 3500.0},
         {"time": 0.10, "value": 1400.0, "curve": "exponential"},
         {"time": 1.0, "value": 600.0, "curve": "linear"},
@@ -77,13 +77,13 @@ _KICK_FILTERED: dict = {
 # Bars 17-24: Foldback distortion for aggression at the peak
 _KICK_FOLDBACK: dict = {
     **_KICK_FM,
-    "body_distortion": "foldback",
-    "body_distortion_drive": 0.40,
-    "body_distortion_mix": 0.55,
-    "body_filter_mode": "lowpass",
-    "body_filter_cutoff_hz": 1800.0,
-    "body_filter_q": 0.9,
-    "body_filter_envelope": [
+    "tone_shaper": "foldback",
+    "tone_shaper_drive": 0.40,
+    "tone_shaper_mix": 0.55,
+    "filter_mode": "lowpass",
+    "filter_cutoff_hz": 1800.0,
+    "filter_q": 0.9,
+    "filter_envelope": [
         {"time": 0.0, "value": 5000.0},
         {"time": 0.08, "value": 1800.0, "curve": "exponential"},
         {"time": 1.0, "value": 800.0, "curve": "linear"},
@@ -92,12 +92,12 @@ _KICK_FOLDBACK: dict = {
 
 # Bars 29-32: Pitch dive — alien outro
 _KICK_DIVE: dict = {
-    "pitch_envelope": [
+    "tone_pitch_envelope": [
         {"time": 0.0, "value": 5.0},
         {"time": 0.025, "value": 2.0, "curve": "bezier", "cx": 0.1, "cy": 0.9},
         {"time": 0.12, "value": 1.0, "curve": "exponential"},
     ],
-    "body_amp_envelope": [
+    "tone_envelope": [
         {"time": 0.0, "value": 1.0},
         {"time": 0.7, "value": 0.6, "curve": "linear"},
         {"time": 0.8, "value": 0.0, "curve": "exponential"},
@@ -261,7 +261,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "kick",
-        engine="kick_tom",
+        engine="drum_voice",
         preset="909_techno",
         drum_bus=drum_bus,
         send_db=-2.0,
@@ -273,7 +273,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "closed_hat",
-        engine="metallic_perc",
+        engine="drum_voice",
         preset="closed_hat",
         drum_bus=drum_bus,
         send_db=-4.0,
@@ -292,7 +292,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "open_hat",
-        engine="metallic_perc",
+        engine="drum_voice",
         preset="open_hat",
         drum_bus=drum_bus,
         send_db=-4.0,
@@ -310,7 +310,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "snare",
-        engine="snare",
+        engine="drum_voice",
         preset="gated_snare",
         drum_bus=drum_bus,
         send_db=-3.0,
@@ -326,7 +326,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "clap",
-        engine="clap",
+        engine="drum_voice",
         preset="gated_clap",
         drum_bus=drum_bus,
         send_db=-3.0,
@@ -338,7 +338,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "ride",
-        engine="metallic_perc",
+        engine="drum_voice",
         preset="decaying_bell",
         drum_bus=drum_bus,
         send_db=-4.0,
@@ -356,7 +356,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "perc",
-        engine="noise_perc",
+        engine="drum_voice",
         preset="shaped_hit",
         drum_bus=drum_bus,
         send_db=-5.0,
@@ -496,7 +496,7 @@ def _place_closed_hat(score: Score) -> None:
                     duration=0.04,
                     freq=9000.0,
                     amp_db=subdiv_db,
-                    synth={"filter_envelope": hat_filter},
+                    synth={"filter_mode": "bandpass", "filter_envelope": hat_filter},
                 )
 
 

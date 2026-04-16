@@ -19,14 +19,12 @@ class TestExtractAnalogParams:
 
     def test_returns_defaults_for_empty_params(self) -> None:
         result = extract_analog_params({})
-        assert result == {
-            "pitch_drift": 0.12,
-            "analog_jitter": 1.0,
-            "noise_floor": 0.001,
-            "drift_rate_hz": 0.3,
-            "cutoff_drift": 0.5,
-            "voice_card": 1.0,
-        }
+        assert result["pitch_drift"] == 0.12
+        assert result["analog_jitter"] == 1.0
+        assert result["noise_floor"] == 0.001
+        assert result["drift_rate_hz"] == 0.3
+        assert result["cutoff_drift"] == 0.5
+        assert result["voice_card_spread"] == 1.0
 
     def test_overrides_from_params(self) -> None:
         params = {
@@ -35,17 +33,45 @@ class TestExtractAnalogParams:
             "noise_floor": 0.01,
             "drift_rate_hz": 1.0,
             "cutoff_drift": 0.8,
-            "voice_card": 0.5,
+            "voice_card_spread": 2.5,
         }
         result = extract_analog_params(params)
-        assert result == {
-            "pitch_drift": 0.5,
-            "analog_jitter": 0.0,
-            "noise_floor": 0.01,
-            "drift_rate_hz": 1.0,
-            "cutoff_drift": 0.8,
-            "voice_card": 0.5,
-        }
+        assert result["pitch_drift"] == 0.5
+        assert result["analog_jitter"] == 0.0
+        assert result["noise_floor"] == 0.01
+        assert result["drift_rate_hz"] == 1.0
+        assert result["cutoff_drift"] == 0.8
+        assert result["voice_card_spread"] == 2.5
+
+    def test_legacy_voice_card_fallback(self) -> None:
+        result = extract_analog_params({"voice_card": 0.5})
+        assert result["voice_card_spread"] == 0.5
+
+    def test_voice_card_spread_takes_precedence(self) -> None:
+        result = extract_analog_params({"voice_card": 0.5, "voice_card_spread": 2.0})
+        assert result["voice_card_spread"] == 2.0
+
+    def test_per_group_spreads_inherit_from_global(self) -> None:
+        result = extract_analog_params({"voice_card_spread": 2.5})
+        assert result["voice_card_pitch_spread"] == 2.5
+        assert result["voice_card_filter_spread"] == 2.5
+        assert result["voice_card_envelope_spread"] == 2.5
+        assert result["voice_card_osc_spread"] == 2.5
+        assert result["voice_card_level_spread"] == 2.5
+
+    def test_per_group_spread_overrides_global(self) -> None:
+        result = extract_analog_params(
+            {
+                "voice_card_spread": 2.0,
+                "voice_card_pitch_spread": 0.3,
+                "voice_card_filter_spread": 3.0,
+            }
+        )
+        assert result["voice_card_spread"] == 2.0
+        assert result["voice_card_pitch_spread"] == 0.3
+        assert result["voice_card_filter_spread"] == 3.0
+        assert result["voice_card_envelope_spread"] == 2.0  # inherited
+        assert result["voice_card_osc_spread"] == 2.0  # inherited
 
     def test_partial_overrides_use_defaults_for_missing(self) -> None:
         result = extract_analog_params({"pitch_drift": 0.3, "noise_floor": 0.0})
@@ -63,7 +89,7 @@ class TestExtractAnalogParams:
         result = extract_analog_params({"waveform": "saw", "cutoff_hz": 1200.0})
         assert "waveform" not in result
         assert "cutoff_hz" not in result
-        assert len(result) == 6
+        assert len(result) == 15
 
 
 # ---------------------------------------------------------------------------

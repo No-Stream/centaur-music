@@ -163,12 +163,12 @@ def build_score() -> Score:
     score.add_voice(
         "kick",
         synth_defaults={
-            "engine": "kick_tom",
+            "engine": "drum_voice",
             "preset": "808_house",
             "params": {
-                "body_punch_ratio": 0.32,
-                "overtone_amount": 0.09,
-                "click_amount": 0.10,
+                "tone_punch": 0.32,
+                "tone_second_harmonic": 0.09,
+                "exciter_level": 0.10,
             },
         },
         effects=[
@@ -248,7 +248,7 @@ def build_score() -> Score:
     # ------------------------------------------------------------------
     score.add_voice(
         "hat",
-        synth_defaults={"engine": "noise_perc", "preset": "chh"},
+        synth_defaults={"engine": "drum_voice", "preset": "chh"},
         mix_db=-11.0,
         velocity_humanize=None,
         effects=[
@@ -272,7 +272,7 @@ def build_score() -> Score:
     # ------------------------------------------------------------------
     score.add_voice(
         "perc",
-        synth_defaults={"engine": "noise_perc", "preset": "tick"},
+        synth_defaults={"engine": "drum_voice", "preset": "tick"},
         mix_db=-10.0,
         normalize_peak_db=-6.0,
         velocity_humanize=None,
@@ -291,7 +291,7 @@ def build_score() -> Score:
     # ------------------------------------------------------------------
     score.add_voice(
         "clap",
-        synth_defaults={"engine": "noise_perc", "preset": "clap"},
+        synth_defaults={"engine": "drum_voice", "preset": "clap_noise"},
         mix_db=-14.5,
         normalize_peak_db=-6.0,
         velocity_humanize=None,

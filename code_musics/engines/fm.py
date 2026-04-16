@@ -120,12 +120,22 @@ def render(
         freq_profile = freq_trajectory
 
     # Voice card calibration — persistent per-voice character (no filter in FM)
-    freq_profile, amp, _ = apply_voice_card(
+    freq_profile, amp, _, vc_offsets = apply_voice_card(
         params,
-        voice_card_amount=analog["voice_card"],
+        voice_card_spread=analog["voice_card_spread"],
+        pitch_spread=analog["voice_card_pitch_spread"],
+        filter_spread=analog["voice_card_filter_spread"],
+        envelope_spread=analog["voice_card_envelope_spread"],
+        osc_spread=analog["voice_card_osc_spread"],
+        level_spread=analog["voice_card_level_spread"],
         freq_profile=freq_profile,
         amp=amp,
     )
+
+    attack = float(params.get("attack", 0.04)) * vc_offsets["attack_scale"]
+    release = float(params.get("release", 0.1)) * vc_offsets["release_scale"]
+    _ = attack, release  # available for ADSR when wired
+    drift_rate_hz *= 1.0 + vc_offsets["drift_rate_offset_pct"] / 100.0
 
     # Apply pitch drift to both carrier and modulator
     if pitch_drift > 0:

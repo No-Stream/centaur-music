@@ -14,8 +14,10 @@ Supported waveforms:
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
+import numba
 import numpy as np
 
 from code_musics.engines._dsp_utils import (
@@ -27,7 +29,11 @@ from code_musics.engines._dsp_utils import (
     extract_analog_params,
     rng_for_note,
 )
-from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_zdf_svf
+from code_musics.engines._filters import (
+    _SUPPORTED_FILTER_MODES,
+    _SUPPORTED_FILTER_TOPOLOGIES,
+    apply_filter,
+)
 
 
 def _polyblep_triangle(
@@ -53,6 +59,82 @@ def _polyblep_triangle(
         triangle /= peak
 
     return triangle
+
+
+@numba.njit(cache=True)
+def _apply_one_pole_lowpass(signal: np.ndarray, alpha: float) -> np.ndarray:
+    """Single-pole IIR lowpass: y[n] = alpha*x[n] + (1-alpha)*y[n-1]."""
+    n = signal.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    out[0] = signal[0] * alpha
+    one_minus_alpha = 1.0 - alpha
+    for i in range(1, n):
+        out[i] = alpha * signal[i] + one_minus_alpha * out[i - 1]
+    return out
+
+
+def _apply_osc_softness(
+    signal: np.ndarray,
+    *,
+    softness: float,
+    freq: float,
+    sample_rate: int,
+) -> np.ndarray:
+    """Bandwidth-limit a waveform via a frequency-tracking one-pole lowpass."""
+    if softness <= 0.0:
+        return signal
+    harmonic_multiplier = 10.0 + 40.0 * (1.0 - softness)
+    cutoff_freq = freq * harmonic_multiplier
+    cutoff_freq = min(cutoff_freq, sample_rate * 0.45)
+    alpha = float(np.clip(2.0 * math.pi * cutoff_freq / sample_rate, 0.0, 1.0))
+    if alpha >= 1.0:
+        return signal
+    return _apply_one_pole_lowpass(signal, alpha)
+
+
+def _apply_osc_asymmetry(
+    signal: np.ndarray,
+    phase: np.ndarray,
+    *,
+    asymmetry: float,
+    waveform: str,
+) -> np.ndarray:
+    """Apply waveform asymmetry: saw reset softening or square PW shift."""
+    if asymmetry <= 0.0 or waveform not in {"saw", "square"}:
+        return signal
+    if waveform == "saw":
+        sine_component = np.sin(2.0 * np.pi * phase)
+        blend = asymmetry * 0.3
+        return signal * (1.0 - blend) + blend * sine_component
+    return signal
+
+
+def _build_shape_drift_profile(
+    n_samples: int,
+    *,
+    shape_drift: float,
+    sample_rate: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Build a slow O-U drift profile for waveform shape modulation.
+
+    Returns an array in roughly [-1, 1] range that modulates waveform shape
+    parameters over time.  At shape_drift=1.0, the peak excursion is ~3%.
+    """
+    if shape_drift <= 0.0 or n_samples == 0:
+        return np.zeros(n_samples, dtype=np.float64)
+    drift = build_cutoff_drift(
+        n_samples,
+        amount_cents=30.0 * shape_drift,
+        rate_hz=0.15,
+        rng=rng,
+        sample_rate=sample_rate,
+    )
+    centered = drift - 1.0
+    peak = np.max(np.abs(centered))
+    if peak > 1e-12:
+        centered = centered / peak
+    return centered * shape_drift * 0.03
 
 
 def render(
@@ -87,12 +169,23 @@ def render(
     filter_mode = str(params.get("filter_mode", "lowpass")).lower()
     filter_drive = float(params.get("filter_drive", 0.0))
     filter_even_harmonics = float(params.get("filter_even_harmonics", 0.0))
+    filter_topology = str(params.get("filter_topology", "svf")).lower()
+    bass_compensation = float(params.get("bass_compensation", 0.0))
+    filter_morph = float(params.get("filter_morph", 0.0))
+    hpf_cutoff_hz = float(params.get("hpf_cutoff_hz", 0.0))
+    hpf_resonance_q = float(params.get("hpf_resonance_q", 0.707))
+    feedback_amount = float(params.get("feedback_amount", 0.0))
+    feedback_saturation = float(params.get("feedback_saturation", 0.3))
     analog = extract_analog_params(params)
     pitch_drift = analog["pitch_drift"]
     analog_jitter = analog["analog_jitter"]
     noise_floor_level = analog["noise_floor"]
     drift_rate_hz = analog["drift_rate_hz"]
     cutoff_drift_amount = analog["cutoff_drift"]
+    osc_asymmetry = analog["osc_asymmetry"]
+    osc_softness = analog["osc_softness"]
+    osc_dc_offset = analog["osc_dc_offset"]
+    osc_shape_drift = analog["osc_shape_drift"]
 
     if cutoff_hz <= 0:
         raise ValueError("cutoff_hz must be positive")
@@ -120,6 +213,10 @@ def render(
         )
     if filter_drive < 0:
         raise ValueError("filter_drive must be non-negative")
+    if filter_topology not in _SUPPORTED_FILTER_TOPOLOGIES:
+        raise ValueError(
+            f"Unsupported filter_topology: {filter_topology!r}. Use 'svf' or 'ladder'."
+        )
     if osc2_level < 0:
         raise ValueError("osc2_level must be non-negative")
 
@@ -146,9 +243,14 @@ def render(
         params=params,
     )
     # Voice card calibration — persistent per-voice character
-    freq_profile, amp, cutoff_hz = apply_voice_card(
+    freq_profile, amp, cutoff_hz, vc_offsets = apply_voice_card(
         params,
-        voice_card_amount=analog["voice_card"],
+        voice_card_spread=analog["voice_card_spread"],
+        pitch_spread=analog["voice_card_pitch_spread"],
+        filter_spread=analog["voice_card_filter_spread"],
+        envelope_spread=analog["voice_card_envelope_spread"],
+        osc_spread=analog["voice_card_osc_spread"],
+        level_spread=analog["voice_card_level_spread"],
         freq_profile=freq_profile,
         amp=amp,
         cutoff_hz=cutoff_hz,
@@ -157,9 +259,28 @@ def render(
     jittered = apply_note_jitter(params, rng, analog_jitter)
     cutoff_hz = float(jittered.get("cutoff_hz", cutoff_hz))
     resonance_q = float(jittered.get("resonance_q", resonance_q))
+    resonance_q = max(
+        0.5, resonance_q * (1.0 + vc_offsets["resonance_offset_pct"] / 100.0)
+    )
     filter_env_decay = float(jittered.get("filter_env_decay", filter_env_decay))
     start_phase = float(jittered.get("_phase_offset", 0.0))
     amp_jitter_db = float(jittered.get("_amp_jitter_db", 0.0))
+
+    attack = float(params.get("attack", 0.04)) * vc_offsets["attack_scale"]
+    release = float(params.get("release", 0.1)) * vc_offsets["release_scale"]
+    _ = attack, release  # available for ADSR when wired
+
+    pulse_width = min(0.99, max(0.01, pulse_width + vc_offsets["pulse_width_offset"]))
+    osc_softness = max(0.0, osc_softness + vc_offsets["softness_offset"])
+    drift_rate_hz *= 1.0 + vc_offsets["drift_rate_offset_pct"] / 100.0
+
+    # Asymmetry shifts square PW slightly
+    if osc_asymmetry > 0.0 and waveform == "square":
+        pulse_width = min(0.99, max(0.01, pulse_width + osc_asymmetry * 0.04 - 0.02))
+    if osc_asymmetry > 0.0 and osc2_waveform == "square" and osc2_level > 0.0:
+        osc2_pulse_width = min(
+            0.99, max(0.01, osc2_pulse_width + osc_asymmetry * 0.04 - 0.02)
+        )
 
     if pitch_drift > 0:
         drift_multiplier = build_drift(
@@ -172,26 +293,84 @@ def render(
         )
         freq_profile = freq_profile * drift_multiplier
 
-    raw_signal = _render_oscillator(
+    # Shape drift profile (shared between osc1 and osc2)
+    shape_drift_profile: np.ndarray | None = None
+    if osc_shape_drift > 0.0:
+        shape_rng = rng_for_note(
+            freq=freq,
+            duration=duration,
+            amp=amp,
+            sample_rate=sample_rate,
+            extra_seed="shape_drift",
+        )
+        shape_drift_profile = _build_shape_drift_profile(
+            n_samples,
+            shape_drift=osc_shape_drift,
+            sample_rate=sample_rate,
+            rng=shape_rng,
+        )
+
+    raw_signal, osc1_phase = _render_oscillator_with_phase(
         waveform=waveform,
         pulse_width=pulse_width,
         freq_profile=freq_profile,
         sample_rate=sample_rate,
         start_phase=start_phase,
     )
+
+    # Oscillator imperfections for osc1
+    if osc_asymmetry > 0.0:
+        raw_signal = _apply_osc_asymmetry(
+            raw_signal, osc1_phase, asymmetry=osc_asymmetry, waveform=waveform
+        )
+    if shape_drift_profile is not None:
+        raw_signal = _apply_shape_drift(
+            raw_signal, osc1_phase, drift_profile=shape_drift_profile, waveform=waveform
+        )
+    mean_freq = float(np.mean(freq_profile))
+    raw_signal = _apply_osc_softness(
+        raw_signal, softness=osc_softness, freq=mean_freq, sample_rate=sample_rate
+    )
+    if osc_dc_offset > 0.0:
+        dc_sign = 1.0 if rng.integers(2) == 0 else -1.0
+        raw_signal = raw_signal + osc_dc_offset * 0.05 * dc_sign
+
     if osc2_level > 0.0:
-        # Power-scaled detune: power>1 clusters near center, power<1 spreads evenly
         effective_detune = osc2_detune_cents * pow(0.5, osc2_spread_power - 1.0)
         osc2_ratio = float(2.0 ** (osc2_semitones / 12.0)) * float(
             2.0 ** (effective_detune / 1200.0)
         )
-        osc2_signal = _render_oscillator(
+        osc2_signal, osc2_phase = _render_oscillator_with_phase(
             waveform=osc2_waveform,
             pulse_width=osc2_pulse_width,
             freq_profile=freq_profile * osc2_ratio,
             sample_rate=sample_rate,
             start_phase=start_phase * 1.618,
         )
+
+        # Osc2 imperfections (different DC sign via separate RNG draw)
+        if osc_asymmetry > 0.0:
+            osc2_signal = _apply_osc_asymmetry(
+                osc2_signal, osc2_phase, asymmetry=osc_asymmetry, waveform=osc2_waveform
+            )
+        if shape_drift_profile is not None:
+            osc2_signal = _apply_shape_drift(
+                osc2_signal,
+                osc2_phase,
+                drift_profile=shape_drift_profile,
+                waveform=osc2_waveform,
+            )
+        osc2_mean_freq = mean_freq * osc2_ratio
+        osc2_signal = _apply_osc_softness(
+            osc2_signal,
+            softness=osc_softness,
+            freq=osc2_mean_freq,
+            sample_rate=sample_rate,
+        )
+        if osc_dc_offset > 0.0:
+            dc_sign_2 = 1.0 if rng.integers(2) == 0 else -1.0
+            osc2_signal = osc2_signal + osc_dc_offset * 0.05 * dc_sign_2
+
         raw_signal = (raw_signal + osc2_level * osc2_signal) / (1.0 + osc2_level)
 
     # Cutoff envelope (identical pattern to filtered_stack)
@@ -221,7 +400,7 @@ def render(
             cutoff_profile * cutoff_modulation, 20.0, nyquist * 0.98
         )
 
-    filtered = apply_zdf_svf(
+    filtered = apply_filter(
         raw_signal,
         cutoff_profile=cutoff_profile,
         resonance_q=resonance_q,
@@ -229,6 +408,13 @@ def render(
         filter_mode=filter_mode,
         filter_drive=filter_drive,
         filter_even_harmonics=filter_even_harmonics,
+        filter_topology=filter_topology,
+        bass_compensation=bass_compensation,
+        filter_morph=filter_morph,
+        hpf_cutoff_hz=hpf_cutoff_hz,
+        hpf_resonance_q=hpf_resonance_q,
+        feedback_amount=feedback_amount,
+        feedback_saturation=feedback_saturation,
     )
 
     filtered = apply_analog_post_processing(
@@ -248,6 +434,29 @@ def render(
     return amp * filtered
 
 
+def _apply_shape_drift(
+    signal: np.ndarray,
+    phase: np.ndarray,
+    *,
+    drift_profile: np.ndarray,
+    waveform: str,
+) -> np.ndarray:
+    """Apply time-varying shape modulation via a drift profile.
+
+    For saw: modulates the asymmetry blend over time.
+    For square: modulates the output by blending with a sine at the drift rate.
+    """
+    if waveform == "saw":
+        sine_component = np.sin(2.0 * np.pi * phase)
+        blend = np.abs(drift_profile)
+        return signal * (1.0 - blend) + blend * sine_component
+    if waveform == "square":
+        sine_component = np.sin(2.0 * np.pi * phase)
+        blend = np.abs(drift_profile)
+        return signal * (1.0 - blend) + blend * sine_component
+    return signal
+
+
 def _render_oscillator(
     *,
     waveform: str,
@@ -257,18 +466,37 @@ def _render_oscillator(
     start_phase: float = 0.0,
 ) -> np.ndarray:
     """Render one PolyBLEP oscillator from a frequency trajectory."""
+    signal, _phase = _render_oscillator_with_phase(
+        waveform=waveform,
+        pulse_width=pulse_width,
+        freq_profile=freq_profile,
+        sample_rate=sample_rate,
+        start_phase=start_phase,
+    )
+    return signal
+
+
+def _render_oscillator_with_phase(
+    *,
+    waveform: str,
+    pulse_width: float,
+    freq_profile: np.ndarray,
+    sample_rate: int,
+    start_phase: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Render one PolyBLEP oscillator, returning both signal and phase."""
     phase_inc = freq_profile / sample_rate
     cumphase = np.cumsum(phase_inc) + start_phase / (2.0 * np.pi)
     phase = cumphase % 1.0
 
     if waveform == "sine":
-        return np.sin(2.0 * np.pi * phase)
+        return np.sin(2.0 * np.pi * phase), phase
     if waveform == "saw":
-        return _polyblep_saw(phase, phase_inc)
+        return _polyblep_saw(phase, phase_inc), phase
     if waveform == "square":
-        return _polyblep_square(phase, phase_inc, cumphase, pulse_width)
+        return _polyblep_square(phase, phase_inc, cumphase, pulse_width), phase
     if waveform == "triangle":
-        return _polyblep_triangle(phase, phase_inc, cumphase, sample_rate)
+        return _polyblep_triangle(phase, phase_inc, cumphase, sample_rate), phase
     raise ValueError(f"Unknown waveform: {waveform!r}")
 
 

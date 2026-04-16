@@ -291,6 +291,24 @@ See `FUTURE.md` for way more ideas.
   co-designed instead of assuming a plain harmonic ladder.
 - The `polyblep` engine supports an optional second oscillator via `osc2_*`
   parameters for detuned stacks and sub layers.
+- The `polyblep` and `filtered_stack` engines support `filter_topology="ladder"`
+  for a 4-pole (24 dB/oct) Moog-style ladder filter with per-stage saturation
+  and `bass_compensation` for restoring low-frequency energy at high resonance.
+- Oscillator imperfection params (`osc_asymmetry`, `osc_softness`,
+  `osc_dc_offset`, `osc_shape_drift`) model analog VCO behavior in the
+  `polyblep` and `filtered_stack` engines.
+- `voice_card_spread` (0-3) replaces the old `voice_card` param for controlling
+  inter-voice calibration variation, with named tiers from JI-conservative (1.0)
+  through Oberheim-level (3.0).
+- `filter_morph` enables continuous blending between filter modes (SVF:
+  LP/BP/HP/Notch cycle; ladder: pole-tap blending for 24 -> 6 dB/oct slope
+  control). Automatable.
+- `feedback_amount` and `feedback_saturation` model Minimoog-style
+  post-filter -> pre-filter feedback for thickening and growl.
+- `hpf_cutoff_hz` adds a serial 2-pole ZDF highpass before the main filter,
+  modeling CS80/Jupiter-8 dual-filter architecture.
+- `vca_nonlinearity` adds gain-dependent envelope saturation for OTA-based VCA
+  character on attack peaks.
 - The native effect chain includes a minimum-phase multi-band `eq` effect with
   ordered highpass, lowpass, bell, and shelf bands for routine tone shaping.
   Band params: highpass/lowpass use `cutoff_hz`/`slope_db_per_oct`; bell/shelf
@@ -329,11 +347,22 @@ See `FUTURE.md` for way more ideas.
   sounds. Supports optional multi-point envelopes for body tail decay and
   overall amplitude shaping (gated claps). Presets: `909_clap`, `tight_clap`,
   `big_clap`, `finger_snap`. Use `engine="clap"` in `synth_defaults`.
+- The `drum_voice` engine is a unified composable percussion synthesizer with four
+  independent layers (exciter, tone, noise, metallic). It replaces the five separate
+  drum engines with a single architecture where any synthesis mode can be combined
+  with any other. Presets from all original engines are available. Shaper slots can
+  dispatch to waveshaper algorithms, the modern saturation effect, or the preamp
+  transformer model. Three ergonomic macros (punch, decay_shape, character) provide
+  high-level perceptual control. See `docs/synth_api.md` for the full parameter
+  surface.
+- The waveshaper module (`_waveshaper.py`) now includes first-order ADAA
+  anti-aliasing for 7 of 11 algorithms and optional 2x oversampling for the
+  remaining fold-type algorithms.
 - All drum engines share multi-point envelope support via `_envelopes.py`
   (linear, exponential, bezier interpolation). Any param ending in `_envelope`
   accepts a list of `{time, value, curve}` dicts. Shared utilities live in
   `_drum_utils.py` (RNG, bandpass noise, phase integration) and
-  `_waveshaper.py` (9 distortion algorithms for per-oscillator use).
+  `_waveshaper.py` (11 distortion algorithms with ADAA for per-oscillator use).
 - `Voice.choke_group` lets voices in the same named group cut each other on note
   onset (e.g., open/closed hi-hat pairs). See `docs/score_api.md`.
 - `code_musics/drum_helpers.py` provides `setup_drum_bus()` and `add_drum_voice()`
@@ -522,6 +551,26 @@ some tuning schemes -
 - meantone and other historical tunings (constraints are good)
 
 ```
+! 7-limit JI.scl
+!
+7-limit Just Intonation scale. Simple 5-limit JI with septimal tritone (7/5) and septimal seventh (7/4).
+ 12
+!
+16/15
+9/8
+6/5
+5/4
+4/3
+7/5
+3/2
+8/5
+5/3
+7/4
+15/8
+2/1
+```
+
+```
 ! colundi_ji_core.scl
 !
 Approximate Colundi-inspired 7-note JI scale
@@ -540,6 +589,8 @@ Approximate Colundi-inspired 7-note JI scale
 - Meantone, well temperaments, and baroque tunings
 - Bohlen Pierce?
 - Other?
+
+**typically stick in the keys of F through G# for songs with an electronic kick for maximum impact. for more ambient/chill pieces, there are no restrictions, but don't default to Cmaj/Amin, consider randomizing the key or picking one intentionally**
 
 ### Automation Ideas
 

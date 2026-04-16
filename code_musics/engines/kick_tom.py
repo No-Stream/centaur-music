@@ -16,7 +16,7 @@ from code_musics.engines._drum_utils import (
 )
 from code_musics.engines._dsp_utils import fm_modulate
 from code_musics.engines._envelopes import render_envelope
-from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_zdf_svf
+from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_filter
 from code_musics.engines._waveshaper import ALGORITHM_NAMES, apply_waveshaper
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -119,6 +119,8 @@ def render(
     body_filter_cutoff_hz = float(params.get("body_filter_cutoff_hz", 2000.0))
     body_filter_q = float(params.get("body_filter_q", 0.707))
     body_filter_drive = float(params.get("body_filter_drive", 0.0))
+    body_filter_topology = str(params.get("body_filter_topology", "svf")).lower()
+    body_bass_compensation = float(params.get("body_bass_compensation", 0.0))
     body_filter_envelope_raw = params.get("body_filter_envelope")
 
     # FM body params
@@ -355,13 +357,15 @@ def render(
             )
         else:
             cutoff_profile = np.full(n_samples, body_filter_cutoff_hz)
-        body = apply_zdf_svf(
+        body = apply_filter(
             body,
             cutoff_profile=cutoff_profile,
             resonance_q=body_filter_q,
             sample_rate=sample_rate,
             filter_mode=body_filter_mode,
             filter_drive=body_filter_drive,
+            filter_topology=body_filter_topology,
+            bass_compensation=body_bass_compensation,
         )
 
     overtone_phase = integrated_phase(

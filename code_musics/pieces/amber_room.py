@@ -79,43 +79,40 @@ TOTAL_DUR = _pos_straight(TOTAL_BARS + 1)
 # ---------------------------------------------------------------------------
 
 _KICK_808: dict = {
-    "body_decay_ms": 800.0,
-    "body_amp_envelope": [
+    "tone_decay_s": 0.80,
+    "tone_envelope": [
         {"time": 0.0, "value": 1.0},
         {"time": 0.55, "value": 0.75, "curve": "linear"},
         {"time": 0.85, "value": 0.15, "curve": "exponential"},
         {"time": 1.0, "value": 0.0, "curve": "linear"},
     ],
-    "pitch_sweep_amount_ratio": 2.8,
-    "pitch_sweep_decay_ms": 55.0,
-    "body_wave": "sine",
-    "body_tone_ratio": 0.06,
-    "body_punch_ratio": 0.10,
-    "body_filter_mode": "lowpass",
-    "body_filter_cutoff_hz": 800.0,
-    "body_filter_q": 0.8,
-    "body_filter_envelope": [
+    "tone_sweep_ratio": 2.8,
+    "tone_sweep_decay_s": 0.055,
+    "tone_wave": "sine",
+    "tone_second_harmonic": 0.06,
+    "tone_punch": 0.10,
+    "filter_mode": "lowpass",
+    "filter_cutoff_hz": 800.0,
+    "filter_q": 0.8,
+    "filter_envelope": [
         {"time": 0.0, "value": 2400.0},
         {"time": 0.08, "value": 800.0, "curve": "exponential"},
         {"time": 1.0, "value": 400.0, "curve": "linear"},
     ],
-    "overtone_amount": 0.02,
-    "overtone_ratio": 1.6,
-    "overtone_decay_ms": 160.0,
-    "click_amount": 0.01,
-    "click_decay_ms": 8.0,
-    "click_tone_hz": 2_000.0,
-    "noise_amount": 0.008,
-    "noise_decay_ms": 22.0,
-    "noise_bandpass_hz": 600.0,
+    "exciter_level": 0.01,
+    "exciter_decay_s": 0.008,
+    "exciter_center_hz": 2000.0,
+    "noise_level": 0.008,
+    "noise_decay_s": 0.022,
+    "noise_center_ratio": 10.91,
 }
 
 # Peak 2: barely-there warmth — house, not techno
 _KICK_PEAK: dict = {
     **_KICK_808,
-    "body_distortion": "tanh",
-    "body_distortion_drive": 0.08,
-    "body_distortion_mix": 0.20,
+    "tone_shaper": "tanh",
+    "tone_shaper_drive": 0.08,
+    "tone_shaper_mix": 0.20,
 }
 
 # ---------------------------------------------------------------------------
@@ -123,22 +120,79 @@ _KICK_PEAK: dict = {
 # ---------------------------------------------------------------------------
 
 _HAT_909: dict = {
-    "n_partials": 3,
-    "brightness": 0.25,
-    "noise_amount": 0.92,
-    "decay_ms": 8.0,
-    "density": 0.7,
-    "click_amount": 0.65,
-    "click_decay_ms": 0.3,
-    "filter_q": 0.65,
+    "metallic_type": "partials",
+    "metallic_n_partials": 3,
+    "metallic_brightness": 0.25,
+    "metallic_density": 0.7,
+    "metallic_decay_s": 0.008,
+    "metallic_level": 1.0,
+    "metallic_filter_q": 0.65,
+    "noise_level": 0.92,
+    "noise_decay_s": 0.008,
+    "exciter_level": 0.65,
+    "exciter_decay_s": 0.0003,
+    "tone_type": None,
 }
 
 _OHH_909: dict = {
     **_HAT_909,
-    "decay_ms": 140.0,
-    "click_amount": 0.40,
-    "filter_q": 0.7,
+    "metallic_decay_s": 0.140,
+    "noise_decay_s": 0.140,
+    "exciter_level": 0.40,
+    "metallic_filter_q": 0.7,
 }
+
+# ---------------------------------------------------------------------------
+# Hat pitch pool — harmonic-series frequencies of F0=55 Hz, in key
+# ---------------------------------------------------------------------------
+
+HAT_A = 7040.0  # H128 = 55 * 128 — root (A), dark
+HAT_CS = 8800.0  # H160 = 55 * 160 — major 3rd (C#), medium
+HAT_SEPT = 9240.0  # H168 = 55 * 168 — septimal (21/16), spicy
+HAT_E = 10560.0  # H192 = 55 * 192 — fifth (E), bright
+
+# (primary, secondary, tertiary) per section — primary on downbeats,
+# secondary on "and" (pos 2), tertiary on ghost 16ths (pos 1, 3)
+_HAT_PALETTES: list[tuple[int, tuple[float, float, float]]] = [
+    (16, (HAT_CS, HAT_CS, HAT_CS)),  # intro: neutral
+    (24, (HAT_CS, HAT_A, HAT_CS)),  # build: warm contrast enters
+    (48, (HAT_CS, HAT_A, HAT_SEPT)),  # groove enter + A: septimal spice
+    (56, (HAT_A, HAT_A, HAT_A)),  # breakdown 1: dark, withdrawn
+    (72, (HAT_CS, HAT_SEPT, HAT_E)),  # build B + groove B: brightening
+    (88, (HAT_CS, HAT_SEPT, HAT_E)),  # peak 1: handled specially below
+    (96, (HAT_A, HAT_A, HAT_A)),  # breakdown 2: dark again
+    (120, (HAT_CS, HAT_SEPT, HAT_E)),  # peak 2: handled specially below
+    (128, (HAT_CS, HAT_A, HAT_CS)),  # settle: narrowing
+    (999, (HAT_A, HAT_A, HAT_A)),  # outro: settling dark
+]
+
+# Peak rotation: cycle through 4 different palette assignments per 4-bar phrase
+_PEAK_ROTATIONS: list[tuple[float, float, float]] = [
+    (HAT_CS, HAT_A, HAT_SEPT),
+    (HAT_E, HAT_CS, HAT_A),
+    (HAT_SEPT, HAT_E, HAT_CS),
+    (HAT_A, HAT_SEPT, HAT_E),
+]
+
+_N16_TO_TIER: dict[int, int] = {0: 0, 1: 2, 2: 1, 3: 2}  # pos → palette index
+
+
+def _hat_pitch(bar: int, n16: int) -> float:
+    """Return hat freq for a given bar and 16th position."""
+    # Peak sections: rotate through full pool
+    if 73 <= bar <= 88 or 105 <= bar <= 120:
+        start = 73 if bar <= 88 else 105
+        rot_idx = ((bar - start) // 4) % len(_PEAK_ROTATIONS)
+        palette = _PEAK_ROTATIONS[rot_idx]
+    else:
+        palette = (HAT_CS, HAT_CS, HAT_CS)  # fallback
+        for cutoff_bar, pal in _HAT_PALETTES:
+            if bar <= cutoff_bar:
+                palette = pal
+                break
+    tier = _N16_TO_TIER.get(n16, 0)
+    return palette[tier]
+
 
 # Filter envelopes evolve gradually (indexed by progress through the track)
 _HAT_FILTERS: list[tuple[int, list[dict]]] = [
@@ -188,7 +242,7 @@ _HAT_FILTERS: list[tuple[int, list[dict]]] = [
 def _hat_synth(bar: int) -> dict:
     for cutoff_bar, filt in _HAT_FILTERS:
         if bar <= cutoff_bar:
-            return {**_HAT_909, "filter_envelope": filt}
+            return {**_HAT_909, "filter_mode": "bandpass", "filter_envelope": filt}
     return _HAT_909
 
 
@@ -272,16 +326,23 @@ def _has_snare(bar: int) -> bool:
     return 33 <= bar <= 48 or 57 <= bar <= 88 or 97 <= bar <= 120
 
 
-def _snare_ghosts(bar: int) -> list[tuple[int, int, float]]:
-    """Return (beat, n16, amp_db) for ghost snare hits.  Varies per phrase."""
-    phase = ((bar - 1) // 4) % 4
-    if phase == 0:
-        return [(2, 1, -16.0), (3, 3, -18.0)]
-    if phase == 1:
-        return [(2, 3, -17.0), (4, 1, -16.0)]
-    if phase == 2:
-        return [(1, 3, -18.0), (3, 1, -16.0)]
-    return [(2, 1, -15.0), (3, 3, -17.0), (4, 3, -19.0)]
+# Snare ghost pitch pool — chord-tone fundamentals
+SNR_E = 165.0  # P3 — ~E3
+SNR_A = 220.0  # P4 — A3 (original)
+SNR_CS = 275.0  # P5 — ~C#4
+
+
+def _snare_ghosts(bar: int) -> list[tuple[int, int, float, float]]:
+    """Return (beat, n16, amp_db, freq) for ghost snare hits.
+
+    Steady placement with gentle pitch drift — root on the main ghost,
+    fifth or third on the secondary depending on 8-bar phrasing.
+    """
+    second_pitch = SNR_E if ((bar - 1) // 8) % 2 == 0 else SNR_CS
+    return [
+        (2, 1, -16.0, SNR_A),
+        (3, 3, -18.0, second_pitch),
+    ]
 
 
 def _has_clap(bar: int) -> bool:
@@ -322,88 +383,10 @@ def _chord_for_bar(bar: int) -> list[tuple[float, float]]:
 
 
 # ---------------------------------------------------------------------------
-# Melodic hook — consonant chord-tone melody with rhythmic variety.
-# Notes: P4(A), P6(E), P7(Bb), P8(A oct) always safe. P5(C#) passing.
-# 4-bar phrases: 2 bars melody, 2 bars rest for breathing room.
-# amp_db varies for humanization — downbeats louder, ghost notes softer.
-# ---------------------------------------------------------------------------
-
-# (beat, n16, partial, dur_beats, amp_db)
-
-# Phrase A: spacious, soulful — long A, leap to Bb, settle on E
-_MELODY_A1: list[tuple[int, int, float, float, float]] = [
-    (1, 0, P8, 2.0, -8.0),
-    (3, 2, P7, 1.0, -10.0),
-    (4, 2, P6, 0.75, -12.0),
-]
-_MELODY_A2: list[tuple[int, int, float, float, float]] = [
-    (1, 2, P7, 1.5, -9.0),
-    (3, 0, P8, 1.5, -11.0),
-]
-
-# Phrase B: rhythmic — syncopated E and Bb interplay
-_MELODY_B1: list[tuple[int, int, float, float, float]] = [
-    (1, 0, P6, 0.75, -9.0),
-    (1, 3, P7, 1.0, -11.0),
-    (3, 0, P8, 0.5, -10.0),
-    (3, 2, P7, 1.25, -12.0),
-]
-_MELODY_B2: list[tuple[int, int, float, float, float]] = [
-    (1, 0, P6, 2.0, -10.0),
-    (3, 2, P8, 0.75, -11.0),
-]
-
-# Phrase C: minimal, wide leap — high A down to low A, back up to Bb
-_MELODY_C1: list[tuple[int, int, float, float, float]] = [
-    (1, 0, P8, 1.5, -8.0),
-    (3, 0, P4, 1.5, -11.0),
-]
-_MELODY_C2: list[tuple[int, int, float, float, float]] = [
-    (2, 0, P7, 2.5, -9.0),
-]
-
-# Phrase D: call-and-response with C# passing tone
-_MELODY_D1: list[tuple[int, int, float, float, float]] = [
-    (1, 2, P7, 0.75, -10.0),
-    (2, 1, P6, 1.25, -9.0),
-    (3, 2, P5, 0.5, -13.0),
-    (4, 0, P6, 0.75, -11.0),
-]
-_MELODY_D2: list[tuple[int, int, float, float, float]] = [
-    (1, 0, P8, 1.5, -8.0),
-    (2, 2, P7, 1.0, -12.0),
-    (4, 0, P6, 0.75, -11.0),
-]
-
-# Phrase E: gentle variation on A — octave play with Bb color
-_MELODY_E1: list[tuple[int, int, float, float, float]] = [
-    (1, 0, P4, 1.0, -10.0),
-    (2, 0, P7, 0.75, -9.0),
-    (2, 3, P8, 1.5, -11.0),
-]
-_MELODY_E2: list[tuple[int, int, float, float, float]] = [
-    (1, 2, P6, 1.75, -10.0),
-    (3, 1, P7, 0.5, -13.0),
-    (4, 0, P8, 0.75, -11.0),
-]
-
-_PHRASES_BAR1 = [_MELODY_A1, _MELODY_B1, _MELODY_C1, _MELODY_D1, _MELODY_E1]
-_PHRASES_BAR2 = [_MELODY_A2, _MELODY_B2, _MELODY_C2, _MELODY_D2, _MELODY_E2]
-
-
-def _melody_for_bar(
-    bar: int,
-) -> tuple[list[tuple[int, int, float, float, float]], bool]:
-    """Return (phrase_notes, has_notes) for this bar."""
-    phrase_idx = ((bar - 57) // 4) % len(_PHRASES_BAR1)
-    bar_in_phrase = (bar - 57) % 4
-    if bar_in_phrase == 0:
-        return _PHRASES_BAR1[phrase_idx], True
-    if bar_in_phrase == 1:
-        return _PHRASES_BAR2[phrase_idx], True
-    return [], False
-
-
+# Melodic fragments — hand-placed gestures, Moodymann-style found-sound feel.
+# JI A dorian scale (from A4 = 440 Hz) for human-sounding runs.
+# Each fragment: (offset_seconds, freq_hz, duration_seconds, amp_db)
+# offset_seconds is relative to the fragment's anchor bar start.
 # ---------------------------------------------------------------------------
 # Bass phrases — composed per section, more active as track builds
 # ---------------------------------------------------------------------------
@@ -730,7 +713,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "kick",
-        engine="kick_tom",
+        engine="drum_voice",
         preset="808_hiphop",
         drum_bus=drum_bus,
         send_db=-2.0,
@@ -741,7 +724,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "closed_hat",
-        engine="metallic_perc",
+        engine="drum_voice",
         preset="closed_hat",
         drum_bus=drum_bus,
         send_db=-4.0,
@@ -754,7 +737,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "open_hat",
-        engine="metallic_perc",
+        engine="drum_voice",
         preset="open_hat",
         drum_bus=drum_bus,
         send_db=-4.0,
@@ -766,7 +749,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "clap",
-        engine="clap",
+        engine="drum_voice",
         preset="909_clap",
         drum_bus=drum_bus,
         send_db=-3.0,
@@ -777,7 +760,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "snare",
-        engine="snare",
+        engine="drum_voice",
         preset="brush",
         drum_bus=drum_bus,
         send_db=-5.0,
@@ -788,12 +771,12 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "shaker",
-        engine="noise_perc",
+        engine="drum_voice",
         preset="shaped_hit",
         drum_bus=drum_bus,
         send_db=-6.0,
         mix_db=-12.0,
-        synth_overrides={"noise_mix": 0.8, "bandpass_ratio": 2.5},
+        synth_overrides={"noise_level": 0.8, "noise_center_ratio": 2.5},
     )
     score.voices["shaker"].sends.append(VoiceSend(target="hall", send_db=-16.0))
 
@@ -1001,48 +984,6 @@ def build_score() -> Score:
         ],
     )
 
-    # Melodic hook — brighter organ voice
-    score.add_voice(
-        "melody",
-        synth_defaults={
-            "engine": "organ",
-            "drawbars": [0, 6, 6, 8, 4, 3, 2, 0, 0],
-            "click": 0.12,
-            "click_brightness": 0.50,
-            "vibrato_depth": 0.10,
-            "vibrato_rate_hz": 5.8,
-            "vibrato_chorus": 0.3,
-            "drift": 0.12,
-            "drift_rate_hz": 0.06,
-            "leakage": 0.03,
-            "tonewheel_shape": 0.0,
-        },
-        effects=[
-            EffectSpec(
-                "eq",
-                {
-                    "bands": [
-                        {
-                            "kind": "lowpass",
-                            "cutoff_hz": 7000.0,
-                            "slope_db_per_oct": 12,
-                        },
-                        {
-                            "kind": "highpass",
-                            "cutoff_hz": 200.0,
-                            "slope_db_per_oct": 12,
-                        },
-                    ]
-                },
-            ),
-            EffectSpec("preamp", {"drive": 0.15, "mix": 0.4}),
-        ],
-        mix_db=-6.0,
-        normalize_lufs=-22.0,
-        velocity_humanize=None,
-        sends=[VoiceSend(target="hall", send_db=-8.0)],
-    )
-
     # --- Place notes ---
     _place_kick(score)
     _place_closed_hat(score)
@@ -1053,8 +994,6 @@ def build_score() -> Score:
     _place_fills(score)
     _place_bass(score)
     _place_keys(score)
-    _place_melody(score)
-
     return score
 
 
@@ -1094,7 +1033,7 @@ def _place_closed_hat(score: Score) -> None:
                     "closed_hat",
                     start=_pos(bar, beat, n16),
                     duration=0.025,
-                    freq=8800.0,
+                    freq=_hat_pitch(bar, n16),
                     amp_db=accents.get(n16, -14.0),
                     synth=synth,
                 )
@@ -1109,7 +1048,7 @@ def _place_open_hat(score: Score) -> None:
                 "open_hat",
                 start=_pos(bar, beat, 2),
                 duration=0.4,
-                freq=8800.0,
+                freq=_hat_pitch(bar, 0),
                 amp_db=-9.0,
                 synth=_OHH_909,
             )
@@ -1133,12 +1072,12 @@ def _place_snare(score: Score) -> None:
     for bar in range(1, TOTAL_BARS + 1):
         if not _has_snare(bar):
             continue
-        for beat, n16, db in _snare_ghosts(bar):
+        for beat, n16, db, freq in _snare_ghosts(bar):
             score.add_note(
                 "snare",
                 start=_pos(bar, beat, n16),
                 duration=0.12,
-                freq=220.0,
+                freq=freq,
                 amp_db=db,
             )
 
@@ -1178,7 +1117,7 @@ def _place_fills(score: Score) -> None:
                 "closed_hat",
                 start=_pos(bar, 4, n16),
                 duration=0.02,
-                freq=8800.0,
+                freq=_hat_pitch(bar, n16),
                 amp_db=-8.0 - n16 * 0.5,
                 synth=_HAT_909,
             )
@@ -1263,24 +1202,6 @@ def _place_keys(score: Score) -> None:
                 duration=BAR * 0.85,
                 partial=P8,
                 amp_db=-20.0,
-            )
-
-
-def _place_melody(score: Score) -> None:
-    """Melodic hook enters at bar 57. 4-bar phrases: 2 bars melody, 2 bars rest."""
-    for bar in range(57, 121):
-        if 89 <= bar <= 96:
-            continue
-        notes, has_notes = _melody_for_bar(bar)
-        if not has_notes:
-            continue
-        for beat, n16, partial, dur_beats, amp_db in notes:
-            score.add_note(
-                "melody",
-                start=_pos_straight(bar, beat, n16),
-                duration=BEAT * dur_beats,
-                partial=partial,
-                amp_db=amp_db,
             )
 
 

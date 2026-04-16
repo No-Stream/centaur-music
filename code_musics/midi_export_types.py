@@ -63,6 +63,42 @@ class TuningAnalysisResult:
     warning_suffix: str | None = None
 
 
+CHROMATIC_SLOT_NAMES: tuple[str, ...] = (
+    "C",
+    "C#",
+    "D",
+    "Eb",
+    "E",
+    "F",
+    "F#",
+    "G",
+    "Ab",
+    "A",
+    "Bb",
+    "B",
+)
+CHROMATIC_SLOT_CENTS: tuple[float, ...] = tuple(float(i * 100) for i in range(12))
+DEFAULT_CHROMATIC_WARNING_THRESHOLD_CENTS = 35.0
+
+
+@dataclass(frozen=True)
+class ChromaticSlotAssignment:
+    slot: int
+    slot_name: str
+    cents: float
+    source: str
+    error_cents: float
+
+
+@dataclass(frozen=True)
+class ChromaticTuningResult:
+    slot_assignments: tuple[ChromaticSlotAssignment, ...]
+    warnings: list[str]
+    scl_path: str | None = None
+    kbm_path: str | None = None
+    skipped_reason: str | None = None
+
+
 @dataclass(frozen=True)
 class MidiStemExportResult:
     voice_name: str
@@ -84,6 +120,7 @@ class MidiBundleManifest:
     tuning: dict[str, Any]
     stem_exports: list[MidiStemExportResult]
     tuning_files: dict[str, str]
+    chromatic_tuning: dict[str, Any] | None = None
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -133,6 +170,8 @@ class MidiBundleExportSpec:
     static_scale_max_size: int = DEFAULT_STATIC_SCALE_MAX_SIZE
     quantization_cents: float = PITCH_CLASS_QUANTIZATION_CENTS
     stem_formats: tuple[MidiStemFormat, ...] = ALL_STEM_FORMATS
+    chromatic_scl: bool = True
+    chromatic_warning_threshold_cents: float = DEFAULT_CHROMATIC_WARNING_THRESHOLD_CENTS
 
     def __post_init__(self) -> None:
         if self.ticks_per_beat <= 0:
@@ -149,6 +188,8 @@ class MidiBundleExportSpec:
             raise ValueError("static_scale_max_size must be >= 1")
         if self.quantization_cents <= 0:
             raise ValueError("quantization_cents must be positive")
+        if self.chromatic_warning_threshold_cents <= 0:
+            raise ValueError("chromatic_warning_threshold_cents must be positive")
         object.__setattr__(
             self,
             "stem_formats",

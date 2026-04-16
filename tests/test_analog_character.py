@@ -13,8 +13,12 @@ from code_musics.engines._dsp_utils import (
     _VOICE_CARD_AMP_DB,
     _VOICE_CARD_ATTACK_SCALE,
     _VOICE_CARD_CUTOFF_CENTS,
+    _VOICE_CARD_DRIFT_RATE_PCT,
     _VOICE_CARD_PITCH_CENTS,
+    _VOICE_CARD_PULSE_WIDTH,
     _VOICE_CARD_RELEASE_SCALE,
+    _VOICE_CARD_RESONANCE_PCT,
+    _VOICE_CARD_SOFTNESS,
     apply_note_jitter,
     rng_for_note,
     voice_card_offsets,
@@ -231,6 +235,10 @@ class TestVoiceCardOffsets:
             "release_scale",
             "amp_offset_db",
             "pitch_offset_cents",
+            "pulse_width_offset",
+            "resonance_offset_pct",
+            "softness_offset",
+            "drift_rate_offset_pct",
         }
         assert set(offsets.keys()) == expected_keys
 
@@ -246,6 +254,26 @@ class TestVoiceCardOffsets:
                 -_VOICE_CARD_PITCH_CENTS
                 <= offsets["pitch_offset_cents"]
                 <= _VOICE_CARD_PITCH_CENTS
+            )
+            assert (
+                -_VOICE_CARD_PULSE_WIDTH
+                <= offsets["pulse_width_offset"]
+                <= _VOICE_CARD_PULSE_WIDTH
+            )
+            assert (
+                -_VOICE_CARD_RESONANCE_PCT
+                <= offsets["resonance_offset_pct"]
+                <= _VOICE_CARD_RESONANCE_PCT
+            )
+            assert (
+                -_VOICE_CARD_SOFTNESS
+                <= offsets["softness_offset"]
+                <= _VOICE_CARD_SOFTNESS
+            )
+            assert (
+                -_VOICE_CARD_DRIFT_RATE_PCT
+                <= offsets["drift_rate_offset_pct"]
+                <= _VOICE_CARD_DRIFT_RATE_PCT
             )
 
 

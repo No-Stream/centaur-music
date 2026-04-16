@@ -522,9 +522,9 @@ def build_pure_states() -> Score:
     score.add_voice(
         "kick",
         synth_defaults={
-            "engine": "kick_tom",
+            "engine": "drum_voice",
             "preset": "909_house",
-            "params": {"body_decay_ms": 160.0, "body_punch_ratio": 0.12},
+            "params": {"tone_decay_s": 0.160, "tone_punch": 0.12},
         },
         normalize_peak_db=-6.0,
         mix_db=-5.0,
@@ -903,7 +903,7 @@ def build_pure_states() -> Score:
     # ── Hats ──────────────────────────────────────────────────────────
     score.add_voice(
         "hat",
-        synth_defaults={"engine": "noise_perc", "preset": "chh"},
+        synth_defaults={"engine": "drum_voice", "preset": "chh"},
         mix_db=-12.0,
         normalize_peak_db=-6.0,
         velocity_humanize=VelocityHumanizeSpec(preset="subtle_living", seed=20),
@@ -948,7 +948,7 @@ def build_pure_states() -> Score:
     # ── Clap ──────────────────────────────────────────────────────────
     score.add_voice(
         "clap",
-        synth_defaults={"engine": "noise_perc", "preset": "clap"},
+        synth_defaults={"engine": "drum_voice", "preset": "clap_noise"},
         mix_db=-9.5,
         normalize_peak_db=-6.0,
         velocity_humanize=None,

@@ -25,6 +25,7 @@ The rendering path is frequency-first:
 - [code_musics/engines/filtered_stack.py](code_musics/engines/filtered_stack.py)
 - [code_musics/engines/harpsichord.py](code_musics/engines/harpsichord.py)
 - [code_musics/engines/clap.py](code_musics/engines/clap.py)
+- [code_musics/engines/drum_voice.py](code_musics/engines/drum_voice.py)
 - [code_musics/engines/kick_tom.py](code_musics/engines/kick_tom.py)
 - [code_musics/engines/metallic_perc.py](code_musics/engines/metallic_perc.py)
 - [code_musics/engines/noise_perc.py](code_musics/engines/noise_perc.py)
@@ -300,17 +301,18 @@ Available presets:
 
 - `additive`: `soft_pad`, `drone`, `bright_pluck`, `organ`, `ji_fusion_pad`, `septimal_reed`, `eleven_limit_glass`, `utonal_drone`, `plucked_ji`, `breathy_flute`, `ancient_bell`, `whispered_chord`, `struck_membrane`, `singing_bowl`, `marimba_bar`, `convolved_bell`, `thick_drone`, `fractal_fifth`, `fractal_septimal`, `vowel_a_pad`, `singing_glass`, `gravity_cloud`, `drifting_to_just`, `living_drone`, `candle_light`
 - `fm`: `bell`, `glass_lead`, `metal_bass`, `dx_piano`, `lately_bass`, `fm_clav`, `fm_mallet`, `chorused_ep`
-- `filtered_stack`: `warm_pad`, `reed_lead`, `round_bass`, `saw_pad`, `string_pad`
-- `kick_tom`: `808_hiphop`, `808_house`, `808_tape`, `909_techno`, `909_house`, `909_crunch`, `distorted_hardkick`, `zap_kick`, `round_tom`, `floor_tom`, `electro_tom`, `ring_tom`, `gated_808`, `pitch_dive`, `filtered_kick`, `fm_body_kick`, `foldback_kick`
-- `metallic_perc`: `closed_hat`, `open_hat`, `pedal_hat`, `ride_bell`, `ride_bow`, `crash`, `cowbell`, `clave`, `swept_hat`, `decaying_bell`
+- `filtered_stack`: `warm_pad`, `reed_lead`, `round_bass`, `saw_pad`, `string_pad`, `analog_strings`
+- `kick_tom`: `808_hiphop`, `808_house`, `808_tape`, `909_techno`, `909_house`, `909_crunch`, `distorted_hardkick`, `zap_kick`, `round_tom`, `floor_tom`, `electro_tom`, `ring_tom`, `gated_808`, `pitch_dive`, `filtered_kick`, `fm_body_kick`, `foldback_kick`, `808_resonant`, `808_resonant_long`, `resonant_tom`, `melodic_resonator`, `kick_bell`
+- `metallic_perc`: `closed_hat`, `open_hat`, `pedal_hat`, `ride_bell`, `ride_bow`, `crash`, `cowbell`, `clave`, `swept_hat`, `decaying_bell`, `harmonic_bell`, `septimal_bell`, `square_gamelan`, `beating_hat_a`, `beating_hat_b`, `beating_hat_c`, `808_closed_hat`, `808_open_hat`, `808_cowbell_square`
 - `noise_perc`: `kickish`, `snareish`, `tick`, `chh`, `clap`, `shaped_hit`
-- `snare`: `909_tight`, `909_fat`, `808_snare`, `rim_shot`, `brush`, `cross_stick`, `gated_snare`
-- `clap`: `909_clap`, `tight_clap`, `big_clap`, `finger_snap`, `hand_clap`, `gated_clap`
+- `snare`: `909_tight`, `909_fat`, `808_snare`, `rim_shot`, `brush`, `cross_stick`, `gated_snare`, `fm_snare`, `driven_snare`, `fm_tom`, `fm_noise_burst`
+- `clap`: `909_clap`, `tight_clap`, `big_clap`, `finger_snap`, `hand_clap`, `gated_clap`, `909_clap_authentic`, `scattered_clap`, `granular_cascade`, `micro_burst`
+- `drum_voice`: All presets from the five drum engines above are available, plus hybrid presets. See the `drum_voice` engine section for the full list.
 - `organ`: `warm`, `full`, `jazz`, `gospel`, `cathedral`, `baroque`, `septimal`, `glass_organ`
 - `harpsichord`: `baroque`, `concert`, `bright`, `warm`, `ethereal`, `glass`, `septimal`
 - `piano`: `grand`, `bright`, `warm`, `felt`, `honky_tonk`, `tack`, `glass`, `septimal`
 - `piano_additive`: `grand`, `bright`, `warm`, `felt`, `honky_tonk`, `tack`, `glass`, `septimal`
-- `polyblep`: `warm_lead`, `synth_pluck`, `analog_brass`, `square_lead`, `hoover`, `moog_bass`, `sync_lead`, `acid_bass`, `sub_bass`, `resonant_sweep`, `soft_square_pad`, `juno_pad`, `analog_bass`, `prophet_lead`, `glass_pad`
+- `polyblep`: `warm_lead`, `synth_pluck`, `analog_brass`, `square_lead`, `hoover`, `moog_bass`, `sync_lead`, `acid_bass`, `sub_bass`, `resonant_sweep`, `soft_square_pad`, `juno_pad`, `analog_bass`, `prophet_lead`, `glass_pad`, `moog_lead`, `moog_bass_ladder`, `cs80_brass`, `oberheim_pad`, `jupiter_saw`, `acid_ladder`
 
 ## Effects
 
@@ -1219,6 +1221,14 @@ Available for per-oscillator distortion via `body_distortion` (kick_tom):
 Drive follows the standard knob convention: 0-0.25 subtle, 0.33-0.66
 moderate, 0.66-1.0 strong.
 
+All 11 algorithms include first-order ADAA (Anti-Derivative Anti-Aliasing)
+for reduced aliasing at no significant CPU cost. For algorithms where a
+closed-form antiderivative is not available (`foldback`, `linear_fold`,
+`sine_fold`, `half_wave_rect`), optional 2x oversampling is available via
+the `oversample=2` parameter. The `apply_waveshaper` function accepts an
+optional `drive_envelope` (per-sample array in [0, 1]) for time-varying
+drive modulation.
+
 ## `additive`
 
 Implementation: [code_musics/engines/additive.py](code_musics/engines/additive.py)
@@ -1391,6 +1401,10 @@ Parameters:
 | `filter_width_ratio` | `float` | `2.0` | Bandpass width relative to center frequency |
 | `click_amount` | `float` | `0.08` | Level of an initial high-frequency click transient |
 | `click_decay_ms` | `float` | `2.0` | Decay time for the click transient |
+| `tap_acceleration` | `float` | `0.0` | Tap spacing compression (0–1); higher values make later taps closer together, creating a "roll" effect |
+| `tap_freq_spread` | `float` | `0.0` | Per-tap frequency jitter (0–1); randomizes each tap's bandpass center for a more natural, scattered sound |
+| `tail_filter_cutoff_hz` | `float` | `None` | Optional lowpass cutoff applied to the noise body tail; useful for darker, warmer clap tails |
+| `tail_filter_q` | `float` | `1.5` | Q for the tail lowpass filter (>= 0.5) |
 
 **Multi-point envelope params (optional):**
 
@@ -1415,6 +1429,10 @@ Presets:
 | `big_clap` | Wider 6-tap clap with longer body |
 | `finger_snap` | Quick 2-tap snap with narrow bandpass |
 | `hand_clap` | Natural 5-tap hand clap with crescendo |
+| `909_clap_authentic` | 909-accurate timing with tap acceleration and frequency spread |
+| `scattered_clap` | Wide 6-tap clap with heavy acceleration and spread for organic character |
+| `granular_cascade` | Dense 8-tap granular burst with high acceleration and spread |
+| `micro_burst` | Tight 6-tap burst with subtle spread, very short body |
 
 Example:
 
@@ -1549,6 +1567,14 @@ imperfection and default to subtle, conservative values.
 - `filter_even_harmonics: float`
   Asymmetric bias in the driven filter for even-harmonic warmth. Default `0.0`.
   Range `[0, 0.5]`.
+
+The oscillator imperfections (`osc_asymmetry`, `osc_softness`, `osc_dc_offset`,
+`osc_shape_drift`), voice card spread (`voice_card_spread`), filter topology
+(`filter_topology`, `bass_compensation`), filter mode morphing (`filter_morph`),
+serial HPF (`hpf_cutoff_hz`, `hpf_resonance_q`), feedback path
+(`feedback_amount`, `feedback_saturation`), and VCA nonlinearity
+(`vca_nonlinearity`) documented under Analog Character (polyblep) are also
+available on this engine. See that section for full parameter details.
 
 Recommended authoring aliases:
 
@@ -1709,6 +1735,8 @@ Parameters:
 | `click_amount` | `float` | `0.05` | Level of the transient click layer |
 | `click_decay_ms` | `float` | `3.0` | Click decay time in ms |
 | `density` | `float` | `0.5` | Partial frequency jitter (0–1); adds randomness to partial tuning for thicker, less tonal results |
+| `oscillator_mode` | `str` | `"sine"` | Partial oscillator mode: `"sine"` for standard additive, `"square"` for bandlimited square partials (808-style digital metallic character) |
+| `noise_amount` | `float` | `0.0` | Level of a broadband noise layer mixed into the output (0–1); adds sizzle and air to the metallic sound |
 
 **Multi-point envelope params (optional):**
 
@@ -1727,6 +1755,8 @@ Notes:
   inharmonicity of real cymbals
 - `ring_mod_amount > 0` adds sidebands for a more complex, splashy character
   (useful for rides and crashes)
+- `oscillator_mode="square"` uses bandlimited PolyBLEP square waves instead of
+  sines, giving a harsher, more digital character similar to the 808 hi-hat circuit
 
 Presets:
 
@@ -1740,6 +1770,15 @@ Presets:
 | `crash` | Long crash cymbal (2 s decay) with high density |
 | `cowbell` | Two-partial cowbell with fixed ratios [1.0, 1.504] |
 | `clave` | Sharp, short clave click with harmonic partials |
+| `harmonic_bell` | Harmonic integer-ratio partials for tuned bell character |
+| `septimal_bell` | 7-limit JI partial ratios for xenharmonic bell |
+| `square_gamelan` | Square-wave partials with gamelan-inspired inharmonic ratios |
+| `beating_hat_a` / `b` / `c` | Near-unison partial pairs for beating interference patterns |
+| `swept_hat` | Hi-hat with filter sweep via filter envelope |
+| `decaying_bell` | Long bell with multi-point amplitude envelope |
+| `808_closed_hat` | 808-style square-wave closed hat with fixed partial ratios |
+| `808_open_hat` | 808-style square-wave open hat |
+| `808_cowbell_square` | 808-style square-wave cowbell |
 
 Example:
 
@@ -1832,6 +1871,11 @@ standard kick behavior does not require score-level `pitch_motion`.
 
 Parameters:
 
+- `body_mode: str`
+  Body synthesis mode. `"oscillator"` (default) uses a waveform oscillator with
+  optional FM; `"resonator"` drives a time-varying biquad bandpass resonator from
+  the click transient (or a short noise impulse when the click is absent).
+  Resonator mode ignores FM body params.
 - `body_decay_ms: float`
   Main body decay time in milliseconds.
 - `pitch_sweep_amount_ratio: float`
@@ -1943,6 +1987,36 @@ Notes:
 - this engine is intended to be paired with native effect presets such as
   `EffectSpec("compressor", {"preset": "kick_punch"})` and
   `EffectSpec("saturation", {"preset": "kick_weight"})`
+- resonator mode (`body_mode="resonator"`) is driven by the click transient;
+  the exciter energy passes through a time-varying biquad tuned to the body
+  pitch, producing a more naturally resonant, less synthetic body character
+
+Presets:
+
+| Preset | Character |
+|--------|-----------|
+| `808_hiphop` | Long 808-style sub kick with deep sweep |
+| `808_house` | Medium 808 with moderate sweep and punch |
+| `808_tape` | 808 with sine_clip body for tape-saturated warmth |
+| `909_techno` | Hard 909-style kick with triangle body and strong click |
+| `909_house` | Clean 909 house kick with sharp attack |
+| `909_crunch` | 909 with sine_clip body and extra click emphasis |
+| `distorted_hardkick` | Aggressive hard kick with heavy click and sine_clip |
+| `zap_kick` | Wide pitch sweep (5x) for zappy electronic kicks |
+| `round_tom` | Gentle tom with moderate sweep and triangle body |
+| `floor_tom` | Deep floor tom with longer decay |
+| `electro_tom` | Punchy electronic tom |
+| `ring_tom` | Tom with prominent ring/overtone character |
+| `gated_808` | 808 with multi-point body envelope for gated decay |
+| `pitch_dive` | Extreme pitch sweep (6x) for dramatic dive effect |
+| `filtered_kick` | Kick with envelope-modulated lowpass voice filter |
+| `fm_body_kick` | FM body synthesis for harmonically rich attack |
+| `foldback_kick` | Foldback waveshaper on the body for harmonic density |
+| `808_resonant` | Resonator body mode driven by click excitation |
+| `808_resonant_long` | Long-decay resonator with wider pitch sweep |
+| `resonant_tom` | Resonator body for naturally resonant tom character |
+| `melodic_resonator` | Long resonator body tuned for melodic percussion |
+| `kick_bell` | Kick with metallic partials layer for bell overtones |
 
 Example:
 
@@ -2209,6 +2283,81 @@ individually.
   gives symmetric (odd-only) saturation. Non-zero values add 2nd/4th harmonic
   content via an envelope-tracked DC bias in the filter. Range `[0, 0.5]`.
 
+#### Oscillator Imperfections
+
+- `osc_asymmetry: float`
+  Saw wave reset slope softening. Blends toward a softer reset shape. At 0:
+  perfect digital saw. At 0.3: subtle analog warmth. For square waves,
+  introduces slight duty cycle asymmetry. Default `0.0`. Range `[0, 1]`.
+- `osc_softness: float`
+  Bandwidth limiting that models capacitor-limited VCO slew rate. Reduces higher
+  harmonics with a frequency-tracking one-pole lowpass. At 0: full harmonics.
+  At 0.3: gentle warmth. At 1.0: almost sinusoidal. Default `0.0`. Range `[0, 1]`.
+- `osc_dc_offset: float`
+  Per-oscillator DC bias. Deterministic sign per voice card. When hitting a
+  driven filter, produces even harmonics (the same mechanism as in real VCOs).
+  Removed downstream by DC blocking. Default `0.0`. Range `[0, 1]`.
+- `osc_shape_drift: float`
+  Slow waveform shape modulation via Ornstein-Uhlenbeck process. Models thermal
+  drift in VCO capacitors. For square waves, modulates effective pulse width;
+  for saws, modulates the asymmetry blend. Default `0.0`. Range `[0, 1]`.
+
+#### Voice Card Spread
+
+- `voice_card_spread: float`
+  Controls inter-voice calibration variation. Replaces the old `voice_card`
+  parameter (backward compatible). `0.0` = identical voices, `1.0` =
+  conservative (JI-safe), `2.0` = Roland/Yamaha level, `3.0` = Oberheim Four
+  Voice level. Scales all per-voice offsets: pitch, cutoff, amplitude, attack
+  time, release time, pulse width, resonance, softness, and drift rate. Default
+  `1.0`. Range `[0, 3]`.
+
+#### Filter Topology
+
+- `filter_topology: str`
+  Selects filter architecture. `"svf"` = 2-pole (12 dB/oct) ZDF state-variable
+  filter. `"ladder"` = 4-pole (24 dB/oct) Moog-style ladder with per-stage
+  saturation. Default `"svf"`.
+- `bass_compensation: float`
+  Ladder only. Restores low-frequency energy lost to resonance feedback. At 0:
+  classic Moog behavior (bass loss at high resonance). At 1.0: full bass
+  restoration. Based on Rossum's approach in the Subsequent 37. Default `0.0`.
+  Range `[0, 1]`.
+
+#### Filter Mode Morphing
+
+- `filter_morph: float`
+  Continuous blend between filter modes. For SVF: cycles through LP -> BP -> HP
+  -> Notch -> LP. For ladder: blends between pole taps (4-pole -> 3-pole ->
+  2-pole -> 1-pole), giving continuous slope control from 24 dB to 6 dB/oct.
+  Automatable. Default `0.0`. Range `[0, 3]`.
+
+#### Serial Highpass Filter
+
+- `hpf_cutoff_hz: float`
+  When > 0, adds a 2-pole ZDF SVF highpass before the main filter. Models
+  CS80/Jupiter-8 dual-filter architecture. Default `0.0`.
+- `hpf_resonance_q: float`
+  Resonance for the serial HPF. Default `0.707`.
+
+#### Feedback Path
+
+- `feedback_amount: float`
+  Minimoog-style post-filter -> pre-filter feedback. At 0.3: subtle thickening.
+  At 0.7: aggressive growl. Works with both SVF and ladder topologies. Default
+  `0.0`. Range `[0, 1]`.
+- `feedback_saturation: float`
+  Saturation in the feedback path (tanh). Tames feedback and adds harmonics.
+  Default `0.3`. Range `[0, 1]`.
+
+#### VCA Nonlinearity
+
+- `vca_nonlinearity: float`
+  Gain-dependent envelope saturation modeling OTA-based VCAs. Drive scales with
+  envelope level — attack peaks get maximum saturation, release tails stay
+  clean. At 0.1-0.3: subtle warmth. At 0.5-0.8: audible push on loud notes.
+  Default `0.0`. Range `[0, 1]`.
+
 Validation:
 
 - `cutoff_hz > 0`
@@ -2294,6 +2443,12 @@ Presets:
 - `analog_bass` - deep saw + square sub bass with filter envelope.
 - `prophet_lead` - bright saw lead with resonant filter sweep.
 - `glass_pad` - gentle sine pad with subtle triangle osc2.
+- `moog_lead` - ladder-filtered saw lead with bass compensation and feedback.
+- `moog_bass_ladder` - 4-pole ladder bass with resonance and feedback growl.
+- `cs80_brass` - dual-filter brass stab using serial HPF and filter morph.
+- `oberheim_pad` - wide voice card spread pad with oscillator imperfections and VCA warmth.
+- `jupiter_saw` - bright saw stack with ladder filter and subtle oscillator softness.
+- `acid_ladder` - resonant ladder bass with filter morph automation and feedback saturation.
 
 Example:
 
@@ -2346,6 +2501,38 @@ Parameters:
 | `click_amount` | `float` | `0.15` | Level of the broadband click transient |
 | `click_decay_ms` | `float` | `5.0` | Click decay time in ms |
 
+**Wire noise mode:**
+
+- `wire_noise_mode: str`
+  Noise source for the wire layer. `"white"` (default) uses raw white noise;
+  `"colored"` applies a 500 Hz highpass before the comb filter for a brighter,
+  thinner wire character.
+
+**FM body params (optional — standard oscillator used when `body_fm_ratio` is absent):**
+
+- `body_fm_ratio: float`
+  Modulator frequency as ratio of body frequency. Enables FM synthesis on the body,
+  replacing the standard sine oscillator with an FM pair.
+- `body_fm_index: float` (default 2.0)
+  Peak modulation index (controls harmonic richness).
+- `body_fm_feedback: float` (default 0.0)
+  Modulator self-feedback (adds noise/complexity).
+- `body_fm_index_envelope: list[dict]`
+  Multi-point envelope for index modulation. Value axis = 0-1 multiplier.
+  Default when absent: `exp(-t/0.05)` for percussive FM.
+
+**Body distortion params (optional — bypassed when `body_distortion` is absent):**
+
+- `body_distortion: str`
+  Waveshaping algorithm applied to the body after assembly. Same algorithms as
+  kick_tom: `"tanh"`, `"foldback"`, etc. See Shared Drum DSP Infrastructure.
+- `body_distortion_drive: float` (default 0.5)
+  Drive amount (0-1).
+- `body_distortion_mix: float` (default 1.0)
+  Dry/wet blend (0 = fully dry, 1 = fully wet).
+- `body_distortion_drive_envelope: list[dict]`
+  Multi-point envelope for drive modulation over time.
+
 **Multi-point envelope params (optional):**
 
 - `body_amp_envelope: list[dict]` — replaces body exponential decay
@@ -2374,6 +2561,11 @@ Presets:
 | `rim_shot` | Short, sharp rim shot dominated by click transient |
 | `brush` | Soft brush sweep with long wire decay and minimal body |
 | `cross_stick` | Very short, sharp cross-stick click |
+| `fm_snare` | FM body for harmonically rich snare attack |
+| `driven_snare` | Tanh waveshaping on the body for gritty character |
+| `fm_tom` | FM body with lighter wire, tom-like tuning |
+| `fm_noise_burst` | Heavy FM + noise, minimal body — noise-forward burst |
+| `gated_snare` | Multi-point body envelope with sharp gate cutoff |
 
 Example:
 
@@ -2386,6 +2578,409 @@ score.add_voice(
         EffectSpec("compressor", {"preset": "snare_punch"}),
         EffectSpec("saturation", {"preset": "snare_bite"}),
     ],
+)
+```
+
+## `drum_voice`
+
+Implementation: [code_musics/engines/drum_voice.py](code_musics/engines/drum_voice.py)
+
+Composable percussion synthesizer with four independent, mixable layers --
+exciter, tone, noise, and metallic. Any synthesis mode can be combined with any
+other, enabling creative hybrid timbres that the separate drum engines cannot
+produce (e.g., FM metallic partials on a kick, resonator body on a snare).
+Replaces the five separate drum engines (`kick_tom`, `snare`, `clap`,
+`metallic_perc`, `noise_perc`) with a unified architecture. All original presets
+are available under the `drum_voice` engine name.
+
+### Architecture
+
+```
+                   +---------------+
+                   |  Pitch Sweep  |  (shared freq_profile for tone + metallic)
+                   +-------+-------+
+                           |
+Exciter -> [shaper] --+    Tone -> [shaper] --+
+                      |                       |
+                   x level x env           x level x env
+                      |                       |
+                      +----------+------------+
+                                 |
+Noise -> [ZDF filter] --+       |
+                     x level x env
+                        |       |
+Metallic -> [ZDF filter]+       |
+          x level x env         |
+                                |
+                     -----------+
+                         |
+                      Sum mix
+                         |
+                   [Voice filter]  (optional ZDF SVF)
+                         |
+                   [Voice shaper]  (optional)
+                         |
+                   Peak normalize -> x amp
+```
+
+Key routing:
+
+- **Exciter feeds resonator**: When `tone_type="resonator"`, the exciter output
+  drives the resonator as excitation. `exciter_level` controls how much raw
+  exciter also appears in the mix (0 = only resonated result).
+- **Pitch sweep is shared**: Tone and metallic both receive the swept
+  `freq_profile`. Metallic partial ratios are relative to this, so the sweep
+  affects all pitched content coherently.
+- **Shapers are pre-envelope**: Distortion on the raw oscillator before decay
+  shapes it.
+- **Noise + metallic get per-layer ZDF filters**: These layers produce broadband
+  content that almost always needs filtering. Envelope-modulated cutoff supported.
+- **Voice filter + shaper are post-mix**: Glue the layers, then final shaping.
+
+### Layer types
+
+**Exciter layer** (transient/attack energy):
+
+| Type | Description | Key params |
+|------|-------------|------------|
+| `click` | Bandpass-filtered noise burst | `exciter_center_hz`, `exciter_emphasis` |
+| `impulse` | Sub-ms pulse for exciting resonators | `exciter_width_samples` |
+| `multi_tap` | Multiple rapid micro-bursts (clap architecture) | `exciter_n_taps`, `exciter_tap_spacing_s`, `exciter_tap_decay_s`, `exciter_tap_crescendo`, `exciter_tap_acceleration`, `exciter_tap_freq_spread`, `exciter_tap_bandwidth_ratio` |
+| `fm_burst` | Short FM oscillator burst | `exciter_fm_ratio`, `exciter_fm_index`, `exciter_fm_feedback` |
+| `noise_burst` | Wider-band noise with optional tail filter | `exciter_bandwidth_ratio`, `exciter_filter_cutoff_hz`, `exciter_filter_q` |
+
+**Tone layer** (pitched periodic content / body):
+
+| Type | Description | Key params |
+|------|-------------|------------|
+| `oscillator` | Waveform + pitch sweep + punch | `tone_wave` (sine/tri/sine_clip), `tone_punch`, `tone_second_harmonic` |
+| `resonator` | Time-varying biquad bandpass driven by exciter | `tone_punch` (affects fallback impulse if no exciter) |
+| `fm` | FM synthesis body | `tone_fm_ratio`, `tone_fm_index`, `tone_fm_feedback`, `tone_fm_index_decay_s` |
+| `additive` | Small partial set at configurable ratios | `tone_partial_ratios`, `tone_n_partials`, `tone_brightness` |
+
+**Noise layer** (aperiodic texture):
+
+| Type | Description | Key params |
+|------|-------------|------------|
+| `white` | Raw white noise | (none beyond shared) |
+| `colored` | White + highpass filter | `noise_pre_hp_hz` |
+| `bandpass` | FFT-domain bandpass noise | `noise_center_ratio`, `noise_width_ratio` |
+| `comb` | Noise through comb filter at note freq (snare wire buzz) | `noise_comb_feedback`, `noise_pre_noise_mode` (white/colored), `noise_pre_hp_hz` |
+
+**Metallic layer** (inharmonic periodic content):
+
+| Type | Description | Key params |
+|------|-------------|------------|
+| `partials` | Additive inharmonic partials | `metallic_partial_ratios`, `metallic_n_partials`, `metallic_oscillator_mode` (sine/square), `metallic_brightness`, `metallic_density` |
+| `ring_mod` | Ring modulator on harmonic partial sum | `metallic_ring_mod_freq_ratio`, `metallic_ring_mod_amount`, `metallic_n_partials`, `metallic_brightness`, `metallic_density` |
+| `fm_cluster` | Multiple FM operators at inharmonic ratios | `metallic_n_operators`, `metallic_fm_ratios`, `metallic_fm_index`, `metallic_fm_feedback`, `metallic_brightness`, `metallic_density` |
+
+### Parameters
+
+**Layer type selectors** (set to `None` to disable a layer):
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `tone_type` | `str \| None` | `"oscillator"` | Tone layer synthesis type |
+| `exciter_type` | `str \| None` | `None` | Exciter layer synthesis type |
+| `noise_type` | `str \| None` | `None` | Noise layer synthesis type |
+| `metallic_type` | `str \| None` | `None` | Metallic layer synthesis type |
+
+**Layer levels:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `tone_level` | `float` | `1.0` | Tone layer mix level |
+| `exciter_level` | `float` | `0.08` | Exciter layer mix level |
+| `noise_level` | `float` | `0.02` | Noise layer mix level |
+| `metallic_level` | `float` | `0.0` | Metallic layer mix level |
+
+**Decay times:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `tone_decay_s` | `float` | `0.26` | Tone layer decay time in seconds |
+| `exciter_decay_s` | `float` | `0.007` | Exciter layer decay time in seconds |
+| `noise_decay_s` | `float` | `0.028` | Noise layer decay time in seconds |
+| `metallic_decay_s` | `float` | `0.08` | Metallic layer decay time in seconds |
+
+**Pitch sweep:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `tone_sweep_ratio` | `float` | `2.5` | Starting pitch multiplier for the sweep (decays toward 1.0) |
+| `tone_sweep_decay_s` | `float` | `0.042` | Sweep decay time in seconds |
+
+**Per-layer shaper params** (same pattern for `exciter_shaper_*`, `tone_shaper_*`):
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `tone_shaper` | `str \| None` | `None` | Shaper algorithm, `"saturation"`, `"preamp"`, or `None` |
+| `tone_shaper_drive` | `float` | `0.5` | Drive amount (0-1) |
+| `tone_shaper_mix` | `float` | `1.0` | Dry/wet blend |
+| `tone_shaper_mode` | `str` | `"triode"` | Saturation mode (when shaper=`"saturation"`) |
+| `tone_shaper_fidelity` | `float` | `0.5` | Saturation fidelity (when shaper=`"saturation"`) |
+
+**Voice filter** (post-mix, optional):
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `filter_mode` | `str \| None` | `None` | `"lowpass"`, `"bandpass"`, `"highpass"`, or `None` |
+| `filter_cutoff_hz` | `float` | `2000.0` | Base cutoff frequency |
+| `filter_q` | `float` | `0.707` | Filter resonance (>= 0.5) |
+| `filter_drive` | `float` | `0.0` | Filter drive amount |
+| `filter_envelope` | `list[dict]` | `None` | Multi-point envelope for cutoff modulation (values = Hz) |
+
+**Voice shaper** (post-mix, optional):
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `shaper` | `str \| None` | `None` | Voice-level shaper (same dispatch as per-layer) |
+| `shaper_drive` | `float` | `0.5` | Drive amount |
+| `shaper_mix` | `float` | `1.0` | Dry/wet blend |
+| `shaper_mode` | `str` | `"triode"` | Saturation mode |
+| `shaper_fidelity` | `float` | `0.5` | Saturation fidelity |
+
+**Per-layer noise/metallic filters** (optional):
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `noise_filter_mode` | `str \| None` | `None` | ZDF SVF filter on noise layer |
+| `noise_filter_cutoff_hz` | `float` | `2000.0` | Noise filter cutoff |
+| `noise_filter_q` | `float` | `0.707` | Noise filter Q |
+| `metallic_filter_mode` | `str \| None` | `None` | ZDF SVF filter on metallic layer |
+| `metallic_filter_cutoff_hz` | `float` | `2000.0` | Metallic filter cutoff |
+| `metallic_filter_q` | `float` | `1.2` | Metallic filter Q |
+
+**Multi-point envelope overrides** (optional):
+
+- `tone_envelope: list[dict]` -- replaces tone exponential decay
+- `exciter_envelope: list[dict]` -- replaces exciter exponential decay
+- `noise_envelope: list[dict]` -- replaces noise exponential decay
+- `metallic_envelope: list[dict]` -- replaces metallic exponential decay
+- `tone_pitch_envelope: list[dict]` -- replaces pitch sweep (values = freq multiplier)
+
+**Velocity-to-timbre:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `velocity_timbre_decay` | `float` | `0.0` | Velocity sensitivity for decay time scaling |
+| `velocity_timbre_brightness` | `float` | `0.0` | Velocity sensitivity for brightness scaling |
+| `velocity_timbre_harmonics` | `float` | `0.0` | Velocity sensitivity for harmonic content (FM index) |
+| `velocity_timbre_noise` | `float` | `0.0` | Velocity sensitivity for noise balance |
+
+### Shaper dispatch
+
+The shaper slots (`exciter_shaper`, `tone_shaper`, `shaper`) dispatch to three
+tiers of nonlinearity, all reusing existing code:
+
+| Shaper value | Routes to | Character |
+|---|---|---|
+| `"tanh"`, `"foldback"`, `"atan"`, etc. (11 algorithms) | `_waveshaper.py` with ADAA | Fast, simple tone shaping |
+| `"saturation"` | `synth.py` modern saturation (tube/triode/iron) | Rich analog character with optional oversampling |
+| `"preamp"` | `synth.py` preamp (flux-domain transformer) | Warm transformer color, frequency-dependent |
+
+Additional params (`mode`, `fidelity`) are forwarded to the underlying
+implementation. The drum voice calls into the existing effect functions with no
+code duplication.
+
+### Ergonomic macros
+
+Three high-level perceptual knobs that fill in params not already set by the
+user or a preset. Set to `None` (default) to leave inactive. Macros never
+override explicit values.
+
+**`punch`** (0.0 = soft pillowy, 1.0 = hard snappy):
+
+| Target param | At 0.0 | At 1.0 |
+|---|---|---|
+| `exciter_level` | 0.01 | 0.25 |
+| `exciter_decay_s` | 0.012 | 0.003 |
+| `exciter_center_hz` | 1500 | 5000 |
+| `tone_punch` | 0.0 | 0.35 |
+
+**`decay_shape`** (0.0 = tight/gated, 1.0 = long/boomy):
+
+| Target param | At 0.0 | At 1.0 |
+|---|---|---|
+| `tone_decay_s` | 0.08 | 0.9 |
+| `noise_decay_s` | 0.015 | 0.3 |
+| `metallic_decay_s` | 0.03 | 0.4 |
+| `tone_sweep_decay_s` | 0.02 | 0.08 |
+
+**`character`** (0.0 = clean/pure, 1.0 = dirty/complex):
+
+| Target param | At 0.0 | At 1.0 |
+|---|---|---|
+| `tone_shaper` | None | `"tanh"` (0.3+), `"foldback"` (0.7+) |
+| `tone_shaper_drive` | 0.0 | 0.6 |
+| `filter_drive` | 0.0 | 0.3 |
+| `noise_level` | (unchanged) | +30% boost if already present |
+
+### Presets
+
+All 62 migrated presets organized by original engine category:
+
+**Kick/tom** (from kick_tom):
+
+| Preset | Character |
+|--------|-----------|
+| `808_hiphop` | Long 808-style sub kick with deep sweep |
+| `808_house` | Medium 808 with moderate sweep and punch |
+| `808_tape` | 808 with sine_clip body for tape-saturated warmth |
+| `909_techno` | Hard 909-style kick with triangle body and strong click |
+| `909_house` | Clean 909 house kick with sharp attack |
+| `909_crunch` | 909 with sine_clip body and extra click emphasis |
+| `distorted_hardkick` | Aggressive hard kick with heavy click and sine_clip |
+| `zap_kick` | Wide pitch sweep (5x) for zappy electronic kicks |
+| `round_tom` | Gentle tom with moderate sweep and triangle body |
+| `floor_tom` | Deep floor tom with longer decay |
+| `electro_tom` | Punchy electronic tom |
+| `ring_tom` | Tom with prominent ring/overtone character |
+| `melodic_resonator` | Long resonator body tuned for melodic percussion |
+| `kick_bell` | Kick with metallic partials layer for bell overtones |
+| `gated_808` | 808 with multi-point body envelope for gated decay |
+| `pitch_dive` | Extreme pitch sweep (6x) for dramatic dive effect |
+| `filtered_kick` | Kick with envelope-modulated lowpass voice filter |
+| `fm_body_kick` | FM body synthesis for harmonically rich attack |
+| `foldback_kick` | Foldback waveshaper on the body for harmonic density |
+| `808_resonant` | Resonator body mode driven by click excitation |
+| `808_resonant_long` | Long-decay resonator with wider pitch sweep |
+| `resonant_tom` | Resonator body for naturally resonant tom character |
+
+**Snare** (from snare):
+
+| Preset | Character |
+|--------|-----------|
+| `909_tight` | Tight 909-style snare with balanced body/wire |
+| `909_fat` | Fatter 909 with longer decay and more body emphasis |
+| `rim_shot` | Short, sharp rim shot dominated by click transient |
+| `brush` | Soft brush sweep with long wire decay and minimal body |
+| `fm_tom` | FM body with lighter wire, tom-like tuning |
+| `fm_noise_burst` | Heavy FM + noise, minimal body -- noise-forward burst |
+| `gated_snare` | Multi-point body envelope with sharp gate cutoff |
+| `fm_snare` | FM body for harmonically rich snare attack |
+| `driven_snare` | Tanh waveshaping on the body for gritty character |
+
+**Clap** (from clap):
+
+| Preset | Character |
+|--------|-----------|
+| `909_clap` | Classic 909-style 4-tap clap |
+| `tight_clap` | Short, snappy 3-tap clap |
+| `big_clap` | Wider 6-tap clap with longer body |
+| `finger_snap` | Quick 2-tap snap with narrow bandpass |
+| `gated_clap` | 909-style clap with gated tail via noise envelope |
+| `909_clap_authentic` | 909-accurate timing with tap acceleration and frequency spread |
+| `scattered_clap` | Wide 6-tap clap with heavy acceleration and spread |
+| `granular_cascade` | Dense 8-tap granular burst with high acceleration and spread |
+| `micro_burst` | Tight 6-tap burst with subtle spread, very short body |
+
+**Metallic** (from metallic_perc):
+
+| Preset | Character |
+|--------|-----------|
+| `closed_hat` | Tight, bright closed hi-hat |
+| `open_hat` | Longer open hi-hat |
+| `ride_bell` | Focused ride bell |
+| `cowbell` | Two-partial cowbell with fixed ratios |
+| `clave` | Sharp, short clave click |
+| `harmonic_bell` | Harmonic integer-ratio partials for tuned bell |
+| `septimal_bell` | 7-limit JI partial ratios for xenharmonic bell |
+| `square_gamelan` | Square-wave partials with gamelan-inspired ratios |
+| `beating_hat_a` / `b` / `c` | Near-unison partial pairs for beating interference |
+| `swept_hat` | Hi-hat with lowered filter start for sweep character |
+| `decaying_bell` | Long bell with multi-point amplitude envelope |
+| `808_closed_hat` | 808-style square-wave closed hat |
+| `808_open_hat` | 808-style square-wave open hat |
+| `808_cowbell_square` | 808-style square-wave cowbell |
+
+**Noise perc** (from noise_perc):
+
+| Preset | Character |
+|--------|-----------|
+| `kickish` | Noise-tone hybrid with kick-like low body |
+| `snareish` | Noise-heavy snare-like hit |
+| `tick` | Sharp high-frequency tick |
+| `chh` | Short noise burst for closed hi-hat |
+| `clap_noise` | Wide bandpass noise clap |
+| `shaped_hit` | Balanced tone+noise with multi-point noise envelope |
+
+Notes:
+
+- does not support pitch motion (`freq_trajectory`) at the score level;
+  the engine owns its internal pitch sweep
+- deterministic for identical inputs (SHA-256 seeded RNG)
+- `freq` sets the base pitch; pitch sweep, partial ratios, and noise bandpass
+  centers are all relative to this frequency
+- when no preset is used and no layer types are specified, `tone_type` defaults
+  to `"oscillator"` and all other layers default to `None`
+- the engine peak-normalizes internally before applying `amp`
+
+Examples:
+
+Simple preset usage:
+
+```python
+score.add_voice(
+    "kick",
+    synth_defaults={"engine": "drum_voice", "preset": "909_techno"},
+    normalize_peak_db=-6.0,
+)
+```
+
+Hybrid -- start from a preset, add a metallic shimmer layer:
+
+```python
+score.add_voice(
+    "kick_bell",
+    synth_defaults={
+        "engine": "drum_voice",
+        "preset": "808_house",
+        "metallic_type": "partials",
+        "metallic_level": 0.15,
+        "metallic_decay_s": 0.12,
+    },
+    normalize_peak_db=-6.0,
+)
+```
+
+From scratch -- FM body + comb noise + FM cluster metallic:
+
+```python
+score.add_voice(
+    "hybrid_perc",
+    synth_defaults={
+        "engine": "drum_voice",
+        "exciter_type": "click",
+        "exciter_level": 0.12,
+        "tone_type": "fm",
+        "tone_level": 0.6,
+        "tone_fm_ratio": 1.41,
+        "tone_fm_index": 3.0,
+        "noise_type": "comb",
+        "noise_level": 0.3,
+        "noise_comb_feedback": 0.4,
+        "metallic_type": "fm_cluster",
+        "metallic_level": 0.2,
+        "metallic_decay_s": 0.1,
+    },
+    normalize_peak_db=-6.0,
+)
+```
+
+Using macros for quick timbral control:
+
+```python
+score.add_voice(
+    "snare",
+    synth_defaults={
+        "engine": "drum_voice",
+        "preset": "909_tight",
+        "punch": 0.8,
+        "character": 0.4,
+    },
+    normalize_peak_db=-6.0,
 )
 ```
 

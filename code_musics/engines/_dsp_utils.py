@@ -14,7 +14,7 @@ from typing import Any
 import numba
 import numpy as np
 
-from code_musics.engines._filters import apply_zdf_svf
+from code_musics.engines._filters import apply_filter
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -36,6 +36,10 @@ _VOICE_CARD_ATTACK_SCALE: float = 0.05  # +/- 5% (0.95-1.05)
 _VOICE_CARD_RELEASE_SCALE: float = 0.05
 _VOICE_CARD_AMP_DB: float = 0.2  # +/- 0.2 dB
 _VOICE_CARD_PITCH_CENTS: float = 0.5  # +/- 0.5 cents (conservative for JI)
+_VOICE_CARD_PULSE_WIDTH: float = 0.03  # +/- 0.03
+_VOICE_CARD_RESONANCE_PCT: float = 5.0  # +/- 5%
+_VOICE_CARD_SOFTNESS: float = 0.05  # +/- 0.05
+_VOICE_CARD_DRIFT_RATE_PCT: float = 20.0  # +/- 20%
 
 SOUNDBOARD_MODES = (
     (80.0, 4.0, 0.10),
@@ -438,7 +442,7 @@ def apply_soundboard(
         if mode_hz >= sample_rate / 2.0:
             continue
         cutoff_profile = np.full(signal.size, mode_hz, dtype=np.float64)
-        resonant = apply_zdf_svf(
+        resonant = apply_filter(
             signal,
             cutoff_profile=cutoff_profile,
             resonance_q=mode_q,
@@ -451,7 +455,7 @@ def apply_soundboard(
     cutoff_hz = 300.0 + soundboard_brightness * 4000.0
     lp_resonance = 0.5 + soundboard_color * 0.3
     cutoff_profile = np.full(signal.size, cutoff_hz, dtype=np.float64)
-    lp_wet = apply_zdf_svf(
+    lp_wet = apply_filter(
         signal,
         cutoff_profile=cutoff_profile,
         resonance_q=lp_resonance,
@@ -635,52 +639,119 @@ def fm_modulate(
 def extract_analog_params(params: dict[str, Any]) -> dict[str, float]:
     """Extract analog character parameters with defaults.
 
-    Returns a flat dict of the five common analog-character knobs that
+    Returns a flat dict of the common analog-character knobs that
     polyblep, filtered_stack, and fm engines all share.
+
+    ``voice_card_spread`` (0.0-3.0, default 1.0) sets the global inter-voice
+    calibration variation.  Per-group overrides let you scale individual
+    dimensions independently (e.g., keep pitch tight for JI while opening up
+    filter and envelope variation):
+
+    - ``voice_card_pitch_spread`` — pitch offset (default: global)
+    - ``voice_card_filter_spread`` — cutoff + resonance (default: global)
+    - ``voice_card_envelope_spread`` — attack + release timing (default: global)
+    - ``voice_card_osc_spread`` — pulse width, softness, drift rate (default: global)
+    - ``voice_card_level_spread`` — amplitude (default: global)
+
+    For backward compatibility, the legacy ``voice_card`` key is accepted
+    as a fallback for the global spread.
     """
+    if "voice_card_spread" in params:
+        spread = float(params["voice_card_spread"])
+    else:
+        spread = float(params.get("voice_card", 1.0))
     return {
         "pitch_drift": float(params.get("pitch_drift", 0.12)),
         "analog_jitter": float(params.get("analog_jitter", 1.0)),
         "noise_floor": float(params.get("noise_floor", 0.001)),
         "drift_rate_hz": float(params.get("drift_rate_hz", 0.3)),
         "cutoff_drift": float(params.get("cutoff_drift", 0.5)),
-        "voice_card": float(params.get("voice_card", 1.0)),
+        "voice_card_spread": spread,
+        "voice_card_pitch_spread": float(params.get("voice_card_pitch_spread", spread)),
+        "voice_card_filter_spread": float(
+            params.get("voice_card_filter_spread", spread)
+        ),
+        "voice_card_envelope_spread": float(
+            params.get("voice_card_envelope_spread", spread)
+        ),
+        "voice_card_osc_spread": float(params.get("voice_card_osc_spread", spread)),
+        "voice_card_level_spread": float(params.get("voice_card_level_spread", spread)),
+        "osc_asymmetry": float(params.get("osc_asymmetry", 0.0)),
+        "osc_softness": float(params.get("osc_softness", 0.0)),
+        "osc_dc_offset": float(params.get("osc_dc_offset", 0.0)),
+        "osc_shape_drift": float(params.get("osc_shape_drift", 0.0)),
     }
+
+
+_NEUTRAL_VC_OFFSETS: dict[str, float] = {
+    "attack_scale": 1.0,
+    "release_scale": 1.0,
+    "pulse_width_offset": 0.0,
+    "resonance_offset_pct": 0.0,
+    "softness_offset": 0.0,
+    "drift_rate_offset_pct": 0.0,
+}
 
 
 def apply_voice_card(
     params: dict[str, Any],
     *,
-    voice_card_amount: float,
+    voice_card_spread: float,
+    pitch_spread: float | None = None,
+    filter_spread: float | None = None,
+    envelope_spread: float | None = None,
+    osc_spread: float | None = None,
+    level_spread: float | None = None,
     freq_profile: np.ndarray,
     amp: float,
     cutoff_hz: float | None = None,
-) -> tuple[np.ndarray, float, float | None]:
+) -> tuple[np.ndarray, float, float | None, dict[str, float]]:
     """Apply deterministic per-voice calibration offsets.
 
-    Returns ``(freq_profile, amp, cutoff_hz)`` with voice card offsets applied.
-    *cutoff_hz* is passed through unchanged when ``None`` (for engines without
-    a filter).
+    Returns ``(freq_profile, amp, cutoff_hz, extra_offsets)`` with voice card
+    offsets applied.  *cutoff_hz* is passed through unchanged when ``None``
+    (for engines without a filter).  *extra_offsets* is a dict of additional
+    per-voice offsets that engines can optionally consume (attack/release
+    scale, pulse width, resonance, softness, drift rate).
+
+    *voice_card_spread* sets the global scale for all offset dimensions.
+    Per-group overrides (*pitch_spread*, *filter_spread*, *envelope_spread*,
+    *osc_spread*, *level_spread*) replace the global for their dimension
+    when provided.  This lets you keep pitch tight for JI while opening up
+    filter and envelope variation.
     """
+    s_pitch = pitch_spread if pitch_spread is not None else voice_card_spread
+    s_filter = filter_spread if filter_spread is not None else voice_card_spread
+    s_env = envelope_spread if envelope_spread is not None else voice_card_spread
+    s_osc = osc_spread if osc_spread is not None else voice_card_spread
+    s_level = level_spread if level_spread is not None else voice_card_spread
+
     voice_name = str(params.get("_voice_name", ""))
-    if voice_card_amount <= 0 or not voice_name:
-        return freq_profile, amp, cutoff_hz
+    all_zero = (
+        s_pitch <= 0 and s_filter <= 0 and s_env <= 0 and s_osc <= 0 and s_level <= 0
+    )
+    if all_zero or not voice_name:
+        return freq_profile, amp, cutoff_hz, dict(_NEUTRAL_VC_OFFSETS)
 
     vc = voice_card_offsets(voice_name)
 
-    # Pitch offset applied to freq_profile (before drift)
-    pitch_cents = vc["pitch_offset_cents"] * voice_card_amount
-    freq_profile = freq_profile * (2.0 ** (pitch_cents / 1200.0))
+    freq_profile = freq_profile * (2.0 ** (vc["pitch_offset_cents"] * s_pitch / 1200.0))
 
-    # Cutoff offset for engines with filters
     if cutoff_hz is not None:
-        cutoff_cents = vc["cutoff_offset_cents"] * voice_card_amount
-        cutoff_hz = cutoff_hz * (2.0 ** (cutoff_cents / 1200.0))
+        cutoff_hz = cutoff_hz * (2.0 ** (vc["cutoff_offset_cents"] * s_filter / 1200.0))
 
-    # Amp offset
-    amp = amp * (10.0 ** (vc["amp_offset_db"] * voice_card_amount / 20.0))
+    amp = amp * (10.0 ** (vc["amp_offset_db"] * s_level / 20.0))
 
-    return freq_profile, amp, cutoff_hz
+    extra_offsets = {
+        "attack_scale": 1.0 + (vc["attack_scale"] - 1.0) * s_env,
+        "release_scale": 1.0 + (vc["release_scale"] - 1.0) * s_env,
+        "pulse_width_offset": vc["pulse_width_offset"] * s_osc,
+        "resonance_offset_pct": vc["resonance_offset_pct"] * s_filter,
+        "softness_offset": vc["softness_offset"] * s_osc,
+        "drift_rate_offset_pct": vc["drift_rate_offset_pct"] * s_osc,
+    }
+
+    return freq_profile, amp, cutoff_hz, extra_offsets
 
 
 def apply_analog_post_processing(
@@ -759,11 +830,13 @@ def voice_card_offsets(voice_name: str) -> dict[str, float]:
     """Deterministic per-voice calibration offsets from voice name.
 
     Returns fixed offsets that persist across all notes in a voice.
+    New offset dimensions are drawn after the original five so that
+    existing per-voice character is preserved.
     """
     seed_bytes = sha256(f"voice_card:{voice_name}".encode()).digest()[:8]
     seed = int.from_bytes(seed_bytes, byteorder="big", signed=False)
     rng = np.random.default_rng(seed)
-    return {
+    offsets: dict[str, float] = {
         "cutoff_offset_cents": float(
             rng.uniform(-_VOICE_CARD_CUTOFF_CENTS, _VOICE_CARD_CUTOFF_CENTS)
         ),
@@ -780,3 +853,16 @@ def voice_card_offsets(voice_name: str) -> dict[str, float]:
             rng.uniform(-_VOICE_CARD_PITCH_CENTS, _VOICE_CARD_PITCH_CENTS)
         ),
     }
+    offsets["pulse_width_offset"] = float(
+        rng.uniform(-_VOICE_CARD_PULSE_WIDTH, _VOICE_CARD_PULSE_WIDTH)
+    )
+    offsets["resonance_offset_pct"] = float(
+        rng.uniform(-_VOICE_CARD_RESONANCE_PCT, _VOICE_CARD_RESONANCE_PCT)
+    )
+    offsets["softness_offset"] = float(
+        rng.uniform(-_VOICE_CARD_SOFTNESS, _VOICE_CARD_SOFTNESS)
+    )
+    offsets["drift_rate_offset_pct"] = float(
+        rng.uniform(-_VOICE_CARD_DRIFT_RATE_PCT, _VOICE_CARD_DRIFT_RATE_PCT)
+    )
+    return offsets

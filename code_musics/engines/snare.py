@@ -20,7 +20,7 @@ from code_musics.engines._drum_utils import (
 )
 from code_musics.engines._dsp_utils import fm_modulate
 from code_musics.engines._envelopes import render_envelope
-from code_musics.engines._filters import apply_zdf_svf
+from code_musics.engines._filters import apply_filter
 from code_musics.engines._waveshaper import ALGORITHM_NAMES, apply_waveshaper
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -212,7 +212,7 @@ def render(
     # Colored wire noise: highpass filter before comb for more realistic character
     if wire_noise_mode == "colored":
         hp_cutoff = np.full(n_samples, 500.0, dtype=np.float64)
-        raw_noise = apply_zdf_svf(
+        raw_noise = apply_filter(
             raw_noise,
             cutoff_profile=hp_cutoff,
             resonance_q=0.707,
@@ -231,7 +231,7 @@ def render(
         )
     else:
         cutoff_profile = np.full(n_samples, cutoff_hz, dtype=np.float64)
-    wire = apply_zdf_svf(
+    wire = apply_filter(
         wire,
         cutoff_profile=cutoff_profile,
         resonance_q=wire_q,

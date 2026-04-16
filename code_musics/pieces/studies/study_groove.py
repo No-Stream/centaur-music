@@ -51,8 +51,8 @@ CHORD_B = [1.0, 8 / 7, 4 / 3, 8 / 5]  # utonal colour
 # Synth specs
 # ---------------------------------------------------------------------------
 
-KICK_SYNTH: dict = {"engine": "kick_tom", "preset": "808_hiphop"}
-HAT_SYNTH: dict = {"engine": "metallic_perc", "preset": "closed_hat"}
+KICK_SYNTH: dict = {"engine": "drum_voice", "preset": "808_hiphop"}
+HAT_SYNTH: dict = {"engine": "drum_voice", "preset": "closed_hat"}
 PAD_SYNTH: dict = {
     "engine": "organ",
     "preset": "septimal",
@@ -73,7 +73,7 @@ BASS_SYNTH: dict = {
         "release_ms": 150.0,
     },
 }
-CLAP_SYNTH: dict = {"engine": "clap", "preset": "909_clap"}
+CLAP_SYNTH: dict = {"engine": "drum_voice", "preset": "909_clap"}
 
 
 def _bar_start(bar: int) -> float:

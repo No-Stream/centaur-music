@@ -1143,6 +1143,7 @@ def adsr(
     release: float = 0.3,
     sample_rate: int = SAMPLE_RATE,
     hold_duration: float | None = None,
+    vca_nonlinearity: float = 0.0,
 ) -> np.ndarray:
     """Apply ADSR amplitude envelope."""
     _MIN_ATTACK_S = 0.003  # 3 ms floor — prevents onset clicks
@@ -1196,7 +1197,15 @@ def adsr(
         )
         cursor += release_samples
 
-    return signal * envelope
+    shaped = signal * envelope
+    if vca_nonlinearity > 0.0:
+        drive = 1.0 + vca_nonlinearity * 3.0 * envelope
+        shaped = np.where(
+            drive > 1e-6,
+            np.tanh(drive * shaped) / np.tanh(drive),
+            shaped,
+        )
+    return shaped
 
 
 def stack(*signals: np.ndarray) -> np.ndarray:

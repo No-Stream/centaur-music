@@ -1,7 +1,7 @@
 """Dark minimal techno loop showcasing the full percussion engine palette.
 
-32 bars at 128 BPM.  Every new drum engine gets a voice: metallic_perc
-(closed hat, open hat, ride bell), snare (909_tight), clap (909_clap).
+32 bars at 128 BPM.  Every drum voice uses the unified drum_voice engine:
+closed hat, open hat, ride bell, snare (909_tight), clap (909_clap).
 Uses choke groups, drum bus routing, and the new effect presets.
 """
 
@@ -202,7 +202,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "kick",
-        engine="kick_tom",
+        engine="drum_voice",
         preset="909_techno",
         drum_bus=drum_bus,
         send_db=-2.0,
@@ -214,7 +214,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "closed_hat",
-        engine="metallic_perc",
+        engine="drum_voice",
         preset="closed_hat",
         drum_bus=drum_bus,
         send_db=-4.0,
@@ -233,7 +233,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "open_hat",
-        engine="metallic_perc",
+        engine="drum_voice",
         preset="open_hat",
         drum_bus=drum_bus,
         send_db=-4.0,
@@ -251,7 +251,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "snare",
-        engine="snare",
+        engine="drum_voice",
         preset="909_tight",
         drum_bus=drum_bus,
         send_db=-3.0,
@@ -268,7 +268,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "clap",
-        engine="clap",
+        engine="drum_voice",
         preset="909_clap",
         drum_bus=drum_bus,
         send_db=-3.0,
@@ -281,7 +281,7 @@ def build_score() -> Score:
     add_drum_voice(
         score,
         "ride",
-        engine="metallic_perc",
+        engine="drum_voice",
         preset="ride_bell",
         drum_bus=drum_bus,
         send_db=-4.0,

@@ -61,10 +61,10 @@ V4_SYNTH: dict = {"engine": "piano", "preset": "warm"}
 V5_SYNTH: dict = {"engine": "additive", "preset": "soft_pad"}
 
 # Percussion voices — three CA layers with distinct timbres.
-PERC_HAT_SYNTH: dict = {"engine": "metallic_perc", "preset": "closed_hat"}
-PERC_TICK_SYNTH: dict = {"engine": "noise_perc", "preset": "tick"}
+PERC_HAT_SYNTH: dict = {"engine": "drum_voice", "preset": "closed_hat"}
+PERC_TICK_SYNTH: dict = {"engine": "drum_voice", "preset": "tick"}
 PERC_COWBELL_SYNTH: dict = {
-    "engine": "metallic_perc",
+    "engine": "drum_voice",
     "preset": "cowbell",
     "env": {
         "attack_ms": 0.5,

@@ -1,9 +1,15 @@
 """Per-oscillator waveshaping distortion algorithms for drum engines.
 
-Nine distortion algorithms inspired by Geonkick, each implemented as a
+Eleven distortion algorithms inspired by Geonkick, each implemented as a
 numba-compiled inner loop.  The public entry point is :func:`apply_waveshaper`,
 which handles drive mapping, optional per-sample drive envelopes, dry/wet mix,
-and output-level compensation.
+output-level compensation, and first-order ADAA anti-aliasing.
+
+Algorithms with closed-form antiderivatives (tanh, atan, hard_clip, exponential,
+logarithmic, half_wave_rect, full_wave_rect) use analytical first-order ADAA.
+Folding algorithms (foldback, linear_fold, sine_fold) rely on the ``oversample``
+parameter for alias reduction.  The polynomial algorithm uses direct evaluation
+since it already limits input to the monotone region.
 
 This module is for per-oscillator use *inside* drum engines.  The voice-level
 saturation effect in ``synth.py`` is a separate post-render concern.
@@ -17,6 +23,7 @@ from collections.abc import Callable
 
 import numba
 import numpy as np
+from scipy.signal import resample_poly
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -209,7 +216,209 @@ def _sine_fold(signal: np.ndarray, drive_gain: float) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Per-sample envelope-modulated waveshaping (single numba function)
+# ADAA antiderivative helpers (numba-compiled, per-sample)
+# ---------------------------------------------------------------------------
+
+_LN2: float = 0.6931471805599453
+_ADAA_DX_THRESHOLD: float = 1e-5
+
+
+@numba.njit(cache=True)
+def _log_cosh(x: float) -> float:
+    """Numerically stable log(cosh(x)): |x| + log(1 + exp(-2|x|)) - ln(2)."""
+    ax = math.fabs(x)
+    return ax + math.log1p(math.exp(-2.0 * ax)) - _LN2
+
+
+@numba.njit(cache=True)
+def _ad1_tanh(x: float) -> float:
+    """Antiderivative of tanh: F(x) = log(cosh(x))."""
+    return _log_cosh(x)
+
+
+@numba.njit(cache=True)
+def _ad1_atan(x: float) -> float:
+    """Antiderivative of (2/pi)*atan(x): F(x) = (2/pi)*(x*atan(x) - 0.5*ln(1+x^2))."""
+    return (2.0 / math.pi) * (x * math.atan(x) - 0.5 * math.log(1.0 + x * x))
+
+
+@numba.njit(cache=True)
+def _ad1_hard_clip(x: float) -> float:
+    """Antiderivative of clamp(x, -1, 1)."""
+    if x > 1.0:
+        return x - 0.5
+    if x < -1.0:
+        return -x - 0.5
+    return x * x * 0.5
+
+
+@numba.njit(cache=True)
+def _ad1_exponential(x: float) -> float:
+    """Antiderivative of sgn(x)*(1-exp(-|x|)).
+
+    For x >= 0: integral of (1 - exp(-x)) = x + exp(-x)
+    For x < 0:  integral of (exp(x) - 1) = exp(x) - x
+    Both evaluate to 1 at x=0 (continuous).
+    """
+    if x >= 0.0:
+        return x + math.exp(-x)
+    return math.exp(x) - x
+
+
+@numba.njit(cache=True)
+def _ad1_logarithmic(x: float, norm: float) -> float:
+    """Antiderivative of sgn(x)*log(1+|x|)/norm.
+
+    F is even: F(x) = ((1+|x|)*ln(1+|x|) - |x|) / norm for all x.
+    """
+    ax = math.fabs(x)
+    return ((1.0 + ax) * math.log(1.0 + ax) - ax) / norm
+
+
+@numba.njit(cache=True)
+def _ad1_half_wave_rect(x: float) -> float:
+    """Antiderivative of max(x, 0): F(x) = x^2/2 for x>=0, 0 for x<0."""
+    if x > 0.0:
+        return x * x * 0.5
+    return 0.0
+
+
+@numba.njit(cache=True)
+def _ad1_full_wave_rect(x: float) -> float:
+    """Antiderivative of |x|: F(x) = x*|x|/2 (odd function)."""
+    return x * math.fabs(x) * 0.5
+
+
+# ---------------------------------------------------------------------------
+# Per-sample ADAA dispatch
+# ---------------------------------------------------------------------------
+
+
+@numba.njit(cache=True)
+def _adaa_sample(
+    x_curr: float,
+    x_prev: float,
+    algorithm_id: int,
+    drive_gain: float,
+) -> float:
+    """Compute one ADAA output sample given current and previous driven values.
+
+    x_curr and x_prev are already multiplied by drive_gain.
+    """
+    dx = x_curr - x_prev
+    mid = 0.5 * (x_curr + x_prev)
+
+    if algorithm_id == _ID_TANH:
+        if math.fabs(dx) > _ADAA_DX_THRESHOLD:
+            result = (_ad1_tanh(x_curr) - _ad1_tanh(x_prev)) / dx
+            if result > 1.0:
+                return 1.0
+            if result < -1.0:
+                return -1.0
+            return result
+        return math.tanh(mid)
+
+    if algorithm_id == _ID_ATAN:
+        if math.fabs(dx) > _ADAA_DX_THRESHOLD:
+            return (_ad1_atan(x_curr) - _ad1_atan(x_prev)) / dx
+        return (2.0 / math.pi) * math.atan(mid)
+
+    if algorithm_id == _ID_HARD_CLIP:
+        if math.fabs(dx) > _ADAA_DX_THRESHOLD:
+            return (_ad1_hard_clip(x_curr) - _ad1_hard_clip(x_prev)) / dx
+        if mid > 1.0:
+            return 1.0
+        if mid < -1.0:
+            return -1.0
+        return mid
+
+    if algorithm_id == _ID_EXPONENTIAL:
+        if math.fabs(dx) > _ADAA_DX_THRESHOLD:
+            return (_ad1_exponential(x_curr) - _ad1_exponential(x_prev)) / dx
+        ax = math.fabs(mid)
+        val = 1.0 - math.exp(-ax)
+        return val if mid >= 0.0 else -val
+
+    if algorithm_id == _ID_LOGARITHMIC:
+        norm = math.log(1.0 + drive_gain) if drive_gain > 0.0 else 1.0
+        if math.fabs(dx) > _ADAA_DX_THRESHOLD:
+            return (
+                _ad1_logarithmic(x_curr, norm) - _ad1_logarithmic(x_prev, norm)
+            ) / dx
+        ax = math.fabs(mid)
+        val = math.log(1.0 + ax) / norm
+        return val if mid >= 0.0 else -val
+
+    if algorithm_id == _ID_HALF_WAVE_RECT:
+        if math.fabs(dx) > _ADAA_DX_THRESHOLD:
+            return (_ad1_half_wave_rect(x_curr) - _ad1_half_wave_rect(x_prev)) / dx
+        return mid if mid > 0.0 else 0.0
+
+    if algorithm_id == _ID_FULL_WAVE_RECT:
+        if math.fabs(dx) > _ADAA_DX_THRESHOLD:
+            return (_ad1_full_wave_rect(x_curr) - _ad1_full_wave_rect(x_prev)) / dx
+        return math.fabs(mid)
+
+    # Fallback for algorithms without analytical ADAA (polynomial, folds):
+    # direct evaluation at x_curr
+    if algorithm_id == _ID_POLYNOMIAL:
+        limit = math.sqrt(3.0 / drive_gain) if drive_gain > 0.0 else 1e6
+        xd = x_curr
+        if xd > limit:
+            xd = limit
+        elif xd < -limit:
+            xd = -limit
+        return xd - (drive_gain * xd * xd * xd) / 3.0
+
+    if algorithm_id == _ID_FOLDBACK:
+        threshold = 1.0 / max(drive_gain, 1e-12)
+        if threshold <= 0.0:
+            return 0.0
+        x_shifted = x_curr / drive_gain + threshold
+        period = 4.0 * threshold
+        phase = x_shifted - period * math.floor(x_shifted / period)
+        half = 2.0 * threshold
+        if phase < half:
+            return phase - threshold
+        return 3.0 * threshold - phase
+
+    if algorithm_id == _ID_LINEAR_FOLD:
+        scaled = x_curr
+        return abs(((scaled * 0.25 + 0.75) % 1.0) * -4.0 + 2.0) - 1.0
+
+    if algorithm_id == _ID_SINE_FOLD:
+        return math.sin(x_curr * math.pi)
+
+    return x_curr
+
+
+# ---------------------------------------------------------------------------
+# ADAA-aware static loop (no envelope)
+# ---------------------------------------------------------------------------
+
+
+@numba.njit(cache=True)
+def _apply_adaa(
+    signal: np.ndarray,
+    algorithm_id: int,
+    drive_gain: float,
+) -> np.ndarray:
+    """Apply waveshaping with first-order ADAA over the whole signal."""
+    n = signal.shape[0]
+    out = np.empty(n, dtype=np.float64)
+
+    prev_driven = signal[0] * drive_gain if n > 0 else 0.0
+
+    for i in range(n):
+        curr_driven = signal[i] * drive_gain
+        out[i] = _adaa_sample(curr_driven, prev_driven, algorithm_id, drive_gain)
+        prev_driven = curr_driven
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Per-sample envelope-modulated waveshaping with ADAA
 # ---------------------------------------------------------------------------
 
 _DRIVE_SCALE_NB: float = 49.0  # duplicate constant for numba scope
@@ -222,7 +431,7 @@ def _apply_with_envelope(
     base_drive: float,
     envelope: np.ndarray,
 ) -> np.ndarray:
-    """Apply waveshaping with per-sample drive modulation.
+    """Apply waveshaping with per-sample drive modulation and ADAA.
 
     ``base_drive`` is the user-facing 0-1 drive value.  ``envelope`` contains
     per-sample multipliers in [0, 1] that scale the drive.
@@ -230,76 +439,18 @@ def _apply_with_envelope(
     n = signal.shape[0]
     out = np.empty(n, dtype=np.float64)
 
+    # Initialize prev_driven for ADAA state
+    initial_drive = base_drive * envelope[0] if n > 0 else 0.0
+    initial_g = 1.0 + _DRIVE_SCALE_NB * initial_drive * initial_drive
+    prev_driven = signal[0] * initial_g if n > 0 else 0.0
+
     for i in range(n):
         effective_drive = base_drive * envelope[i]
         g = 1.0 + _DRIVE_SCALE_NB * effective_drive * effective_drive
-        x = signal[i]
+        curr_driven = signal[i] * g
 
-        if algorithm_id == 0:  # hard_clip
-            xd = x * g
-            if xd > 1.0:
-                out[i] = 1.0
-            elif xd < -1.0:
-                out[i] = -1.0
-            else:
-                out[i] = xd
-
-        elif algorithm_id == 1:  # tanh
-            out[i] = math.tanh(x * g)
-
-        elif algorithm_id == 2:  # atan
-            out[i] = (2.0 / math.pi) * math.atan(x * g)
-
-        elif algorithm_id == 3:  # exponential
-            ax = abs(x) * g
-            val = 1.0 - math.exp(-ax)
-            out[i] = val if x >= 0.0 else -val
-
-        elif algorithm_id == 4:  # polynomial
-            limit = math.sqrt(3.0 / g) if g > 0.0 else 1e6
-            xd = x * g
-            if xd > limit:
-                xd = limit
-            elif xd < -limit:
-                xd = -limit
-            out[i] = xd - (g * xd * xd * xd) / 3.0
-
-        elif algorithm_id == 5:  # logarithmic
-            norm = math.log(1.0 + g) if g > 0.0 else 1.0
-            ax = abs(x) * g
-            val = math.log(1.0 + ax) / norm
-            out[i] = val if x >= 0.0 else -val
-
-        elif algorithm_id == 6:  # foldback
-            threshold = 1.0 / max(g, 1e-12)
-            if threshold <= 0.0:
-                out[i] = 0.0
-            else:
-                x_shifted = x + threshold
-                period = 4.0 * threshold
-                phase = x_shifted - period * math.floor(x_shifted / period)
-                half = 2.0 * threshold
-                if phase < half:
-                    out[i] = phase - threshold
-                else:
-                    out[i] = 3.0 * threshold - phase
-
-        elif algorithm_id == 7:  # half_wave_rect
-            xd = x * g
-            out[i] = xd if xd > 0.0 else 0.0
-
-        elif algorithm_id == 8:  # full_wave_rect
-            out[i] = abs(x * g)
-
-        elif algorithm_id == 9:  # linear_fold
-            scaled = x * g
-            out[i] = abs(((scaled * 0.25 + 0.75) % 1.0) * -4.0 + 2.0) - 1.0
-
-        elif algorithm_id == 10:  # sine_fold
-            out[i] = math.sin(x * g * math.pi)
-
-        else:
-            out[i] = x
+        out[i] = _adaa_sample(curr_driven, prev_driven, algorithm_id, g)
+        prev_driven = curr_driven
 
     return out
 
@@ -351,6 +502,7 @@ def apply_waveshaper(
     drive: float,
     drive_envelope: np.ndarray | None = None,
     mix: float = 1.0,
+    oversample: int = 1,
 ) -> np.ndarray:
     """Apply a waveshaping distortion algorithm to *signal*.
 
@@ -362,6 +514,9 @@ def apply_waveshaper(
         drive_envelope: Optional per-sample envelope (same length as *signal*,
             values in [0, 1]) that modulates the drive over time.
         mix: Dry/wet blend in [0, 1].  0 = fully dry, 1 = fully wet.
+        oversample: Oversampling factor (1 or 2).  When 2, the signal is
+            upsampled before processing and downsampled after, reducing
+            aliasing for folding algorithms that lack analytical ADAA.
 
     Returns:
         Processed signal, level-compensated to roughly match input RMS.
@@ -390,13 +545,31 @@ def apply_waveshaper(
     if mix <= 0.0:
         return sig.copy()
 
-    # Compute wet signal
-    if env is not None:
-        wet = _apply_with_envelope(sig, _NAME_TO_ID[algorithm], drive, env)
+    # Upsample if requested
+    if oversample > 1:
+        sig_proc = resample_poly(sig, oversample, 1).astype(np.float64)
+        env_proc: np.ndarray | None = None
+        if env is not None:
+            env_proc = resample_poly(env, oversample, 1).astype(np.float64)
     else:
-        drive_gain = _drive_to_gain(drive)
-        fn = _ALGORITHMS[algorithm]
-        wet = fn(sig, drive_gain)
+        sig_proc = sig
+        env_proc = env
+
+    # Compute wet signal (ADAA is built into both paths)
+    algo_id = _NAME_TO_ID[algorithm]
+    if env_proc is not None:
+        wet = _apply_with_envelope(sig_proc, algo_id, drive, env_proc)
+    else:
+        wet = _apply_adaa(sig_proc, algo_id, _drive_to_gain(drive))
+
+    # Downsample if oversampled
+    if oversample > 1:
+        wet = resample_poly(wet, 1, oversample).astype(np.float64)
+        # Trim or pad to match original length (resample_poly can be off by 1)
+        if wet.shape[0] > sig.shape[0]:
+            wet = wet[: sig.shape[0]]
+        elif wet.shape[0] < sig.shape[0]:
+            wet = np.concatenate([wet, np.zeros(sig.shape[0] - wet.shape[0])])
 
     # RMS-based level compensation: match the wet signal's RMS to the dry
     dry_rms = float(np.sqrt(np.mean(sig * sig)))

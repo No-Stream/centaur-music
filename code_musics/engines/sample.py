@@ -13,7 +13,7 @@ import soundfile as sf
 from scipy.signal import resample_poly
 
 from code_musics.engines._envelopes import render_envelope
-from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_zdf_svf
+from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_filter
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -101,6 +101,8 @@ def render(
     filter_mode: str | None = params.get("filter_mode")
     filter_cutoff_hz = float(params.get("filter_cutoff_hz", 5000.0))
     filter_q = float(params.get("filter_q", 0.707))
+    filter_topology = str(params.get("filter_topology", "svf")).lower()
+    bass_compensation = float(params.get("bass_compensation", 0.0))
 
     if root_freq <= 0:
         raise ValueError("root_freq must be positive")
@@ -164,13 +166,15 @@ def render(
         cutoff_profile = np.full(
             n_samples, min(filter_cutoff_hz, sample_rate * 0.4), dtype=np.float64
         )
-        signal = apply_zdf_svf(
+        signal = apply_filter(
             signal,
             cutoff_profile=cutoff_profile,
             resonance_q=filter_q,
             sample_rate=sample_rate,
             filter_mode=filter_mode,
             filter_drive=0.0,
+            filter_topology=filter_topology,
+            bass_compensation=bass_compensation,
         )
 
     # Peak-normalize then scale by amp.

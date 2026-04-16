@@ -14,7 +14,7 @@ from code_musics.engines._drum_utils import (
     rng_for_note,
 )
 from code_musics.engines._envelopes import render_envelope
-from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_zdf_svf
+from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_filter
 from code_musics.engines.polyblep import _polyblep_square
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -62,6 +62,8 @@ def render(
     filter_center_ratio = float(params.get("filter_center_ratio", 1.0))
     filter_q = float(params.get("filter_q", 1.2))
     filter_mode = str(params.get("filter_mode", "bandpass"))
+    filter_topology = str(params.get("filter_topology", "svf")).lower()
+    bass_compensation = float(params.get("bass_compensation", 0.0))
     click_amount = float(params.get("click_amount", 0.05))
     click_decay_s = float(params.get("click_decay", 0.003))
     noise_amount = float(params.get("noise_amount", 0.0))
@@ -179,13 +181,15 @@ def render(
         )
     else:
         cutoff_profile = np.full(n_samples, cutoff_hz, dtype=np.float64)
-    partials_sum = apply_zdf_svf(
+    partials_sum = apply_filter(
         partials_sum,
         cutoff_profile=cutoff_profile,
         resonance_q=filter_q,
         sample_rate=sample_rate,
         filter_mode=filter_mode,
         filter_drive=0.0,
+        filter_topology=filter_topology,
+        bass_compensation=bass_compensation,
     )
 
     # --- Amplitude envelope: exponential decay with 0.1ms attack ramp ---
