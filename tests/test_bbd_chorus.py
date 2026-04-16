@@ -152,7 +152,7 @@ class TestBbdChorus:
 
     def test_integration_in_score(self) -> None:
         """End-to-end smoke test: a voice with bbd_chorus renders audio."""
-        score = Score(f0=220.0, auto_master_gain_stage=False)
+        score = Score(f0_hz=220.0, auto_master_gain_stage=False)
         score.add_voice(
             "pad",
             synth_defaults={
