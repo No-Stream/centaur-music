@@ -541,6 +541,71 @@ def bandpass_noise(
     return shaped.real
 
 
+def flow_exciter(
+    *,
+    n_samples: int,
+    param: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Rare-event sample-and-hold noise generator (MI Elements "Flow" exciter).
+
+    Produces breath/brush-like stochastic noise. Low ``param`` yields very
+    sparse events (pauses interrupted by rare "flips"), high ``param``
+    yields essentially uniform noise. The transition between regimes is
+    continuous -- the same generator covers the gamut from an exhaled-air
+    whisper to a sustained brush.
+
+    DSP definition (per-sample):
+
+        threshold  = 0.0001 + 0.125 * param**4
+        mix_weight = param**4
+        on each sample:
+            draw r ~ uniform(-0.5, 0.5)
+            if uniform(0, 1) < threshold: state = r   (flip)
+            out = state + (r - state) * mix_weight
+
+    Vectorized with numpy. Deterministic given a fixed ``rng``.
+
+    Args:
+        n_samples: Number of samples to generate.
+        param: Density / sparsity control in ``[0, 1]``.
+        rng: Pre-seeded numpy ``Generator`` for deterministic output.
+
+    Returns:
+        Float64 array of length ``n_samples``, bounded within ``[-0.5, 0.5]``.
+
+    Notes:
+        Algorithm re-implemented in numpy from Mutable Instruments
+        ``elements/dsp/exciter.cc::ProcessFlow`` (MIT-licensed). Not a
+        verbatim port.
+    """
+    if n_samples < 0:
+        raise ValueError(f"n_samples must be non-negative, got {n_samples}")
+    if not (0.0 <= param <= 1.0):
+        raise ValueError(f"param must be in [0, 1], got {param}")
+    if n_samples == 0:
+        return np.zeros(0, dtype=np.float64)
+
+    threshold = 0.0001 + 0.125 * (param**4)
+    mix_weight = param**4
+
+    uniform_samples = rng.uniform(-0.5, 0.5, size=n_samples)
+    flip_trigger = rng.uniform(0.0, 1.0, size=n_samples) < threshold
+
+    # Propagate the S&H state vectorized: initial value is 0.0; at each
+    # flip index the state adopts uniform_samples[flip_index] and holds
+    # until the next flip.
+    state = np.zeros(n_samples, dtype=np.float64)
+    if flip_trigger.any():
+        flip_indices = np.flatnonzero(flip_trigger)
+        segment_starts = np.concatenate(([0], flip_indices))
+        segment_values = np.concatenate(([0.0], uniform_samples[flip_indices]))
+        segment_lengths = np.diff(np.concatenate((segment_starts, [n_samples])))
+        state = np.repeat(segment_values, segment_lengths)
+
+    return state + (uniform_samples - state) * mix_weight
+
+
 # ---------------------------------------------------------------------------
 # Reusable FM modulation primitive for drum engines
 # ---------------------------------------------------------------------------
@@ -866,3 +931,116 @@ def voice_card_offsets(voice_name: str) -> dict[str, float]:
         rng.uniform(-_VOICE_CARD_DRIFT_RATE_PCT, _VOICE_CARD_DRIFT_RATE_PCT)
     )
     return offsets
+
+
+# --- Shared drift bus --------------------------------------------------------
+#
+# The Surge XT ``DriftLFO`` class (``OscillatorDriftUnisonCharacter.h`` in
+# sst-basic-blocks) describes a glacial random walk driven by a single-pole
+# filter with a gain-compensation factor of ``m = sqrt(1/filter)``. The math
+# itself (single-pole filtered uniform noise with RMS-preserving gain) is a
+# public-domain technique; we re-implement it here from the published
+# description without copying code (Surge is GPL-3; this repo is MIT).
+#
+# The bus is intended as a slow, shared modulation source that correlates
+# pitch drift across voices — the "modular rack patched to one S&H" feel.
+
+_DRIFT_BUS_FILTER_COEFF: float = 1.0e-5
+_DRIFT_BUS_DOWNSAMPLE_HZ: float = 1000.0
+
+
+def _drift_bus_seed(seed: int | None, rate_hz: float) -> int:
+    material = f"drift_bus|{seed if seed is not None else 0}|{round(rate_hz, 6)}"
+    return int.from_bytes(
+        sha256(material.encode("utf-8")).digest()[:8], byteorder="big"
+    )
+
+
+def build_drift_bus(
+    *,
+    times: np.ndarray,
+    rate_hz: float,
+    depth_cents: float,
+    sample_rate: int,
+    seed: int | None = None,
+) -> np.ndarray:
+    """Generate a shared, slow, surge-style drift bus trajectory.
+
+    The bus is a single-pole filtered uniform-noise random walk.  It runs at a
+    low internal rate (independent of the audio ``sample_rate``) and is sampled
+    at the requested ``times`` (in seconds, monotonically non-decreasing).
+
+    The returned array is a multiplicative ratio (around 1.0) derived from
+    cents via ``2 ** (cents / 1200)``; it is safe to multiply directly into a
+    frequency trajectory, matching the convention from :func:`build_drift`.
+
+    Args:
+        times: Sample times in seconds.  Must be non-negative and finite.
+        rate_hz: Characteristic rate of the drift (0.05-0.5 Hz is the
+            musically useful range).  Higher values produce slightly faster
+            wobble; the filter coefficient is fixed, so the effective shape
+            is close to constant — ``rate_hz`` primarily disambiguates seeds.
+        depth_cents: Peak-ish excursion in cents.  0.0 returns all-ones.
+        sample_rate: Audio sample rate (used only to scale the internal
+            downsampled walk length; the bus itself runs at ~1 kHz).
+        seed: Optional deterministic seed.
+
+    Reference: Surge XT ``sst::basic_blocks::dsp::DriftLFO``
+    (``filter = 1e-5; m = sqrt(1/filter); state = state*(1-filter) +
+    rand11*filter; output = state * m``).
+    """
+    if depth_cents < 0.0:
+        raise ValueError("depth_cents must be non-negative")
+    if rate_hz <= 0.0:
+        raise ValueError("rate_hz must be positive")
+    if sample_rate <= 0:
+        raise ValueError("sample_rate must be positive")
+
+    times = np.asarray(times, dtype=np.float64)
+    if times.size == 0:
+        return np.zeros(0, dtype=np.float64)
+    if depth_cents == 0.0:
+        return np.ones(times.shape[0], dtype=np.float64)
+
+    total_duration = float(np.max(times))
+    total_duration = max(total_duration, 0.0)
+    # Pad to avoid indexing past the end when times == total_duration exactly.
+    pad_seconds = 1.0 + 2.0 / _DRIFT_BUS_DOWNSAMPLE_HZ
+    internal_rate = _DRIFT_BUS_DOWNSAMPLE_HZ
+    n_internal = int(math.ceil((total_duration + pad_seconds) * internal_rate)) + 2
+
+    rng = np.random.default_rng(_drift_bus_seed(seed, rate_hz))
+    # Surge's rand11 is uniform on [-1, 1]. Scale the filter coefficient to the
+    # internal rate so the characteristic time is consistent regardless of how
+    # finely we sample.
+    noise = rng.uniform(-1.0, 1.0, size=n_internal).astype(np.float64)
+
+    # Convert the per-sample filter coefficient (1e-5 at ~48 kHz) to one that
+    # produces a similar cutoff at our downsampled rate. At f_c ≈ 0.08 Hz in
+    # Surge's native scaling, the effective cutoff is filter * sr / (2*pi).
+    # We preserve that effective cutoff at our internal rate: the downsampled
+    # filter coefficient alpha satisfies alpha ≈ 2 * pi * f_c / internal_rate.
+    # For the default 1e-5 at 48 kHz this gives an effective cutoff of
+    # ~0.076 Hz; rate_hz scales that center proportionally.
+    cutoff_hz = max(_DRIFT_BUS_FILTER_COEFF * 48000.0 / (2.0 * math.pi), 1e-6)
+    cutoff_hz *= rate_hz / 0.2  # 0.2 Hz is the musical center of the spec
+    alpha = 1.0 - math.exp(-2.0 * math.pi * cutoff_hz / internal_rate)
+    alpha = float(np.clip(alpha, 1e-9, 1.0))
+    gain = math.sqrt(1.0 / max(alpha, 1e-12))
+
+    state = np.empty(n_internal, dtype=np.float64)
+    state[0] = 0.0
+    one_minus_alpha = 1.0 - alpha
+    for i in range(1, n_internal):
+        state[i] = state[i - 1] * one_minus_alpha + noise[i] * alpha
+    walk = state * gain
+
+    # Normalize so depth_cents is roughly the RMS excursion in cents.
+    walk_rms = float(np.sqrt(np.mean(walk**2)))
+    if walk_rms > 1e-12:
+        walk = walk / walk_rms
+    cents = walk * depth_cents
+
+    internal_times = np.arange(n_internal, dtype=np.float64) / internal_rate
+    sampled_cents = np.interp(times, internal_times, cents)
+    return np.power(2.0, sampled_cents / 1200.0)

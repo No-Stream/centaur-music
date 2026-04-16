@@ -134,6 +134,8 @@ def test_new_unit_bearing_aliases_override_legacy_flat_names() -> None:
         ("additive", "breathy_flute"),
         ("additive", "ancient_bell"),
         ("additive", "whispered_chord"),
+        ("additive", "brush_breath"),
+        ("additive", "brush_cymbal"),
         ("additive", "struck_membrane"),
         ("additive", "singing_bowl"),
         ("additive", "marimba_bar"),

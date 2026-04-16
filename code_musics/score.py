@@ -25,7 +25,9 @@ from code_musics.engines import (
     render_note_signal,
     resolve_synth_params,
 )
+from code_musics.engines._dsp_utils import build_drift_bus
 from code_musics.humanize import (
+    DriftBusSpec,
     EnvelopeHumanizeSpec,
     TimingHumanizeSpec,
     TimingTarget,
@@ -355,6 +357,8 @@ class Voice:
     sympathetic_amount: float = 0.0
     sympathetic_decay_s: float = 2.0
     sympathetic_modes: int = 8
+    drift_bus: str | None = None
+    drift_bus_correlation: float = 1.0
     automation: list[AutomationSpec] = field(default_factory=list)
     notes: list[NoteEvent] = field(default_factory=list)
 
@@ -395,6 +399,10 @@ class PreparedVoiceNote:
     effective_attack: float
     effective_release: float
     vca_nonlinearity: float
+    attack_power: float = 1.0
+    decay_power: float = 1.0
+    release_power: float = 1.0
+    attack_target: float = 1.0
 
 
 @dataclass
@@ -410,6 +418,7 @@ class Score:
     master_input_gain_db: float = 0.0
     master_effects: list[EffectSpec] = field(default_factory=list)
     send_buses: list[SendBusSpec] = field(default_factory=list)
+    drift_buses: dict[str, DriftBusSpec] = field(default_factory=dict)
     voices: dict[str, Voice] = field(default_factory=dict)
     time_origin_seconds: float = 0.0
     time_reference_total_dur: float | None = None
@@ -448,6 +457,8 @@ class Score:
         sympathetic_amount: float = 0.0,
         sympathetic_decay_s: float = 2.0,
         sympathetic_modes: int = 8,
+        drift_bus: str | None = None,
+        drift_bus_correlation: float = 1.0,
         automation: list[AutomationSpec] | None = None,
     ) -> Voice:
         """Add or replace a named voice definition."""
@@ -475,6 +486,8 @@ class Score:
             raise ValueError("normalize_peak_db must be finite when provided")
         if max_polyphony is not None and max_polyphony < 1:
             raise ValueError("max_polyphony must be >= 1 when provided")
+        if not 0.0 <= drift_bus_correlation <= 1.0:
+            raise ValueError("drift_bus_correlation must be between 0 and 1")
         if velocity_humanize is _UNSET:
             velocity_humanize = VelocityHumanizeSpec()
         resolved_sends = list(sends or [])
@@ -500,6 +513,8 @@ class Score:
             sympathetic_amount=sympathetic_amount,
             sympathetic_decay_s=sympathetic_decay_s,
             sympathetic_modes=sympathetic_modes,
+            drift_bus=drift_bus,
+            drift_bus_correlation=drift_bus_correlation,
             automation=list(automation or []),
         )
         self.voices[name] = voice
@@ -531,6 +546,29 @@ class Score:
         else:
             self.send_buses[existing_index] = send_bus
         return send_bus
+
+    def add_drift_bus(
+        self,
+        name: str,
+        *,
+        rate_hz: float = 0.2,
+        depth_cents: float = 5.0,
+        seed: int | None = None,
+    ) -> DriftBusSpec:
+        """Add or replace a named shared drift bus definition.
+
+        Voices that set ``drift_bus=name`` receive a correlated slow pitch-drift
+        signal on top of their independent per-voice drift.  The amount of
+        correlation is controlled per voice via ``drift_bus_correlation``.
+        """
+        spec = DriftBusSpec(
+            name=name,
+            rate_hz=rate_hz,
+            depth_cents=depth_cents,
+            seed=seed,
+        )
+        self.drift_buses[name] = spec
+        return spec
 
     def get_or_create_voice(self, name: str) -> Voice:
         """Get or create a voice with no defaults."""
@@ -1043,6 +1081,10 @@ class Score:
                 sample_rate=self.sample_rate,
                 hold_duration=prepared_note.effective_hold_duration,
                 vca_nonlinearity=prepared_note.vca_nonlinearity,
+                attack_power=prepared_note.attack_power,
+                decay_power=prepared_note.decay_power,
+                release_power=prepared_note.release_power,
+                attack_target=prepared_note.attack_target,
             )
             voice_signals.append(
                 synth.at_sample_rate(
@@ -1282,6 +1324,92 @@ class Score:
                 )
         return voice_mix
 
+    def _apply_drift_bus_to_trajectory(
+        self,
+        *,
+        voice: Voice,
+        note_start: float,
+        duration: float,
+        release: float,
+        base_freq: float,
+        freq_trajectory: np.ndarray | None,
+        synth_params: dict[str, Any],
+    ) -> np.ndarray | None:
+        """Bake the shared drift bus into the note's frequency trajectory.
+
+        Modifies ``synth_params`` in place to scale the engine's independent
+        ``pitch_drift`` parameter by ``(1 - correlation)``.  Returns the
+        (possibly new) frequency trajectory.
+
+        The bus contribution is applied in log-frequency space as
+        ``bus_ratio ** correlation``; this is equivalent to a linear blend of
+        cents between the bus signal and the engine's own drift.
+        """
+        bus_name = voice.drift_bus
+        if bus_name is None:
+            return freq_trajectory
+
+        if bus_name not in self.drift_buses:
+            raise ValueError(
+                f"Voice {voice.name!r} subscribes to drift_bus {bus_name!r} "
+                "which is not defined on the score"
+            )
+        correlation = float(voice.drift_bus_correlation)
+        # Engine-internal drift scales down proportionally to how much the bus
+        # takes over; this keeps the mathematical identity at the endpoints:
+        #   correlation=0 -> freq_trajectory unchanged, full engine drift
+        #   correlation=1 -> full bus drift, engine drift = 0
+        if correlation > 0.0 and "pitch_drift" in synth_params:
+            synth_params["pitch_drift"] = float(synth_params["pitch_drift"]) * (
+                1.0 - correlation
+            )
+        if correlation <= 0.0:
+            return freq_trajectory
+
+        bus = self.drift_buses[bus_name]
+        total_samples = max(0, int((duration + release) * self.sample_rate))
+        if total_samples == 0:
+            return freq_trajectory
+
+        sample_times = note_start + np.arange(total_samples, dtype=np.float64) / float(
+            self.sample_rate
+        )
+        bus_ratio = build_drift_bus(
+            times=sample_times,
+            rate_hz=bus.rate_hz,
+            depth_cents=bus.depth_cents,
+            sample_rate=self.sample_rate,
+            seed=bus.seed,
+        )
+        # Log-space blend: bus_ratio ** correlation is the multiplicative
+        # identity when correlation=0 and full bus modulation when correlation=1.
+        scaled_bus = np.power(bus_ratio, correlation)
+
+        if freq_trajectory is None:
+            return base_freq * scaled_bus
+        return freq_trajectory * scaled_bus
+
+    def _debug_freq_trajectories(
+        self,
+    ) -> dict[str, list[np.ndarray | None]]:
+        """Return per-voice, per-note freq trajectories as seen by the engine.
+
+        Intended for tests and diagnostics — prepares voices through the
+        normal pipeline (including drift-bus wiring) without rendering audio.
+        """
+        trajectories: dict[str, list[np.ndarray | None]] = {}
+        for voice_name, voice in self.voices.items():
+            prepared = self._prepare_voice_notes(
+                voice_name=voice_name,
+                voice=voice,
+                timing_offsets={},
+                velocity_multipliers={
+                    (voice_name, idx): 1.0 for idx in range(len(voice.notes))
+                },
+            )
+            trajectories[voice_name] = [n.freq_trajectory for n in prepared]
+        return trajectories
+
     def _prepare_voice_notes(
         self,
         *,
@@ -1379,7 +1507,27 @@ class Score:
                     else:
                         freq_trajectory = held_trajectory
 
+            # Shared drift-bus modulation.  When a voice subscribes to a named
+            # bus (``voice.drift_bus``) the bus trajectory is baked into the
+            # note's freq trajectory at ``correlation``-weight in log space,
+            # and the engine's independent ``pitch_drift`` is scaled by
+            # ``(1 - correlation)`` so the two sources mix as promised by the
+            # spec without double-counting.
+            freq_trajectory = self._apply_drift_bus_to_trajectory(
+                voice=voice,
+                note_start=absolute_note_start,
+                duration=note.duration,
+                release=release,
+                base_freq=note_freq,
+                freq_trajectory=freq_trajectory,
+                synth_params=synth_params,
+            )
+
             vca_nonlinearity = float(synth_params.get("vca_nonlinearity", 0.0))
+            attack_power = float(synth_params.get("attack_power", 1.0))
+            decay_power = float(synth_params.get("decay_power", 1.0))
+            release_power = float(synth_params.get("release_power", 1.0))
+            attack_target = float(synth_params.get("attack_target", 1.0))
             prepared_notes.append(
                 PreparedVoiceNote(
                     note_index=note_index,
@@ -1397,6 +1545,10 @@ class Score:
                     effective_attack=attack,
                     effective_release=release,
                     vca_nonlinearity=vca_nonlinearity,
+                    attack_power=attack_power,
+                    decay_power=decay_power,
+                    release_power=release_power,
+                    attack_target=attack_target,
                 )
             )
         return prepared_notes

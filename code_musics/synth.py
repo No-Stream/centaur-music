@@ -1144,11 +1144,45 @@ def adsr(
     sample_rate: int = SAMPLE_RATE,
     hold_duration: float | None = None,
     vca_nonlinearity: float = 0.0,
+    attack_power: float = 1.0,
+    decay_power: float = 1.0,
+    release_power: float = 1.0,
+    attack_target: float = 1.0,
 ) -> np.ndarray:
-    """Apply ADSR amplitude envelope."""
+    """Apply ADSR amplitude envelope with optional per-stage curve shaping.
+
+    Each stage transitions from start to end with a shaped position
+    ``s = p**power`` where ``p`` is the linear ramp ``[0, 1)`` across the
+    stage. ``power == 1.0`` yields the linear behavior of the classic ADSR.
+    Values below 1.0 give concave (fast-start) curves; values above 1.0 give
+    convex (slow-start) curves. Per-stage powers are clamped to ``[0.1, 8.0]``.
+
+    ``attack_target`` is a VCV Fundamental-style trick (``ATT_TARGET``):
+    the attack stage shapes a ramp toward ``attack_target`` and then clips at
+    ``1.0``. With ``attack_target == 1.0`` and ``attack_power == 1.0`` the
+    output is identical to the original linear envelope. With
+    ``attack_target > 1.0`` (typical: 1.2) the attack reaches 1.0 with more
+    slope at the top — a "pokey" analog-feeling attack instead of an
+    asymptotic approach. ``attack_target`` is clamped to ``[1.0, 1.5]``.
+
+    The per-stage exponent math (``y = p**power``) is public-domain. The
+    overshoot-target idiom comes from Vital DAHDSR, OB-Xd's exponential ADSR,
+    and VCV Fundamental ``ADSR.cpp``; this is a clean re-implementation from
+    the algorithmic description.
+    """
     _MIN_ATTACK_S = 0.003  # 3 ms floor — prevents onset clicks
+    _POWER_MIN = 0.1
+    _POWER_MAX = 8.0
+    _ATTACK_TARGET_MIN = 1.0
+    _ATTACK_TARGET_MAX = 1.5
     attack = max(attack, _MIN_ATTACK_S)
     release = max(release, _MIN_ATTACK_S)
+    attack_power = float(np.clip(attack_power, _POWER_MIN, _POWER_MAX))
+    decay_power = float(np.clip(decay_power, _POWER_MIN, _POWER_MAX))
+    release_power = float(np.clip(release_power, _POWER_MIN, _POWER_MAX))
+    attack_target = float(
+        np.clip(attack_target, _ATTACK_TARGET_MIN, _ATTACK_TARGET_MAX)
+    )
     n = len(signal)
     n_attack = int(attack * sample_rate)
     n_decay = int(decay * sample_rate)
@@ -1166,18 +1200,21 @@ def adsr(
 
     attack_samples = min(n_attack, hold_samples)
     if attack_samples > 0:
-        envelope[cursor : cursor + attack_samples] = np.linspace(
-            0.0, 1.0, attack_samples, endpoint=False
-        )
+        p = np.linspace(0.0, 1.0, attack_samples, endpoint=False)
+        shaped_position = p if attack_power == 1.0 else p**attack_power
+        # Ramp toward attack_target then clamp at 1.0 (VCV ATT_TARGET idiom).
+        attack_ramp = shaped_position * attack_target
+        if attack_target > 1.0:
+            np.minimum(attack_ramp, 1.0, out=attack_ramp)
+        envelope[cursor : cursor + attack_samples] = attack_ramp
         cursor += attack_samples
 
     decay_samples = min(n_decay, hold_samples - cursor)
     if decay_samples > 0:
-        envelope[cursor : cursor + decay_samples] = np.linspace(
-            1.0,
-            sustain_level,
-            decay_samples,
-            endpoint=False,
+        p = np.linspace(0.0, 1.0, decay_samples, endpoint=False)
+        shaped_position = p if decay_power == 1.0 else p**decay_power
+        envelope[cursor : cursor + decay_samples] = (
+            1.0 + (sustain_level - 1.0) * shaped_position
         )
         cursor += decay_samples
 
@@ -1189,12 +1226,19 @@ def adsr(
     release_start_level = float(envelope[cursor - 1]) if cursor > 0 else 0.0
 
     if release_samples > 0:
-        envelope[cursor : cursor + release_samples] = np.linspace(
-            release_start_level,
-            0.0,
-            release_samples,
-            endpoint=True,
-        )
+        if release_power == 1.0:
+            envelope[cursor : cursor + release_samples] = np.linspace(
+                release_start_level,
+                0.0,
+                release_samples,
+                endpoint=True,
+            )
+        else:
+            p = np.linspace(0.0, 1.0, release_samples, endpoint=True)
+            shaped_position = p**release_power
+            envelope[cursor : cursor + release_samples] = release_start_level * (
+                1.0 - shaped_position
+            )
         cursor += release_samples
 
     shaped = signal * envelope

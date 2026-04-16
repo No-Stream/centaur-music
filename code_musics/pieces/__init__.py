@@ -4,6 +4,7 @@ from code_musics.pieces.additive_studies import PIECES as _ADDITIVE_STUDY_PIECES
 from code_musics.pieces.amber_room import PIECES as _AMBER_ROOM_PIECES
 from code_musics.pieces.beating_light import PIECES as _BEATING_LIGHT_PIECES
 from code_musics.pieces.bell_pulse import PIECES as _BELL_PULSE_PIECES
+from code_musics.pieces.breath_study import PIECES as _BREATH_STUDY_PIECES
 from code_musics.pieces.bwv_846 import PIECES as _BWV_846_PIECES
 from code_musics.pieces.bwv_846_fugue import PIECES as _BWV_846_FUGUE_PIECES
 from code_musics.pieces.coltrane_studies import PIECES as _COLTRANE_PIECES
@@ -87,6 +88,7 @@ PIECES = merge_piece_maps(
     _NIGHT_LATTICE_PIECES,
     _WARMING_UP_PIECES,
     _FORGE_PIECES,
+    _BREATH_STUDY_PIECES,
 )
 
 __all__ = ["PIECES"]

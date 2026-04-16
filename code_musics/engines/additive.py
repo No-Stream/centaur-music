@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 from scipy.signal import butter, sosfilt
 
-from code_musics.engines._dsp_utils import nyquist_fade, rng_for_note
+from code_musics.engines._dsp_utils import flow_exciter, nyquist_fade, rng_for_note
 from code_musics.engines._envelopes import parse_envelope_points, render_envelope
 from code_musics.spectra import formant_weight, harmonic_spectrum, vowel_formants
 from code_musics.tuning import tenney_height
@@ -19,6 +19,9 @@ _DECAY_TILT_STRENGTH = 4.0
 _NOISE_AMOUNT_EPSILON = 1e-6
 
 _DEFAULT_GRAVITY_TARGETS = [1.0, 9 / 8, 5 / 4, 4 / 3, 3 / 2, 5 / 3, 7 / 4, 2.0]
+
+_VALID_NOISE_MODES = frozenset({"white", "flow"})
+_DEFAULT_FLOW_DENSITY = 0.5
 
 
 def render(
@@ -40,11 +43,19 @@ def render(
 
     noise_amount = float(params.get("noise_amount", 0.0))
     noise_bandwidth_hz = float(params.get("noise_bandwidth_hz", 60.0))
+    noise_mode = str(params.get("noise_mode", "white"))
+    flow_density = float(params.get("flow_density", _DEFAULT_FLOW_DENSITY))
 
     if noise_amount < 0.0 or noise_amount > 1.0:
         raise ValueError("noise_amount must be between 0.0 and 1.0")
     if noise_bandwidth_hz <= 0.0:
         raise ValueError("noise_bandwidth_hz must be positive")
+    if noise_mode not in _VALID_NOISE_MODES:
+        raise ValueError(
+            f"noise_mode must be one of {sorted(_VALID_NOISE_MODES)}, got {noise_mode!r}"
+        )
+    if not (0.0 <= flow_density <= 1.0):
+        raise ValueError("flow_density must be between 0.0 and 1.0")
 
     n_samples = int(sample_rate * duration)
     if n_samples == 0:
@@ -232,6 +243,8 @@ def render(
         sample_rate=sample_rate,
         noise_amount=noise_amount,
         noise_bandwidth_hz=noise_bandwidth_hz,
+        noise_mode=noise_mode,
+        flow_density=flow_density,
         freq_trajectory=freq_trajectory,
         rng=rng_for_note(
             freq=freq, duration=duration, amp=amp, sample_rate=sample_rate
@@ -288,13 +301,23 @@ def _render_noise_bands(
     noise_bandwidth_hz: float,
     freq_trajectory: np.ndarray | None,
     rng: np.random.Generator,
+    noise_mode: str = "white",
+    flow_density: float = _DEFAULT_FLOW_DENSITY,
 ) -> np.ndarray:
     """Render narrow noise bands centered on each partial's frequency.
 
-    Uses ring modulation: lowpass-filtered white noise multiplied by the
-    partial's sine carrier.  This naturally places a noise band centered at
-    each partial frequency with bandwidth approximately equal to
-    ``noise_bandwidth_hz`` (or per-partial ``noise_bw`` override).
+    Uses ring modulation: lowpass-filtered noise multiplied by the partial's
+    sine carrier.  This naturally places a noise band centered at each partial
+    frequency with bandwidth approximately equal to ``noise_bandwidth_hz``
+    (or per-partial ``noise_bw`` override).
+
+    ``noise_mode`` selects the base noise source:
+
+    * ``"white"`` (default): Gaussian white noise — smooth, woolly character.
+    * ``"flow"``: Mutable Instruments Elements "Flow" rare-event S&H exciter
+      — breath/brush-like character, modulated by ``flow_density`` ∈ [0, 1].
+      Low density gives sparse exhale-style events; high density gives
+      brush-on-cymbal texture.
     """
     result = np.zeros(n_samples, dtype=np.float64)
     nyquist_hz = sample_rate / 2.0
@@ -306,9 +329,19 @@ def _render_noise_bands(
     if not has_any_noise:
         return result
 
-    # Generate a single shared white noise buffer; each partial gets its own
-    # filtered copy via ring modulation with the partial's carrier.
-    base_noise = rng.standard_normal(n_samples)
+    # Generate a shared base noise buffer; each partial gets its own filtered
+    # copy via ring modulation with the partial's carrier.  The base noise
+    # source is switched by noise_mode.
+    if noise_mode == "flow":
+        # Flow produces bounded ~[-0.5, 0.5] output with density < unit
+        # variance. Rescale to roughly unit RMS (~sqrt(12)x at density=1)
+        # so that downstream band amplitude is comparable to white.
+        raw_flow = flow_exciter(n_samples=n_samples, param=flow_density, rng=rng)
+        flow_rms = float(np.sqrt(np.mean(raw_flow**2)))
+        gain = 1.0 / flow_rms if flow_rms > 1e-9 else 0.0
+        base_noise = raw_flow * gain
+    else:
+        base_noise = rng.standard_normal(n_samples)
     t = np.linspace(
         0.0, n_samples / sample_rate, n_samples, endpoint=False, dtype=np.float64
     )

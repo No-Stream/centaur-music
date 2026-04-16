@@ -112,6 +112,42 @@ Legacy compatibility:
 - `sustain_level` is still accepted as the legacy name for `sustain_ratio`
 - top-level flat aliases like `attack_ms=30.0` are accepted if you prefer a flat style
 
+### Per-stage curve powers
+
+Each ADSR stage can reshape its linear ramp through a per-stage exponent. The
+shaped position is `s = p**power` where `p` is the linear ramp `[0, 1)` across
+the stage; the stage then interpolates `start + (end - start) * s`. With
+`power == 1.0` the stage is linear and the output is identical to the legacy
+ADSR.
+
+- `attack_power: float` — default `1.0`. Values `< 1` give a concave
+  (fast-start) attack; values `> 1` give a convex (slow-start) attack.
+  Clamped to `[0.1, 8.0]`.
+- `decay_power: float` — default `1.0`. Values `> 1` make the decay linger
+  near the top before falling to `sustain_level`; values `< 1` drop quickly
+  then ease into sustain. Clamped to `[0.1, 8.0]`.
+- `release_power: float` — default `1.0`. Values `< 1` give a natural
+  exponential-looking release (concave, sounds like energy dissipation);
+  values `> 1` hold near the sustain level longer before dropping to zero.
+  Clamped to `[0.1, 8.0]`.
+- `attack_target: float` — default `1.0`. When `> 1.0` (typical `1.2`), the
+  attack ramp is scaled toward `attack_target` and clamped at `1.0`. The
+  shaped ramp therefore reaches `1.0` with a non-zero slope instead of
+  asymptoting, producing a "pokey" analog-feeling attack top (VCV
+  Fundamental `ATT_TARGET` idiom). Clamped to `[1.0, 1.5]`.
+
+Recommended starting points (not applied automatically):
+
+- For acoustic-flavored voices, `decay_power=2.0` and `release_power=2.0`
+  give natural exponential-looking decay and release.
+- For "pokey" analog attacks on pads or plucks, try `attack_target=1.2`
+  alone, or combine with `attack_power=1.5..2.5` for more character.
+
+These params are also registered as automation targets, so they can be swept
+over time like any other synth param. They are not drifted by
+`EnvelopeHumanizeSpec`; the curve shape is treated as authored intent rather
+than ensemble variation.
+
 ## Velocity and Expression Resolution
 
 Velocity is now a core part of the render path.
@@ -1262,6 +1298,19 @@ Parameters:
 - `noise_bandwidth_hz: float` (default 60.0)
   Width of the noise band centered on each partial.
 - Per-partial `noise` and `noise_bw`: override global noise params per partial.
+- `noise_mode: str` (default `"white"`)
+  Base noise source for the partial noise bands.  Choices:
+  - `"white"`: Gaussian white noise (smooth, woolly).
+  - `"flow"`: Mutable Instruments Elements-style "Flow" rare-event
+    sample-and-hold exciter.  Produces breath- or brush-like texture
+    (organic, granular character that white noise and plain S&H cannot
+    match).  RMS-normalized so switching modes preserves apparent
+    loudness.
+- `flow_density: float` (0-1, default 0.5)
+  Only used when `noise_mode="flow"`.  Controls the density of flow
+  events: low values (~0.05-0.2) yield very sparse, exhale-like gestures;
+  mid values (~0.4-0.6) give an audible brush; high values (>0.8) approach
+  uniform granular noise.
 - `spectral_gravity: float` (0-1, default 0.0)
   Strength of attraction toward nearby just intervals. Partials slowly drift toward
   the nearest JI attractor, weighted by ratio simplicity (Tenney height).
@@ -1338,6 +1387,8 @@ Additive presets:
 - `breathy_flute` — harmonic partials + breath noise bands
 - `ancient_bell` — stretched inharmonic partials + metallic noise shimmer
 - `whispered_chord` — JI chord + high noise for airy consonance
+- `brush_breath` — 7-limit JI support + sparse "Flow" S&H exciter, exhale-like
+- `brush_cymbal` — inharmonic bar partials + dense "Flow" exciter, brushed-cymbal shimmer
 - `struck_membrane` — drumhead modes with fast decay tilt
 - `singing_bowl` — bowl modes with slow attack and upper-partial drift
 - `marimba_bar` — bar modes with fast decay

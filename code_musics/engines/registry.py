@@ -370,6 +370,39 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "attack": 0.05,
             "release": 0.3,
         },
+        "brush_breath": {
+            # Breath/exhale voice: harmonic support with sparse "Flow" S&H
+            # noise bands. Feels like a whispered exhale against a soft tone.
+            "partials": ratio_spectrum(
+                [1.0, 2.0, 3.0, 4.0, 5.0],
+                [0.3, 0.18, 0.1, 0.06, 0.03],
+            ),
+            "noise_amount": 0.7,
+            "noise_bandwidth_hz": 220.0,
+            "noise_mode": "flow",
+            "flow_density": 0.15,
+            "attack": 0.12,
+            "decay": 0.2,
+            "sustain_level": 0.7,
+            "release": 0.35,
+        },
+        "brush_cymbal": {
+            # Brush-on-cymbal shimmer: dense flow events with metallic bar
+            # partials.  Pair with gates or envelopes for strokes.
+            "partials": ratio_spectrum(
+                [2.76, 5.40, 8.93, 13.34, 18.64],
+                [0.35, 0.22, 0.14, 0.08, 0.04],
+            ),
+            "noise_amount": 0.85,
+            "noise_bandwidth_hz": 900.0,
+            "noise_mode": "flow",
+            "flow_density": 0.75,
+            "partial_decay_tilt": 0.6,
+            "attack": 0.005,
+            "decay": 0.25,
+            "sustain_level": 0.55,
+            "release": 0.6,
+        },
         "struck_membrane": {
             "partials": _MEMBRANE_PARTIALS,
             "partial_decay_tilt": 1.5,

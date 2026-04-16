@@ -251,6 +251,8 @@ Fields:
 - `sympathetic_amount`
 - `sympathetic_decay_s`
 - `sympathetic_modes`
+- `drift_bus`
+- `drift_bus_correlation`
 - `automation`
 - `notes`
 
@@ -285,6 +287,8 @@ Practical interpretation:
 - `sympathetic_amount` controls the level of sympathetic resonance added to the voice; `0.0` (default) disables it
 - `sympathetic_decay_s` sets the decay time in seconds for sympathetic resonator ringing; default `2.0`
 - `sympathetic_modes` sets how many harmonic modes per note are used as resonator frequencies; default `8`
+- `drift_bus` is the name of a shared `DriftBusSpec` on the score that this voice subscribes to; default `None` (no bus). When set, the bus name must be registered via `Score.add_drift_bus(...)`
+- `drift_bus_correlation` controls how much of the voice's slow pitch drift comes from the shared bus vs. the engine's independent drift; `1.0` (default) is fully shared, `0.0` is fully independent; must be in `[0, 1]`
 - `automation` adds explicit score-time parameter lanes beyond humanization
 - in phase 1, `Voice.automation` can target synth params, `pitch_ratio`, and
   control surfaces such as `pan`, `pre_fx_gain_db`, and `mix_db`
@@ -383,6 +387,27 @@ Behavior:
 - if you heavily attenuate both `send_db` and `return_db`, the shared return can become effectively inaudible and harder to reason about
 - `automation` can ride `return_db` and `pan` over score time
 
+## `DriftBusSpec`
+
+`DriftBusSpec` defines a shared slow pitch-drift bus on the score. Voices set
+`drift_bus=<name>` and `drift_bus_correlation=<x>` to subscribe; the bus output
+is mixed into their per-note frequency trajectories in log-cents space.
+
+Fields:
+
+- `name: str`
+- `rate_hz: float = 0.2` — characteristic drift rate; 0.05-0.5 Hz is the musically useful range
+- `depth_cents: float = 5.0` — RMS excursion in cents; 2-12 is the subtle-to-breathing range
+- `seed: int | None = None` — deterministic seed
+
+Behavior:
+
+- bus names must be unique within a score (enforced by `Score.drift_buses` being a dict)
+- `rate_hz` must be positive, `depth_cents` must be non-negative
+- the bus runs independently of audio sample rate; it produces a single slow random-walk trajectory that all subscribed voices sample at their respective absolute note times
+- at `Voice.drift_bus_correlation=1.0` the bus replaces the engine's independent pitch drift entirely; at `0.0` it is ignored; intermediate values blend (engine `pitch_drift` is scaled by `(1 - correlation)` and the bus is applied as `bus_ratio ** correlation` to the frequency trajectory)
+- implementation follows Surge XT's published `DriftLFO` algorithm (single-pole filtered uniform noise with RMS-preserving gain compensation); re-written from the description, not copied
+
 ## `Score`
 
 `Score` is the top-level composition container and renderer.
@@ -398,6 +423,7 @@ Fields:
 - `master_input_gain_db: float = 0.0`
 - `master_effects: list[EffectSpec] = []`
 - `send_buses: list[SendBusSpec] = []`
+- `drift_buses: dict[str, DriftBusSpec] = {}`
 - `voices: dict[str, Voice] = {}`
 
 ### `Score.add_voice(...)`
@@ -426,6 +452,8 @@ Parameters:
 - `sympathetic_amount` — strength of sympathetic resonance; `0.0` (default) disables it
 - `sympathetic_decay_s` — decay time in seconds for sympathetic resonator ringing; default `2.0`
 - `sympathetic_modes` — number of harmonic modes per note used as resonator frequencies; default `8`
+- `drift_bus` — optional name of a shared `DriftBusSpec` registered on the score via `add_drift_bus(...)`; default `None` (no shared drift)
+- `drift_bus_correlation` — fraction of the voice's slow pitch drift coming from the shared bus vs. the engine's independent drift; `1.0` (default) is fully shared, `0.0` is fully independent; must be in `[0, 1]`
 - `automation` — voice-level score-time automation specs; default `None`
 
 Important behavior:
@@ -495,6 +523,39 @@ Use shared send buses when several voices should feed the same reverb, delay,
 or modulation return instead of duplicating similar insert chains per voice.
 In normal authoring, prefer balancing the effect with voice `mix_db` and per-voice
 `send_db`, leaving `return_db=0.0` unless you explicitly want a global return trim.
+
+### `Score.add_drift_bus(...)`
+
+Adds or replaces a named shared pitch-drift bus definition. Voices that set
+`drift_bus=<name>` receive a correlated slow pitch-drift signal; the amount of
+correlation is controlled per voice via `drift_bus_correlation`.
+
+Parameters:
+
+- `name: str` — bus name referenced by `Voice.drift_bus`
+- `rate_hz: float = 0.2` — characteristic drift rate; musically useful range is 0.05-0.5 Hz
+- `depth_cents: float = 5.0` — RMS excursion in cents; 2-12 is the subtle-to-breathing range
+- `seed: int | None = None` — deterministic seed; omitting it still produces the same output across identical scores, but varying `seed` picks a different random-walk trajectory
+
+Behavior:
+
+- the bus produces a single shared slow random-walk signal; every subscribing voice samples it at their note's absolute score time
+- per-voice `drift_bus_correlation=1.0` means the engine's independent pitch drift is fully replaced by the bus; `0.0` means the bus is entirely ignored and the voice keeps its original independent drift; intermediate values blend linearly in cents space (equivalent to `bus_ratio ** correlation` multiplied into the freq trajectory, with the engine's internal `pitch_drift` parameter scaled by `(1 - correlation)`)
+- the bus is MIT-licensed and re-implemented from Surge XT's published `DriftLFO` algorithm (single-pole filtered uniform noise with gain compensation)
+
+Example:
+
+```python
+score = Score(f0_hz=220.0)
+score.add_drift_bus("ensemble", rate_hz=0.2, depth_cents=6.0, seed=17)
+for voice_name in ("lead", "alto", "bass"):
+    score.add_voice(
+        voice_name,
+        synth_defaults={"engine": "polyblep", "waveform": "saw"},
+        drift_bus="ensemble",
+        drift_bus_correlation=0.7,  # mostly shared, with a hint of individual wobble
+    )
+```
 
 ### `Score.get_voice(name)`
 

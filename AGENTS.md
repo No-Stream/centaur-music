@@ -157,11 +157,28 @@
   right tool for ensemble breathing rather than independent per-voice wobble.
 - `envelope_humanize` is for subtle ADSR variation over score time. This is the
   current "env slop" surface.
+- Per-stage ADSR curve powers (`attack_power`, `decay_power`, `release_power`)
+  and the VCV-style `attack_target` overshoot are accepted as synth params (in
+  `synth_defaults` / per-note `synth={...}`) and as automation targets. Defaults
+  are `1.0` (linear, preserves legacy behavior). For acoustic-feeling voices
+  try `decay_power=2.0` / `release_power=2.0`; for "pokey" analog attack tops
+  try `attack_target=1.2`. See `docs/synth_api.md` for the full surface.
 - `timing_humanize` is score-level. Use it for ensemble looseness and shared drift,
   not for rewriting rhythmic structure.
 - automation is the explicit parameter-motion surface. Use it for deliberate
   sweeps, bends, timbral motion, and wet/send/pan rides; use humanization for
   subtle living variation.
+- **Pitch motion is a standard part of the composition surface**, not an optional
+  extra. Melodic and sustained voices should almost always use `PitchMotionSpec`:
+  lead voices get vibrato on sustained notes (increasing depth/rate with
+  intensity), pad voices benefit from `ratio_glide` between chord changes, and
+  `linear_bend` serves deliberate pitch gestures. A melody with no pitch motion
+  sounds static and lifeless.
+- **Use exponential automation (`shape="exp"`) for frequency-domain parameters**
+  (cutoff_hz, hpf_cutoff_hz, any `_hz` param). Frequency perception is
+  logarithmic, so linear sweeps sound unnatural — they rush through the bottom
+  and crawl at the top. Linear (`shape="linear"`) is correct for dB, pan, drive,
+  morph, and other perceptually linear parameters.
 - When documenting or changing these APIs, keep `AGENTS.md` high-level and put the
   parameter-by-parameter details in `docs/score_api.md`,
   `docs/composition_api.md`, and
@@ -253,6 +270,11 @@ making for a better experience for both agent and human.
 The project is no longer just about proving that xenharmonic ideas work. Prefer music
 that feels like music: shaped, intentional, and complete, even when it is strange.
 Be ambitious! Use velocity, humanization, frequent and thorough parameter automation, effects, and so on to create rich, complex, alive pieces. Creativity is welcome and mistakes are cheap. Be not afraid!
+
+**API feedback welcome:** If you encounter API surfaces in this library that feel
+unintuitive, backwards, or have surprising defaults, flag them to the user rather
+than silently working around them. The goal is a library that's delightful for
+agents to compose with — bad ergonomics should be fixed, not tolerated.
 
 Current aesthetic center:
 
@@ -419,6 +441,12 @@ See `FUTURE.md` for way more ideas.
   adds a resonator bank tuned to active note harmonics, applied after note
   mixing and before normalization. Works best with harpsichord and piano
   voices where harmonically related notes reinforce each other.
+- `Score.add_drift_bus(name, rate_hz, depth_cents, seed)` registers a shared
+  slow pitch-drift bus; voices subscribe via `drift_bus=<name>` and
+  `drift_bus_correlation` (0.0 = fully independent, 1.0 = fully shared). Held
+  chords on subscribed voices breathe as a correlated unit, replacing the
+  per-voice-independent analog drift with modular-rack-style shared CV.
+  Defaults: no bus and no subscription, so existing pieces are unchanged.
 - The `surge_xt` instrument engine renders voices through Surge XT via
   pedalboard's VSTi hosting. It uses MPE-style per-note pitch bend
   (48-semitone range) for microtonal accuracy. Unlike the native per-note
@@ -446,6 +474,14 @@ See `FUTURE.md` for way more ideas.
   demonstrate these features: `vowel_cathedral` (vowel formant morphing
   with spectral gravity) and `struck_light` (inharmonic strikes resolving
   to fractal drones) in `code_musics/pieces/additive_studies.py`.
+- The additive engine's partial noise bands support `noise_mode="flow"`
+  plus `flow_density` (0-1) for a Mutable Instruments Elements-style
+  rare-event sample-and-hold exciter.  Produces breath/brush-like
+  organic texture that plain white noise and S&H cannot.  `brush_breath`
+  and `brush_cymbal` presets demonstrate the range.  The `breath_study`
+  piece in `code_musics/pieces/breath_study.py` shows it in context.
+  Underlying primitive is `flow_exciter()` in
+  `code_musics/engines/_dsp_utils.py`.
 - Keep plugin notes here high-level. Detailed parameter semantics and any new
   `EffectSpec` integration still belong in `docs/synth_api.md`.
 - If you change score/expression parameters or presets, update the docs in the same
@@ -528,17 +564,18 @@ delegation-to-subagents pattern.
 - septimal harmony
 - harmonic series, otonal and utonal
 - aphex twin, both the simple and pleasant side (avril, aisatsana) and the chaotic side
-- bach, the GOAT
+- bach, the GOAT, and a very algorithmic composer for his time; useful inspiration both in barqoue-adjacent styles and broadly
 - making xenharmonic ideas sound weird is pretty easy, making them sound pleasant is harder. let's bias in the pleasant direction, but not be constrained to narrow ideas of what pleasant is
 - why are most xenharmonic pieces more like experimentations or sketches and not complete pieces? let's err on the side of making music that sounds musical. which shouldn't wall off experimentation and riffing, but can we make full compositions?
-- commas and quirks of tuning systems (but musically; think Giant Steps)
+- commas and quirks of tuning systems (but musically; think Giant Steps, not pure studies)
 - bittersweet, haunting. (think burial - untrue or MBV loveless)
 - spacious, reverb, lofi (BoC, m83's dead cities)
 - spicy but euphonic chords, creative voicing, voice leading, sevenths and septimal harmony
 - it's fine to explore and fail. we can try a bunch of ideas, and none of them have to work
 - think of music creation like a GAN: we come up with ideas, we see how we like them, and we iterate
-- four tet (pretty and euphonic but not cheesy)
-- autechre
+- four tet (pretty and euphonic but not cheesy, wandering arps, cool organic sounds)
+- autechre (creative, glitchy, weird, but still poppy at its core)
+- emotional journey side of techno, think carl craig's "at les"
 (for more ideas, use `make inspire`; this is an idea generator inspired by Eno's _Oblique Strategies_)
 
 some tuning schemes -

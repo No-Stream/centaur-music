@@ -127,6 +127,32 @@ class DriftSpec:
 
 
 @dataclass(frozen=True)
+class DriftBusSpec:
+    """Score-level shared drift bus definition.
+
+    Voices that subscribe to the bus (via ``Voice.drift_bus``) receive a
+    correlated slow pitch-drift signal on top of whatever independent drift
+    their engine generates.  The correlation knob (``Voice.drift_bus_correlation``)
+    blends between fully independent (0.0) and fully shared (1.0) per-voice.
+
+    Musically useful range: ``rate_hz`` 0.05-0.5 Hz, ``depth_cents`` 2-12 cents.
+    """
+
+    name: str
+    rate_hz: float = 0.2
+    depth_cents: float = 5.0
+    seed: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("DriftBusSpec.name must be non-empty")
+        if self.rate_hz <= 0:
+            raise ValueError("DriftBusSpec.rate_hz must be positive")
+        if self.depth_cents < 0:
+            raise ValueError("DriftBusSpec.depth_cents must be non-negative")
+
+
+@dataclass(frozen=True)
 class TimingTarget:
     """Resolved note timing target used during render-time humanization."""
 

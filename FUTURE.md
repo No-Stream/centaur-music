@@ -113,6 +113,18 @@ Most valuable next helpers:
   orthogonal to and simpler than the wavetable engine's spectral morphs. Source:
   Vital WavetableOscillator (the transforms are separable from the wavetable
   frame machinery).
+- **Sigma-approximation (Lánczos σ-damping) for band-limited additive
+  tables** — multiply each Fourier coefficient by `sinc(K/(MaxK+1))`
+  before summing instead of hard-truncating. Removes Gibbs ringing at
+  near-zero CPU cost. Strictly better than our current hard truncation.
+  Source: MZ2SYNTH wavetable build (`SOURCE/wvecmp.f90`).
+- **Brush/Flow exciter as an additive-or-organ "breath" source** — rare-
+  event stochastic sample-and-hold. `threshold = 0.0001 + 0.125·param^4`;
+  flip state when `rand < threshold`; output = `state + (rand - 0.5 -
+  state)·param^4`. Ten lines. Produces organic/breathy character that
+  uniform noise and plain S&H can't. Pairs well as a note-onset exciter
+  for pad/breath voices. Source: Mutable Instruments `elements/dsp/
+  exciter.cc::ProcessFlow`.
 
 ### MIDI Export — Implemented
 
@@ -141,6 +153,12 @@ Most promising directions:
 ---
 
 ## Medium priority
+
+### A few concrete references to draw inspiration from in future pieces
+
+- "at les"
+- "aisatsana"
+- four tet-y arps + colundi scale - think these could blend really well. with some more organic additive, fm, or other textures (we can also add engines)
 
 ### Slop, swing, and drift extensions — Groove Implemented
 
@@ -227,6 +245,28 @@ Remaining follow-up:
 - stronger analysis feedback so we can verify whether a sound actually opens,
     softens, or narrows the way intended
 
+### Modulation architecture
+
+Ideas for the modulation wiring layer itself (not new sources — see below
+for those).
+
+- **Per-connection modulation remap (Vital-style)** — our automation is
+  rich at the segment level but per-target-per-voice wiring is ad hoc.
+  Vital's pattern: every mod connection is a first-class object with
+  `amount`, `bipolar: bool`, `stereo: bool`, `power ∈ [-20, 20]`, and
+  an optional drawable `curve`. A single system-wide matrix (~32-64
+  slots) with these fields replaces scattered one-off mod wiring.
+  Stereo "constant" sources (`(1, 0)` poly_float) become a mod source
+  you can pan-split anything with. Integrates naturally with our
+  existing `AutomationSpec` and humanization system.
+  Source: Vital `ModulationConnectionProcessor`.
+- **Diva-style global `accuracy` dial** — one user-facing quality
+  parameter with named tiers (`draft`/`fast`/`great`/`divine`) that
+  simultaneously controls oversampling factor, iterative solver
+  convergence count, and feedback-path precision. Auto-escalates for
+  offline render. Users happily accept CPU cost when the metaphor is
+  clear. Source: Diva manual (Main panel, Accuracy setting).
+
 ### Modulation sources and aliveness
 
 Ideas for richer, more organic modulation beyond the current humanization and
@@ -247,11 +287,32 @@ automation surfaces.
 - **Ornstein-Uhlenbeck process as general modulation** — mean-reverting random
   walk (`dx = theta*(mu-x)*dt + sigma*dW`) that naturally returns to center
   without hard clamping. Better character than clamped random walk for filter
-  cutoff, pan, etc.
+  cutoff, pan, etc. (Note: our current `build_cutoff_drift` is sine-based, not
+  truly O-U, despite being documented as such.)
 - **Per-sample oscillator phase noise** — tiny random perturbation to phase
   accumulator (distinct from pitch drift which is coherent). Simulates real
   oscillator zero-crossing jitter. Subtler and higher-frequency than existing
   drift.
+- **Helm-style smoothed-random LFO** — at each LFO period boundary, draw a new
+  uniform random `[-1, 1]`; between boundaries crossfade via
+  `t = (1 - cos(π·phase))/2`. Five lines. Sits alongside our existing
+  `random_walk`/`smooth_noise`/`lfo`/`sample_hold` styles in `DriftSpec` but
+  has a distinctive organic-wobble character that the others miss — neither
+  woolly like filtered noise nor blocky like S&H. Source: Helm `helm_lfo.cpp`.
+- **Shared drift bus with correlation knob** — our drift is per-voice
+  independent. A single slow (0.05–0.5 Hz) random-walk generator mixed into
+  every voice at configurable depth, with a `correlation ∈ [0, 1]` knob that
+  blends between "fully independent" and "fully shared," replicates the
+  modular-rack-patched-to-one-S&H feel. Complements `follow_strength` in
+  humanization (which correlates timing/velocity but not pitch/cutoff drift).
+  Sources: VCV Eurorack idiom + Surge DriftLFO.
+- **OB-Xd dual-layer voice variance** — we have stable per-voice card offsets
+  (slow) and per-note jitter (fresh per note). Missing: the OB-Xd fast-layer
+  per-sample CV dither (`pitch += dirt*noise` with `dirt≈0.05 semitones` on
+  pitch and `±3%` on cutoff), applied continuously on top of the stable
+  seed. Gives "the CV rail isn't clean" character — held chords breathe
+  subtly without the slow drift being cranked up. Source: OB-Xd
+  `ObxdOscillatorB.h::ProcessSample` and `ObxdVoice.h::ProcessSample`.
 
 ### Utonal, subharmonic, and drift-based harmony
 
@@ -336,6 +397,16 @@ territory for a piece — the 11-limit and septimal intervals (11/10, 49/30,
   hammer stiffness)
 - Prepared piano extensions (muting, objects on strings -- mute_position,
   mute_amount, extra inharmonic partial layers from bolts/screws)
+- **Rings-style modal position via cosine-amplitude weighting** — if/when
+  we revisit the modal engine. Rather than post-filtering to simulate
+  pickup position (which flangers when modulated), encode position as
+  per-mode amplitude weighting: `amp[k] *= cos(2π·k·position)`. Moving
+  position is just re-weighting the mode sum — no delay, no flanger
+  artifact. Bonus: free odd/even stereo split (Out = sum of even modes,
+  Aux = sum of odd). Also adopt RT60 damping parameterization
+  (`rt60 = 0.07 * 2^(damping*8)` seconds) instead of raw feedback
+  coefficients — much more musical to reason about. Source: Mutable
+  Instruments `rings/dsp/resonator.cc`.
 
   Follow-up ideas for `piano_additive` (legacy engine):
 
@@ -361,6 +432,14 @@ territory for a piece — the 11-limit and septimal intervals (11/10, 49/30,
 ### Combination Product Set - Harmonic Lattice (Erv Wilson)
 
 - cool idea. let's try.
+
+### Some JI intervals I haven't used much, to try
+
+- 6:7:9 (septimal minor / subminor triad)
+- 11/9 neutral third triads
+- 9/7 (supermajor third)
+- Utonal tetrads (1/4:1/5:1/6:1/7) (we have already explored utonal a bit)
+As always, _musically_ not just throwing weird intervals out there randomly.
 
 ### Tuning-aware effects
 
@@ -403,6 +482,26 @@ secret). Dual-LFO modulation at ~0.18 Hz and ~5.52 Hz. Anti-alias filter cutoff
 tracks clock rate. This is the classic thick-but-clear chorus character that
 plugin chorus approximates but rarely nails. Source: Surge BBDEnsembleEffect.
 
+Our current `apply_chorus` is a digital LFO chorus styled "Juno-inspired,"
+not a BBD model. A Juno-faithful rebuild (stereo quadrature LFOs + cross
+feedback + pre/post bandlimiting + optional soft compander per channel) is
+the biggest single effect gap. Mode defaults based on Juno service manual:
+
+- Mode I: base 3.2 ms, depth ±1.5 ms, rate 0.51 Hz, cross-fb 0.08
+- Mode II: base 4.4 ms, depth ±2.8 ms, rate 0.83 Hz, cross-fb 0.20
+
+Critical implementation details:
+
+- sum dry + wet (don't crossfade)
+- quadrature LFOs (π/2 offset between L and R delay times)
+- cross-feedback (L→R and R→L, not self-feedback) for airy stereo width
+- fractional-delay interpolation, ideally 3-point Lagrange
+- pre/post 6 kHz LPF + 120 Hz HPF for BBD bandlimiting
+- optional gentle per-channel soft compander or tanh for BBD character
+
+Sources: Juno-106 emulation (`stevengoldberg/juno106`) + general BBD
+knowledge + Surge `sst-effects/BBDEnsembleEffect.h`.
+
 #### Wavefolders
 
 Linear fold and sine fold as effect-chain waveshapers. `linear_fold:
@@ -441,6 +540,25 @@ Ideas for more convincing analog character across the signal path:
 - **Per-sample oscillator phase noise** — see "Modulation sources and
   aliveness" above. Distinct from pitch drift; simulates zero-crossing
   jitter.
+- **Bootstrap 1e-6 noise on feedback paths** — a specific case of thermal
+  noise that's ubiquitous in quality analog models. Without it, a pure
+  digital ladder/feedback path at max resonance won't oscillate on
+  silence. One line at the input of our ladder filter and post-filter
+  feedback summation: `input += 1e-6 * (2*rng.uniform() - 1)`. Source:
+  VCV Fundamental `VCF.cpp`.
+- **Envelope curve shaping** — our `adsr()` uses pure linear segments. Known
+  gap. Minimum viable upgrade: add `attack_power`, `decay_power`, and
+  `release_power` exponents (defaults 1.0 for backward-compat) applied via
+  `y = pow(position, power)` per stage. Also consider VCV's overshoot
+  target trick (attack ramps toward 1.2, clamps at 1.0 — keeps the curve
+  curvy at the top instead of flattening). Sources: Vital DAHDSR, OB-Xd
+  exponential coefficient ADSR, VCV Fundamental `ADSR.cpp:ATT_TARGET=1.2`.
+- **Saturation-blend coefficient idiom** — instead of a boolean "driven"
+  flag on filters/stages, always compute both the clean and driven paths
+  and blend via a 0-1 coefficient. Zero modulation stepping when drive
+  modulates across zero. Surge's K35 does this with three coefficients
+  (`saturation`, `saturation_blend`, `saturation_blend_inv`). Source:
+  Surge `sst-filters/K35Filter.h`.
 
 #### Plugin reliability follow-up
 
