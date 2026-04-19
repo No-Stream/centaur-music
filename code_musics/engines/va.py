@@ -56,9 +56,28 @@ from code_musics.engines._spectral_morphs import (
     apply_sigma_approximation,
     apply_spectral_morph,
 )
+from code_musics.engines._voice_dist import apply_voice_dist
 from code_musics.engines._waveshaper import (
     apply_waveshaper,
 )
+
+# Exclude from RNG seed so default values are bit-identical to omitted keys.
+_RNG_SEED_EXCLUDED_KEYS: frozenset[str] = frozenset(
+    {
+        "voice_dist_mode",
+        "voice_dist_drive",
+        "voice_dist_mix",
+        "voice_dist_tone",
+        "osc_phase_noise",
+        "osc_spread_cents",
+    }
+)
+
+# Per-sample oscillator phase noise scale, in cycles per sample at
+# ``osc_phase_noise=1.0``.  ~1e-4 cycles is equivalent to roughly one
+# cent of jitter per sample — small enough to hear as zero-crossing
+# texture rather than pitch wobble.
+_PHASE_NOISE_SCALE: float = 1e-4
 
 _OSC_MODES: frozenset[str] = frozenset({"supersaw", "spectralwave"})
 _FILTER_ROUTINGS: frozenset[str] = frozenset({"single", "serial", "parallel", "split"})
@@ -202,59 +221,116 @@ def _render_supersaw_voice(
     return polyblep_saw(phase, voice_phase_inc)
 
 
-def _render_supersaw_bank(
+_SUPERSAW_DETUNE_PATTERN: np.ndarray = np.array(
+    [-1.0, -0.57735, -0.33333, 0.0, 0.33333, 0.57735, 1.0],
+    dtype=np.float64,
+)
+
+
+def _supersaw_phase_noise_streams(
+    *,
+    n_samples: int,
+    freq: float,
+    duration: float,
+    amp: float,
+    sample_rate: int,
+    voice_name: str,
+) -> np.ndarray:
+    """Deterministic per-voice white-noise streams for phase perturbation.
+
+    Returns a ``(7, n_samples)`` array in ``[-1, 1]``.  Each voice stream
+    is seeded independently via :func:`rng_for_note` with a per-voice
+    ``extra_seed``, so the 7 streams are mutually uncorrelated and two
+    renders with identical params produce identical streams.
+    """
+    streams = np.empty((_SUPERSAW_VOICES, n_samples), dtype=np.float64)
+    for voice_index in range(_SUPERSAW_VOICES):
+        rng = rng_for_note(
+            freq=freq,
+            duration=duration,
+            amp=amp,
+            sample_rate=sample_rate,
+            extra_seed=f"va_supersaw_voice_phase_noise:{voice_index}:{voice_name}",
+        )
+        streams[voice_index] = rng.uniform(-1.0, 1.0, size=n_samples)
+    return streams
+
+
+def _voice_cents_profile(
+    *,
+    pattern_scale: float,
+    side_cents: float,
+    spread_profile: np.ndarray | None,
+    n_samples: int,
+) -> np.ndarray | float:
+    """Return either a scalar cents value or a per-sample cents profile.
+
+    When no ``spread_profile`` is supplied the scalar fast path is
+    preserved (bit-identical to the pre-change engine).
+    """
+    if spread_profile is None:
+        return float(pattern_scale * side_cents)
+    return pattern_scale * (side_cents + spread_profile)
+
+
+def _render_one_supersaw_voice(
     *,
     freq_profile: np.ndarray,
     sample_rate: int,
-    detune: float,
-    mix: float,
+    cumphase_base: np.ndarray,
+    cents: float | np.ndarray,
+    start_phase: float,
     sync: bool,
-    rng: np.random.Generator,
+    center_cumphase: np.ndarray | None,
+    phase_noise_stream: np.ndarray | None,
+    phase_noise_amount: float,
 ) -> np.ndarray:
-    """Render the 7-voice supersaw bank as a single mixed output."""
-    (
-        cents_per_voice,
-        gains,
-        start_phases,
-        cumphase_base,
-        side_gain,
-        center_gain,
-    ) = _supersaw_setup(
-        freq_profile=freq_profile,
-        sample_rate=sample_rate,
-        detune=detune,
-        mix=mix,
-        rng=rng,
-    )
+    """Render one supersaw voice with optional per-sample cents + phase noise.
 
-    center_ratio = float(2.0 ** (cents_per_voice[_SUPERSAW_CENTER_INDEX] / 1200.0))
-    center_cumphase = (
-        cumphase_base * center_ratio + start_phases[_SUPERSAW_CENTER_INDEX]
-    )
-    center_phase_inc = freq_profile * center_ratio / sample_rate
-    center_phase = center_cumphase - np.floor(center_cumphase)
-    center_voice = polyblep_saw(center_phase, center_phase_inc)
+    * When ``cents`` is a scalar and ``phase_noise_amount == 0``, this
+      collapses to :func:`_render_supersaw_voice` (same phase-inc math,
+      same polyBLEP call).
+    * When ``cents`` is per-sample, we integrate the per-sample
+      phase-inc instead of scaling ``cumphase_base``.  This is the only
+      path that handles audio-rate detune modulation correctly.
+    * Phase noise is applied AFTER phase accumulation and BEFORE
+      polyBLEP evaluation so the bandlimit correction sees the noised
+      phase — the noise reads as zero-crossing jitter, not aliasing.
+    """
+    if isinstance(cents, float):
+        ratio = float(2.0 ** (cents / 1200.0))
+        voice_phase_inc = freq_profile * ratio / sample_rate
+        if sync and center_cumphase is not None:
+            phase = _synced_phase_trajectory(
+                voice_phase_inc, start_phase, center_cumphase
+            )
+        else:
+            voice_cumphase = cumphase_base * ratio + start_phase
+            phase = voice_cumphase - np.floor(voice_cumphase)
+    else:
+        # Per-sample cents: recompute ratio and phase-inc per sample and
+        # integrate.  Hard-sync with a per-sample-detuned satellite is
+        # unusual; we still honor the sync flag.
+        cents_arr = np.asarray(cents, dtype=np.float64)
+        ratio_arr = np.power(2.0, cents_arr / 1200.0)
+        voice_phase_inc = freq_profile * ratio_arr / sample_rate
+        if sync and center_cumphase is not None:
+            phase = _synced_phase_trajectory(
+                voice_phase_inc, start_phase, center_cumphase
+            )
+        else:
+            voice_cumphase = np.cumsum(voice_phase_inc) + start_phase
+            phase = voice_cumphase - np.floor(voice_cumphase)
 
-    mix_signal = gains[_SUPERSAW_CENTER_INDEX] * center_voice
+    if phase_noise_amount > 0.0 and phase_noise_stream is not None:
+        # Add perturbation then re-wrap to [0, 1).  Taking ``% 1.0`` on a
+        # float64 ndarray after a tiny offset is safe: values stay well
+        # away from the rollover boundary sensitivity of polyBLEP.
+        phase = (
+            phase + phase_noise_amount * _PHASE_NOISE_SCALE * phase_noise_stream
+        ) % 1.0
 
-    for i in range(_SUPERSAW_VOICES):
-        if i == _SUPERSAW_CENTER_INDEX:
-            continue
-        voice = _render_supersaw_voice(
-            freq_profile=freq_profile,
-            sample_rate=sample_rate,
-            cumphase_base=cumphase_base,
-            cents=float(cents_per_voice[i]),
-            start_phase=float(start_phases[i]),
-            sync=sync,
-            center_cumphase=center_cumphase,
-        )
-        mix_signal = mix_signal + gains[i] * voice
-
-    total_gain = center_gain + 6.0 * side_gain
-    if total_gain > 1e-6:
-        mix_signal = mix_signal / total_gain
-    return mix_signal
+    return polyblep_saw(phase, voice_phase_inc)
 
 
 def _render_supersaw_bank_with_components(
@@ -265,11 +341,23 @@ def _render_supersaw_bank_with_components(
     mix: float,
     sync: bool,
     rng: np.random.Generator,
+    spread_profile: np.ndarray | None,
+    phase_noise_amount: float,
+    phase_noise_freq: float,
+    phase_noise_duration: float,
+    phase_noise_amp: float,
+    phase_noise_voice_name: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Render the supersaw bank and return ``(mix, center_only, sides_only)``.
 
     All three streams share the same RNG / start phases so downstream split
     routing sees coherent signals (center and sides that sum back to mix).
+
+    ``spread_profile`` (optional per-sample cents offset added to
+    ``side_cents``) and ``phase_noise_amount`` (per-sample voice-local
+    phase perturbation) are the audio-rate extensions introduced in
+    Phase 2b.  When both are inactive this function produces output
+    bit-identical to the pre-change implementation.
     """
     (
         cents_per_voice,
@@ -286,12 +374,49 @@ def _render_supersaw_bank_with_components(
         rng=rng,
     )
 
-    center_ratio = float(2.0 ** (cents_per_voice[_SUPERSAW_CENTER_INDEX] / 1200.0))
+    n_samples = freq_profile.shape[0]
+    phase_noise_streams: np.ndarray | None
+    if phase_noise_amount > 0.0 and n_samples > 0:
+        phase_noise_streams = _supersaw_phase_noise_streams(
+            n_samples=n_samples,
+            freq=phase_noise_freq,
+            duration=phase_noise_duration,
+            amp=phase_noise_amp,
+            sample_rate=sample_rate,
+            voice_name=phase_noise_voice_name,
+        )
+    else:
+        phase_noise_streams = None
+
+    side_cents_scalar = _supersaw_detune_cents(detune)
+
+    def _voice_cents(voice_index: int) -> float | np.ndarray:
+        return _voice_cents_profile(
+            pattern_scale=float(_SUPERSAW_DETUNE_PATTERN[voice_index]),
+            side_cents=side_cents_scalar,
+            spread_profile=spread_profile,
+            n_samples=n_samples,
+        )
+
+    # Center voice drives the sync trajectory.  If we're modulating the
+    # detune law per sample the center sits at pattern scale 0.0, so the
+    # spread modulation has no effect on the center voice (its cents
+    # profile is identically zero).  Its ratio is therefore always 1.0.
+    center_ratio = float(
+        2.0 ** (float(cents_per_voice[_SUPERSAW_CENTER_INDEX]) / 1200.0)
+    )
     center_cumphase = (
         cumphase_base * center_ratio + start_phases[_SUPERSAW_CENTER_INDEX]
     )
     center_phase_inc = freq_profile * center_ratio / sample_rate
     center_phase = center_cumphase - np.floor(center_cumphase)
+    if phase_noise_streams is not None:
+        center_phase = (
+            center_phase
+            + phase_noise_amount
+            * _PHASE_NOISE_SCALE
+            * phase_noise_streams[_SUPERSAW_CENTER_INDEX]
+        ) % 1.0
     center_voice = polyblep_saw(center_phase, center_phase_inc)
 
     center_only = gains[_SUPERSAW_CENTER_INDEX] * center_voice
@@ -300,14 +425,18 @@ def _render_supersaw_bank_with_components(
     for i in range(_SUPERSAW_VOICES):
         if i == _SUPERSAW_CENTER_INDEX:
             continue
-        voice = _render_supersaw_voice(
+        voice = _render_one_supersaw_voice(
             freq_profile=freq_profile,
             sample_rate=sample_rate,
             cumphase_base=cumphase_base,
-            cents=float(cents_per_voice[i]),
+            cents=_voice_cents(i),
             start_phase=float(start_phases[i]),
             sync=sync,
             center_cumphase=center_cumphase,
+            phase_noise_stream=(
+                phase_noise_streams[i] if phase_noise_streams is not None else None
+            ),
+            phase_noise_amount=phase_noise_amount,
         )
         sides_only = sides_only + gains[i] * voice
 
@@ -318,6 +447,39 @@ def _render_supersaw_bank_with_components(
 
     mix_signal = center_only + sides_only
     return mix_signal, center_only, sides_only
+
+
+def _render_supersaw_bank(
+    *,
+    freq_profile: np.ndarray,
+    sample_rate: int,
+    detune: float,
+    mix: float,
+    sync: bool,
+    rng: np.random.Generator,
+    spread_profile: np.ndarray | None,
+    phase_noise_amount: float,
+    phase_noise_freq: float,
+    phase_noise_duration: float,
+    phase_noise_amp: float,
+    phase_noise_voice_name: str,
+) -> np.ndarray:
+    """Render the 7-voice supersaw bank as a single mixed output."""
+    mix_signal, _, _ = _render_supersaw_bank_with_components(
+        freq_profile=freq_profile,
+        sample_rate=sample_rate,
+        detune=detune,
+        mix=mix,
+        sync=sync,
+        rng=rng,
+        spread_profile=spread_profile,
+        phase_noise_amount=phase_noise_amount,
+        phase_noise_freq=phase_noise_freq,
+        phase_noise_duration=phase_noise_duration,
+        phase_noise_amp=phase_noise_amp,
+        phase_noise_voice_name=phase_noise_voice_name,
+    )
+    return mix_signal
 
 
 def _build_spectralwave_partials(
@@ -535,8 +697,16 @@ def render(
     sample_rate: int,
     params: dict[str, Any],
     freq_trajectory: np.ndarray | None = None,
+    param_profiles: dict[str, np.ndarray] | None = None,
 ) -> np.ndarray:
-    """Render a VA-flavored note."""
+    """Render a VA-flavored note.
+
+    ``param_profiles`` carries per-sample modulation curves produced by
+    the audio-rate modulation matrix.  Currently supported: the
+    supersaw ``osc_spread_cents`` law.  Engines opt in via
+    :func:`code_musics.engines.registry.register_param_profile_support`;
+    profiles that are not consumed are silently ignored.
+    """
     if duration <= 0:
         raise ValueError("duration must be positive")
     if sample_rate <= 0:
@@ -595,6 +765,17 @@ def render(
 
     drive_amount = float(params.get("drive_amount", 0.0))
 
+    # Per-note voice-distortion slot (see _voice_dist.py).
+    voice_dist_mode = str(params.get("voice_dist_mode", "off")).lower()
+    voice_dist_drive = float(params.get("voice_dist_drive", 0.5))
+    voice_dist_mix = float(params.get("voice_dist_mix", 1.0))
+    voice_dist_tone = float(params.get("voice_dist_tone", 0.0))
+
+    # Per-sample supersaw phase noise.  0.0 is a fast-path no-op.
+    osc_phase_noise = float(params.get("osc_phase_noise", 0.0))
+    if not 0.0 <= osc_phase_noise <= 1.0:
+        raise ValueError("osc_phase_noise must be in [0, 1]")
+
     default_slot_defaults: dict[str, Any] = {
         "cutoff_hz": float(params.get("cutoff_hz", 3000.0)),
         "keytrack": float(params.get("keytrack", 0.0)),
@@ -611,6 +792,7 @@ def render(
         "hpf_resonance_q": float(params.get("hpf_resonance_q", 0.707)),
         "feedback_amount": float(params.get("feedback_amount", 0.0)),
         "feedback_saturation": float(params.get("feedback_saturation", 0.3)),
+        "k35_feedback_asymmetry": float(params.get("k35_feedback_asymmetry", 0.0)),
     }
     filter1 = _resolve_filter_slot_params(params, 1, default_slot_defaults)
     filter2_defaults = dict(default_slot_defaults)
@@ -690,12 +872,13 @@ def render(
     else:
         freq_profile = np.full(n_samples, freq, dtype=np.float64)
 
+    seed_params = {k: v for k, v in params.items() if k not in _RNG_SEED_EXCLUDED_KEYS}
     rng = rng_for_note(
         freq=freq,
         duration=duration,
         amp=amp,
         sample_rate=sample_rate,
-        params=params,
+        params=seed_params,
     )
     freq_profile, amp, vc_cutoff1, vc_offsets = apply_voice_card(
         params,
@@ -773,6 +956,17 @@ def render(
         freq_profile = freq_profile * drift_multiplier
 
     # ---- Oscillator rendering ----
+    # Resolve audio-rate supersaw detune profile (optional).  Silently
+    # ignored if the engine is running in spectralwave mode.
+    spread_profile: np.ndarray | None = None
+    if param_profiles is not None and "osc_spread_cents" in param_profiles:
+        spread_profile = np.asarray(
+            param_profiles["osc_spread_cents"], dtype=np.float64
+        )
+        if spread_profile.shape != (n_samples,):
+            raise ValueError(
+                "osc_spread_cents profile length must match note duration in samples"
+            )
     signal_a: np.ndarray
     signal_b: np.ndarray
     if osc_mode == "supersaw":
@@ -784,6 +978,12 @@ def render(
                 mix=supersaw_mix,
                 sync=supersaw_sync,
                 rng=rng,
+                spread_profile=spread_profile,
+                phase_noise_amount=osc_phase_noise,
+                phase_noise_freq=freq,
+                phase_noise_duration=duration,
+                phase_noise_amp=amp,
+                phase_noise_voice_name=voice_name,
             )
             signal_a = center_only
             signal_b = sides_only
@@ -795,6 +995,12 @@ def render(
                 mix=supersaw_mix,
                 sync=supersaw_sync,
                 rng=rng,
+                spread_profile=spread_profile,
+                phase_noise_amount=osc_phase_noise,
+                phase_noise_freq=freq,
+                phase_noise_duration=duration,
+                phase_noise_amp=amp,
+                phase_noise_voice_name=voice_name,
             )
             signal_a = raw_signal
             signal_b = np.zeros_like(raw_signal)
@@ -964,6 +1170,7 @@ def render(
             hpf_resonance_q=filter1["hpf_resonance_q"],
             feedback_amount=filter1["feedback_amount"],
             feedback_saturation=filter1["feedback_saturation"],
+            k35_feedback_asymmetry=filter1["k35_feedback_asymmetry"],
         )
 
     def _f2(sig: np.ndarray) -> np.ndarray:
@@ -982,6 +1189,7 @@ def render(
             hpf_resonance_q=filter2["hpf_resonance_q"],
             feedback_amount=filter2["feedback_amount"],
             feedback_saturation=filter2["feedback_saturation"],
+            k35_feedback_asymmetry=filter2["k35_feedback_asymmetry"],
         )
 
     if filter_routing == "single":
@@ -1011,4 +1219,16 @@ def render(
     peak = float(np.max(np.abs(filtered)))
     if peak > 1e-9:
         filtered /= peak
-    return amp * filtered
+    note_buffer = amp * filtered
+
+    # Per-note distortion slot (see _voice_dist.py).
+    if voice_dist_mode != "off" and voice_dist_drive > 0.0:
+        note_buffer = apply_voice_dist(
+            note_buffer,
+            mode=voice_dist_mode,
+            drive=voice_dist_drive,
+            mix=voice_dist_mix,
+            tone=voice_dist_tone,
+            sample_rate=sample_rate,
+        )
+    return note_buffer

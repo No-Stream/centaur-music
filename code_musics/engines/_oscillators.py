@@ -14,18 +14,32 @@ import numpy as np
 def render_polyblep_oscillator(
     *,
     waveform: str,
-    pulse_width: float,
+    pulse_width: float | np.ndarray,
     freq_profile: np.ndarray,
     sample_rate: int,
     start_phase: float = 0.0,
+    phase_noise: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Render a PolyBLEP oscillator, returning ``(signal, phase)``.
 
     ``phase`` is the wrapped 0-1 phase at each sample so callers (e.g. a
     supersaw bank with hard-sync) can inspect or re-drive downstream stages.
+
+    ``pulse_width`` may be a scalar (legacy, default path) or a per-sample
+    ``np.ndarray`` of the same length as ``freq_profile``.  Per-sample values
+    are used only by the ``square`` waveform and are ignored by saw, sine,
+    and triangle.
+
+    ``phase_noise`` is an optional per-sample offset (in cycles) added to
+    the integrated phase *before* wrapping and *before* the PolyBLEP
+    discontinuity correction.  Callers scale the noise to their desired
+    amount; a value of ``None`` (default) preserves bit-identical legacy
+    behavior.
     """
     phase_inc = freq_profile / sample_rate
     cumphase = np.cumsum(phase_inc) + start_phase / (2.0 * np.pi)
+    if phase_noise is not None:
+        cumphase = cumphase + phase_noise
     phase = cumphase % 1.0
 
     if waveform == "sine":
@@ -58,9 +72,13 @@ def polyblep_square(
     phase: np.ndarray,
     phase_inc: np.ndarray,
     cumphase: np.ndarray,
-    pulse_width: float,
+    pulse_width: float | np.ndarray,
 ) -> np.ndarray:
-    """Generate a bandlimited square/pulse wave as the difference of two saws."""
+    """Generate a bandlimited square/pulse wave as the difference of two saws.
+
+    ``pulse_width`` may be a scalar or a per-sample array.  Per-sample
+    arrays enable audio-rate PWM; scalars preserve the legacy path.
+    """
     saw1 = polyblep_saw(phase, phase_inc)
     phase2 = (cumphase + pulse_width) % 1.0
     saw2 = polyblep_saw(phase2, phase_inc)

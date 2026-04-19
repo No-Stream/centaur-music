@@ -351,19 +351,46 @@ def apply_control_automation(
     return values
 
 
+def apply_mode_vectorized(
+    mode: AutomationMode,
+    base: np.ndarray,
+    contribution: np.ndarray,
+    *,
+    nan_mask_contribution: bool = False,
+) -> np.ndarray:
+    """Apply a combine mode to a contribution against a base curve.
+
+    ``nan_mask_contribution=True`` preserves the automation-segment
+    semantics where NaN in ``contribution`` means "outside any segment —
+    keep base value."  With the default ``False``, every sample of
+    ``contribution`` is treated as defined (modulation-matrix semantics).
+    """
+    if not nan_mask_contribution:
+        if mode == "replace":
+            return contribution.astype(np.float64, copy=True)
+        if mode == "add":
+            return base + contribution
+        if mode == "multiply":
+            return base * contribution
+        raise ValueError(f"Unsupported combine mode: {mode!r}")
+
+    valid = ~np.isnan(contribution)
+    result = base.copy()
+    if mode == "replace":
+        result[valid] = contribution[valid]
+    elif mode == "add":
+        result[valid] = base[valid] + contribution[valid]
+    elif mode == "multiply":
+        result[valid] = base[valid] * contribution[valid]
+    else:
+        raise ValueError(f"Unsupported combine mode: {mode!r}")
+    return result
+
+
 def _apply_mode_vectorized(
     mode: AutomationMode, base: np.ndarray, sampled: np.ndarray
 ) -> np.ndarray:
-    """Apply automation mode element-wise.  NaN in sampled → keep base value."""
-    valid = ~np.isnan(sampled)
-    result = base.copy()
-    if mode == "replace":
-        result[valid] = sampled[valid]
-    elif mode == "add":
-        result[valid] = base[valid] + sampled[valid]
-    elif mode == "multiply":
-        result[valid] = base[valid] * sampled[valid]
-    return result
+    return apply_mode_vectorized(mode, base, sampled, nan_mask_contribution=True)
 
 
 def _sample_segments_vectorized(

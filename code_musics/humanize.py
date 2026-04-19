@@ -230,7 +230,7 @@ def build_drift_bus(
     internal_rate = _DRIFT_BUS_DOWNSAMPLE_HZ
     n_internal = int(math.ceil((total_duration + pad_seconds) * internal_rate)) + 2
 
-    rng = np.random.default_rng(_stable_seed("drift_bus", seed or 0, round(rate_hz, 6)))
+    rng = np.random.default_rng(stable_seed("drift_bus", seed or 0, round(rate_hz, 6)))
     noise = rng.uniform(-1.0, 1.0, size=n_internal).astype(np.float64)
 
     # Preserve Surge's effective cutoff at our downsampled rate, scaling with
@@ -482,7 +482,7 @@ def build_timing_offsets(
     if humanize is None or not targets:
         return {}
 
-    global_seed = _seed_or_default(humanize.seed, "timing", humanize.preset)
+    global_seed = seed_or_default(humanize.seed, "timing", humanize.preset)
     ensemble_drift = humanize.ensemble_drift
     if ensemble_drift is None:
         raise ValueError("ensemble_drift must be resolved")
@@ -514,7 +514,7 @@ def build_timing_offsets(
     per_voice_static_ms: dict[str, float] = {}
     per_voice_dynamic: dict[str, np.ndarray] = {}
     for voice_name in {target.voice_name for target in targets}:
-        voice_seed = _stable_seed(global_seed, "voice", voice_name)
+        voice_seed = stable_seed(global_seed, "voice", voice_name)
         voice_rng = np.random.default_rng(voice_seed)
         per_voice_static_ms[voice_name] = float(
             voice_rng.uniform(-voice_spread_ms, voice_spread_ms)
@@ -532,7 +532,7 @@ def build_timing_offsets(
                     ),
                     times=start_times,
                     total_dur=total_dur,
-                    seed=_stable_seed(voice_seed, "dynamic"),
+                    seed=stable_seed(voice_seed, "dynamic"),
                 )
             )
         )
@@ -540,12 +540,12 @@ def build_timing_offsets(
     chord_offsets_ms = _build_chord_spread_offsets(
         targets=targets,
         chord_spread_ms=chord_spread_ms,
-        seed=_stable_seed(global_seed, "chords"),
+        seed=stable_seed(global_seed, "chords"),
     )
 
     offsets: dict[tuple[str, int], float] = {}
     for index, target in enumerate(targets):
-        note_seed = _stable_seed(global_seed, "note", target.voice_name, target.key[1])
+        note_seed = stable_seed(global_seed, "note", target.voice_name, target.key[1])
         note_rng = np.random.default_rng(note_seed)
         note_jitter_ms = 0.0
         if micro_jitter_limit_ms > 0:
@@ -600,7 +600,7 @@ def resolve_envelope_params(
     if release_amount_frac is None:
         raise ValueError("release_amount_frac must be resolved")
 
-    shared_seed = _seed_or_default(
+    shared_seed = seed_or_default(
         humanize.seed, "envelope", humanize.preset, voice_name
     )
     shared_curve = _sample_drift_curve(
@@ -615,7 +615,7 @@ def resolve_envelope_params(
             drift,
             times=np.asarray([note_start], dtype=np.float64),
             total_dur=total_dur,
-            seed=_stable_seed(shared_seed, parameter_name),
+            seed=stable_seed(shared_seed, parameter_name),
         )[0]
         return float((0.6 * shared_curve) + (0.4 * local_curve))
 
@@ -679,7 +679,7 @@ def build_velocity_multipliers(
     if max_multiplier is None:
         raise ValueError("max_multiplier must be resolved")
 
-    velocity_seed = _seed_or_default(humanize.seed, "velocity", humanize.preset)
+    velocity_seed = seed_or_default(humanize.seed, "velocity", humanize.preset)
     grouped_targets: dict[str, list[VelocityTarget]] = {}
     for target in targets:
         grouped_targets.setdefault(target.group_name, []).append(target)
@@ -689,7 +689,7 @@ def build_velocity_multipliers(
         group_times = np.asarray(
             [target.start for target in group_targets], dtype=np.float64
         )
-        group_seed = _stable_seed(velocity_seed, "group", group_name)
+        group_seed = stable_seed(velocity_seed, "group", group_name)
         shared_curve = _sample_drift_curve(
             drift,
             times=group_times,
@@ -700,7 +700,7 @@ def build_velocity_multipliers(
         voice_static_offsets: dict[str, float] = {}
         voice_dynamic_curves: dict[str, np.ndarray] = {}
         for voice_name in {target.voice_name for target in group_targets}:
-            voice_seed = _stable_seed(group_seed, "voice", voice_name)
+            voice_seed = stable_seed(group_seed, "voice", voice_name)
             voice_rng = np.random.default_rng(voice_seed)
             voice_static_offsets[voice_name] = float(
                 voice_rng.uniform(-voice_spread, voice_spread)
@@ -716,17 +716,17 @@ def build_velocity_multipliers(
                     ),
                     times=group_times,
                     total_dur=total_dur,
-                    seed=_stable_seed(voice_seed, "dynamic"),
+                    seed=stable_seed(voice_seed, "dynamic"),
                 )
             )
 
         chord_offsets = _build_velocity_chord_offsets(
             targets=group_targets,
             chord_spread=chord_spread,
-            seed=_stable_seed(group_seed, "chords"),
+            seed=stable_seed(group_seed, "chords"),
         )
         for index, target in enumerate(group_targets):
-            note_seed = _stable_seed(
+            note_seed = stable_seed(
                 group_seed, "note", target.voice_name, target.key[1]
             )
             note_rng = np.random.default_rng(note_seed)
@@ -779,7 +779,7 @@ def _build_chord_spread_offsets(
         )
         ordering = sorted(
             group,
-            key=lambda target: _stable_seed(
+            key=lambda target: stable_seed(
                 seed, "group", start_time, target.voice_name, target.key[1]
             ),
         )
@@ -811,7 +811,7 @@ def _build_velocity_chord_offsets(
         spread_values = np.linspace(-chord_spread / 2.0, chord_spread / 2.0, len(group))
         ordering = sorted(
             group,
-            key=lambda target: _stable_seed(
+            key=lambda target: stable_seed(
                 seed, "group", group_key, target.voice_name, target.key[1]
             ),
         )
@@ -835,7 +835,7 @@ def _sample_drift_curve(
 
     bounded_times = np.clip(np.asarray(times, dtype=np.float64), 0.0, total_dur)
     rng = np.random.default_rng(
-        _stable_seed(seed, spec.seed if spec.seed is not None else 0)
+        stable_seed(seed, spec.seed if spec.seed is not None else 0)
     )
 
     if spec.style == "lfo":
@@ -872,19 +872,13 @@ def _sample_drift_curve(
     return _normalize_curve(curve)
 
 
-def _smoothed_random_curve(
-    bounded_times: np.ndarray,
+def hann_crossfade_anchors(
+    times: np.ndarray,
     anchor_times: np.ndarray,
     anchor_values: np.ndarray,
 ) -> np.ndarray:
-    """Helm-style smoothed-random drift.
-
-    Generates random anchor values at the drift rate and crossfades between
-    consecutive anchors with a raised-cosine (Hann) window.  Produces an
-    organic wobble distinct from ``sample_hold`` (steppy) and ``smooth_noise``
-    (linear-interp of smoothed anchors).
-    """
-    indices = np.searchsorted(anchor_times, bounded_times, side="right") - 1
+    """Hann-crossfade between evenly spaced anchor values at given times."""
+    indices = np.searchsorted(anchor_times, times, side="right") - 1
     indices = np.clip(indices, 0, anchor_times.size - 1)
     next_indices = np.clip(indices + 1, 0, anchor_times.size - 1)
     anchor_left = anchor_times[indices]
@@ -892,12 +886,24 @@ def _smoothed_random_curve(
     segment = anchor_right - anchor_left
     # Avoid division by zero at the final segment (where indices saturate).
     safe_segment = np.where(segment > 0.0, segment, 1.0)
-    frac = np.clip((bounded_times - anchor_left) / safe_segment, 0.0, 1.0)
-    # Raised-cosine (Hann) crossfade weight: 0 at frac=0, 1 at frac=1.
+    frac = np.clip((times - anchor_left) / safe_segment, 0.0, 1.0)
     weight = 0.5 - 0.5 * np.cos(np.pi * frac)
     return (1.0 - weight) * anchor_values[indices] + weight * anchor_values[
         next_indices
     ]
+
+
+def _smoothed_random_curve(
+    bounded_times: np.ndarray,
+    anchor_times: np.ndarray,
+    anchor_values: np.ndarray,
+) -> np.ndarray:
+    """Helm-style smoothed-random drift using Hann-crossfaded random anchors.
+
+    Distinct from ``sample_hold`` (steppy) and ``smooth_noise``
+    (linear-interp of smoothed anchors).
+    """
+    return hann_crossfade_anchors(bounded_times, anchor_times, anchor_values)
 
 
 def _smooth_anchor_values(values: np.ndarray, smoothness: float) -> np.ndarray:
@@ -915,13 +921,13 @@ def _normalize_curve(curve: np.ndarray) -> np.ndarray:
     return np.asarray(curve / max_abs, dtype=np.float64)
 
 
-def _seed_or_default(seed: int | None, *parts: object) -> int:
+def seed_or_default(seed: int | None, *parts: object) -> int:
     if seed is not None:
         return int(seed)
-    return _stable_seed(*parts)
+    return stable_seed(*parts)
 
 
-def _stable_seed(*parts: object) -> int:
+def stable_seed(*parts: object) -> int:
     material = "|".join(str(part) for part in parts).encode("utf-8")
     digest = hashlib.sha256(material).digest()
     return int.from_bytes(digest[:8], byteorder="big", signed=False)

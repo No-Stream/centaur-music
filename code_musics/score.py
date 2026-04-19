@@ -21,6 +21,7 @@ from code_musics.automation import (
     has_pitch_ratio_automation,
 )
 from code_musics.engines import (
+    engine_supports_param_profile,
     is_instrument_engine,
     normalize_synth_spec,
     render_note_signal,
@@ -501,9 +502,13 @@ class Score:
         self._drift_bus_cache: dict[
             tuple[str, int | None, float, float], tuple[np.ndarray, np.ndarray]
         ] = {}
-        # Memoized macro lookup tables, keyed by (n_samples, first_time).
-        # Cleared implicitly whenever a render pass uses a new time grid.
-        self._macro_lookup_cache: dict[tuple[int, float], dict[str, np.ndarray]] = {}
+        # Memoized macro lookup tables, keyed by (n_samples, first_time,
+        # last_time).  Including ``last_time`` disambiguates grids that
+        # share start and length but span different durations.  Cleared
+        # implicitly whenever a render pass uses a new time grid.
+        self._macro_lookup_cache: dict[
+            tuple[int, float, float], dict[str, np.ndarray]
+        ] = {}
 
     def add_voice(
         self,
@@ -1144,7 +1149,16 @@ class Score:
             max_polyphony=voice.max_polyphony,
             legato=voice.legato,
         )
-        for prepared_note in prepared_notes:
+        # Per-voice state dict for transient-mode carryover (polyblep /
+        # filtered_stack consume it; other engines ignore it).  Iterate in
+        # chronological order so state flows from earlier notes to later
+        # ones.  Polyphonic overlaps still share a single state — the last
+        # note to finish wins — which is good enough for analog-style
+        # carryover; a future per-oscillator-slot state map could refine
+        # this if needed.
+        voice_state: dict[str, Any] = {}
+        chronological = sorted(prepared_notes, key=lambda pn: pn.humanized_start)
+        for prepared_note in chronological:
             if (
                 prepared_note.effective_hold_duration + prepared_note.effective_release
                 <= 0
@@ -1164,6 +1178,7 @@ class Score:
                 params=prepared_note.synth_params,
                 freq_trajectory=prepared_note.freq_trajectory,
                 param_profiles=prepared_note.param_profiles or None,
+                voice_state=voice_state,
             )
             note_signal = synth.adsr(
                 note_signal,
@@ -1420,13 +1435,23 @@ class Score:
     def _macro_lookup_for_times(self, times: np.ndarray) -> dict[str, np.ndarray]:
         """Sample every registered macro against a time grid.
 
-        Per-render memoization via ``_macro_lookup_cache`` keyed by the
-        times array's id/shape keeps repeated lookups cheap across
-        voice evaluations in the same render pass.
+        Per-render memoization via ``_macro_lookup_cache`` keyed by
+        (length, first_time, last_time) keeps repeated lookups cheap
+        across voice evaluations in the same render pass.  All three
+        fields are required to disambiguate grids that share endpoints
+        but have different spans (e.g. two 1 s sub-slices with the
+        same start but different lengths).
         """
         if not self.macros:
             return {}
-        cache_key = (times.shape[0], float(times[0]) if times.size else 0.0)
+        if times.size:
+            cache_key = (
+                times.shape[0],
+                float(times[0]),
+                float(times[-1]),
+            )
+        else:
+            cache_key = (0, 0.0, 0.0)
         cached = self._macro_lookup_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -1467,13 +1492,16 @@ class Score:
         resolved_velocity: float,
         note_start: float,
         note_duration: float,
+        engine_name: str,
     ) -> dict[str, Any]:
         """Fold matrix contributions into synth params at note onset.
 
-        Per-sample-capable synth destinations are skipped here because
-        they are threaded through the engine via ``param_profiles``;
-        everything else is sampled as a scalar at ``note_start`` and
-        written back into ``params`` under the target name.
+        Per-sample-capable destinations are skipped only when the
+        target engine actually consumes a per-sample profile for that
+        destination (see ``engine_supports_param_profile``).  For any
+        engine that doesn't consume the profile, the contribution is
+        sampled as a scalar at ``note_start`` and written into
+        ``params`` so the modulation isn't silently dropped.
         """
         if not connections:
             return params
@@ -1484,8 +1512,6 @@ class Score:
         ]
         if not synth_connections:
             return params
-        # Eagerly group to skip per-sample targets — those are handled
-        # separately via build_param_profiles below.
         context = self._build_source_context(
             times=np.asarray([note_start], dtype=np.float64),
             note_velocity=resolved_velocity,
@@ -1495,9 +1521,12 @@ class Score:
         updated = dict(params)
         grouped: dict[str, list[ModConnection]] = {}
         for connection in synth_connections:
-            if is_per_sample_synth_destination(connection.target.name):
+            destination = connection.target.name
+            if is_per_sample_synth_destination(
+                destination
+            ) and engine_supports_param_profile(engine_name, destination):
                 continue
-            grouped.setdefault(connection.target.name, []).append(connection)
+            grouped.setdefault(destination, []).append(connection)
         for param_name, group in grouped.items():
             base = float(updated.get(param_name, 0.0))
             combined = combine_connections_scalar(
@@ -1517,13 +1546,15 @@ class Score:
         note_start: float,
         note_duration: float,
         total_samples: int,
+        engine_name: str,
     ) -> dict[str, np.ndarray]:
-        """Build per-sample profiles for synth destinations in the whitelist.
+        """Build per-sample profiles for synth destinations the engine consumes.
 
         Only destinations with ``is_per_sample_synth_destination(name)``
-        true AND at least one connection get a profile.  The profile
-        carries the sampled scalar base (from ``synth_params``) plus
-        the matrix contribution across the note's time grid.
+        AND ``engine_supports_param_profile(engine_name, name)`` get a
+        profile.  Everything else is handled by the scalar fold in
+        :meth:`_apply_matrix_to_synth_params` so the modulation reaches
+        the engine one way or the other.
         """
         if total_samples <= 0 or not connections:
             return {}
@@ -1531,9 +1562,12 @@ class Score:
         for connection in connections:
             if connection.target.kind != "synth":
                 continue
-            if not is_per_sample_synth_destination(connection.target.name):
+            destination = connection.target.name
+            if not is_per_sample_synth_destination(destination):
                 continue
-            grouped.setdefault(connection.target.name, []).append(connection)
+            if not engine_supports_param_profile(engine_name, destination):
+                continue
+            grouped.setdefault(destination, []).append(connection)
         if not grouped:
             return {}
         times = note_start + np.arange(total_samples, dtype=np.float64) / float(
@@ -1724,12 +1758,14 @@ class Score:
                 note_start=absolute_note_start,
             )
             matrix_connections = self._matrix_connections_for_voice(voice)
+            engine_name = str(synth_params.get("engine", "additive"))
             synth_params = self._apply_matrix_to_synth_params(
                 params=synth_params,
                 connections=matrix_connections,
                 resolved_velocity=resolved_velocity,
                 note_start=absolute_note_start,
                 note_duration=note.duration,
+                engine_name=engine_name,
             )
             attack_scale = float(synth_params.pop("attack_scale", 1.0))
             release_scale = float(synth_params.pop("release_scale", 1.0))
@@ -1859,6 +1895,7 @@ class Score:
                 note_start=absolute_note_start,
                 note_duration=note.duration,
                 total_samples=total_samples,
+                engine_name=engine_name,
             )
             prepared_notes.append(
                 PreparedVoiceNote(
@@ -1977,6 +2014,7 @@ class Score:
             modulations=voice_matrix,
         )
         if voice.effects and processed_voice_mix.size > 0:
+            voice_fx_context = self._build_source_context(times=signal_times)
             if collect_effect_analysis:
                 rendered_voice_mix, rendered_effect_analysis = cast(
                     tuple[np.ndarray, list[synth.EffectAnalysisEntry]],
@@ -1986,6 +2024,8 @@ class Score:
                         sidechain_signals=processed_voice_outputs,
                         signal_name=voice_name,
                         start_time_seconds=self.time_origin_seconds,
+                        matrix_connections=voice_matrix,
+                        source_sampling_context=voice_fx_context,
                         return_analysis=True,
                     ),
                 )
@@ -2000,6 +2040,8 @@ class Score:
                         sidechain_signals=processed_voice_outputs,
                         signal_name=voice_name,
                         start_time_seconds=self.time_origin_seconds,
+                        matrix_connections=voice_matrix,
+                        source_sampling_context=voice_fx_context,
                     ),
                 )
         processed_voice_mix = self._apply_db_control(
@@ -2043,6 +2085,7 @@ class Score:
             signal_times = self._signal_times(bus_mix.shape[-1])
             effect_analysis: list[synth.EffectAnalysisEntry] = []
             if send_bus.effects:
+                bus_fx_context = self._build_source_context(times=signal_times)
                 if collect_effect_analysis:
                     processed_bus_mix, rendered_effect_analysis = cast(
                         tuple[np.ndarray, list[synth.EffectAnalysisEntry]],
@@ -2050,6 +2093,8 @@ class Score:
                             bus_mix,
                             send_bus.effects,
                             start_time_seconds=self.time_origin_seconds,
+                            matrix_connections=self.modulations,
+                            source_sampling_context=bus_fx_context,
                             return_analysis=True,
                         ),
                     )
@@ -2062,6 +2107,8 @@ class Score:
                             bus_mix,
                             send_bus.effects,
                             start_time_seconds=self.time_origin_seconds,
+                            matrix_connections=self.modulations,
+                            source_sampling_context=bus_fx_context,
                         ),
                     )
             bus_mix = self._apply_db_control(
@@ -2070,6 +2117,7 @@ class Score:
                 automation_specs=send_bus.automation,
                 target_name="return_db",
                 signal_times=signal_times,
+                modulations=self.modulations,
             )
             bus_mix = self._apply_pan_control(
                 bus_mix,
@@ -2077,6 +2125,7 @@ class Score:
                 automation_specs=send_bus.automation,
                 target_name="pan",
                 signal_times=signal_times,
+                modulations=self.modulations,
             )
             if bus_mix.size > 0:
                 send_returns[send_bus.name] = bus_mix
@@ -2212,6 +2261,8 @@ class Score:
         if self.master_input_gain_db != 0.0:
             processed_mix = processed_mix * synth.db_to_amp(self.master_input_gain_db)
         if self.master_effects:
+            master_signal_times = self._signal_times(processed_mix.shape[-1])
+            master_fx_context = self._build_source_context(times=master_signal_times)
             if collect_effect_analysis:
                 mastered_mix, effect_entries = cast(
                     tuple[np.ndarray, list[synth.EffectAnalysisEntry]],
@@ -2219,6 +2270,8 @@ class Score:
                         processed_mix,
                         self.master_effects,
                         start_time_seconds=self.time_origin_seconds,
+                        matrix_connections=self.modulations,
+                        source_sampling_context=master_fx_context,
                         return_analysis=True,
                     ),
                 )
@@ -2232,6 +2285,8 @@ class Score:
                         processed_mix,
                         self.master_effects,
                         start_time_seconds=self.time_origin_seconds,
+                        matrix_connections=self.modulations,
+                        source_sampling_context=master_fx_context,
                     ),
                 )
 

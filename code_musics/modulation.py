@@ -15,7 +15,6 @@ order.
 
 from __future__ import annotations
 
-import hashlib
 import math
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -26,19 +25,36 @@ from code_musics.automation import (
     AutomationMode,
     AutomationSpec,
     AutomationTarget,
+    apply_mode_vectorized,
+)
+from code_musics.humanize import (
+    DriftSpec,
+    _sample_drift_curve,
+    hann_crossfade_anchors,
+    seed_or_default,
+    stable_seed,
 )
 
 ModSourceDomain = Literal["bipolar", "unipolar"]
 LFOWaveshape = Literal[
     "sine", "triangle", "saw_up", "saw_down", "square", "smoothed_random"
 ]
+OscillatorWaveshape = Literal["sine", "saw", "triangle"]
 
 # Synth destinations that support per-sample sampling via engine
 # ``param_profiles``.  Engines not listed here accept only the scalar
 # note-onset value from ``apply_synth_automation`` plus the matrix
 # scalar fold.  Destinations in this set get a per-sample ndarray
 # threaded to the engine through ``render_note_signal``.
-_PER_SAMPLE_SYNTH_DESTINATIONS: frozenset[str] = frozenset({"cutoff_hz"})
+_PER_SAMPLE_SYNTH_DESTINATIONS: frozenset[str] = frozenset(
+    {
+        "cutoff_hz",
+        "pulse_width",
+        "osc2_detune_cents",
+        "osc2_freq_ratio",
+        "osc_spread_cents",
+    }
+)
 
 
 def is_per_sample_synth_destination(name: str) -> bool:
@@ -138,9 +154,109 @@ class LFOSource(ModSource):
             return _sample_smoothed_random_lfo(
                 times=local_times,
                 rate_hz=self.rate_hz,
-                seed=_resolve_seed(self.seed, "lfo_smoothed_random"),
+                seed=seed_or_default(self.seed, "lfo_smoothed_random"),
             )
         raise ValueError(f"Unsupported LFO waveshape: {self.waveshape!r}")
+
+
+@dataclass(frozen=True)
+class OscillatorSource(ModSource):
+    """Arbitrary-rate oscillator modulation source (LFO-to-audio-rate).
+
+    Sibling to :class:`LFOSource` that removes the sub-audio rate cap,
+    intended for audio-rate modulation destinations (PWM, osc2 detune
+    FM, supersaw spread modulation).  Running at rates near or above
+    ``sample_rate / 2`` produces undefined (naively-aliased) output —
+    callers are expected to keep ``rate_hz`` comfortably below Nyquist
+    and rely on the destination engine's oversampling for higher
+    quality.
+
+    Parameters mirror :class:`LFOSource` for consistency.  Shapes are
+    limited to ``sine``, ``saw``, and ``triangle`` for the MVP; square
+    is intentionally omitted pending anti-aliased generation.
+
+    Parameters
+    ----------
+    rate_hz
+        Oscillator frequency in Hz, must be strictly positive.  There
+        is no upper cap, but values above ``sample_rate / 2`` alias.
+    waveshape
+        One of ``"sine"``, ``"saw"``, ``"triangle"``.
+    phase
+        Starting phase normalized to ``[0, 1)`` cycles (0.25 cycles
+        == 90 degrees).
+    stereo
+        When True, :meth:`sample` returns a ``(2, n)`` array whose L
+        and R rows differ by ``stereo_phase_offset`` cycles so a
+        stereo-aware consumer can decorrelate L/R without a second
+        source.  When False (default), :meth:`sample` returns a 1D
+        mono array and behaves identically to :class:`LFOSource`'s
+        matrix contract.
+    stereo_phase_offset
+        Phase shift applied to the right channel in cycles.  Only
+        consulted when ``stereo=True``.
+    """
+
+    rate_hz: float = 1.0
+    waveshape: OscillatorWaveshape = "sine"
+    phase: float = 0.0
+    stereo: bool = False
+    stereo_phase_offset: float = 0.25
+    output_domain: ModSourceDomain = "bipolar"
+
+    def __post_init__(self) -> None:
+        if self.rate_hz <= 0:
+            raise ValueError("OscillatorSource.rate_hz must be positive")
+        if self.waveshape not in ("sine", "saw", "triangle"):
+            raise ValueError(
+                "OscillatorSource.waveshape must be one of 'sine', 'saw', 'triangle'"
+            )
+
+    def sample(self, times: np.ndarray, context: SourceSamplingContext) -> np.ndarray:
+        if times.size == 0:
+            if self.stereo:
+                return np.zeros((2, 0), dtype=np.float64)
+            return np.zeros(0, dtype=np.float64)
+        local_times = np.asarray(times, dtype=np.float64)
+        if not self.stereo:
+            return _render_oscillator_wave(
+                times=local_times,
+                rate_hz=self.rate_hz,
+                phase_cycles=self.phase,
+                waveshape=self.waveshape,
+            )
+        left = _render_oscillator_wave(
+            times=local_times,
+            rate_hz=self.rate_hz,
+            phase_cycles=self.phase,
+            waveshape=self.waveshape,
+        )
+        right = _render_oscillator_wave(
+            times=local_times,
+            rate_hz=self.rate_hz,
+            phase_cycles=self.phase + self.stereo_phase_offset,
+            waveshape=self.waveshape,
+        )
+        return np.stack([left, right], axis=0)
+
+
+def _render_oscillator_wave(
+    *,
+    times: np.ndarray,
+    rate_hz: float,
+    phase_cycles: float,
+    waveshape: OscillatorWaveshape,
+) -> np.ndarray:
+    """Render a mono oscillator waveform over ``times`` (seconds)."""
+    if waveshape == "sine":
+        phase_rad = 2.0 * math.pi * (rate_hz * times + phase_cycles)
+        return np.sin(phase_rad).astype(np.float64)
+    frac = (rate_hz * times + phase_cycles) % 1.0
+    if waveshape == "saw":
+        return np.asarray(2.0 * frac - 1.0, dtype=np.float64)
+    if waveshape == "triangle":
+        return np.asarray(2.0 * np.abs(2.0 * frac - 1.0) - 1.0, dtype=np.float64)
+    raise ValueError(f"Unsupported OscillatorSource waveshape: {waveshape!r}")
 
 
 @dataclass(frozen=True)
@@ -256,19 +372,12 @@ class MacroSource(ModSource):
                 f"MacroSource {self.name!r} has no registered value"
                 " — call Score.add_macro(name, ...) first"
             )
-        if curve.shape == times.shape:
-            return curve
-        if curve.size == 1:
-            return np.full(times.shape, float(curve[0]), dtype=np.float64)
-        # Macros registered on coarser grids are interpolated onto the
-        # requested times.  The macro_lookup is pre-built at render
-        # time against self.times, so this branch handles per-note
-        # evaluation against a subset of the full grid.
-        return np.interp(
-            times,
-            np.linspace(0.0, context.total_dur, curve.size, dtype=np.float64),
-            curve,
-        )
+        if curve.shape != times.shape:
+            raise ValueError(
+                f"macro {self.name!r} has shape {curve.shape} but expected {times.shape};"
+                " macro lookup was sampled on a different time grid"
+            )
+        return curve
 
 
 @dataclass(frozen=True)
@@ -329,10 +438,10 @@ class RandomSource(ModSource):
             local_times = times
         bucket = np.floor(local_times / hold_period).astype(np.int64)
         unique_buckets, inverse = np.unique(bucket, return_inverse=True)
-        base_seed = _resolve_seed(self.seed, "random_sh")
+        base_seed = seed_or_default(self.seed, "random_sh")
         values = np.empty(unique_buckets.size, dtype=np.float64)
         for index, bucket_value in enumerate(unique_buckets):
-            rng = np.random.default_rng(_stable_seed(base_seed, int(bucket_value)))
+            rng = np.random.default_rng(stable_seed(base_seed, int(bucket_value)))
             if self.output_domain == "unipolar":
                 values[index] = float(rng.random())
             else:
@@ -342,16 +451,16 @@ class RandomSource(ModSource):
 
 @dataclass(frozen=True)
 class ConstantSource(ModSource):
-    """Constant mono or stereo-spread source.
+    """Constant mono value.
 
-    ``value`` is the mono value.  ``stereo_spread`` applies a signed
-    offset used only when a connection has ``stereo=True`` and the
-    destination is stereo-aware (currently ``pan``).  Mono
-    destinations ignore ``stereo_spread``.
+    For stereo pan-split effects on mono destinations, use two voices
+    with opposite-signed ``amount`` on their respective
+    ``ModConnection`` (see ``code_musics/pieces/mod_matrix_study.py``
+    for a demo).  A native stereo source for mono destinations is
+    deferred future work.
     """
 
     value: float = 1.0
-    stereo_spread: float = 0.0
     output_domain: ModSourceDomain = "bipolar"
 
     def sample(self, times: np.ndarray, context: SourceSamplingContext) -> np.ndarray:
@@ -386,11 +495,6 @@ class DriftAdapter(ModSource):
             raise ValueError("DriftAdapter.smoothness must be in [0, 1]")
 
     def sample(self, times: np.ndarray, context: SourceSamplingContext) -> np.ndarray:
-        # Import locally: humanize imports modulation indirectly via
-        # score.py at module load, and circular import protection
-        # here is cheap.
-        from code_musics.humanize import DriftSpec, _sample_drift_curve  # noqa: PLC0415
-
         spec = DriftSpec(
             style=self.style,
             rate_hz=self.rate_hz,
@@ -401,7 +505,7 @@ class DriftAdapter(ModSource):
             spec,
             times=np.asarray(times, dtype=np.float64),
             total_dur=max(context.total_dur, 1e-6),
-            seed=_resolve_seed(self.seed, "drift_adapter"),
+            seed=seed_or_default(self.seed, "drift_adapter"),
         )
 
 
@@ -469,24 +573,6 @@ class ModConnection:
         return signal * float(self.amount)
 
 
-def apply_mode_vectorized(
-    mode: AutomationMode, base: np.ndarray, contribution: np.ndarray
-) -> np.ndarray:
-    """Apply a combine mode to a contribution against a base curve.
-
-    Mirrors the private ``_apply_mode_vectorized`` in ``automation.py``
-    but handles contribution arrays without NaN semantics (matrix
-    signals are always defined).
-    """
-    if mode == "replace":
-        return contribution.astype(np.float64, copy=True)
-    if mode == "add":
-        return base + contribution
-    if mode == "multiply":
-        return base * contribution
-    raise ValueError(f"Unsupported combine mode: {mode!r}")
-
-
 def _apply_power_curve(
     signal: np.ndarray, power: float, domain: ModSourceDomain
 ) -> np.ndarray:
@@ -539,31 +625,7 @@ def _sample_smoothed_random_lfo(
     anchor_times = t0 + np.arange(anchor_count, dtype=np.float64) * period
     rng = np.random.default_rng(seed)
     anchor_values = rng.uniform(-1.0, 1.0, size=anchor_count).astype(np.float64)
-
-    indices = np.searchsorted(anchor_times, times, side="right") - 1
-    indices = np.clip(indices, 0, anchor_count - 1)
-    next_indices = np.clip(indices + 1, 0, anchor_count - 1)
-    anchor_left = anchor_times[indices]
-    anchor_right = anchor_times[next_indices]
-    segment = anchor_right - anchor_left
-    safe_segment = np.where(segment > 0.0, segment, 1.0)
-    frac = np.clip((times - anchor_left) / safe_segment, 0.0, 1.0)
-    weight = 0.5 - 0.5 * np.cos(math.pi * frac)
-    return (1.0 - weight) * anchor_values[indices] + weight * anchor_values[
-        next_indices
-    ]
-
-
-def _resolve_seed(seed: int | None, tag: str) -> int:
-    if seed is not None:
-        return int(seed)
-    return _stable_seed(tag)
-
-
-def _stable_seed(*parts: object) -> int:
-    material = "|".join(str(part) for part in parts).encode("utf-8")
-    digest = hashlib.sha256(material).digest()
-    return int.from_bytes(digest[:8], byteorder="big", signed=False)
+    return hann_crossfade_anchors(times, anchor_times, anchor_values)
 
 
 # --- High-level evaluation helpers ------------------------------------------

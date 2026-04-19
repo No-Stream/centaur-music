@@ -15,6 +15,7 @@ from code_musics.pieces.composition_showcases import (
 )
 from code_musics.pieces.counterpoint_studies import PIECES as _COUNTERPOINT_PIECES
 from code_musics.pieces.crystal_canon import PIECES as _CRYSTAL_CANON_PIECES
+from code_musics.pieces.diva_study import PIECES as _DIVA_STUDY_PIECES
 from code_musics.pieces.effects_showcase import PIECES as _EFFECTS_SHOWCASE_PIECES
 from code_musics.pieces.emergence_reverse import PIECES as _EMERGENCE_REVERSE_PIECES
 from code_musics.pieces.forge import PIECES as _FORGE_PIECES
@@ -92,6 +93,7 @@ PIECES = merge_piece_maps(
     _WARMING_UP_PIECES,
     _FORGE_PIECES,
     _BREATH_STUDY_PIECES,
+    _DIVA_STUDY_PIECES,
     _MD_STUDY_PIECES,
     _VA_SHOWCASE_PIECES,
     _MOD_MATRIX_STUDY_PIECES,

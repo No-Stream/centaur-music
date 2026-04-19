@@ -313,7 +313,8 @@ Current support:
 
 | Engine | Per-sample params |
 |---|---|
-| `polyblep` | `cutoff_hz` |
+| `polyblep` | `cutoff_hz`, `pulse_width`, `osc2_detune_cents`, `osc2_freq_ratio` |
+| `va` | `cutoff_hz`, `osc_spread_cents` |
 
 All other synth destinations still resolve to a scalar at note
 onset.  See `FUTURE.md` for the deferred per-sample destinations
@@ -321,6 +322,56 @@ onset.  See `FUTURE.md` for the deferred per-sample destinations
 family, `vibrato_depth`, etc.).  The `ModConnection` surface is
 unchanged across the two modes — only the plumbing into the engine
 differs.
+
+For audio-rate modulation (above `LFOSource`'s 200 Hz cap), pair
+these destinations with `OscillatorSource` in
+`code_musics/modulation.py` — a sibling to `LFOSource` with
+`waveshape` in `{"sine", "saw", "triangle"}` and no upper rate
+limit.  Typical musical uses: PWM on `pulse_width` (polyblep),
+cross-osc FM on `osc2_freq_ratio`, and audio-rate detune
+modulation on `osc_spread_cents` (va supersaw).
+
+### Per-note voice distortion (`voice_dist_*`)
+
+`polyblep`, `va`, and `filtered_stack` expose a per-note distortion
+slot placed **inside the engine's note loop, after the VCA but
+before per-note buffers are summed into the voice output**.  This
+is the RePro-5 idiom: chord notes distort independently, so
+chord-tone intermodulation is preserved cleanly instead of
+collapsing into IMD mud when you sum first and distort after.
+
+Params (same surface across the three engines):
+
+- `voice_dist_mode: str = "off"` — one of `"off"`, `"soft_clip"`,
+  `"hard_clip"`, `"foldback"`, `"corrode"` (bitcrush + rate
+  reduction), `"saturation"` (dispatches through the modern
+  `apply_saturation`), `"preamp"` (flux-domain transformer via
+  `apply_preamp`).
+- `voice_dist_drive: float = 0.5` — 0.0–2.0.  `drive <= 0` is a
+  fast-path passthrough.  Modulation through zero uses a blend
+  coefficient so there is no step at the threshold.
+- `voice_dist_mix: float = 1.0` — wet/dry inside the slot.  Default
+  is fully wet because this is the voice distortion, not a bus
+  effect; dial drive down or use a voice-level `EffectSpec`
+  insert for blended flavors.
+- `voice_dist_tone: float = 0.0` — -1..1 pre-stage tilt.  Positive
+  brightens (high-shelf blend), negative darkens.
+
+`voice_dist_mode="off"` is the default.  With the default params
+the slot is a true no-op and existing pieces render bit-for-bit
+identically.
+
+### Per-sample oscillator phase noise (`osc_phase_noise`)
+
+`polyblep` and `va` accept `osc_phase_noise: float = 0.0`
+(0.0–1.0).  At `1.0` the oscillator phase accumulator picks up ~1
+cent of jitter per sample — audible as organic zero-crossing
+texture, not pitch wobble.  Distinct from `analog_jitter` (per-note
+onset jitter plus the OB-Xd-style 4 kHz-smoothed CV dither) and
+from `drift_bus` (0.05–0.5 Hz correlated bus drift): phase noise
+is broadband, per-sample, per-voice, and deterministic from the
+note hash.  Each oscillator (osc1/osc2 in polyblep; the 7 supersaw
+voices in va) gets an independent RNG stream.
 
 ## Engine Selection
 
@@ -371,7 +422,7 @@ Available presets:
 - `harpsichord`: `baroque`, `concert`, `bright`, `warm`, `ethereal`, `glass`, `septimal`
 - `piano`: `grand`, `bright`, `warm`, `felt`, `honky_tonk`, `tack`, `glass`, `septimal`
 - `piano_additive`: `grand`, `bright`, `warm`, `felt`, `honky_tonk`, `tack`, `glass`, `septimal`
-- `polyblep`: `warm_lead`, `synth_pluck`, `analog_brass`, `square_lead`, `hoover`, `moog_bass`, `sync_lead`, `acid_bass`, `sub_bass`, `resonant_sweep`, `soft_square_pad`, `juno_pad`, `analog_bass`, `prophet_lead`, `glass_pad`, `moog_lead`, `moog_bass_ladder`, `cs80_brass`, `oberheim_pad`, `jupiter_saw`, `acid_ladder`
+- `polyblep`: `warm_lead`, `synth_pluck`, `analog_brass`, `square_lead`, `hoover`, `moog_bass`, `sync_lead`, `acid_bass`, `sub_bass`, `resonant_sweep`, `soft_square_pad`, `juno_pad`, `analog_bass`, `prophet_lead`, `glass_pad`, `moog_lead`, `moog_bass_ladder`, `cs80_brass`, `oberheim_pad`, `jupiter_saw`, `acid_ladder`, `diva_bass_resonance`, `cs80_attack`, `prophet_pad`, `moog_acid_newton`, `sk_bite_lead`, `cascade_bass`, `sync_screamer`, `ring_mod_lead`
 
 ## Effects
 
@@ -2478,6 +2529,22 @@ Parameters:
   prior behavior. Values above `1.0` cluster the detune near center for a warmer,
   more focused sound. Values below `1.0` spread detune more evenly for a wider,
   more diffuse image. Range `[0.5, 3.0]`.
+- `osc2_sync: bool`
+  Hard sync: when `True`, osc2's phase is reset to 0 every time osc1 wraps past
+  1.0, with PolyBLEP step corrections injected at each sync event to suppress
+  aliasing. Produces the classic chirpy "sawtooth-with-formant-resonance" timbre
+  whose perceived pitch follows osc1 while the formant moves with osc2's
+  detune. Only supported when `osc2_waveform="saw"`; raises `ValueError`
+  otherwise. Default `False`.
+- `osc2_ring_mod: float`
+  Dry/ring blend between the normal osc1+osc2 mix and `osc1 * osc2`. `0.0`
+  (default) preserves the original dry sum
+  `(osc1 + osc2_level*osc2) / (1 + osc2_level)` bit-for-bit. `1.0` outputs pure
+  ring modulation `osc1 * osc2` — osc1's fundamental is suppressed and the
+  spectrum contains sum/difference sidebands of the two oscillator frequencies.
+  Intermediate values mix both paths. Aliasing is bounded for musical detune
+  ratios; at extreme settings use `quality="fast"` or higher to bring in
+  oversampling. Range `[0.0, 1.0]`.
 
 ### Analog Character (polyblep)
 
@@ -2556,14 +2623,53 @@ individually.
 #### Filter Topology
 
 - `filter_topology: str`
-  Selects filter architecture. `"svf"` = 2-pole (12 dB/oct) ZDF state-variable
-  filter. `"ladder"` = 4-pole (24 dB/oct) Moog-style ladder with per-stage
-  saturation. Default `"svf"`.
+  Selects filter architecture. Four options:
+  - `"svf"` — 2-pole (12 dB/oct) ZDF state-variable filter. Default.
+  - `"ladder"` — 4-pole (24 dB/oct) Moog-style ladder with per-stage saturation.
+  - `"sallen_key"` — 2-pole Sallen-Key-flavored ZDF SVF with narrower resonance
+    peak and pre-filter asymmetric soft-clip under drive, producing the biting
+    CEM-3320 character of a Diva-style "Bite" filter. The underlying DSP is
+    the same TPT 2-pole SVF math as `"svf"`, with a tighter Q-to-damping
+    mapping and an asymmetric-tanh input stage that adds even-harmonic bias
+    when `filter_drive > 0`. Literal-SK cross-sample positive-feedback
+    topologies have state-eigenvalue stability issues at moderate Q even
+    when the instantaneous ZDF solve is well-conditioned; this approach
+    preserves the full ZDF/TPT benefits without that risk.
+  - `"cascade"` — 4-pole (24 dB/oct) cascade of four independent ZDF 1-poles
+    plus a separate peaking bandpass at cutoff. No global feedback loop, so
+    the character is smoother and less growly than the Moog ladder — closer
+    to a Prophet-5 rev-2 or Juno VCF. Supports the same 4→3→2→1-pole morph
+    as the ladder via `filter_morph`.
 - `bass_compensation: float`
   Ladder only. Restores low-frequency energy lost to resonance feedback. At 0:
   classic Moog behavior (bass loss at high resonance). At 1.0: full bass
   restoration. Based on Rossum's approach in the Subsequent 37. Default `0.0`.
   Range `[0, 1]`.
+
+#### Quality Modes
+
+- `quality: str`
+  Engine-level quality control for the ladder solver and internal oversampling.
+  Default `"great"`. Raising quality gives more accurate feedback behavior
+  and less aliasing under drive, at linearly proportional CPU cost.
+
+  | mode | solver | Newton iters | tol | oversample |
+  |-|-|-|-|-|
+  | `"draft"` | ADAA (one-step-delay tanh, as pre-2026-overhaul) | — | — | 1x |
+  | `"fast"` | Newton | 2 | 1e-8 | 2x |
+  | `"great"` | Newton | 4 | 1e-9 | 2x |
+  | `"divine"` | Newton | 8 | 1e-10 | 4x |
+
+  The Newton solver resolves the ladder's delay-free feedback loop implicitly
+  at the current sample (Diva/Zavalishin-style), rather than using the prior
+  sample's state as the feedback input. This is audible at high resonance
+  (cleaner self-oscillation onset), high drive (less intermodulation
+  between drive nonlinearity and resonance), and fast cutoff modulation.
+  SVF topology ignores the solver; oversampling still applies.
+
+  The ladder k-mapping differs per solver so both reach self-oscillation at
+  appropriate user-facing Q values: `k_adaa = min(3.98, 4(1 - 1/(2q)))`,
+  `k_newton = min(4.25, 4.2(1 - 1/(2q)))`.
 
 #### Filter Mode Morphing
 
@@ -2604,6 +2710,40 @@ up from exact silence. Inaudible on normal material.
   envelope level — attack peaks get maximum saturation, release tails stay
   clean. At 0.1-0.3: subtle warmth. At 0.5-0.8: audible push on loud notes.
   Default `0.0`. Range `[0, 1]`.
+
+#### Transient / Reset Modes
+
+- `transient_mode: str`
+  Controls what oscillator state (phase and DC-offset sign) is carried from
+  one note to the next within a voice.  Supported modes:
+
+  | mode | oscillator phase | DC-offset sign | character |
+  |-|-|-|-|
+  | `"analog"` (default) | carried forward | carried forward | most analog-feeling — each note inherits the previous note's exact phase + DC sign, eliminating zero-crossing clicks on rapid restrikes |
+  | `"dc_reset"` | carried forward | redrawn per note | clean attack with a fresh DC decision but no phase-reset glitch — useful when DC drift would otherwise accumulate obvious asymmetric character |
+  | `"osc_reset"` | deterministic per-note seed | redrawn per note | fully reset oscillator state, approximating the pre-carry-era behavior where every note started from a fresh random phase — picks up a faint "new note" click that can be musical on staccato patches |
+
+  The default `"analog"` is usually the right choice.  Reach for `"dc_reset"`
+  on bass patches where you want a fresh attack feel but smooth phase
+  continuity; reach for `"osc_reset"` only when you specifically want the
+  legacy percussive onset.
+
+  State carryover relies on a per-voice mutable `voice_state` dict that the
+  score-level render loop threads through automatically — you do not need
+  to manage it yourself.  When `voice_state` is `None` (for example, in
+  isolated `render_note_signal(...)` calls from a unit test), every note
+  starts fresh regardless of `transient_mode`, matching the pre-carry era.
+
+  Example:
+
+  ```yaml
+  synth_defaults:
+    engine: polyblep
+    preset: moog_bass_ladder
+    transient_mode: dc_reset
+  ```
+
+  Applies to both the `polyblep` and `filtered_stack` engines.
 
 Validation:
 

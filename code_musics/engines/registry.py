@@ -1508,6 +1508,150 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "sustain_level": 0.0,
             "release": 0.08,
         },
+        # ----- Diva-inspired showcase presets -----
+        "diva_bass_resonance": {
+            "waveform": "saw",
+            "filter_topology": "ladder",
+            "quality": "divine",
+            "cutoff_hz": 140.0,
+            "resonance_q": 14.0,
+            "filter_drive": 1.2,
+            "filter_env_amount": 2.8,
+            "filter_env_decay": 0.55,
+            "keytrack": 0.25,
+            "bass_compensation": 0.7,
+            "attack": 0.003,
+            "decay": 0.5,
+            "sustain_level": 0.45,
+            "release": 0.22,
+        },
+        "cs80_attack": {
+            "waveform": "saw",
+            "filter_topology": "sallen_key",
+            "quality": "great",
+            "cutoff_hz": 1_100.0,
+            "resonance_q": 1.8,
+            "filter_drive": 0.35,
+            "filter_env_amount": 1.5,
+            "filter_env_decay": 0.35,
+            "keytrack": 0.35,
+            "hpf_cutoff_hz": 60.0,
+            "hpf_resonance_q": 0.707,
+            "attack": 0.015,
+            "decay": 0.22,
+            "sustain_level": 0.7,
+            "release": 0.45,
+            "voice_card_spread": 1.6,
+            "pitch_drift": 0.18,
+        },
+        "prophet_pad": {
+            "waveform": "saw",
+            "filter_topology": "cascade",
+            "quality": "great",
+            "cutoff_hz": 1_400.0,
+            "resonance_q": 2.2,
+            "filter_drive": 0.18,
+            "filter_env_amount": 0.8,
+            "filter_env_decay": 1.2,
+            "keytrack": 0.4,
+            "osc2_level": 0.8,
+            "osc2_waveform": "saw",
+            "osc2_detune_cents": 6.0,
+            "attack": 0.18,
+            "decay": 0.6,
+            "sustain_level": 0.8,
+            "release": 0.9,
+            "voice_card_spread": 1.2,
+        },
+        "moog_acid_newton": {
+            "waveform": "saw",
+            "filter_topology": "ladder",
+            "quality": "great",
+            "cutoff_hz": 550.0,
+            "resonance_q": 10.0,
+            "filter_drive": 0.8,
+            "filter_env_amount": 3.8,
+            "filter_env_decay": 0.14,
+            "keytrack": 0.15,
+            "bass_compensation": 0.45,
+            "feedback_amount": 0.2,
+            "feedback_saturation": 0.45,
+            "attack": 0.002,
+            "decay": 0.22,
+            "sustain_level": 0.0,
+            "release": 0.08,
+        },
+        "sk_bite_lead": {
+            "waveform": "square",
+            "pulse_width": 0.38,
+            "filter_topology": "sallen_key",
+            "quality": "great",
+            "cutoff_hz": 1_900.0,
+            "resonance_q": 4.5,
+            "filter_drive": 0.55,
+            "filter_env_amount": 1.9,
+            "filter_env_decay": 0.22,
+            "keytrack": 0.2,
+            "attack": 0.008,
+            "decay": 0.3,
+            "sustain_level": 0.6,
+            "release": 0.2,
+        },
+        "cascade_bass": {
+            "waveform": "saw",
+            "filter_topology": "cascade",
+            "quality": "great",
+            "cutoff_hz": 260.0,
+            "resonance_q": 3.5,
+            "filter_drive": 0.45,
+            "filter_env_amount": 2.2,
+            "filter_env_decay": 0.32,
+            "keytrack": 0.22,
+            "osc2_level": 0.6,
+            "osc2_semitones": -12,
+            "attack": 0.004,
+            "decay": 0.35,
+            "sustain_level": 0.35,
+            "release": 0.12,
+        },
+        "sync_screamer": {
+            "waveform": "saw",
+            "filter_topology": "sallen_key",
+            "quality": "great",
+            "cutoff_hz": 2_400.0,
+            "resonance_q": 3.2,
+            "filter_drive": 0.5,
+            "filter_env_amount": 1.6,
+            "filter_env_decay": 0.35,
+            "keytrack": 0.3,
+            "osc2_level": 1.0,
+            "osc2_waveform": "saw",
+            "osc2_sync": True,
+            "osc2_detune_cents": 700.0,
+            "attack": 0.005,
+            "decay": 0.3,
+            "sustain_level": 0.6,
+            "release": 0.18,
+        },
+        "ring_mod_lead": {
+            "waveform": "saw",
+            "filter_topology": "cascade",
+            "quality": "great",
+            "cutoff_hz": 3_200.0,
+            "resonance_q": 2.2,
+            "filter_drive": 0.25,
+            "filter_env_amount": 1.1,
+            "filter_env_decay": 0.4,
+            "keytrack": 0.25,
+            "osc2_level": 0.9,
+            "osc2_waveform": "saw",
+            "osc2_ring_mod": 0.6,
+            "osc2_detune_cents": 386.0,
+            "attack": 0.006,
+            "decay": 0.35,
+            "sustain_level": 0.55,
+            "release": 0.22,
+        },
     },
     "organ": {
         "warm": {
@@ -3894,7 +4038,7 @@ def _rewrite_aliases_in_place(
         resolved_canonical_keys.add(canonical_name)
 
 
-_PARAM_PROFILE_AWARE_ENGINES: set[str] = {"polyblep"}
+_PARAM_PROFILE_AWARE_ENGINES: set[str] = {"polyblep", "va"}
 
 
 def register_param_profile_support(engine_name: str) -> None:
@@ -3906,6 +4050,23 @@ def register_param_profile_support(engine_name: str) -> None:
     _PARAM_PROFILE_AWARE_ENGINES.add(engine_name)
 
 
+def engine_supports_param_profile(engine_name: str, param_name: str) -> bool:
+    """Return whether *engine_name* consumes a per-sample profile for *param_name*.
+
+    Used by the Score render path to decide between the scalar matrix
+    fold (engine does not consume the profile) and the per-sample
+    profile path (engine does).  Currently engines either consume all
+    per-sample-capable destinations or none, so ``param_name`` is only
+    used so callers can ask at the destination granularity the matrix
+    routes at.
+    """
+    del param_name
+    return engine_name in _PARAM_PROFILE_AWARE_ENGINES
+
+
+_VOICE_STATE_AWARE_ENGINES: set[str] = {"polyblep", "filtered_stack"}
+
+
 def render_note_signal(
     *,
     freq: float,
@@ -3915,6 +4076,7 @@ def render_note_signal(
     params: dict[str, Any],
     freq_trajectory: np.ndarray | None = None,
     param_profiles: dict[str, np.ndarray] | None = None,
+    voice_state: dict[str, Any] | None = None,
 ) -> np.ndarray:
     """Render a note through the requested engine.
 
@@ -3924,6 +4086,12 @@ def render_note_signal(
     consume these; others silently ignore the kwarg and fall back to
     the scalar value already in ``params``.  See ``docs/synth_api.md``
     for the opt-in parameter list per engine.
+
+    ``voice_state`` is a mutable dict owned by the score-level per-voice
+    render loop.  Only engines in ``_VOICE_STATE_AWARE_ENGINES``
+    (polyblep, filtered_stack) consume it — other engines silently
+    ignore it.  When ``None`` the voice-state carryover is disabled and
+    each note starts fresh, matching the pre-carry era.
     """
     resolved = resolve_synth_params(params)
     engine_name = str(resolved.get("engine", "additive"))
@@ -3941,7 +4109,19 @@ def render_note_signal(
     }
     if freq_trajectory is not None:
         renderer_kwargs["freq_trajectory"] = freq_trajectory
-    if param_profiles and engine_name in _PARAM_PROFILE_AWARE_ENGINES:
+    if param_profiles:
+        if engine_name not in _PARAM_PROFILE_AWARE_ENGINES:
+            raise ValueError(
+                "Engine "
+                f"{engine_name!r} does not consume per-sample param_profiles "
+                f"but received profiles for: {sorted(param_profiles)}. "
+                "Score should route non-aware engines through the scalar "
+                "matrix fold; register the engine via "
+                "register_param_profile_support() if it now supports "
+                "param_profiles."
+            )
         renderer_kwargs["param_profiles"] = param_profiles
+    if voice_state is not None and engine_name in _VOICE_STATE_AWARE_ENGINES:
+        renderer_kwargs["voice_state"] = voice_state
 
     return _ENGINES[engine_name](**renderer_kwargs)

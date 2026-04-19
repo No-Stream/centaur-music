@@ -349,9 +349,21 @@ See `FUTURE.md` for way more ideas.
   (`q_comb_pad`, `q_comb_bell`, `q_spectral_lead`) flavors. The new
   `apply_comb(...)` primitive in `_filters.py` is available to future engines.
   See `docs/synth_api.md` and `code_musics/pieces/va_showcase.py`.
-- The `polyblep` and `filtered_stack` engines support `filter_topology="ladder"`
-  for a 4-pole (24 dB/oct) Moog-style ladder filter with per-stage saturation
-  and `bass_compensation` for restoring low-frequency energy at high resonance.
+- The `polyblep` and `filtered_stack` engines support four `filter_topology`
+  options: `"svf"` (2-pole ZDF state-variable, default), `"ladder"` (4-pole
+  Moog-style with per-stage saturation + `bass_compensation`), `"sallen_key"`
+  (Diva-style biting 2-pole with pre-filter asymmetric soft-clip under drive),
+  and `"cascade"` (4-pole Prophet-5-style cascade of independent 1-poles +
+  peaking bandpass — no global tanh growl).
+- The ladder filter supports a Diva-style **Newton-iterated ZDF solver**
+  (`filter_solver="newton"`) that resolves the delay-free feedback loop
+  implicitly per-sample. Engine-level `quality` param (`"draft"` / `"fast"`
+  / `"great"` / `"divine"`, default `"great"`) picks the solver + internal
+  oversampling factor. Audibly cleaner self-oscillation and drive behavior
+  vs. the prior one-step-delay ADAA path. See `docs/synth_api.md` Quality
+  Modes for the full mapping and `diva_bass_resonance`, `cs80_attack`,
+  `prophet_pad`, `moog_acid_newton`, `sk_bite_lead`, `cascade_bass` presets
+  for showcase patches.
 - Oscillator imperfection params (`osc_asymmetry`, `osc_softness`,
   `osc_dc_offset`, `osc_shape_drift`) model analog VCO behavior in the
   `polyblep` and `filtered_stack` engines.
@@ -364,6 +376,26 @@ See `FUTURE.md` for way more ideas.
   (pitch ±0.05 semitone, cutoff ±3% at amount=1.0, 4 kHz one-pole smoothed)
   on polyblep + filtered_stack, stacked on top of the stable voice_card
   offsets; `analog_jitter=0` disables it.
+- `voice_dist_mode` on `polyblep`, `va`, and `filtered_stack` adds a
+  RePro-5-style per-note distortion slot applied *inside the engine's note
+  loop, after the VCA and before the per-note buffers sum into the voice
+  output*. Modes: `soft_clip` / `hard_clip` / `foldback` / `corrode` /
+  `saturation` (reuses `apply_saturation`) / `preamp` (reuses
+  `apply_preamp`). Chord tones distort independently, preserving harmonic
+  identity instead of collapsing into the IMD mud that a post-mix shaper
+  produces. Default `off`; paired params `voice_dist_drive`,
+  `voice_dist_mix`, `voice_dist_tone`. See `docs/synth_api.md`.
+- Audio-rate modulation coverage: `polyblep` accepts per-sample
+  `pulse_width`, `osc2_detune_cents`, `osc2_freq_ratio` (in addition to
+  `cutoff_hz`), and `va` accepts per-sample `osc_spread_cents`. Drive
+  these from the new `OscillatorSource` in `code_musics/modulation.py` —
+  a sibling to `LFOSource` with no 200 Hz cap, usable at audio rate for
+  PWM, cross-osc FM, and detune modulation.
+- `osc_phase_noise` (0.0–1.0) on `polyblep` and `va` adds per-sample
+  phase-accumulator jitter — broadband zero-crossing texture distinct
+  from `analog_jitter` (CV-rail dither) and `drift_bus` (slow correlated
+  drift). Deterministic from note hash; per-oscillator independent
+  streams.
 - `filter_morph` enables continuous blending between filter modes (SVF:
   LP/BP/HP/Notch cycle; ladder: pole-tap blending for 24 -> 6 dB/oct slope
   control). Automatable.
@@ -606,7 +638,7 @@ delegation-to-subagents pattern.
 
 ## Test Philosophy
 
-- Test early and often. Ideally write tests _first_ then code (TDD).  
+- Test early and often. Ideally write tests *first* then code (TDD).  
 - Focus on realistic, e2e tests (smoke, integration).  
 - No need for trivial tests or testing each unexpected edge case. First and foremost, tests should validate that code runs properly, end to end, without major bugs; and they should prevent regressions.
 - Backward compatibility is not always required or expected; this is a local, creative library not a business one.
@@ -632,7 +664,7 @@ delegation-to-subagents pattern.
 - four tet (pretty and euphonic but not cheesy, wandering arps, cool organic sounds)
 - autechre (creative, glitchy, weird, but still poppy at its core)
 - emotional journey side of techno, think carl craig's "at les"
-(for more ideas, use `make inspire`; this is an idea generator inspired by Eno's _Oblique Strategies_)
+(for more ideas, use `make inspire`; this is an idea generator inspired by Eno's *Oblique Strategies*)
 
 some tuning schemes -
 

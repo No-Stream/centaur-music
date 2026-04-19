@@ -803,7 +803,10 @@ Targets reuse `AutomationTarget`:
 - `kind="synth"` — any name in
   `_SUPPORTED_SYNTH_AUTOMATION_PARAMS`;
 - `kind="control"` — `mix_db`, `pan`, `send_db`, `return_db`,
-  `pre_fx_gain_db`, `wet`, `mix`, `wet_level`;
+  `pre_fx_gain_db`. Effect wet/mix/wet_level targets (`wet`, `mix`,
+  `wet_level`) are reachable by `AutomationSpec` but **not yet** by
+  matrix `ModConnection`s; see `FUTURE.md` under "Modulation
+  architecture";
 - `kind="pitch_ratio"` — the dedicated `pitch_ratio` target.
 
 ### Time resolution

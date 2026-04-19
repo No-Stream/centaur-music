@@ -22,7 +22,12 @@ from code_musics.engines._drum_layers import (
 from code_musics.engines._drum_macros import resolve_macros
 from code_musics.engines._drum_utils import resolve_velocity_timbre, rng_for_note
 from code_musics.engines._envelopes import render_envelope
-from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_zdf_svf
+from code_musics.engines._filters import (
+    _SUPPORTED_FILTER_MODES,
+    _SUPPORTED_FILTER_TOPOLOGIES,
+    apply_filter,
+    apply_zdf_svf,
+)
 from code_musics.engines._pi_macros import resolve_pi_macros
 from code_musics.engines._waveshaper import ALGORITHM_NAMES, apply_waveshaper
 
@@ -110,6 +115,9 @@ def render(
     filter_q = float(params.get("filter_q", 0.707))
     filter_drive = float(params.get("filter_drive", 0.0))
     filter_envelope_raw = params.get("filter_envelope")
+    filter_topology = str(params.get("filter_topology", "svf")).lower()
+    filter_morph = float(params.get("filter_morph", 0.0))
+    k35_feedback_asymmetry = float(params.get("k35_feedback_asymmetry", 0.0))
 
     # --- Extract noise/metallic per-layer filter ---
     noise_filter_mode: str | None = params.get("noise_filter_mode")
@@ -276,20 +284,43 @@ def render(
 
     # --- Voice filter (post-mix) ---
     if filter_mode is not None:
+        if filter_topology not in _SUPPORTED_FILTER_TOPOLOGIES:
+            raise ValueError(
+                f"Unsupported filter_topology: {filter_topology!r}. "
+                f"Supported: {sorted(_SUPPORTED_FILTER_TOPOLOGIES)}"
+            )
         if filter_envelope_raw is not None:
             cutoff_profile = render_envelope(
                 filter_envelope_raw, n_samples, default_value=filter_cutoff_hz
             )
         else:
             cutoff_profile = np.full(n_samples, filter_cutoff_hz, dtype=np.float64)
-        signal = apply_zdf_svf(
-            signal,
-            cutoff_profile=cutoff_profile,
-            resonance_q=filter_q,
-            sample_rate=sample_rate,
-            filter_mode=filter_mode,
-            filter_drive=filter_drive,
-        )
+        # SVF stays on its fast direct path to keep existing drums bit-identical;
+        # any non-SVF topology goes through the unified dispatcher.  Since
+        # ``filter_topology`` defaults to ``"svf"``, this preserves existing
+        # behavior exactly and only engages when a drum preset asks for a
+        # different analog character.
+        if filter_topology == "svf":
+            signal = apply_zdf_svf(
+                signal,
+                cutoff_profile=cutoff_profile,
+                resonance_q=filter_q,
+                sample_rate=sample_rate,
+                filter_mode=filter_mode,
+                filter_drive=filter_drive,
+            )
+        else:
+            signal = apply_filter(
+                signal,
+                cutoff_profile=cutoff_profile,
+                resonance_q=filter_q,
+                sample_rate=sample_rate,
+                filter_mode=filter_mode,
+                filter_drive=filter_drive,
+                filter_topology=filter_topology,
+                filter_morph=filter_morph,
+                k35_feedback_asymmetry=k35_feedback_asymmetry,
+            )
 
     # --- Voice shaper (post-mix) ---
     signal = _apply_layer_shaper(

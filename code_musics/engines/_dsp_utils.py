@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from hashlib import sha256
 from typing import Any
 
@@ -16,12 +16,13 @@ import numba
 import numpy as np
 from scipy.signal import resample_poly
 
-from code_musics.engines._filters import apply_filter
+from code_musics.engines._filters import FilterParams, apply_filter
 from code_musics.humanize import build_drift_bus  # re-exported for legacy callers
 
 __all__ = ["build_drift_bus"]
 
 logger: logging.Logger = logging.getLogger(__name__)
+
 
 NYQUIST_FADE_START = 0.85
 MAX_DRIFT_CENTS = 4.0
@@ -222,14 +223,48 @@ def rng_for_note(
 
 
 @numba.njit(cache=True)
-def _iir_lowpass_1pole(raw_noise: np.ndarray, alpha: float) -> np.ndarray:
-    n = raw_noise.shape[0]
+def iir_lowpass_1pole(signal: np.ndarray, alpha: float) -> np.ndarray:
+    """Single-pole IIR lowpass: ``y[n] = alpha*x[n] + (1-alpha)*y[n-1]``, y[-1]=0."""
+    n = signal.shape[0]
     out = np.empty(n, dtype=np.float64)
-    out[0] = raw_noise[0] * alpha
+    if n == 0:
+        return out
+    out[0] = signal[0] * alpha
     one_minus_alpha = 1.0 - alpha
     for j in range(1, n):
-        out[j] = alpha * raw_noise[j] + one_minus_alpha * out[j - 1]
+        out[j] = alpha * signal[j] + one_minus_alpha * out[j - 1]
     return out
+
+
+# Legacy alias retained for older call sites that import the private name.
+_iir_lowpass_1pole = iir_lowpass_1pole
+
+
+def alpha_from_cutoff(cutoff_hz: float, sample_rate: int) -> float:
+    """RC-style one-pole lowpass coefficient: ``alpha = dt / (RC + dt)``.
+
+    Matches the coefficient convention used by :func:`iir_lowpass_1pole`
+    (where ``alpha`` is the input weight).  ``cutoff_hz`` values <= 0 are
+    floored to a tiny positive epsilon to avoid a divide-by-zero.
+    """
+    dt = 1.0 / max(float(sample_rate), 1.0)
+    rc = 1.0 / (2.0 * math.pi * max(cutoff_hz, 1e-6))
+    return dt / (rc + dt)
+
+
+def smoothstep_blend(value: float, epsilon: float) -> float:
+    """Smoothstep crossfade coefficient for ``value`` entering a process.
+
+    Returns 0 for ``value <= 0``, the classic ``3t² - 2t³`` smoothstep for
+    ``0 < value < epsilon``, and 1 for ``value >= epsilon``.  ``epsilon``
+    must be positive.
+    """
+    if value <= 0.0:
+        return 0.0
+    if value >= epsilon:
+        return 1.0
+    t = value / epsilon
+    return float(t * t * (3.0 - 2.0 * t))
 
 
 @numba.njit(cache=True)
@@ -1074,6 +1109,7 @@ def extract_analog_params(params: dict[str, Any]) -> dict[str, Any]:
         "osc_dc_offset": float(params.get("osc_dc_offset", 0.0)),
         "osc_shape_drift": float(params.get("osc_shape_drift", 0.0)),
         "quality": str(params.get("quality", "great")),
+        "transient_mode": str(params.get("transient_mode", "analog")),
     }
 
 
@@ -1100,6 +1136,121 @@ class QualityConfig:
 
 
 _SUPPORTED_QUALITIES: set[str] = {"draft", "fast", "great", "divine"}
+
+
+# ---------------------------------------------------------------------------
+# Transient / reset modes
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TransientConfig:
+    """Per-note reset policy for oscillator phase and DC offset carry-over.
+
+    Modes: ``analog`` (carry both), ``dc_reset`` (carry phase, reset DC),
+    ``osc_reset`` (reset both — per-note random phase).
+    """
+
+    reset_phase: bool
+    reset_dc: bool
+
+
+_SUPPORTED_TRANSIENT_MODES: set[str] = {
+    "analog",
+    "dc_reset",
+    "osc_reset",
+}
+
+
+def resolve_transient_mode(mode: str) -> TransientConfig:
+    """Return the `TransientConfig` for a named transient mode.
+
+    Supported modes: ``analog`` (default), ``dc_reset``, ``osc_reset``.
+    Raises ``ValueError`` for any other value — fail fast rather than
+    silently falling back to a default.
+    """
+    if mode == "analog":
+        return TransientConfig(reset_phase=False, reset_dc=False)
+    if mode == "dc_reset":
+        return TransientConfig(reset_phase=False, reset_dc=True)
+    if mode == "osc_reset":
+        return TransientConfig(reset_phase=True, reset_dc=True)
+    raise ValueError(
+        f"Unknown transient_mode: {mode!r}. "
+        f"Supported: {sorted(_SUPPORTED_TRANSIENT_MODES)}"
+    )
+
+
+def apply_transient_state(
+    voice_state: dict[str, Any] | None,
+    *,
+    transient_config: TransientConfig,
+    fresh_phase: float,
+    fresh_dc_signs: tuple[float, float],
+) -> tuple[float, float, float, float]:
+    """Resolve per-note oscillator phases + DC signs from the voice state.
+
+    Returns ``(start_phase_osc1, start_phase_osc2, dc_sign_osc1, dc_sign_osc2)``
+    with both phases in radians and DC signs as ``+/- 1.0`` multipliers on
+    ``osc_dc_offset``.
+
+    When ``voice_state`` is ``None`` or lacks a given key, the corresponding
+    fresh input is returned.  ``reset_phase`` discards both prior phases;
+    ``reset_dc`` discards both prior DC signs.  osc2's phase defaults to
+    ``fresh_phase`` when not present in the state dict so callers can
+    construct their own osc2 start phase downstream when osc2 isn't active.
+    """
+    if voice_state is None:
+        return (
+            fresh_phase,
+            fresh_phase,
+            fresh_dc_signs[0],
+            fresh_dc_signs[1],
+        )
+
+    if transient_config.reset_phase or "phase_osc1" not in voice_state:
+        start_phase_osc1 = fresh_phase
+    else:
+        start_phase_osc1 = float(voice_state["phase_osc1"])
+
+    if transient_config.reset_phase or "phase_osc2" not in voice_state:
+        start_phase_osc2 = fresh_phase
+    else:
+        start_phase_osc2 = float(voice_state["phase_osc2"])
+
+    if transient_config.reset_dc or "dc_sign_osc1" not in voice_state:
+        dc_sign_osc1 = fresh_dc_signs[0]
+    else:
+        dc_sign_osc1 = float(voice_state["dc_sign_osc1"])
+
+    if transient_config.reset_dc or "dc_sign_osc2" not in voice_state:
+        dc_sign_osc2 = fresh_dc_signs[1]
+    else:
+        dc_sign_osc2 = float(voice_state["dc_sign_osc2"])
+
+    return start_phase_osc1, start_phase_osc2, dc_sign_osc1, dc_sign_osc2
+
+
+def snapshot_voice_state(
+    voice_state: dict[str, Any] | None,
+    *,
+    final_phase_osc1: float,
+    final_phase_osc2: float,
+    dc_sign_osc1: float,
+    dc_sign_osc2: float,
+) -> None:
+    """Persist end-of-note oscillator state back into the voice state dict.
+
+    A no-op when ``voice_state`` is ``None``.  Both phases are stored as
+    continuous radian values; callers need not pre-wrap since the oscillator
+    takes ``start_phase`` modulo 2π anyway.
+    """
+    if voice_state is None:
+        return
+    voice_state["phase_osc1"] = float(final_phase_osc1)
+    voice_state["phase_osc2"] = float(final_phase_osc2)
+    voice_state["dc_sign_osc1"] = float(dc_sign_osc1)
+    voice_state["dc_sign_osc2"] = float(dc_sign_osc2)
 
 
 def resolve_quality_mode(quality: str) -> QualityConfig:
@@ -1144,6 +1295,7 @@ def apply_filter_oversampled(
     filter_solver: str = "adaa",
     max_newton_iters: int = 4,
     newton_tolerance: float = 1e-9,
+    k35_feedback_asymmetry: float = 0.0,
 ) -> np.ndarray:
     """Run `apply_filter` at ``oversample_factor * sample_rate``.
 
@@ -1157,25 +1309,30 @@ def apply_filter_oversampled(
     if oversample_factor < 1:
         raise ValueError("oversample_factor must be >= 1")
 
+    fp = FilterParams(
+        resonance_q=resonance_q,
+        filter_mode=filter_mode,
+        filter_drive=filter_drive,
+        filter_even_harmonics=filter_even_harmonics,
+        filter_topology=filter_topology,
+        bass_compensation=bass_compensation,
+        filter_morph=filter_morph,
+        hpf_cutoff_hz=hpf_cutoff_hz,
+        hpf_resonance_q=hpf_resonance_q,
+        feedback_amount=feedback_amount,
+        feedback_saturation=feedback_saturation,
+        filter_solver=filter_solver,
+        k35_feedback_asymmetry=k35_feedback_asymmetry,
+        max_newton_iters=max_newton_iters,
+        newton_tolerance=newton_tolerance,
+    )
+
     if oversample_factor == 1:
         return apply_filter(
             signal,
             cutoff_profile=cutoff_profile,
-            resonance_q=resonance_q,
             sample_rate=sample_rate,
-            filter_mode=filter_mode,
-            filter_drive=filter_drive,
-            filter_even_harmonics=filter_even_harmonics,
-            filter_topology=filter_topology,
-            bass_compensation=bass_compensation,
-            filter_morph=filter_morph,
-            hpf_cutoff_hz=hpf_cutoff_hz,
-            hpf_resonance_q=hpf_resonance_q,
-            feedback_amount=feedback_amount,
-            feedback_saturation=feedback_saturation,
-            filter_solver=filter_solver,
-            max_newton_iters=max_newton_iters,
-            newton_tolerance=newton_tolerance,
+            **asdict(fp),
         )
 
     n_base = int(signal.shape[0])
@@ -1218,21 +1375,8 @@ def apply_filter_oversampled(
     filtered_up = apply_filter(
         signal_up,
         cutoff_profile=cutoff_up,
-        resonance_q=resonance_q,
         sample_rate=sample_rate * oversample_factor,
-        filter_mode=filter_mode,
-        filter_drive=filter_drive,
-        filter_even_harmonics=filter_even_harmonics,
-        filter_topology=filter_topology,
-        bass_compensation=bass_compensation,
-        filter_morph=filter_morph,
-        hpf_cutoff_hz=hpf_cutoff_hz,
-        hpf_resonance_q=hpf_resonance_q,
-        feedback_amount=feedback_amount,
-        feedback_saturation=feedback_saturation,
-        filter_solver=filter_solver,
-        max_newton_iters=max_newton_iters,
-        newton_tolerance=newton_tolerance,
+        **asdict(fp),
     )
 
     filtered = resample_poly(
@@ -1643,6 +1787,47 @@ def apply_voice_card_post_offsets(
     )
     drift_rate_hz *= 1.0 + vc_offsets["drift_rate_offset_pct"] / 100.0
     return resonance_q, drift_rate_hz
+
+
+# ---------------------------------------------------------------------------
+# Scalar PolyBLEP step correction (for hard-sync / per-event discontinuities)
+# ---------------------------------------------------------------------------
+
+
+@numba.njit(cache=True)
+def apply_polyblep_step_correction(
+    signal: np.ndarray,
+    event_sample: int,
+    event_fraction: float,
+    step_amplitude: float,
+) -> None:
+    """In-place scalar PolyBLEP step correction at a single discontinuity.
+
+    Replaces a vertical step of size ``step_amplitude`` (``y_post - y_pre``)
+    with a bandlimited version using the standard 2-point PolyBLEP kernel.
+
+    ``event_sample`` + ``event_fraction`` is the continuous-sample time of
+    the event; ``event_fraction`` lies in ``[0, 1)`` and measures how far
+    past ``event_sample`` the exact crossing occurred.  The correction is
+    applied to ``signal[event_sample]`` (pre-event sample) and
+    ``signal[event_sample + 1]`` (post-event sample).
+
+    Kernel derivation mirrors the vectorized saw correction in
+    :func:`code_musics.engines._oscillators.polyblep_saw`.  For arbitrary
+    step ``d``:
+
+        pre:  signal[k]   += (d / 2) * (1 - frac) ** 2
+        post: signal[k+1] -= (d / 2) * (frac) ** 2
+    """
+    n = signal.shape[0]
+    half_step = 0.5 * step_amplitude
+    frac = event_fraction
+    one_minus = 1.0 - frac
+    if 0 <= event_sample < n:
+        signal[event_sample] += half_step * one_minus * one_minus
+    post_idx = event_sample + 1
+    if 0 <= post_idx < n:
+        signal[post_idx] -= half_step * frac * frac
 
 
 # --- Shared drift bus --------------------------------------------------------

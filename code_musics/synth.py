@@ -23,6 +23,7 @@ from scipy.signal import butter, lfilter, resample_poly, sosfilt, tf2sos
 
 from code_musics.automation import apply_control_automation
 from code_musics.engines._dsp_utils import classify_thd, compute_signal_thd
+from code_musics.modulation import combine_connections_on_curve
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -6028,6 +6029,8 @@ def _resolve_effect_amount_automation(
     params: dict[str, Any],
     signal_length: int,
     start_time_seconds: float,
+    matrix_connections: list[Any] | None = None,
+    source_sampling_context: Any | None = None,
 ) -> tuple[str, np.ndarray] | None:
     automation_specs = list(getattr(effect, "automation", []))
     targeted_specs = [
@@ -6036,10 +6039,17 @@ def _resolve_effect_amount_automation(
         if spec.target.kind == "control"
         and spec.target.name in _SUPPORTED_EFFECT_AMOUNT_AUTOMATION_TARGETS
     ]
-    if not targeted_specs:
+    matrix_conns = [
+        connection
+        for connection in (matrix_connections or [])
+        if connection.target.kind == "control"
+        and connection.target.name in _SUPPORTED_EFFECT_AMOUNT_AUTOMATION_TARGETS
+    ]
+    if not targeted_specs and not matrix_conns:
         return None
 
     target_names = {spec.target.name for spec in targeted_specs}
+    target_names.update(connection.target.name for connection in matrix_conns)
     if len(target_names) != 1:
         raise ValueError(
             "effect automation must target exactly one of mix, wet, wet_level"
@@ -6060,6 +6070,17 @@ def _resolve_effect_amount_automation(
         target_name=target_name,
         times=signal_times,
     )
+    if matrix_conns:
+        if source_sampling_context is None:
+            raise ValueError(
+                "matrix connections on effect wet require source_sampling_context"
+            )
+        amount_curve = combine_connections_on_curve(
+            base=amount_curve,
+            connections=matrix_conns,
+            times=signal_times,
+            context=source_sampling_context,
+        )
     if np.any((amount_curve < 0.0) | (amount_curve > 1.0)):
         raise ValueError(
             f"effect automation target {target_name!r} must stay within [0, 1]"
@@ -6172,6 +6193,8 @@ def apply_effect_chain(
     sidechain_signals: Mapping[str, np.ndarray] | None = ...,
     signal_name: str | None = ...,
     start_time_seconds: float = ...,
+    matrix_connections: list[Any] | None = ...,
+    source_sampling_context: Any | None = ...,
     return_analysis: Literal[False] = ...,
 ) -> np.ndarray: ...
 
@@ -6184,6 +6207,8 @@ def apply_effect_chain(
     sidechain_signals: Mapping[str, np.ndarray] | None = ...,
     signal_name: str | None = ...,
     start_time_seconds: float = ...,
+    matrix_connections: list[Any] | None = ...,
+    source_sampling_context: Any | None = ...,
     return_analysis: Literal[True],
 ) -> tuple[np.ndarray, list[EffectAnalysisEntry]]: ...
 
@@ -6195,6 +6220,8 @@ def apply_effect_chain(
     sidechain_signals: Mapping[str, np.ndarray] | None = None,
     signal_name: str | None = None,
     start_time_seconds: float = 0.0,
+    matrix_connections: list[Any] | None = None,
+    source_sampling_context: Any | None = None,
     return_analysis: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, list[EffectAnalysisEntry]]:
     """Apply a declarative effect chain to mono or stereo audio."""
@@ -6221,6 +6248,8 @@ def apply_effect_chain(
             params=params,
             signal_length=effect_input.shape[-1],
             start_time_seconds=start_time_seconds,
+            matrix_connections=matrix_connections,
+            source_sampling_context=source_sampling_context,
         )
         native_metrics: dict[str, float | int | str] | None = None
         # Guard: skip plugin-backed effects when the plugin isn't installed,

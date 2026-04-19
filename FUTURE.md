@@ -242,6 +242,10 @@ Remaining follow-up:
 - **Audio-capable judges**: feed actual audio (or spectrograms as images)
     to omnimodal models (Gemini, Gemma4) for judges that can hear.
 
+### More voice engine unification
+
+As with our drum voices, let's be able to share pieces b/w our synth voices.
+
 ### Timbre and mix automation
 
   Automation now exists, but it is still an intentionally limited v1 surface.
@@ -288,6 +292,12 @@ for those).
     Future work: engine support for stereo profiles (e.g., per-L/R
     cutoff split, per-L/R detune) to make the `ConstantSource`
     pan-split trick work for any destination.
+  - **Stereo sources for mono destinations — deferred.** The
+    current MVP workaround is to use two voices with opposite
+    `ConstantSource` `amount` signs (see
+    `code_musics/pieces/mod_matrix_study.py`). A native stereo
+    source layer would let a single voice fan out L/R
+    independently without doubling the voice count.
   - **Unification of humanization into the matrix.** Humanization
     (`TimingHumanizeSpec` / `EnvelopeHumanizeSpec` /
     `VelocityHumanizeSpec`) keeps its existing surface; its
@@ -311,14 +321,33 @@ for those).
     accepts hand-authored `(x, y)` pairs but there's no graphical
     editor or library of named curve shapes. Low priority until we
     feel the pain.
+  - ~~**Effect wet/mix/wet_level matrix coverage.**~~ **Implemented.**
+    `synth.apply_effect_chain` now accepts `matrix_connections` and
+    `source_sampling_context`; `_resolve_effect_amount_automation`
+    combines matrix contributions with the existing `AutomationSpec`
+    curve via `combine_connections_on_curve`. Wired into the voice,
+    send-bus, and master effect chains in `score.py`. Voice-scoped
+    connections reach voice effects; score-scoped connections reach
+    send-bus effects and master effects. See
+    `TestEffectWetMatrixFold` in `tests/test_modulation.py`.
 
   Source: Vital `ModulationConnectionProcessor`.
-- **Diva-style global `accuracy` dial** — one user-facing quality
-  parameter with named tiers (`draft`/`fast`/`great`/`divine`) that
-  simultaneously controls oversampling factor, iterative solver
-  convergence count, and feedback-path precision. Auto-escalates for
-  offline render. Users happily accept CPU cost when the metaphor is
-  clear. Source: Diva manual (Main panel, Accuracy setting).
+- ~~**Diva-style global `accuracy` dial**~~ **Implemented.** Engine-level
+  `quality` parameter on polyblep and filtered_stack with tiers
+  `draft`/`fast`/`great`/`divine` controlling oversampling (1/2/2/4x) and
+  the ladder solver (ADAA vs Newton-iterated ZDF). See
+  `docs/synth_api.md` "Quality Modes".
+- **Iterative Newton solver on external filter feedback loop.** Currently
+  `_filters.py` uses unit-delay `y += tanh((1+3k)·y_prev)` on the
+  feedback_amount path (SVF, ladder, Sallen-Key, cascade). Replace with
+  1–2 Newton steps on the implicit `y = H(x + k·tanh(y))` to eliminate
+  the one-sample delay that damps high-resonance behavior. The
+  intra-filter resonance loop already uses Newton (ladder) / implicit
+  (Sallen-Key); external feedback is the last unit-delay hold-out.
+  Source: u-he "RePro Filters Unveiled" PDF; Urs notes unit-delay
+  approaches smooth/damp feedback behavior and that Newton is
+  well-behaved even near Nyquist. Main beneficiaries: high-resonance
+  self-oscillation character, feedback-growl leads.
 
 ### Modulation sources and aliveness
 

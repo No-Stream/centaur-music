@@ -52,6 +52,13 @@ class TestOscSoftness:
         the one-pole cutoff from softness falls within the audible band.  At
         higher frequencies, the cutoff exceeds the alpha=1.0 ceiling and the
         one-pole lowpass is a no-op.
+
+        A Hann window is applied before the FFT so the band sum reflects
+        true harmonic content rather than DFT spectral leakage from the
+        fundamental.  An unwindowed FFT of a saw would report HF bin
+        magnitudes dominated by ``sinc``-shaped leakage of low-frequency
+        harmonics, which scales with signal envelope rather than actual
+        HF energy — irrelevant to what this test is measuring.
         """
         low_freq = 100.0
         common_params: dict[str, object] = {
@@ -78,8 +85,9 @@ class TestOscSoftness:
             sample_rate=SR,
             params={**common_params, "osc_softness": 0.99},
         )
-        sharp_spec = np.abs(np.fft.rfft(sharp))
-        soft_spec = np.abs(np.fft.rfft(soft))
+        window = np.hanning(len(sharp))
+        sharp_spec = np.abs(np.fft.rfft(sharp * window))
+        soft_spec = np.abs(np.fft.rfft(soft * window))
         freqs = np.fft.rfftfreq(len(sharp), 1 / SR)
         hf_mask = freqs > 4000
         assert np.sum(soft_spec[hf_mask]) < np.sum(sharp_spec[hf_mask]) * 0.9

@@ -12,6 +12,7 @@ from code_musics.engines._dsp_utils import (
     apply_filter_oversampled,
     apply_note_jitter,
     apply_pitch_cv_dither,
+    apply_transient_state,
     apply_voice_card,
     apply_voice_card_post_offsets,
     build_cutoff_drift,
@@ -20,9 +21,12 @@ from code_musics.engines._dsp_utils import (
     extract_analog_params,
     nyquist_fade,
     resolve_quality_mode,
+    resolve_transient_mode,
     rng_for_note,
+    snapshot_voice_state,
 )
 from code_musics.engines._filters import _SUPPORTED_FILTER_MODES
+from code_musics.engines._voice_dist import apply_voice_dist
 
 
 def render(
@@ -33,6 +37,7 @@ def render(
     sample_rate: int,
     params: dict[str, Any],
     freq_trajectory: np.ndarray | None = None,
+    voice_state: dict[str, Any] | None = None,
 ) -> np.ndarray:
     """Render a harmonic-rich source shaped by a ZDF state-variable filter.
 
@@ -43,6 +48,13 @@ def render(
     - ``fast`` — Newton ladder (2 iters), 2x oversampling
     - ``great`` — Newton ladder (4 iters), 2x oversampling (default)
     - ``divine`` — Newton ladder (8 iters), 4x oversampling
+
+    The ``transient_mode`` param controls what oscillator phase is carried
+    across notes in a voice (see :func:`resolve_transient_mode`).  This
+    engine is purely additive (no per-oscillator DC), so only the
+    ``reset_phase`` axis of the mode affects output.  ``voice_state`` is
+    an optional per-voice carry-over state dict; ``None`` disables
+    carry-over.
     """
     if duration <= 0:
         raise ValueError("duration must be positive")
@@ -66,6 +78,11 @@ def render(
     filter_morph = float(params.get("filter_morph", 0.0))
     hpf_cutoff_hz = float(params.get("hpf_cutoff_hz", 0.0))
     hpf_resonance_q = float(params.get("hpf_resonance_q", 0.707))
+    k35_feedback_asymmetry = float(params.get("k35_feedback_asymmetry", 0.0))
+    voice_dist_mode = str(params.get("voice_dist_mode", "off")).lower()
+    voice_dist_drive = float(params.get("voice_dist_drive", 0.5))
+    voice_dist_mix = float(params.get("voice_dist_mix", 1.0))
+    voice_dist_tone = float(params.get("voice_dist_tone", 0.0))
     analog = extract_analog_params(params)
     pitch_drift = analog["pitch_drift"]
     analog_jitter = analog["analog_jitter"]
@@ -73,6 +90,7 @@ def render(
     drift_rate_hz = analog["drift_rate_hz"]
     cutoff_drift_amount = analog["cutoff_drift"]
     quality_config = resolve_quality_mode(str(analog["quality"]))
+    transient_config = resolve_transient_mode(str(analog["transient_mode"]))
 
     if n_harmonics < 1:
         raise ValueError("n_harmonics must be at least 1")
@@ -131,8 +149,18 @@ def render(
     cutoff_hz = float(jittered.get("cutoff_hz", cutoff_hz))
     resonance_q = float(jittered.get("resonance_q", resonance_q))
     filter_env_decay = float(jittered.get("filter_env_decay", filter_env_decay))
-    start_phase = float(jittered.get("_phase_offset", 0.0))
+    fresh_phase = float(jittered.get("_phase_offset", 0.0))
     amp_jitter_db = float(jittered.get("_amp_jitter_db", 0.0))
+
+    # filtered_stack is purely additive (no per-oscillator DC); only the
+    # phase axis matters.  We use ``start_phase_osc1`` and ignore the
+    # osc2 / DC fields.
+    start_phase, _, _, _ = apply_transient_state(
+        voice_state,
+        transient_config=transient_config,
+        fresh_phase=fresh_phase,
+        fresh_dc_signs=(1.0, 1.0),
+    )
 
     attack = float(params.get("attack", 0.04)) * vc_offsets["attack_scale"]
     release = float(params.get("release", 0.1)) * vc_offsets["release_scale"]
@@ -266,6 +294,7 @@ def render(
         filter_morph=filter_morph,
         hpf_cutoff_hz=hpf_cutoff_hz,
         hpf_resonance_q=hpf_resonance_q,
+        k35_feedback_asymmetry=k35_feedback_asymmetry,
         filter_solver=quality_config.solver,
         max_newton_iters=quality_config.max_newton_iters,
         newton_tolerance=quality_config.newton_tolerance,
@@ -285,7 +314,38 @@ def render(
     if peak > 1e-9:
         filtered /= peak
 
-    return amp * filtered
+    note_signal = amp * filtered
+
+    # Snapshot end-of-note fundamental phase.  The harmonic stack derives
+    # each partial's phase from the fundamental via ``start_phase *
+    # harmonic_index``, so the fundamental phase is sufficient to resume
+    # the stack coherently.
+    fundamental_phase_increments = (
+        np.cumsum(2.0 * np.pi * freq_profile / sample_rate)
+        if freq_profile.size > 0
+        else np.zeros(0)
+    )
+    final_phase = (
+        float(start_phase + fundamental_phase_increments[-1])
+        if fundamental_phase_increments.size > 0
+        else float(start_phase)
+    )
+    snapshot_voice_state(
+        voice_state,
+        final_phase_osc1=final_phase,
+        final_phase_osc2=final_phase,
+        dc_sign_osc1=1.0,
+        dc_sign_osc2=1.0,
+    )
+
+    return apply_voice_dist(
+        note_signal,
+        mode=voice_dist_mode,
+        drive=voice_dist_drive,
+        mix=voice_dist_mix,
+        tone=voice_dist_tone,
+        sample_rate=sample_rate,
+    )
 
 
 def _waveform_weight(waveform: str, harmonic_index: int, pulse_width: float) -> float:
