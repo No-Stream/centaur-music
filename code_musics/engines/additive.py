@@ -11,7 +11,6 @@ from scipy.signal import butter, sosfilt
 from code_musics.engines._dsp_utils import flow_exciter, nyquist_fade, rng_for_note
 from code_musics.engines._envelopes import parse_envelope_points, render_envelope
 from code_musics.engines._spectral_morphs import (
-    MORPH_TYPES,
     apply_sigma_approximation,
     apply_spectral_morph,
 )
@@ -180,12 +179,8 @@ def render(
     )
 
     # --- Spectral morph params (Vital-style frequency-domain transforms) ---
+    # Validation of morph_type happens inside apply_spectral_morph; don't duplicate.
     morph_type = str(params.get("spectral_morph_type", "none"))
-    if morph_type not in MORPH_TYPES:
-        raise ValueError(
-            f"Unsupported spectral_morph_type: {morph_type!r}. "
-            f"Expected one of {list(MORPH_TYPES)}."
-        )
     morph_amount = float(params.get("spectral_morph_amount", 0.0))
     morph_shift = float(params.get("spectral_morph_shift", 0.0))
     morph_center_k = int(params.get("spectral_morph_center_k", 24))

@@ -15,7 +15,7 @@ from code_musics.engines._drum_utils import (
 )
 from code_musics.engines._envelopes import render_envelope
 from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_filter
-from code_musics.engines.polyblep import _polyblep_square
+from code_musics.engines._oscillators import polyblep_square as _polyblep_square
 
 logger: logging.Logger = logging.getLogger(__name__)
 

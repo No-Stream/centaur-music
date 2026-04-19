@@ -23,8 +23,10 @@ from code_musics.pieces.iron_pulse import PIECES as _IRON_PULSE_PIECES
 from code_musics.pieces.iron_pulse_v2 import PIECES as _IRON_PULSE_V2_PIECES
 from code_musics.pieces.ji import PIECES as _JI_PIECES
 from code_musics.pieces.justly_intoned_synth import PIECES as _JUSTLY_INTONED_PIECES
+from code_musics.pieces.md_study import PIECES as _MD_STUDY_PIECES
 from code_musics.pieces.mellow_studies import PIECES as _MELLOW_PIECES
 from code_musics.pieces.mirror_dialogue import PIECES as _MIRROR_DIALOGUE_PIECES
+from code_musics.pieces.mod_matrix_study import PIECES as _MOD_MATRIX_STUDY_PIECES
 from code_musics.pieces.natural_steps import PIECES as _NATURAL_STEPS_PIECES
 from code_musics.pieces.night_lattice import PIECES as _NIGHT_LATTICE_PIECES
 from code_musics.pieces.organ_passacaglia import PIECES as _ORGAN_CHORALE_PIECES
@@ -42,6 +44,7 @@ from code_musics.pieces.tape_hymn import PIECES as _TAPE_HYMN_PIECES
 from code_musics.pieces.techno_studies import PIECES as _TECHNO_PIECES
 from code_musics.pieces.texture_studies import PIECES as _TEXTURE_STUDY_PIECES
 from code_musics.pieces.trance_studies import PIECES as _TRANCE_PIECES
+from code_musics.pieces.va_showcase import PIECES as _VA_SHOWCASE_PIECES
 from code_musics.pieces.velvet_wall import PIECES as _VELVET_WALL_PIECES
 from code_musics.pieces.warming_up import PIECES as _WARMING_UP_PIECES
 from code_musics.pieces.wtc_sketches import PIECES as _WTC_PIECES
@@ -89,6 +92,9 @@ PIECES = merge_piece_maps(
     _WARMING_UP_PIECES,
     _FORGE_PIECES,
     _BREATH_STUDY_PIECES,
+    _MD_STUDY_PIECES,
+    _VA_SHOWCASE_PIECES,
+    _MOD_MATRIX_STUDY_PIECES,
 )
 
 __all__ = ["PIECES"]

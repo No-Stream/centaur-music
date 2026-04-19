@@ -48,6 +48,9 @@ def _copy_partials(partials: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [dict(entry) for entry in partials]
 
 
+_INHARMONIC_AMOUNT_FLOOR: float = -1.0 + 1e-6
+
+
 def apply_inharmonic_scale(
     partials: list[dict[str, Any]],
     *,
@@ -62,14 +65,23 @@ def apply_inharmonic_scale(
 
     Formula::
 
-        new_ratio[k] = ratio[k] * (1 + amount * log2(k) / log2(k_max))
+        new_ratio[k] = ratio[k] * (1 + amount * log2(k_rank) / log2(k_max))
 
-    where ``k`` is a 1-indexed partial number from the sorted ratio set and
-    ``k_max`` is the count of partials.  ``log2(1) = 0`` ensures the bottom
-    partial is unaffected, and higher ``k`` scale progressively more.
+    where ``k_rank`` is the 1-indexed rank of each partial's ratio (smallest
+    ratio = rank 1) and ``k_max`` is the count of partials.  Rank-based
+    weighting ensures the stretching curve is applied to spectral position
+    regardless of the input list's order; partials are returned in their
+    original input order.  ``log2(1) = 0`` ensures the bottom partial is
+    unaffected, and higher-ranked partials scale progressively more.
+
+    ``amount`` is clamped at ``-1 + 1e-6`` from below to guarantee strictly
+    positive output ratios (``math.log2`` downstream in ``apply_shepard`` would
+    otherwise crash on zero/negative ratios).  There is no upper clamp.
     """
     if amount == 0.0 or len(partials) <= 1:
         return _copy_partials(partials)
+
+    clamped_amount = max(_INHARMONIC_AMOUNT_FLOOR, float(amount))
 
     result = _copy_partials(partials)
     n = len(result)
@@ -80,9 +92,16 @@ def apply_inharmonic_scale(
     if log2_kmax <= 0.0:
         return result
 
-    for k_index, entry in enumerate(result, start=1):
-        weight = math.log2(k_index) / log2_kmax
-        entry["ratio"] = float(entry["ratio"]) * (1.0 + amount * weight)
+    ratios = np.asarray([float(entry["ratio"]) for entry in result], dtype=np.float64)
+    # argsort -> position in sorted order; invert to get rank of each input index.
+    sort_order = np.argsort(ratios, kind="stable")
+    ranks = np.empty(n, dtype=np.int64)
+    ranks[sort_order] = np.arange(n, dtype=np.int64)
+
+    for input_index, entry in enumerate(result):
+        k_rank = int(ranks[input_index]) + 1  # 1-indexed rank
+        weight = math.log2(k_rank) / log2_kmax
+        entry["ratio"] = float(entry["ratio"]) * (1.0 + clamped_amount * weight)
 
     return result
 
@@ -282,6 +301,88 @@ def apply_sigma_approximation(
     return result
 
 
+def _dispatch_none(
+    partials: list[dict[str, Any]],
+    *,
+    amount: float,
+    shift: float,
+    center_k: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    del amount, shift, center_k, seed
+    return _copy_partials(partials)
+
+
+def _dispatch_inharmonic_scale(
+    partials: list[dict[str, Any]],
+    *,
+    amount: float,
+    shift: float,
+    center_k: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    del shift, center_k, seed
+    return apply_inharmonic_scale(partials, amount=amount)
+
+
+def _dispatch_phase_disperse(
+    partials: list[dict[str, Any]],
+    *,
+    amount: float,
+    shift: float,
+    center_k: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    del shift, seed
+    return apply_phase_disperse(partials, amount=amount, center_k=center_k)
+
+
+def _dispatch_smear(
+    partials: list[dict[str, Any]],
+    *,
+    amount: float,
+    shift: float,
+    center_k: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    del shift, center_k, seed
+    return apply_smear(partials, amount=amount)
+
+
+def _dispatch_shepard(
+    partials: list[dict[str, Any]],
+    *,
+    amount: float,
+    shift: float,
+    center_k: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    del center_k, seed
+    return apply_shepard(partials, amount=amount, shift=shift)
+
+
+def _dispatch_random_amplitudes(
+    partials: list[dict[str, Any]],
+    *,
+    amount: float,
+    shift: float,
+    center_k: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    del center_k
+    return apply_random_amplitudes(partials, amount=amount, shift=shift, seed=seed)
+
+
+_MORPH_DISPATCH: dict[str, Any] = {
+    "none": _dispatch_none,
+    "inharmonic_scale": _dispatch_inharmonic_scale,
+    "phase_disperse": _dispatch_phase_disperse,
+    "smear": _dispatch_smear,
+    "shepard": _dispatch_shepard,
+    "random_amplitudes": _dispatch_random_amplitudes,
+}
+
+
 def apply_spectral_morph(
     partials: list[dict[str, Any]],
     *,
@@ -294,21 +395,19 @@ def apply_spectral_morph(
     """Dispatch to the requested spectral morph.
 
     ``morph_type == "none"`` is identity (ignoring amount).  Unknown types
-    raise ``ValueError`` so misconfigured params fail fast.
+    raise ``ValueError`` so misconfigured params fail fast.  This is the single
+    authoritative validation point for ``morph_type``.
     """
-    if morph_type == "none":
-        return _copy_partials(partials)
-    if morph_type == "inharmonic_scale":
-        return apply_inharmonic_scale(partials, amount=amount)
-    if morph_type == "phase_disperse":
-        return apply_phase_disperse(partials, amount=amount, center_k=center_k)
-    if morph_type == "smear":
-        return apply_smear(partials, amount=amount)
-    if morph_type == "shepard":
-        return apply_shepard(partials, amount=amount, shift=shift)
-    if morph_type == "random_amplitudes":
-        return apply_random_amplitudes(partials, amount=amount, shift=shift, seed=seed)
-    raise ValueError(
-        f"Unsupported spectral_morph_type: {morph_type!r}. "
-        f"Expected one of {list(MORPH_TYPES)}."
+    dispatcher = _MORPH_DISPATCH.get(morph_type)
+    if dispatcher is None:
+        raise ValueError(
+            f"Unsupported spectral_morph_type: {morph_type!r}. "
+            f"Expected one of {list(MORPH_TYPES)}."
+        )
+    return dispatcher(
+        partials,
+        amount=amount,
+        shift=shift,
+        center_k=center_k,
+        seed=seed,
     )

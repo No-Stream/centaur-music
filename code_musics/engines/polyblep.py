@@ -22,43 +22,26 @@ import numpy as np
 
 from code_musics.engines._dsp_utils import (
     apply_analog_post_processing,
+    apply_cutoff_cv_dither,
+    apply_filter_oversampled,
     apply_note_jitter,
+    apply_pitch_cv_dither,
     apply_voice_card,
+    apply_voice_card_post_offsets,
     build_cutoff_drift,
     build_drift,
+    build_keytracked_cutoff_profile,
     extract_analog_params,
+    resolve_quality_mode,
     rng_for_note,
 )
 from code_musics.engines._filters import (
     _SUPPORTED_FILTER_MODES,
     _SUPPORTED_FILTER_TOPOLOGIES,
-    apply_filter,
 )
-
-
-def _polyblep_triangle(
-    phase: np.ndarray,
-    phase_inc: np.ndarray,
-    cumphase: np.ndarray,
-    sample_rate: int,
-) -> np.ndarray:
-    """Generate a bandlimited triangle wave by integrating the polyblep square.
-
-    The integral of a bandlimited square wave is a bandlimited triangle (BLAMP),
-    so this gives alias-free triangle essentially for free.  ``pulse_width`` is
-    not meaningful for a symmetric triangle and is always fixed at 0.5.
-    """
-    square = _polyblep_square(phase, phase_inc, cumphase, pulse_width=0.5)
-
-    triangle = np.cumsum(square) / sample_rate
-
-    triangle -= triangle.mean()
-
-    peak = np.max(np.abs(triangle))
-    if peak > 1e-9:
-        triangle /= peak
-
-    return triangle
+from code_musics.engines._oscillators import (
+    render_polyblep_oscillator as _render_oscillator_with_phase,
+)
 
 
 @numba.njit(cache=True)
@@ -145,8 +128,19 @@ def render(
     sample_rate: int,
     params: dict[str, Any],
     freq_trajectory: np.ndarray | None = None,
+    param_profiles: dict[str, np.ndarray] | None = None,
 ) -> np.ndarray:
-    """Render a bandlimited oscillator with a driven ZDF/TPT filter sweep."""
+    """Render a bandlimited oscillator with a driven ZDF/TPT filter sweep.
+
+    The ``quality`` param selects the ladder solver + oversampling factor
+    applied to the filter + feedback + dither block (oscillators are
+    generated at the base rate since BLEP handles their aliasing):
+
+    - ``draft`` — ADAA ladder, no oversampling
+    - ``fast`` — Newton ladder (2 iters), 2x oversampling
+    - ``great`` — Newton ladder (4 iters), 2x oversampling (default)
+    - ``divine`` — Newton ladder (8 iters), 4x oversampling
+    """
     if duration <= 0:
         raise ValueError("duration must be positive")
     if sample_rate <= 0:
@@ -186,6 +180,7 @@ def render(
     osc_softness = analog["osc_softness"]
     osc_dc_offset = analog["osc_dc_offset"]
     osc_shape_drift = analog["osc_shape_drift"]
+    quality_config = resolve_quality_mode(str(analog["quality"]))
 
     if cutoff_hz <= 0:
         raise ValueError("cutoff_hz must be positive")
@@ -259,8 +254,8 @@ def render(
     jittered = apply_note_jitter(params, rng, analog_jitter)
     cutoff_hz = float(jittered.get("cutoff_hz", cutoff_hz))
     resonance_q = float(jittered.get("resonance_q", resonance_q))
-    resonance_q = max(
-        0.5, resonance_q * (1.0 + vc_offsets["resonance_offset_pct"] / 100.0)
+    resonance_q, drift_rate_hz = apply_voice_card_post_offsets(
+        resonance_q, drift_rate_hz, vc_offsets
     )
     filter_env_decay = float(jittered.get("filter_env_decay", filter_env_decay))
     start_phase = float(jittered.get("_phase_offset", 0.0))
@@ -272,7 +267,20 @@ def render(
 
     pulse_width = min(0.99, max(0.01, pulse_width + vc_offsets["pulse_width_offset"]))
     osc_softness = max(0.0, osc_softness + vc_offsets["softness_offset"])
-    drift_rate_hz *= 1.0 + vc_offsets["drift_rate_offset_pct"] / 100.0
+
+    # OB-Xd-style per-sample CV dither on pitch (layered on top of stable
+    # voice_card offsets).  Uses ``analog_jitter`` as the amount knob so we
+    # don't introduce a new surface for what is effectively a finer layer of
+    # the existing per-note jitter concept.
+    freq_profile = apply_pitch_cv_dither(
+        freq_profile,
+        analog_jitter=analog_jitter,
+        freq=freq,
+        duration=duration,
+        amp=amp,
+        sample_rate=sample_rate,
+        n_samples=n_samples,
+    )
 
     # Asymmetry shifts square PW slightly
     if osc_asymmetry > 0.0 and waveform == "square":
@@ -373,13 +381,40 @@ def render(
 
         raw_signal = (raw_signal + osc2_level * osc2_signal) / (1.0 + osc2_level)
 
-    # Cutoff envelope (identical pattern to filtered_stack)
-    t = np.linspace(0.0, duration, n_samples, endpoint=False)
+    # Cutoff envelope (identical pattern to filtered_stack / va).
+    # When a per-sample ``cutoff_hz`` profile is supplied via
+    # ``param_profiles`` it replaces the scalar base.  This is how the
+    # modulation matrix rides cutoff at audio rate; scalar paths below
+    # (keytrack, envelope, drift, CV dither) stack on top of it.
     nyquist = sample_rate / 2.0
-    cutoff_envelope = 1.0 + filter_env_amount * np.exp(-t / filter_env_decay)
-    cutoff_envelope = np.maximum(cutoff_envelope, 0.05)
-    keytracked_cutoff = cutoff_hz * np.power(freq_profile / reference_freq_hz, keytrack)
-    cutoff_profile = np.clip(keytracked_cutoff * cutoff_envelope, 20.0, nyquist * 0.98)
+    if param_profiles is not None and "cutoff_hz" in param_profiles:
+        cutoff_profile_base = np.asarray(param_profiles["cutoff_hz"], dtype=np.float64)
+        if cutoff_profile_base.shape != (n_samples,):
+            raise ValueError(
+                "cutoff_hz profile length must match note duration in samples"
+            )
+        t = np.linspace(0.0, duration, n_samples, endpoint=False)
+        cutoff_envelope = np.maximum(
+            1.0 + filter_env_amount * np.exp(-t / filter_env_decay), 0.05
+        )
+        keytracked_cutoff = cutoff_profile_base * np.power(
+            freq_profile / reference_freq_hz, keytrack
+        )
+        cutoff_profile = np.clip(
+            keytracked_cutoff * cutoff_envelope, 20.0, nyquist * 0.98
+        )
+    else:
+        cutoff_profile = build_keytracked_cutoff_profile(
+            cutoff_hz=cutoff_hz,
+            keytrack=keytrack,
+            reference_freq_hz=reference_freq_hz,
+            filter_env_amount=filter_env_amount,
+            filter_env_decay=filter_env_decay,
+            duration=duration,
+            n_samples=n_samples,
+            freq_profile=freq_profile,
+            nyquist=nyquist,
+        )
 
     if cutoff_drift_amount > 0:
         cutoff_rng = rng_for_note(
@@ -400,11 +435,25 @@ def render(
             cutoff_profile * cutoff_modulation, 20.0, nyquist * 0.98
         )
 
-    filtered = apply_filter(
+    # OB-Xd-style per-sample CV dither on the filter cutoff.  Same knob as
+    # the pitch dither above (``analog_jitter``), just a different target.
+    cutoff_profile = apply_cutoff_cv_dither(
+        cutoff_profile,
+        analog_jitter=analog_jitter,
+        freq=freq,
+        duration=duration,
+        amp=amp,
+        sample_rate=sample_rate,
+        n_samples=n_samples,
+        nyquist=nyquist,
+    )
+
+    filtered = apply_filter_oversampled(
         raw_signal,
         cutoff_profile=cutoff_profile,
         resonance_q=resonance_q,
         sample_rate=sample_rate,
+        oversample_factor=quality_config.oversample_factor,
         filter_mode=filter_mode,
         filter_drive=filter_drive,
         filter_even_harmonics=filter_even_harmonics,
@@ -415,6 +464,9 @@ def render(
         hpf_resonance_q=hpf_resonance_q,
         feedback_amount=feedback_amount,
         feedback_saturation=feedback_saturation,
+        filter_solver=quality_config.solver,
+        max_newton_iters=quality_config.max_newton_iters,
+        newton_tolerance=quality_config.newton_tolerance,
     )
 
     filtered = apply_analog_post_processing(
@@ -455,78 +507,3 @@ def _apply_shape_drift(
         blend = np.abs(drift_profile)
         return signal * (1.0 - blend) + blend * sine_component
     return signal
-
-
-def _render_oscillator(
-    *,
-    waveform: str,
-    pulse_width: float,
-    freq_profile: np.ndarray,
-    sample_rate: int,
-    start_phase: float = 0.0,
-) -> np.ndarray:
-    """Render one PolyBLEP oscillator from a frequency trajectory."""
-    signal, _phase = _render_oscillator_with_phase(
-        waveform=waveform,
-        pulse_width=pulse_width,
-        freq_profile=freq_profile,
-        sample_rate=sample_rate,
-        start_phase=start_phase,
-    )
-    return signal
-
-
-def _render_oscillator_with_phase(
-    *,
-    waveform: str,
-    pulse_width: float,
-    freq_profile: np.ndarray,
-    sample_rate: int,
-    start_phase: float = 0.0,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Render one PolyBLEP oscillator, returning both signal and phase."""
-    phase_inc = freq_profile / sample_rate
-    cumphase = np.cumsum(phase_inc) + start_phase / (2.0 * np.pi)
-    phase = cumphase % 1.0
-
-    if waveform == "sine":
-        return np.sin(2.0 * np.pi * phase), phase
-    if waveform == "saw":
-        return _polyblep_saw(phase, phase_inc), phase
-    if waveform == "square":
-        return _polyblep_square(phase, phase_inc, cumphase, pulse_width), phase
-    if waveform == "triangle":
-        return _polyblep_triangle(phase, phase_inc, cumphase, sample_rate), phase
-    raise ValueError(f"Unknown waveform: {waveform!r}")
-
-
-def _polyblep_saw(phase: np.ndarray, phase_inc: np.ndarray) -> np.ndarray:
-    """Generate a bandlimited sawtooth via PolyBLEP correction."""
-    saw = 2.0 * phase - 1.0  # new array; in-place assignment below is safe
-
-    # Pre-discontinuity: phase approaching 1 (within one phase_inc)
-    mask_pre = phase > (1.0 - phase_inc)
-    t_pre = (phase[mask_pre] - 1.0) / phase_inc[mask_pre]  # in (-1, 0]
-    saw[mask_pre] -= t_pre * t_pre + 2.0 * t_pre + 1.0
-
-    # Post-discontinuity: phase just wrapped (within one phase_inc of 0)
-    mask_post = phase < phase_inc
-    t_post = phase[mask_post] / phase_inc[mask_post]  # in [0, 1)
-    saw[mask_post] -= 2.0 * t_post - t_post * t_post - 1.0
-
-    return saw
-
-
-def _polyblep_square(
-    phase: np.ndarray,
-    phase_inc: np.ndarray,
-    cumphase: np.ndarray,
-    pulse_width: float,
-) -> np.ndarray:
-    """Generate a bandlimited square/pulse wave as the difference of two saws."""
-    saw1 = _polyblep_saw(phase, phase_inc)
-    phase2 = (cumphase + pulse_width) % 1.0
-    saw2 = _polyblep_saw(phase2, phase_inc)
-    square = (saw1 - saw2) / 2.0
-    square -= square.mean()  # remove DC from pulse_width asymmetry (no-op at pw=0.5)
-    return square

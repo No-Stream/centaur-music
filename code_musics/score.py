@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import warnings
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -25,7 +26,10 @@ from code_musics.engines import (
     render_note_signal,
     resolve_synth_params,
 )
-from code_musics.engines._dsp_utils import build_drift_bus
+from code_musics.engines._dsp_utils import (
+    extract_analog_params,
+    voice_card_offsets,
+)
 from code_musics.humanize import (
     DriftBusSpec,
     EnvelopeHumanizeSpec,
@@ -33,15 +37,68 @@ from code_musics.humanize import (
     TimingTarget,
     VelocityHumanizeSpec,
     VelocityTarget,
+    build_drift_bus,
     build_timing_offsets,
     build_velocity_multipliers,
     resolve_envelope_params,
+)
+from code_musics.modulation import (
+    MacroDefinition,
+    ModConnection,
+    SourceSamplingContext,
+    build_macro_lookup,
+    combine_connections_on_curve,
+    combine_connections_scalar,
+    is_per_sample_synth_destination,
+    iter_connections_for_target,
 )
 from code_musics.pitch_motion import PitchMotionSpec, build_frequency_trajectory
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 _OUTPUT_CEILING_DBFS: float = -0.5
+
+
+def _apply_voice_card_env_rate_scaling(
+    *,
+    attack: float,
+    release: float,
+    synth_params: dict[str, Any],
+    voice_name: str,
+) -> tuple[float, float]:
+    """Apply OB-Xd-style multiplicative per-voice envelope-rate scaling.
+
+    Pulls ``voice_card_spread`` (with an optional
+    ``voice_card_envelope_spread`` override) out of ``synth_params`` and
+    uses the deterministic per-voice ``attack_scale`` / ``release_scale``
+    offsets to nudge the outer ADSR times.  This is the "ensemble of slightly
+    different voice cards" flavour of analog warmth — every voice has its own
+    permanent env-rate bias.
+
+    Opt-in: only fires when ``voice_card_spread``, ``voice_card``, or the
+    envelope-specific override ``voice_card_envelope_spread`` is explicitly
+    present in ``synth_params``.  Voices that never touch these knobs keep
+    their exact attack/release times (preserving fixed-length render semantics
+    for score tests and older pieces).
+    """
+    if not voice_name:
+        return attack, release
+    opted_in = (
+        "voice_card_spread" in synth_params
+        or "voice_card" in synth_params
+        or "voice_card_envelope_spread" in synth_params
+    )
+    if not opted_in:
+        return attack, release
+    analog = extract_analog_params(synth_params)
+    env_spread = analog["voice_card_envelope_spread"]
+    if env_spread <= 0.0:
+        return attack, release
+    vc = voice_card_offsets(voice_name)
+    attack_factor = 1.0 + (vc["attack_scale"] - 1.0) * env_spread
+    release_factor = 1.0 + (vc["release_scale"] - 1.0) * env_spread
+    return attack * attack_factor, release * release_factor
+
 
 EffectKind = Literal[
     "gate",
@@ -361,6 +418,7 @@ class Voice:
     drift_bus: str | None = None
     drift_bus_correlation: float = 1.0
     automation: list[AutomationSpec] = field(default_factory=list)
+    modulations: list[ModConnection] = field(default_factory=list)
     notes: list[NoteEvent] = field(default_factory=list)
 
 
@@ -404,6 +462,7 @@ class PreparedVoiceNote:
     decay_power: float = 1.0
     release_power: float = 1.0
     attack_target: float = 1.0
+    param_profiles: dict[str, np.ndarray] = field(default_factory=dict)
 
 
 @dataclass
@@ -420,6 +479,8 @@ class Score:
     master_effects: list[EffectSpec] = field(default_factory=list)
     send_buses: list[SendBusSpec] = field(default_factory=list)
     drift_buses: dict[str, DriftBusSpec] = field(default_factory=dict)
+    macros: dict[str, MacroDefinition] = field(default_factory=dict)
+    modulations: list[ModConnection] = field(default_factory=list)
     voices: dict[str, Voice] = field(default_factory=dict)
     time_origin_seconds: float = 0.0
     time_reference_total_dur: float | None = None
@@ -434,6 +495,15 @@ class Score:
         self._validate_send_buses()
         for voice in self.voices.values():
             self._validate_voice_sends(voice.sends)
+        # Lazy per-render cache of full-score drift bus trajectories, keyed by
+        # (name, seed, rate_hz, total_dur).  Same inputs -> same array, so it
+        # is safe to keep across renders.
+        self._drift_bus_cache: dict[
+            tuple[str, int | None, float, float], tuple[np.ndarray, np.ndarray]
+        ] = {}
+        # Memoized macro lookup tables, keyed by (n_samples, first_time).
+        # Cleared implicitly whenever a render pass uses a new time grid.
+        self._macro_lookup_cache: dict[tuple[int, float], dict[str, np.ndarray]] = {}
 
     def add_voice(
         self,
@@ -461,6 +531,7 @@ class Score:
         drift_bus: str | None = None,
         drift_bus_correlation: float = 1.0,
         automation: list[AutomationSpec] | None = None,
+        modulations: list[ModConnection] | None = None,
     ) -> Voice:
         """Add or replace a named voice definition."""
         # Resolve normalize_lufs default: -24.0 unless normalize_peak_db is given,
@@ -517,6 +588,7 @@ class Score:
             drift_bus=drift_bus,
             drift_bus_correlation=drift_bus_correlation,
             automation=list(automation or []),
+            modulations=list(modulations or []),
         )
         self.voices[name] = voice
         return voice
@@ -547,6 +619,25 @@ class Score:
         else:
             self.send_buses[existing_index] = send_bus
         return send_bus
+
+    def add_macro(
+        self,
+        name: str,
+        *,
+        default: float = 0.0,
+        automation: AutomationSpec | None = None,
+    ) -> MacroDefinition:
+        """Register a named macro for use with :class:`MacroSource`.
+
+        Macros are shared scalar values in ``[0, 1]`` that ``MacroSource``
+        connections read via their name.  A macro can carry an
+        :class:`AutomationSpec` (with ``target.kind == "control"``) so
+        it rides across the piece timeline; without one the macro
+        stays at ``default``.
+        """
+        macro = MacroDefinition(name=name, default=default, automation=automation)
+        self.macros[name] = macro
+        return macro
 
     def add_drift_bus(
         self,
@@ -1072,6 +1163,7 @@ class Score:
                 sample_rate=self.sample_rate,
                 params=prepared_note.synth_params,
                 freq_trajectory=prepared_note.freq_trajectory,
+                param_profiles=prepared_note.param_profiles or None,
             )
             note_signal = synth.adsr(
                 note_signal,
@@ -1325,6 +1417,206 @@ class Score:
                 )
         return voice_mix
 
+    def _macro_lookup_for_times(self, times: np.ndarray) -> dict[str, np.ndarray]:
+        """Sample every registered macro against a time grid.
+
+        Per-render memoization via ``_macro_lookup_cache`` keyed by the
+        times array's id/shape keeps repeated lookups cheap across
+        voice evaluations in the same render pass.
+        """
+        if not self.macros:
+            return {}
+        cache_key = (times.shape[0], float(times[0]) if times.size else 0.0)
+        cached = self._macro_lookup_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        lookup = build_macro_lookup(self.macros, times=times)
+        self._macro_lookup_cache[cache_key] = lookup
+        return lookup
+
+    def _matrix_connections_for_voice(self, voice: Voice) -> list[ModConnection]:
+        """Return score-level + voice-level modulation connections."""
+        if not self.modulations and not voice.modulations:
+            return []
+        return [*self.modulations, *voice.modulations]
+
+    def _build_source_context(
+        self,
+        *,
+        times: np.ndarray,
+        note_velocity: float | None = None,
+        note_start: float | None = None,
+        note_duration: float | None = None,
+    ) -> SourceSamplingContext:
+        """Build a ``SourceSamplingContext`` prefilled with macro values."""
+        macro_lookup = self._macro_lookup_for_times(times) if times.size else {}
+        return SourceSamplingContext(
+            sample_rate=self.sample_rate,
+            total_dur=self._time_reference_total_dur(),
+            macro_lookup=macro_lookup,
+            note_velocity=note_velocity,
+            note_start=note_start,
+            note_duration=note_duration,
+        )
+
+    def _apply_matrix_to_synth_params(
+        self,
+        *,
+        params: dict[str, Any],
+        connections: list[ModConnection],
+        resolved_velocity: float,
+        note_start: float,
+        note_duration: float,
+    ) -> dict[str, Any]:
+        """Fold matrix contributions into synth params at note onset.
+
+        Per-sample-capable synth destinations are skipped here because
+        they are threaded through the engine via ``param_profiles``;
+        everything else is sampled as a scalar at ``note_start`` and
+        written back into ``params`` under the target name.
+        """
+        if not connections:
+            return params
+        synth_connections = [
+            connection
+            for connection in connections
+            if connection.target.kind == "synth"
+        ]
+        if not synth_connections:
+            return params
+        # Eagerly group to skip per-sample targets — those are handled
+        # separately via build_param_profiles below.
+        context = self._build_source_context(
+            times=np.asarray([note_start], dtype=np.float64),
+            note_velocity=resolved_velocity,
+            note_start=note_start,
+            note_duration=note_duration,
+        )
+        updated = dict(params)
+        grouped: dict[str, list[ModConnection]] = {}
+        for connection in synth_connections:
+            if is_per_sample_synth_destination(connection.target.name):
+                continue
+            grouped.setdefault(connection.target.name, []).append(connection)
+        for param_name, group in grouped.items():
+            base = float(updated.get(param_name, 0.0))
+            combined = combine_connections_scalar(
+                base=base,
+                connections=group,
+                context=context,
+            )
+            updated[param_name] = combined
+        return updated
+
+    def _build_param_profiles(
+        self,
+        *,
+        connections: list[ModConnection],
+        synth_params: dict[str, Any],
+        resolved_velocity: float,
+        note_start: float,
+        note_duration: float,
+        total_samples: int,
+    ) -> dict[str, np.ndarray]:
+        """Build per-sample profiles for synth destinations in the whitelist.
+
+        Only destinations with ``is_per_sample_synth_destination(name)``
+        true AND at least one connection get a profile.  The profile
+        carries the sampled scalar base (from ``synth_params``) plus
+        the matrix contribution across the note's time grid.
+        """
+        if total_samples <= 0 or not connections:
+            return {}
+        grouped: dict[str, list[ModConnection]] = {}
+        for connection in connections:
+            if connection.target.kind != "synth":
+                continue
+            if not is_per_sample_synth_destination(connection.target.name):
+                continue
+            grouped.setdefault(connection.target.name, []).append(connection)
+        if not grouped:
+            return {}
+        times = note_start + np.arange(total_samples, dtype=np.float64) / float(
+            self.sample_rate
+        )
+        context = self._build_source_context(
+            times=times,
+            note_velocity=resolved_velocity,
+            note_start=note_start,
+            note_duration=note_duration,
+        )
+        profiles: dict[str, np.ndarray] = {}
+        for param_name, group in grouped.items():
+            base_value = float(synth_params.get(param_name, 0.0))
+            base_curve = np.full(times.shape, base_value, dtype=np.float64)
+            profiles[param_name] = combine_connections_on_curve(
+                base=base_curve,
+                connections=group,
+                times=times,
+                context=context,
+            )
+        return profiles
+
+    def describe_modulations(self) -> list[dict[str, Any]]:
+        """Return a flat summary of score + voice modulation connections.
+
+        Inspection helper: one dict per connection with source type,
+        destination, and key shaping fields.  Does not touch audio.
+        """
+        rows: list[dict[str, Any]] = []
+        for connection in self.modulations:
+            rows.append(self._describe_connection(connection, scope="score"))
+        for voice_name, voice in self.voices.items():
+            for connection in voice.modulations:
+                rows.append(
+                    self._describe_connection(connection, scope=f"voice:{voice_name}")
+                )
+        return rows
+
+    @staticmethod
+    def _describe_connection(
+        connection: ModConnection, *, scope: str
+    ) -> dict[str, Any]:
+        return {
+            "scope": scope,
+            "name": connection.name,
+            "source": type(connection.source).__name__,
+            "target_kind": connection.target.kind,
+            "target_name": connection.target.name,
+            "amount": connection.amount,
+            "bipolar": connection.bipolar,
+            "stereo": connection.stereo,
+            "power": connection.power,
+            "mode": connection.mode,
+        }
+
+    def _drift_bus_trajectory(self, bus: DriftBusSpec) -> tuple[np.ndarray, np.ndarray]:
+        """Lazily build and cache the full-score bus trajectory.
+
+        Memoizing on ``Score`` means every subscribed voice/note samples the
+        SAME ratio array via ``np.interp``, giving the promised cross-voice
+        correlation at identical wall-clock times.
+        """
+        total_dur = self._time_reference_total_dur()
+        cache_key = (bus.name, bus.seed, round(bus.rate_hz, 9), round(total_dur, 6))
+        cached = self._drift_bus_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        # Pad so np.interp never needs to extrapolate past the final sample.
+        padded_dur = max(total_dur, 0.0) + 1.0
+        internal_rate = 1000.0
+        n_internal = max(2, int(math.ceil(padded_dur * internal_rate)) + 2)
+        dense_times = np.arange(n_internal, dtype=np.float64) / internal_rate
+        dense_ratio = build_drift_bus(
+            times=dense_times,
+            rate_hz=bus.rate_hz,
+            depth_cents=bus.depth_cents,
+            sample_rate=self.sample_rate,
+            seed=bus.seed,
+        )
+        self._drift_bus_cache[cache_key] = (dense_times, dense_ratio)
+        return dense_times, dense_ratio
+
     def _apply_drift_bus_to_trajectory(
         self,
         *,
@@ -1334,61 +1626,44 @@ class Score:
         release: float,
         base_freq: float,
         freq_trajectory: np.ndarray | None,
-        synth_params: dict[str, Any],
-    ) -> np.ndarray | None:
-        """Bake the shared drift bus into the note's frequency trajectory.
+    ) -> tuple[np.ndarray | None, float]:
+        """Return ``(freq_trajectory, pitch_drift_scale)`` for a subscribed note.
 
-        Modifies ``synth_params`` in place to scale the engine's independent
-        ``pitch_drift`` parameter by ``(1 - correlation)``.  Returns the
-        (possibly new) frequency trajectory.
-
-        The bus contribution is applied in log-frequency space as
-        ``bus_ratio ** correlation``; this is equivalent to a linear blend of
-        cents between the bus signal and the engine's own drift.
+        Samples the cached shared drift bus via ``np.interp`` so every voice at
+        the same wall-clock time sees the same ratio.  Returns a scale for the
+        engine's independent ``pitch_drift`` so the caller can apply it
+        explicitly (no hidden mutation of synth params).  See
+        ``docs/score_api.md`` for the log-space blend semantics.
         """
         bus_name = voice.drift_bus
         if bus_name is None:
-            return freq_trajectory
-
+            return freq_trajectory, 1.0
         if bus_name not in self.drift_buses:
             raise ValueError(
                 f"Voice {voice.name!r} subscribes to drift_bus {bus_name!r} "
                 "which is not defined on the score"
             )
         correlation = float(voice.drift_bus_correlation)
-        # Engine-internal drift scales down proportionally to how much the bus
-        # takes over; this keeps the mathematical identity at the endpoints:
-        #   correlation=0 -> freq_trajectory unchanged, full engine drift
-        #   correlation=1 -> full bus drift, engine drift = 0
-        if correlation > 0.0 and "pitch_drift" in synth_params:
-            synth_params["pitch_drift"] = float(synth_params["pitch_drift"]) * (
-                1.0 - correlation
-            )
+        pitch_drift_scale = 1.0 - correlation if correlation > 0.0 else 1.0
         if correlation <= 0.0:
-            return freq_trajectory
+            return freq_trajectory, pitch_drift_scale
 
-        bus = self.drift_buses[bus_name]
         total_samples = max(0, int((duration + release) * self.sample_rate))
         if total_samples == 0:
-            return freq_trajectory
+            return freq_trajectory, pitch_drift_scale
 
+        dense_times, dense_ratio = self._drift_bus_trajectory(
+            self.drift_buses[bus_name]
+        )
         sample_times = note_start + np.arange(total_samples, dtype=np.float64) / float(
             self.sample_rate
         )
-        bus_ratio = build_drift_bus(
-            times=sample_times,
-            rate_hz=bus.rate_hz,
-            depth_cents=bus.depth_cents,
-            sample_rate=self.sample_rate,
-            seed=bus.seed,
-        )
-        # Log-space blend: bus_ratio ** correlation is the multiplicative
-        # identity when correlation=0 and full bus modulation when correlation=1.
+        bus_ratio = np.interp(sample_times, dense_times, dense_ratio)
         scaled_bus = np.power(bus_ratio, correlation)
 
         if freq_trajectory is None:
-            return base_freq * scaled_bus
-        return freq_trajectory * scaled_bus
+            return base_freq * scaled_bus, pitch_drift_scale
+        return freq_trajectory * scaled_bus, pitch_drift_scale
 
     def _debug_freq_trajectories(
         self,
@@ -1448,6 +1723,14 @@ class Score:
                 note_automation=note_automation,
                 note_start=absolute_note_start,
             )
+            matrix_connections = self._matrix_connections_for_voice(voice)
+            synth_params = self._apply_matrix_to_synth_params(
+                params=synth_params,
+                connections=matrix_connections,
+                resolved_velocity=resolved_velocity,
+                note_start=absolute_note_start,
+                note_duration=note.duration,
+            )
             attack_scale = float(synth_params.pop("attack_scale", 1.0))
             release_scale = float(synth_params.pop("release_scale", 1.0))
             note_freq = self._resolve_freq(note)
@@ -1463,6 +1746,12 @@ class Score:
                 note_start=absolute_note_start,
                 humanize=voice.envelope_humanize,
                 total_dur=self._time_reference_total_dur(),
+                voice_name=voice_name,
+            )
+            attack, release = _apply_voice_card_env_rate_scaling(
+                attack=attack,
+                release=release,
+                synth_params=synth_params,
                 voice_name=voice_name,
             )
             held_samples = int(note.duration * self.sample_rate)
@@ -1498,6 +1787,41 @@ class Score:
                     note_automation=note_automation,
                     note_start=absolute_note_start,
                 )
+                pitch_ratio_connections = [
+                    connection
+                    for connection in matrix_connections
+                    if connection.target.kind == "pitch_ratio"
+                ]
+                if pitch_ratio_connections and held_samples > 0:
+                    held_times = absolute_note_start + np.arange(
+                        held_samples, dtype=np.float64
+                    ) / float(self.sample_rate)
+                    # Matrix rides the freq ratio, so fold into the
+                    # trajectory (or build from scratch if automation
+                    # didn't produce one).  Start from an all-ones
+                    # ratio so 'add'/'multiply'/'replace' combine the
+                    # same way the base automation would at 1.0.
+                    if held_trajectory is None:
+                        base_ratio = np.ones(held_samples, dtype=np.float64)
+                    else:
+                        base_ratio = held_trajectory / note_freq
+                    context = self._build_source_context(
+                        times=held_times,
+                        note_velocity=resolved_velocity,
+                        note_start=absolute_note_start,
+                        note_duration=note.duration,
+                    )
+                    modulated_ratio = combine_connections_on_curve(
+                        base=base_ratio,
+                        connections=pitch_ratio_connections,
+                        times=held_times,
+                        context=context,
+                    )
+                    if np.any(modulated_ratio <= 0):
+                        raise ValueError(
+                            "pitch_ratio modulation must produce strictly positive ratios"
+                        )
+                    held_trajectory = note_freq * modulated_ratio
                 if held_trajectory is not None:
                     release_samples = max(0, total_samples - held_samples)
                     if release_samples > 0:
@@ -1508,27 +1832,34 @@ class Score:
                     else:
                         freq_trajectory = held_trajectory
 
-            # Shared drift-bus modulation.  When a voice subscribes to a named
-            # bus (``voice.drift_bus``) the bus trajectory is baked into the
-            # note's freq trajectory at ``correlation``-weight in log space,
-            # and the engine's independent ``pitch_drift`` is scaled by
-            # ``(1 - correlation)`` so the two sources mix as promised by the
-            # spec without double-counting.
-            freq_trajectory = self._apply_drift_bus_to_trajectory(
+            # Blend shared drift bus into freq trajectory; scale engine drift
+            # so the two sources don't double-count.  See docs/score_api.md.
+            freq_trajectory, pitch_drift_scale = self._apply_drift_bus_to_trajectory(
                 voice=voice,
                 note_start=absolute_note_start,
                 duration=note.duration,
                 release=release,
                 base_freq=note_freq,
                 freq_trajectory=freq_trajectory,
-                synth_params=synth_params,
             )
+            if pitch_drift_scale != 1.0 and "pitch_drift" in synth_params:
+                synth_params["pitch_drift"] = (
+                    float(synth_params["pitch_drift"]) * pitch_drift_scale
+                )
 
             vca_nonlinearity = float(synth_params.get("vca_nonlinearity", 0.0))
             attack_power = float(synth_params.get("attack_power", 1.0))
             decay_power = float(synth_params.get("decay_power", 1.0))
             release_power = float(synth_params.get("release_power", 1.0))
             attack_target = float(synth_params.get("attack_target", 1.0))
+            param_profiles = self._build_param_profiles(
+                connections=matrix_connections,
+                synth_params=synth_params,
+                resolved_velocity=resolved_velocity,
+                note_start=absolute_note_start,
+                note_duration=note.duration,
+                total_samples=total_samples,
+            )
             prepared_notes.append(
                 PreparedVoiceNote(
                     note_index=note_index,
@@ -1550,6 +1881,7 @@ class Score:
                     decay_power=decay_power,
                     release_power=release_power,
                     attack_target=attack_target,
+                    param_profiles=param_profiles,
                 )
             )
         return prepared_notes
@@ -1628,18 +1960,21 @@ class Score:
         effect_analysis: list[synth.EffectAnalysisEntry] = []
         processed_voice_mix = np.asarray(voice_mix, dtype=np.float64)
         signal_times = self._signal_times(processed_voice_mix.shape[-1])
+        voice_matrix = self._matrix_connections_for_voice(voice)
         processed_voice_mix = self._apply_db_control(
             processed_voice_mix,
             base_db=voice.pre_fx_gain_db,
             automation_specs=voice.automation,
             target_name="pre_fx_gain_db",
             signal_times=signal_times,
+            modulations=voice_matrix,
         )
         processed_voice_mix = self._apply_pan_control(
             processed_voice_mix,
             base_pan=voice.pan,
             automation_specs=voice.automation,
             signal_times=signal_times,
+            modulations=voice_matrix,
         )
         if voice.effects and processed_voice_mix.size > 0:
             if collect_effect_analysis:
@@ -1673,6 +2008,7 @@ class Score:
             automation_specs=voice.automation,
             target_name="mix_db",
             signal_times=signal_times,
+            modulations=voice_matrix,
         )
         send_signals = {
             send.target: self._apply_db_control(
@@ -1681,6 +2017,7 @@ class Score:
                 automation_specs=send.automation,
                 target_name="send_db",
                 signal_times=signal_times,
+                modulations=voice_matrix,
             )
             for send in voice.sends
         }
@@ -1926,14 +2263,15 @@ class Score:
             np.arange(sample_count, dtype=np.float64) / self.sample_rate
         )
 
-    @staticmethod
     def _apply_db_control(
+        self,
         signal: np.ndarray,
         *,
         base_db: float,
         automation_specs: list[AutomationSpec],
         target_name: str,
         signal_times: np.ndarray,
+        modulations: list[ModConnection] | None = None,
     ) -> np.ndarray:
         if signal.size == 0:
             return np.asarray(signal, dtype=np.float64)
@@ -1943,26 +2281,45 @@ class Score:
             target_name=target_name,
             times=signal_times,
         )
+        if modulations:
+            matrix_connections = iter_connections_for_target(
+                modulations, kind="control", name=target_name
+            )
+            if matrix_connections:
+                context = self._build_source_context(times=signal_times)
+                db_curve = combine_connections_on_curve(
+                    base=db_curve,
+                    connections=matrix_connections,
+                    times=signal_times,
+                    context=context,
+                )
         gain_curve = np.power(10.0, db_curve / 20.0)
         if signal.ndim == 1:
             return np.asarray(signal * gain_curve, dtype=np.float64)
         return np.asarray(signal * gain_curve[np.newaxis, :], dtype=np.float64)
 
-    @staticmethod
     def _apply_pan_control(
+        self,
         signal: np.ndarray,
         *,
         base_pan: float,
         automation_specs: list[AutomationSpec],
         target_name: str = "pan",
         signal_times: np.ndarray,
+        modulations: list[ModConnection] | None = None,
     ) -> np.ndarray:
         if signal.size == 0:
             return np.asarray(signal, dtype=np.float64)
-        if base_pan == 0.0 and not any(
+        has_pan_automation = any(
             spec.target.kind == "control" and spec.target.name == target_name
             for spec in automation_specs
-        ):
+        )
+        pan_connections = (
+            iter_connections_for_target(modulations, kind="control", name=target_name)
+            if modulations
+            else []
+        )
+        if base_pan == 0.0 and not has_pan_automation and not pan_connections:
             return np.asarray(signal, dtype=np.float64)
         pan_curve = apply_control_automation(
             base_value=base_pan,
@@ -1970,6 +2327,14 @@ class Score:
             target_name=target_name,
             times=signal_times,
         )
+        if pan_connections:
+            context = self._build_source_context(times=signal_times)
+            pan_curve = combine_connections_on_curve(
+                base=pan_curve,
+                connections=pan_connections,
+                times=signal_times,
+                context=context,
+            )
         return synth.apply_pan_automation(signal, pan_curve=pan_curve)
 
     def _build_velocity_multiplier_map(self) -> dict[tuple[str, int], float]:

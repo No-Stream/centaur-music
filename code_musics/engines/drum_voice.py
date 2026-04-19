@@ -23,6 +23,7 @@ from code_musics.engines._drum_macros import resolve_macros
 from code_musics.engines._drum_utils import resolve_velocity_timbre, rng_for_note
 from code_musics.engines._envelopes import render_envelope
 from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_zdf_svf
+from code_musics.engines._pi_macros import resolve_pi_macros
 from code_musics.engines._waveshaper import ALGORITHM_NAMES, apply_waveshaper
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -53,6 +54,9 @@ def render(
 
     # --- Resolve macros (punch, decay_shape, character) ---
     resolve_macros(params)
+
+    # --- Resolve physical-informed macros (pi_hardness, pi_tension, ...) ---
+    resolve_pi_macros(params)
 
     # --- Extract layer type selectors ---
     tone_type: str | None = params.get("tone_type", "oscillator")
@@ -94,6 +98,11 @@ def render(
     voice_shaper_mix = float(params.get("shaper_mix", 1.0))
     voice_shaper_mode: str = str(params.get("shaper_mode", "triode"))
     voice_shaper_fidelity = float(params.get("shaper_fidelity", 0.5))
+
+    # Digital-character shaper params (consumed when shaper is bit_crush /
+    # rate_reduce; ignored by other algorithms).
+    voice_shaper_bit_depth = float(params.get("bit_depth", 8.0))
+    voice_shaper_reduce_ratio = float(params.get("reduce_ratio", 2.0))
 
     # --- Extract voice filter ---
     filter_mode: str | None = params.get("filter_mode")
@@ -246,6 +255,7 @@ def render(
             rng=rng,
             metallic_type=metallic_type,
             params=params,
+            exciter_signal=exciter_signal,
         )
         if metallic_filter_mode is not None:
             cutoff_profile = np.full(
@@ -290,6 +300,8 @@ def render(
         sample_rate=sample_rate,
         mode=voice_shaper_mode,
         fidelity=voice_shaper_fidelity,
+        bit_depth=voice_shaper_bit_depth,
+        reduce_ratio=voice_shaper_reduce_ratio,
     )
 
     # --- Peak normalize and scale ---
@@ -345,6 +357,8 @@ def _apply_layer_shaper(
     sample_rate: int = 44_100,
     mode: str = "triode",
     fidelity: float = 0.5,
+    bit_depth: float = 8.0,
+    reduce_ratio: float = 2.0,
 ) -> np.ndarray:
     """Apply waveshaper, saturation, or preamp to a layer signal."""
     if shaper is None:
@@ -386,4 +400,6 @@ def _apply_layer_shaper(
         algorithm=shaper,
         drive=drive,
         mix=mix,
+        bit_depth=bit_depth,
+        reduce_ratio=reduce_ratio,
     )

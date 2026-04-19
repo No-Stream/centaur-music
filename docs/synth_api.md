@@ -299,6 +299,29 @@ Important v1 limits:
   `wet_level`), not arbitrary effect internals
 - `pitch_motion` and `pitch_ratio` automation cannot be combined on the same note
 
+### Per-Sample Engine Param Profiles
+
+The modulation matrix (`code_musics/modulation.py`) can ride selected
+synth params at audio rate via the engine-level `param_profiles`
+kwarg on `render_note_signal`.  Engines opt in by registering via
+`register_param_profile_support(engine_name)`.  When a profile is
+supplied for a supported param, it replaces the scalar base before
+the engine's internal envelope/drift/jitter stack.  Engines not in
+the whitelist silently ignore the kwarg.
+
+Current support:
+
+| Engine | Per-sample params |
+|---|---|
+| `polyblep` | `cutoff_hz` |
+
+All other synth destinations still resolve to a scalar at note
+onset.  See `FUTURE.md` for the deferred per-sample destinations
+(`filter_morph`, `resonance_q`, `hpf_cutoff_hz`, comb/filter1/2
+family, `vibrato_depth`, etc.).  The `ModConnection` surface is
+unchanged across the two modes — only the plumbing into the engine
+differs.
+
 ## Engine Selection
 
 Set the engine with:
@@ -1326,17 +1349,24 @@ Available for per-oscillator distortion via `body_distortion` (kick_tom):
 | `sine_fold` | Sine wavefolder — soft musical folding via sine transfer function. |
 | `half_wave_rect` | Octave-up character |
 | `full_wave_rect` | Full rectification |
+| `bit_crush` | Digital quantization to `bit_depth` bits (1.0-16.0). Machinedrum-flavored crunch. |
+| `rate_reduce` | Integer sample-and-hold at `reduce_ratio` (>= 1.0). Lo-fi digital aliasing. |
+| `digital_clip` | Asymmetric hard clip with small positive bias. Harsh DX-style clipping. |
 
 Drive follows the standard knob convention: 0-0.25 subtle, 0.33-0.66
 moderate, 0.66-1.0 strong.
 
-All 11 algorithms include first-order ADAA (Anti-Derivative Anti-Aliasing)
+Most algorithms include first-order ADAA (Anti-Derivative Anti-Aliasing)
 for reduced aliasing at no significant CPU cost. For algorithms where a
 closed-form antiderivative is not available (`foldback`, `linear_fold`,
 `sine_fold`, `half_wave_rect`), optional 2x oversampling is available via
 the `oversample=2` parameter. The `apply_waveshaper` function accepts an
 optional `drive_envelope` (per-sample array in [0, 1]) for time-varying
-drive modulation.
+drive modulation. The three digital-character algorithms (`bit_crush`,
+`rate_reduce`, `digital_clip`) use 2x oversampling rather than ADAA since
+their transfer functions are piecewise-constant / discontinuous; they read
+the extra scalar params `bit_depth` and `reduce_ratio` from
+`apply_waveshaper`'s keyword arguments.
 
 ## `additive`
 
@@ -2505,6 +2535,24 @@ individually.
   time, release time, pulse width, resonance, softness, and drift rate. Default
   `1.0`. Range `[0, 3]`.
 
+  When `voice_card_spread` (or `voice_card_envelope_spread`) is explicitly
+  present on a voice, the outer Score-level ADSR attack and release times are
+  also scaled per-voice (±5% at spread=1.0, linearly wider at higher spread).
+  Voices that never set the knob keep their exact authored attack/release —
+  this preserves fixed-length render semantics for older pieces and length-
+  sensitive tests; opt in by setting `voice_card_spread` to see per-voice env
+  drift in addition to the per-sample parameter offsets.
+
+#### OB-Xd-Style Fast CV Dither
+
+  The `analog_jitter` knob also drives an audio-rate OB-Xd-style dither layer
+  on top of the stable `voice_card` offsets (polyblep + filtered_stack
+  engines). At `analog_jitter=1.0` the dither is ±0.05 semitone on pitch and
+  ±3% on filter cutoff, smoothed by a 4 kHz one-pole lowpass so it reads as
+  warm rustle rather than pure hiss. FM engine skips the cutoff path (no
+  filter) but is otherwise unaffected — `analog_jitter=0` disables dither
+  entirely, preserving prior behaviour.
+
 #### Filter Topology
 
 - `filter_topology: str`
@@ -2542,6 +2590,12 @@ individually.
 - `feedback_saturation: float`
   Saturation in the feedback path (tanh). Tames feedback and adds harmonics.
   Default `0.3`. Range `[0, 1]`.
+
+Ladder and SVF feedback summations inject a deterministic ~1e-6 (120 dB below
+unity) bootstrap noise buffer — seeded from a hash of the input signal, so
+identical inputs produce identical noise. Without it, a silent input into a
+high-Q self-oscillating ladder would stay silent; with it, the filter can wake
+up from exact silence. Inaudible on normal material.
 
 #### VCA Nonlinearity
 
@@ -2660,6 +2714,196 @@ score.add_voice(
             "filter_drive_ratio": 0.18,
             "filter_env_depth_ratio": 0.6,
             "filter_env_decay_ms": 500.0,
+        },
+    },
+)
+```
+
+## `va`
+
+Implementation: [code_musics/engines/va.py](code_musics/engines/va.py)
+
+Voiced 90s/00s Virtual Analog engine. The character does not come from one
+feature but from the engine as a whole: oscillator voicing, pre-filter drive,
+dual-filter routing, optional resonant comb, and the standard analog-character
+surface (voice-card, jitter, drift, CV dither). Presets cover Roland JP-8000,
+Access Virus, and Waldorf Q flavors.
+
+Two oscillator modes:
+
+- `osc_mode="supersaw"` — 7-voice PolyBLEP saw bank with Szabo-accurate
+  nonlinear detune and mix laws (JP-8000 lineage), random starting phase per
+  note, and optional hard-sync (Virus HyperSaw-adjacent).
+- `osc_mode="spectralwave"` — partial-bank oscillator with continuous
+  `spectral_position` sweep from saw → spectral → square, plus optional
+  spectral-morph layer (smear, inharmonic_scale, phase_disperse, shepard,
+  random_amplitudes).
+
+Signal flow:
+
+```text
+osc_mix → drive (waveshaper) → [comb pre] → filter chain → [comb post] → post-proc → amp
+                                                                ↑
+                                             single | serial | parallel | split
+```
+
+Parameters:
+
+### Oscillator selection
+
+- `osc_mode: str` — `"supersaw"` or `"spectralwave"`. Default `"supersaw"`.
+
+### Supersaw params (`osc_mode="supersaw"`)
+
+- `supersaw_detune: float` — Perceptual detune amount in [0, 1]. Maps via
+  Szabo's reverse-engineered polynomial to per-voice cents spread. Nonlinear:
+  low values stay subtle, high values widen rapidly. Default `0.3`.
+- `supersaw_mix: float` — Mix amount in [0, 1]. Drives both side-voice and
+  center-voice gain through Szabo's nonlinear laws; the center level changes
+  with mix (critical to the JP sound). Default `0.5`.
+- `supersaw_sync: bool` — Hard-sync the 6 side voices to the center voice's
+  phase wrap. Off by default; enabling produces a more aggressive
+  Virus-HyperSaw character. Default `False`.
+
+### Spectralwave params (`osc_mode="spectralwave"`)
+
+- `spectral_position: float` — Morph axis in [0, 1]. `0` is saw-like (all
+  harmonics, `1/n` roll-off); `1` is square-like (odd-only, `1/n`); mid values
+  emphasize formant-like odd harmonics (3, 5, 9, 13, 21) for Virus-classic
+  "spectral wave" character. Default `0.0`.
+- `n_partials: int` — Number of partials in the bank, up to 64. Default `64`.
+- `spectral_morph_type: str` — Optional morph layer: `"none"`,
+  `"inharmonic_scale"`, `"phase_disperse"`, `"smear"`, `"shepard"`,
+  `"random_amplitudes"`. Applied to the partial bank before rendering.
+- `spectral_morph_amount: float` — Strength of the morph layer. Default `0.0`.
+- `spectral_morph_shift: float`, `spectral_morph_center_k: int`,
+  `spectral_morph_seed: int` — Per-morph-type parameters; see
+  `_spectral_morphs.py` for semantics.
+- `sigma_approximation: bool` — Apply Lanczos sigma factors against Gibbs
+  ringing. Default `False`.
+- `osc2_level: float` — Optional simple osc2 stack. Default `0.0` (disabled).
+- `osc2_semitones: float`, `osc2_detune_cents: float` — osc2 tuning offsets.
+
+### Pre-filter drive stage
+
+- `drive_amount: float` — Virus-style pre-filter saturation amount in [0, 1].
+  Default `0.0` (bypass). Uses the waveshaper stage with ADAA anti-aliasing.
+- `drive_algorithm: str` — `"tanh"` (default; warm analog), `"atan"` (softer
+  shoulder), or `"exponential"` (brighter, more aggressive upper-mid grit).
+
+### Dual-filter routing
+
+- `filter_routing: str` — `"single"` (F1 only, default), `"serial"` (F1→F2),
+  `"parallel"` (mean of F1 and F2), `"split"` (osc split: center/osc1 → F1,
+  satellites/osc2 → F2).
+
+Each filter slot (`filter1_*`, `filter2_*`) accepts the full `apply_filter`
+surface. The top-level `cutoff_hz`, `resonance_q`, etc. map to `filter1_*` for
+polyblep-style shorthand. Filter 2 defaults to inheriting filter 1 (so
+`"serial"` with no f2 params cascades the same filter twice for a steeper
+slope).
+
+Key per-slot params: `cutoff_hz`, `resonance_q`, `keytrack`, `reference_freq_hz`,
+`filter_env_amount`, `filter_env_decay`, `filter_mode`, `filter_drive`,
+`filter_topology`, `bass_compensation`, `filter_morph`, `hpf_cutoff_hz`,
+`hpf_resonance_q`, `feedback_amount`, `feedback_saturation`.
+
+### Comb filter slot
+
+- `comb_position: str` — `"off"` (default), `"pre_filter"`, `"post_filter"`,
+  or `"parallel"` (summed with filter-chain output).
+- `comb_delay_ms: float` — Base delay in ms. Default `8.0`.
+- `comb_feedback: float` — Feedback gain in [0, 0.99]. Above ~0.95 with low
+  damping produces sustained self-oscillation. Soft-clipped internally.
+- `comb_damping: float` — Feedback-path 1-pole lowpass amount in [0, 1].
+  `0` is bright resonance, `1` is dark short decay. Default `0.2`.
+- `comb_keytrack: float` — Frequency tracking in [0, 1]. At `1.0` the comb
+  resonates exactly at the note's fundamental (karplus-strong-ish bell).
+  Default `0.0`.
+- `comb_mix: float` — Parallel-position dry/wet balance. Default `0.5`.
+
+### Analog Character (va)
+
+The `va` engine consumes the full analog-character surface: `pitch_drift`,
+`analog_jitter`, `noise_floor`, `drift_rate_hz`, `cutoff_drift`,
+`voice_card_spread` (and per-group overrides). See the polyblep section for
+individual parameter semantics. Defaults are tuned slightly looser than
+polyblep since these synths are meant to feel "alive but produced."
+
+Validation:
+
+- `duration > 0`
+- `sample_rate > 0`
+- `osc_mode ∈ {"supersaw", "spectralwave"}`
+- `filter_routing ∈ {"single", "serial", "parallel", "split"}`
+- `comb_position ∈ {"off", "pre_filter", "post_filter", "parallel"}`
+- `drive_algorithm ∈ {"tanh", "atan", "exponential"}`
+- `filter{1,2}_cutoff_hz > 0`, `filter{1,2}_filter_env_decay > 0`
+- `drive_amount ∈ [0, 1]`, `spectral_position ∈ [0, 1]`, `n_partials >= 1`
+- `comb_delay_ms > 0`, `comb_feedback ∈ [0, 0.99]`,
+  `comb_damping ∈ [0, 1]`, `comb_keytrack ∈ [0, 1]`, `comb_mix ∈ [0, 1]`
+
+Notes:
+
+- Returns mono `float64`. Stereo comes from `Voice.pan`, `SmearVoice`, or
+  effects.
+- Peak-normalizes before multiplying by `amp`, so the per-note level stays
+  predictable regardless of drive/filter/comb combinations.
+- `freq_trajectory` is honored — pitch motion works on both osc modes.
+- ADSR is applied outside the engine by the score layer.
+
+Artifact-risk guidance:
+
+- `supersaw_detune > 0.9` — verges on chorus-ish warble. Musical at `0.3-0.7`.
+- `drive_amount > 0.7` — moves from Virus-style saturation into obvious
+  distortion. For a clean warmth, stay at `0.2-0.4`.
+- `comb_feedback > 0.95` with `comb_damping < 0.15` — approaches
+  self-oscillation. Intentional for comb-bell presets; otherwise keep
+  `feedback < 0.9`.
+- High `resonance_q` × low `cutoff_hz` × `ladder` topology with
+  `feedback_amount > 0` can self-oscillate below the note fundamental.
+  Bootstrap noise keeps this bounded, but it's usually a signal that the
+  filter is over-driven.
+
+Common interaction trap:
+
+The `drive_amount` stage and the per-filter `filter1_drive` / `filter2_drive`
+stages are **independent**. Running both at high amounts compounds saturation
+quickly. For analog-modeling gain staging, prefer raising only one at a time.
+`drive_amount` is the more Virus-flavored surface (pre-filter gain into a
+clean filter); `filter_drive` is the more Ladder-flavored surface (drive
+inside the filter feedback path).
+
+Presets:
+
+- `jp8000_hoover` — Classic trance hoover with ladder filter and light drive.
+- `jp8000_lead` — Tighter supersaw with moderate filter_env for melodic leads.
+- `supersaw_pad` — Wide stacked pad, serial filter cascade for a gentler roll-off.
+- `virus_pad` — Spectralwave with smear morph, long release, serial filter.
+- `virus_bass` — Low spectral_position (saw-leaning) with pre-filter drive and
+  HPF cleanup; fast filter_env for punch.
+- `virus_lead` — Supersaw with hard-sync, parallel BPF+LPF, mid drive.
+- `q_comb_pad` — Spectralwave with phase-disperse morph and keytracked comb
+  post-filter.
+- `q_comb_bell` — Self-oscillating comb (`feedback=0.92`, `keytrack=1.0`) over
+  a spectralwave with light inharmonic morph — karplus-strong-adjacent bell.
+- `q_spectral_lead` — Random-amplitude spectral morph through a
+  slope-morphed ladder filter.
+
+Example (structured spec form):
+
+```python
+voice = score.add_voice(
+    "lead",
+    synth_defaults={
+        "engine": "va",
+        "preset": "virus_lead",
+        "env": {"attack_ms": 20.0, "release_ms": 500.0},
+        "params": {
+            "supersaw_detune_ratio": 0.18,
+            "supersaw_mix_ratio": 0.45,
+            "drive_amount_ratio": 0.35,
+            "filter1_resonance_ratio": 2.2,
         },
     },
 )
@@ -2786,9 +3030,39 @@ Replaces the five separate drum engines (`kick_tom`, `snare`, `clap`,
 `metallic_perc`, `noise_perc`) with a unified architecture. All original presets
 are available under the `drum_voice` engine name.
 
+### Machinedrum-inspired kernels
+
+Four additional kernel families extend the base architecture with
+Elektron-Machinedrum-style synthesis primitives:
+
+- **EFM (two-op FM)** — via `tone_type="efm"`. Aggressive DX-style FM with a
+  primary modulator plus optional second modulator, feedback, and a decaying
+  index envelope. Great for punchy kicks with harmonic bite, metallic snare
+  cracks, chirpy cowbells. Reads `efm_ratio` / `efm_index_peak` /
+  `efm_feedback` / `efm_ratio_2` / `efm_index_2` / `efm_feedback_2` /
+  `efm_index_decay_s` / `efm_carrier_feedback` / `efm_index_envelope`.
+- **PI modal resonator banks** — via `tone_type="modal"` (body) or
+  `metallic_type="modal_bank"` (bell / shimmer layer). Real
+  physical-informed modal synthesis sourced from named mode tables
+  (`membrane`, `bar_wood`, `bar_metal`, `bar_glass`, `plate`, `bowl`,
+  `stopped_pipe`) in `code_musics/spectra.py`, driven by the exciter
+  layer. Ergonomic `pi_hardness` / `pi_tension` / `pi_damping` /
+  `pi_damping_tilt` / `pi_position` macros shape strike character,
+  stretch, decay balance, and strike position.
+- **E12-style sample exciters** — via `exciter_type="sample"`. Loads a
+  WAV and plays it back as the transient layer, with pitch-tracked
+  playback, micro start-offset jitter, optional ring-mod layer, reverse,
+  and bend envelopes. Pair with a PI modal body for convincing
+  sample-plus-resonator drums.
+- **Digital-character shapers** — via `shaper="bit_crush"` /
+  `"rate_reduce"` / `"digital_clip"` on the voice shaper slot. Crunch,
+  lo-fi aliasing, and asymmetric DX-style clipping. These read
+  `bit_depth` (bit_crush) and `reduce_ratio` (rate_reduce) at the voice
+  level.
+
 ### Architecture
 
-```
+```text
                    +---------------+
                    |  Pitch Sweep  |  (shared freq_profile for tone + metallic)
                    +-------+-------+
@@ -2841,6 +3115,7 @@ Key routing:
 | `multi_tap` | Multiple rapid micro-bursts (clap architecture) | `exciter_n_taps`, `exciter_tap_spacing_s`, `exciter_tap_decay_s`, `exciter_tap_crescendo`, `exciter_tap_acceleration`, `exciter_tap_freq_spread`, `exciter_tap_bandwidth_ratio` |
 | `fm_burst` | Short FM oscillator burst | `exciter_fm_ratio`, `exciter_fm_index`, `exciter_fm_feedback` |
 | `noise_burst` | Wider-band noise with optional tail filter | `exciter_bandwidth_ratio`, `exciter_filter_cutoff_hz`, `exciter_filter_q` |
+| `sample` | WAV playback as transient layer | `exciter_sample_path`, `exciter_sample_pitch_shift`, `exciter_sample_start_jitter_ms`, `exciter_sample_ring_freq_hz`, `exciter_sample_reverse` |
 
 **Tone layer** (pitched periodic content / body):
 
@@ -2849,6 +3124,8 @@ Key routing:
 | `oscillator` | Waveform + pitch sweep + punch | `tone_wave` (sine/tri/sine_clip), `tone_punch`, `tone_second_harmonic` |
 | `resonator` | Time-varying biquad bandpass driven by exciter | `tone_punch` (affects fallback impulse if no exciter) |
 | `fm` | FM synthesis body | `tone_fm_ratio`, `tone_fm_index`, `tone_fm_feedback`, `tone_fm_index_decay_s` |
+| `efm` | Two-op DX-style FM (Machinedrum EFM) | `efm_ratio`, `efm_index_peak`, `efm_feedback`, `efm_ratio_2`, `efm_index_2` |
+| `modal` | Physical-informed modal resonator bank | `modal_mode_table`, `modal_n_modes`, `pi_hardness`, `pi_tension`, `pi_damping`, `pi_position` |
 | `additive` | Small partial set at configurable ratios | `tone_partial_ratios`, `tone_n_partials`, `tone_brightness` |
 
 **Noise layer** (aperiodic texture):
@@ -2867,6 +3144,8 @@ Key routing:
 | `partials` | Additive inharmonic partials | `metallic_partial_ratios`, `metallic_n_partials`, `metallic_oscillator_mode` (sine/square), `metallic_brightness`, `metallic_density` |
 | `ring_mod` | Ring modulator on harmonic partial sum | `metallic_ring_mod_freq_ratio`, `metallic_ring_mod_amount`, `metallic_n_partials`, `metallic_brightness`, `metallic_density` |
 | `fm_cluster` | Multiple FM operators at inharmonic ratios | `metallic_n_operators`, `metallic_fm_ratios`, `metallic_fm_index`, `metallic_fm_feedback`, `metallic_brightness`, `metallic_density` |
+| `efm_cymbal` | N-op PM cymbal (Machinedrum EFM cymbal) | `cymbal_op_count`, `cymbal_ratio_set` (tr808 / tr909 / bar / plate), `cymbal_index`, `cymbal_feedback` |
+| `modal_bank` | Modal resonator bank (metallic variant) | `metallic_mode_table`, `metallic_n_modes`, `pi_hardness`, `pi_tension`, `pi_damping`, `pi_position` |
 
 ### Parameters
 
@@ -3010,9 +3289,84 @@ override explicit values.
 | `filter_drive` | 0.0 | 0.3 |
 | `noise_level` | (unchanged) | +30% boost if already present |
 
-### Presets
+### Machinedrum kernel parameters
 
-All 62 migrated presets organized by original engine category:
+**EFM tone params** (consumed when `tone_type="efm"`):
+
+| Parameter | Type | Range | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `efm_ratio` | `float` | > 0 | `1.5` | Primary modulator carrier-ratio |
+| `efm_index_peak` | `float` | >= 0 | `3.0` | Peak modulation index for the primary modulator |
+| `efm_feedback` | `float` | 0.0-1.0 | `0.0` | Primary modulator self-feedback |
+| `efm_ratio_2` | `float` | >= 0 | `0.0` | Second modulator ratio (0 disables) |
+| `efm_index_2` | `float` | >= 0 | `0.0` | Peak index for the second modulator |
+| `efm_feedback_2` | `float` | 0.0-1.0 | `0.0` | Second modulator self-feedback |
+| `efm_index_decay_s` | `float` | > 0 | `0.05` | Exp-decay time constant for both modulator indices (when no explicit envelope) |
+| `efm_carrier_feedback` | `float` | 0.0-1.0 | `0.0` | Carrier self-feedback for added growl |
+| `efm_index_envelope` | `list[dict]` | -- | `None` | Optional multi-point index envelope; overrides `efm_index_decay_s` |
+
+**EFM cymbal params** (consumed when `metallic_type="efm_cymbal"`):
+
+| Parameter | Type | Range | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `cymbal_op_count` | `int` | >= 1 | `6` | Number of PM operators modulating a sine carrier |
+| `cymbal_ratio_set` | `str` | -- | `"tr808"` | Named ratio set: `"tr808"`, `"tr909"`, `"bar"`, `"plate"` |
+| `cymbal_index` | `float` | >= 0 | `2.5` | Peak PM index, broadcast to all operators |
+| `cymbal_feedback` | `float` | 0.0-1.0 | `0.0` | Per-operator self-feedback |
+| `cymbal_index_envelope` | `list[dict]` | -- | `None` | Optional multi-point index envelope applied identically to all operators |
+
+**PI modal params** (tone uses `modal_` prefix when `tone_type="modal"`; metallic uses `metallic_` prefix when `metallic_type="modal_bank"`):
+
+| Parameter | Type | Range | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `{prefix}_mode_table` | `str` | -- | `"membrane"` (tone) / `"bar_metal"` (metallic) | Named mode table from `spectra.py`: `membrane`, `bar_wood`, `bar_metal`, `bar_glass`, `plate`, `bowl`, `stopped_pipe` |
+| `{prefix}_n_modes` | `int` | >= 1 | (table length) | Cap on number of modes used from the table |
+| `{prefix}_ratios` | `list[float]` | -- | `None` | Explicit custom mode ratios (overrides the table) |
+| `{prefix}_amps` | `list[float]` | -- | `None` | Explicit per-mode amplitudes (must match `ratios` length) |
+| `{prefix}_decays_s` | `list[float]` | -- | `None` | Explicit per-mode decay times (must match `ratios` length) |
+| `{prefix}_decay_s` | `float` | > 0 | `0.6` (tone) / `0.4` (metallic) | Global decay multiplier |
+| `{prefix}_tension` | `float` | -1.0 to 1.0 | `0.0` | Fractional stretch of mode ratios (also accepted as `pi_tension`) |
+| `{prefix}_damping` | `float` | 0.0-1.0 | `1.0` | Global decay multiplier (also accepted as `pi_damping`) |
+| `{prefix}_damping_tilt` | `float` | -1.0 to 1.0 | `0.0` | High- vs low-mode decay balance (also accepted as `pi_damping_tilt`) |
+| `{prefix}_position` | `float` | 0.0-1.0 | `0.0` | Strike position window on mode amplitudes (also accepted as `pi_position`) |
+
+**PI macros** (map onto the modal params above for quick perceptual control):
+
+| Macro | Range | Description |
+|-------|-------|-------------|
+| `pi_hardness` | 0.0-1.0 | Mallet / strike brightness (drives exciter brightness and index) |
+| `pi_tension` | -1.0 to 1.0 | Mode-ratio stretch factor (negative = compressed, positive = stretched) |
+| `pi_damping` | 0.0-1.0 | Global modal decay multiplier |
+| `pi_damping_tilt` | -1.0 to 1.0 | Decay balance: positive dampens high modes faster, negative the opposite |
+| `pi_position` | 0.0-1.0 | Strike-position window on the modal amplitudes |
+
+**Sample exciter params** (consumed when `exciter_type="sample"`):
+
+| Parameter | Type | Range | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `exciter_sample_path` | `str` | -- | **required** | Path to the WAV file |
+| `exciter_sample_root_freq` | `float` | > 0 | `freq` | Source pitch of the sample (for pitch-tracked playback) |
+| `exciter_sample_pitch_shift` | `bool` | -- | `True` | Whether to pitch-shift to the note freq |
+| `exciter_sample_pitch_shift_semitones` | `float` | -- | `0.0` | Constant additional semitone offset |
+| `exciter_sample_start_offset_ms` | `float` | >= 0 | `0.0` | Skip this many ms from the start of the sample |
+| `exciter_sample_start_jitter_ms` | `float` | >= 0 | `0.0` | Random start-offset jitter range in ms |
+| `exciter_sample_bend_envelope` | `list[dict]` | -- | `None` | Optional multi-point pitch-bend envelope (cents) |
+| `exciter_sample_ring_freq_hz` | `float` | >= 0 | `0.0` | Ring-mod frequency (0 disables) |
+| `exciter_sample_ring_depth` | `float` | 0.0-1.0 | `0.0` | Ring-mod depth |
+| `exciter_sample_reverse` | `bool` | -- | `False` | Play the sample backwards |
+
+**Digital-character voice shaper params** (consumed by the voice `shaper` slot when set to a digital-character algorithm):
+
+| Parameter | Type | Range | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `bit_depth` | `float` | 1.0-16.0 | `8.0` | Effective bit-depth for `shaper="bit_crush"` |
+| `reduce_ratio` | `float` | >= 1.0 | `2.0` | Sample-and-hold factor for `shaper="rate_reduce"` |
+
+### Presets (drum_voice)
+
+All 62 migrated presets organized by original engine category, plus 15
+Machinedrum-inspired presets at the end (EFM tones / EFM cymbals / PI modal /
+digital character):
 
 **Kick/tom** (from kick_tom):
 
@@ -3098,6 +3452,26 @@ All 62 migrated presets organized by original engine category:
 | `chh` | Short noise burst for closed hi-hat |
 | `clap_noise` | Wide bandpass noise clap |
 | `shaped_hit` | Balanced tone+noise with multi-point noise envelope |
+
+**Machinedrum-inspired** (EFM / PI modal / digital character):
+
+| Preset | Character |
+|--------|-----------|
+| `efm_kick_deep` | Deep EFM kick with slow decay and punchy sweep |
+| `efm_kick_punch` | Brighter 909-ish EFM kick with tight attack |
+| `efm_snare_bright` | EFM metallic crack snare with white noise wire |
+| `efm_cowbell` | Clangy, chirpy EFM cowbell with dual modulators |
+| `efm_cymbal_trash` | Chaotic 6-op EFM crash, TR-909 ratio set |
+| `efm_cymbal_china` | Splashy 4-op EFM china with bar-mode ratios |
+| `pi_tom_membrane` | Physically-modelled membrane tom via modal bank |
+| `pi_kick_shell` | Physical kick-drum shell with compressed modes |
+| `pi_wood_block` | Wooden block strike via bar-wood mode table |
+| `pi_metal_bell` | Metallic bell hit via bar-metal modal bank |
+| `pi_glass_ping` | Crystalline glass ping via bar-glass mode table |
+| `pi_bowl_shimmer` | Long-decay singing bowl shimmer |
+| `kick_bitcrush` | 808 hip-hop kick through bit-crush voice shaper |
+| `hat_rate_reduced` | Lo-fi sample-and-held closed-hat via rate-reduce |
+| `snare_digital_fuzz` | EFM snare body into asymmetric digital clip |
 
 Notes:
 

@@ -5,6 +5,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from code_musics.automation import (
+    AutomationSegment,
+    AutomationSpec,
+    AutomationTarget,
+)
 from code_musics.score import EffectSpec, Score
 from code_musics.synth import (
     _BBD_CHORUS_PRESETS,
@@ -169,6 +174,81 @@ class TestBbdChorus:
         peak = float(np.max(np.abs(audio)))
         assert peak > 0.0, "rendered audio should not be silent"
         assert peak < 1.5, f"rendered audio peak {peak:.3f} is too hot"
+
+    def test_mix_automation_through_score_affects_wet_level(self) -> None:
+        """Automating ``bbd_chorus.mix`` through the Score must ride the wet level.
+
+        This proves EffectSpec automation is wired end-to-end: the control target
+        ``mix`` is resolved, sampled per-render, and applied to the effect's mix
+        parameter. We ramp mix from 0.0 -> 0.8 across the note and assert the
+        second half of the rendered audio differs measurably from the first,
+        in the direction implied by an increasing wet send.
+
+        With ``mix=0`` the output equals dry; with ``mix=0.8`` the wet path
+        sums into the output. So a rising ``mix`` should produce a rising
+        total RMS over time. If automation were not applied, the RMS envelope
+        would be flat modulo natural synth decay.
+        """
+        dur = 2.0
+
+        def _build(mix_automation: AutomationSpec | None) -> Score:
+            score = Score(f0_hz=220.0, auto_master_gain_stage=False)
+            automation_list = [mix_automation] if mix_automation else []
+            score.add_voice(
+                "pad",
+                synth_defaults={
+                    "engine": "polyblep",
+                    "osc_wave": "saw",
+                    "cutoff_hz": 1800.0,
+                    "attack": 0.02,
+                    "release": 0.05,
+                },
+                velocity_humanize=None,
+                effects=[
+                    EffectSpec(
+                        kind="bbd_chorus",
+                        params={"mix": 0.0, "cross_feedback": 0.0},
+                        automation=automation_list,
+                    )
+                ],
+            )
+            score.add_note("pad", start=0.0, duration=dur, partial=2.0, amp=0.3)
+            return score
+
+        mix_ramp = AutomationSpec(
+            target=AutomationTarget(kind="control", name="mix"),
+            segments=(
+                AutomationSegment(
+                    start=0.0,
+                    end=dur,
+                    shape="linear",
+                    start_value=0.0,
+                    end_value=0.8,
+                ),
+            ),
+        )
+
+        static_audio = _build(None).render()
+        ramped_audio = _build(mix_ramp).render()
+
+        assert static_audio.shape == ramped_audio.shape
+        assert np.all(np.isfinite(ramped_audio))
+
+        # Automation must change the rendered audio.
+        assert not np.allclose(static_audio, ramped_audio, atol=1e-6)
+
+        # Rising mix should produce rising wet energy. Compare RMS in the
+        # first quarter vs the last quarter (avoiding initial attack and
+        # tail release windows).
+        mono = ramped_audio.mean(axis=0) if ramped_audio.ndim == 2 else ramped_audio
+        n = mono.shape[-1]
+        q = n // 4
+        early_rms = float(np.sqrt(np.mean(mono[q : 2 * q] ** 2)))
+        late_rms = float(np.sqrt(np.mean(mono[2 * q : 3 * q] ** 2)))
+        assert late_rms > early_rms * 1.05, (
+            f"ramping mix from 0.0 to 0.8 should raise total RMS toward the end; "
+            f"got early_rms={early_rms:.5f} late_rms={late_rms:.5f}"
+        )
 
     def test_bandlimiting_trims_high_frequencies(self) -> None:
         """Pre/post LPF should clearly bandlimit the wet contribution.

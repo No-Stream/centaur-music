@@ -16,11 +16,28 @@ from typing import Any
 
 import numpy as np
 
-from code_musics.engines._dsp_utils import bandpass_noise as bandpass_noise_windowed
+from code_musics.engines._dsp_utils import bandpass_noise as _canonical_bandpass_noise
 from code_musics.engines._dsp_utils import rng_for_note
 
+
+def bandpass_noise_windowed(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    center_hz: float,
+    width_ratio: float = 0.75,
+) -> np.ndarray:
+    """Windowed bandpass variant with hard band edges (canonical in ``_dsp_utils``)."""
+    return _canonical_bandpass_noise(
+        signal,
+        sample_rate=sample_rate,
+        center_hz=center_hz,
+        width_ratio=width_ratio,
+    )
+
+
 # Re-export so existing ``from _drum_utils import rng_for_note`` keeps working.
-__all__ = ["rng_for_note", "bandpass_noise_windowed"]
+__all__ = ["bandpass_noise", "bandpass_noise_windowed", "rng_for_note"]
 
 
 @dataclass(frozen=True)
@@ -83,17 +100,21 @@ def bandpass_noise(
 ) -> np.ndarray:
     """FFT-domain Gaussian bandpass shaping (narrow variant).
 
-    Used by kick_tom, snare, and metallic_perc engines.  For the wider
-    variant with explicit ``width_ratio`` and hard band edges, see
-    :func:`bandpass_noise_windowed` (canonical in ``_dsp_utils``).
+    Used by kick_tom, snare, and metallic_perc engines.  Thin wrapper over the
+    canonical :func:`code_musics.engines._dsp_utils.bandpass_noise` with the
+    drum-tuned parameters: soft Gaussian rolloff (no hard edges), wider
+    minimum width, and 40 Hz center floor.
     """
-    nyquist = sample_rate / 2.0
-    bounded_center_hz = float(np.clip(center_hz, 40.0, nyquist * 0.95))
-    width_hz = max(140.0, bounded_center_hz * 0.8)
-    spectrum = np.fft.rfft(signal)
-    freqs = np.fft.rfftfreq(signal.size, d=1.0 / sample_rate)
-    mask = np.exp(-0.5 * ((freqs - bounded_center_hz) / max(1.0, width_hz / 2.7)) ** 2)
-    return np.fft.irfft(spectrum * mask, n=signal.size).real
+    return _canonical_bandpass_noise(
+        signal,
+        sample_rate=sample_rate,
+        center_hz=center_hz,
+        width_ratio=0.8,
+        min_width_hz=140.0,
+        gaussian_sigma_divisor=2.7,
+        center_clip_min_hz=40.0,
+        hard_edges=False,
+    )
 
 
 def integrated_phase(freq_profile: np.ndarray, *, sample_rate: int) -> np.ndarray:

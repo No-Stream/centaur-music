@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from code_musics.engines._dsp_utils import build_drift, build_drift_bus
-from code_musics.humanize import DriftBusSpec
+from code_musics.engines._dsp_utils import build_drift
+from code_musics.humanize import DriftBusSpec, build_drift_bus
 from code_musics.score import Score
 
 # ---------------------------------------------------------------------------
@@ -381,19 +381,28 @@ class TestIndependentDriftStillActiveAtMidCorrelation:
 # ---------------------------------------------------------------------------
 
 
-class TestHarmonicDriftPieceUnchanged:
-    """The existing harmonic_drift piece renders identically before/after the feature."""
+class TestHarmonicDriftPieceStillRenders:
+    """Smoke test: the existing harmonic_drift piece still renders end-to-end.
+
+    This is intentionally a shallow smoke test, not a bit-for-bit regression
+    guard — the drift bus refactor changes per-note sample consumption in ways
+    that deliberately alter rendered audio on subscribed voices. What we want
+    to preserve is that the piece itself continues to build and render cleanly.
+    """
 
     def test_harmonic_drift_render_is_stable(self) -> None:
-        """Smoke: building the piece's score still runs without error."""
         from code_musics.pieces.septimal import build_harmonic_drift_score
 
         score = build_harmonic_drift_score()
-        # Rendering a full piece is slow; prove invariance via a short window.
+        # Rendering a full piece is slow; prove the piece still runs via a
+        # short window at the start and confirm finite, non-silent audio.
         windowed = score.extract_window(start_seconds=0.0, end_seconds=2.0)
         audio = windowed.render()
         assert audio.size > 0
         assert np.all(np.isfinite(audio))
+        assert float(np.max(np.abs(audio))) > 1e-5, (
+            "harmonic_drift snippet should produce non-silent audio"
+        )
 
 
 # ---------------------------------------------------------------------------

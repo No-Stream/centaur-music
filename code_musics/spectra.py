@@ -79,6 +79,45 @@ _STOPPED_PIPE_MODES: list[float] = [
     17.11,
 ]
 
+# Rectangular free-plate approximation: stretched bar ratios. True plate modes
+# come from plate_spectrum() with an aspect ratio, but this static set is a
+# reasonable physically-motivated default for callers (like the modal bank)
+# that want a single fixed table per named variant.
+_PLATE_MODES: list[float] = [1.0, 2.5, 4.8, 7.9, 11.3, 15.5]
+
+_MODE_TABLES: dict[str, list[float]] = {
+    "membrane": _MEMBRANE_MODES,
+    "bar_wood": _BAR_MODES,
+    "bar_metal": _BAR_MODES,
+    "bar_glass": _BAR_MODES,
+    "plate": _PLATE_MODES,
+    "bowl": _BOWL_MODES,
+    "stopped_pipe": _STOPPED_PIPE_MODES,
+}
+
+
+def get_mode_table(name: str) -> list[float]:
+    """Return a copy of the named physical-model mode ratio table.
+
+    Valid names: ``"membrane"``, ``"bar_wood"``, ``"bar_metal"``,
+    ``"bar_glass"``, ``"plate"``, ``"bowl"``, ``"stopped_pipe"``.
+
+    The three ``"bar_*"`` variants share the same Euler-Bernoulli ratio
+    table — the material name is documentation for the caller.  Damping
+    / decay is a property of the consumer (e.g. the modal bank's
+    ``mode_decays_s`` argument), not of the ratio table itself.
+
+    The ``"plate"`` variant returns a stretched-bar approximation; true
+    plate spectra with aspect-ratio control are available via
+    :func:`plate_spectrum`.
+    """
+    if name == "custom":
+        raise ValueError("'custom' requires the caller to supply mode_ratios directly")
+    if name not in _MODE_TABLES:
+        valid = ", ".join(sorted(_MODE_TABLES))
+        raise ValueError(f"unknown mode table {name!r}, expected one of: {valid}")
+    return list(_MODE_TABLES[name])
+
 
 def ratio_spectrum(
     ratios: Sequence[float],

@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from code_musics.engines._dsp_utils import flow_exciter
+from code_musics.score import Score
 
 
 class TestFlowExciterContract:
@@ -238,3 +239,41 @@ class TestFlowExciterInvalidNoiseMode:
                 sample_rate=44_100,
                 params=params,
             )
+
+
+class TestFlowExciterScoreIntegration:
+    """End-to-end: the flow noise mode survives the full Score render path."""
+
+    def test_score_render_with_flow_noise_is_clean(self) -> None:
+        """A voice with ``noise_mode='flow'`` renders finite non-silent stereo audio.
+
+        Catches regressions where param marshaling, normalization, or the
+        per-note dispatcher drops or corrupts the flow noise source at the
+        Score layer (which is how composers actually reach this primitive).
+        """
+        score = Score(f0_hz=220.0, auto_master_gain_stage=False)
+        score.add_voice(
+            "brush",
+            synth_defaults={
+                "engine": "additive",
+                "partials": [{"ratio": 1.0, "amp": 1.0, "noise": 0.6}],
+                "noise_mode": "flow",
+                "noise_amount": 0.6,
+                "noise_bandwidth_hz": 300.0,
+                "flow_density": 0.4,
+                "attack": 0.02,
+                "release": 0.05,
+            },
+            velocity_humanize=None,
+        )
+        score.add_note("brush", start=0.0, duration=0.5, partial=1.0, amp=0.3)
+        audio = score.render()
+        # Score.render() returns 1-D mono for a single un-panned voice; (2, N)
+        # stereo when pan or stereo effects are present. Accept either.
+        assert audio.ndim in (1, 2), (
+            f"expected 1-D or (2, N) output, got shape {audio.shape}"
+        )
+        assert np.all(np.isfinite(audio))
+        peak = float(np.max(np.abs(audio)))
+        assert peak > 1e-3, f"rendered audio should not be silent; peak={peak}"
+        assert peak < 1.5, f"rendered audio peak {peak:.3f} is too hot"

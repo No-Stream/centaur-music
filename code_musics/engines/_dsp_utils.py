@@ -8,13 +8,18 @@ from __future__ import annotations
 
 import logging
 import math
+from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any
 
 import numba
 import numpy as np
+from scipy.signal import resample_poly
 
 from code_musics.engines._filters import apply_filter
+from code_musics.humanize import build_drift_bus  # re-exported for legacy callers
+
+__all__ = ["build_drift_bus"]
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -40,6 +45,13 @@ _VOICE_CARD_PULSE_WIDTH: float = 0.03  # +/- 0.03
 _VOICE_CARD_RESONANCE_PCT: float = 5.0  # +/- 5%
 _VOICE_CARD_SOFTNESS: float = 0.05  # +/- 0.05
 _VOICE_CARD_DRIFT_RATE_PCT: float = 20.0  # +/- 20%
+
+# OB-Xd-style fast per-sample CV dither.  Layered on top of the stable
+# voice_card offsets: adds an extra rustle of audio-rate modulation to
+# pitch and cutoff so held tones have a subtly living top end.
+_CV_DITHER_PITCH_SEMITONES: float = 0.05  # +/- 0.05 semitone at amount=1.0
+_CV_DITHER_CUTOFF_FRAC: float = 0.03  # +/- 3% of cutoff at amount=1.0
+_CV_DITHER_LOWPASS_HZ: float = 4000.0  # tame out pure whiteness
 
 SOUNDBOARD_MODES = (
     (80.0, 4.0, 0.10),
@@ -521,22 +533,35 @@ def bandpass_noise(
     sample_rate: int,
     center_hz: float,
     width_ratio: float = 0.75,
+    min_width_hz: float = 80.0,
+    gaussian_sigma_divisor: float = 2.5,
+    center_clip_min_hz: float = 30.0,
+    hard_edges: bool = True,
 ) -> np.ndarray:
-    """Bandpass-filter a noise signal around a center frequency via FFT."""
+    """Bandpass-filter a noise signal around a center frequency via FFT.
+
+    Canonical FFT-domain Gaussian bandpass.  ``hard_edges=True`` (the default)
+    adds rectangular band cutoffs outside the Gaussian for sharper rolloff;
+    ``hard_edges=False`` gives a pure Gaussian shape (used by the drum
+    "narrow" variant in ``_drum_utils``).
+    """
     if signal.size == 0:
         return signal
 
     nyquist = sample_rate / 2.0
-    center_hz = float(np.clip(center_hz, 30.0, nyquist * 0.95))
-    width_hz = max(80.0, center_hz * width_ratio)
-    low_hz = max(20.0, center_hz - width_hz / 2.0)
-    high_hz = min(nyquist * 0.98, center_hz + width_hz / 2.0)
+    center_hz = float(np.clip(center_hz, center_clip_min_hz, nyquist * 0.95))
+    width_hz = max(min_width_hz, center_hz * width_ratio)
 
     spectrum = np.fft.rfft(signal)
     freqs = np.fft.rfftfreq(signal.size, d=1.0 / sample_rate)
-    mask = np.exp(-0.5 * ((freqs - center_hz) / max(1.0, width_hz / 2.5)) ** 2)
-    mask *= (freqs >= low_hz).astype(np.float64)
-    mask *= (freqs <= high_hz).astype(np.float64)
+    mask = np.exp(
+        -0.5 * ((freqs - center_hz) / max(1.0, width_hz / gaussian_sigma_divisor)) ** 2
+    )
+    if hard_edges:
+        low_hz = max(20.0, center_hz - width_hz / 2.0)
+        high_hz = min(nyquist * 0.98, center_hz + width_hz / 2.0)
+        mask *= (freqs >= low_hz).astype(np.float64)
+        mask *= (freqs <= high_hz).astype(np.float64)
     shaped = np.fft.irfft(spectrum * mask, n=signal.size)
     return shaped.real
 
@@ -670,6 +695,21 @@ def fm_modulate(
         raise ValueError("mod_ratio must be positive")
     if mod_index < 0:
         raise ValueError("mod_index must be non-negative")
+    # Phase-modulation self-feedback: the loop computes
+    # sin(mod_phase + feedback * prev_mod), which stays stable and musical for
+    # feedback in [0, 1]. Values above 1 push the recursion into chaotic /
+    # noise-like territory that callers almost never want; fail fast instead of
+    # silently producing garbage.
+    if not 0.0 <= feedback <= 1.0:
+        raise ValueError(
+            f"feedback must be in [0.0, 1.0]; got {feedback!r}. "
+            "Higher values push the FM recursion into chaotic noise."
+        )
+    if not np.all(np.isfinite(carrier_freq_profile)):
+        raise ValueError(
+            "carrier_freq_profile contains non-finite values (NaN or Inf); "
+            "FM output would silently propagate non-finite samples."
+        )
 
     mod_freq_profile = carrier_freq_profile * mod_ratio
 
@@ -697,11 +737,299 @@ def fm_modulate(
 
 
 # ---------------------------------------------------------------------------
+# Two-operator (parallel modulators) FM primitive for EFM-style drum tones
+# ---------------------------------------------------------------------------
+
+
+@numba.njit(cache=True)
+def _fm_modulate_2op_loop(
+    out: np.ndarray,
+    carrier_freq_profile: np.ndarray,
+    mod1_freq_profile: np.ndarray,
+    mod2_freq_profile: np.ndarray,
+    mod1_index_profile: np.ndarray,
+    mod2_index_profile: np.ndarray,
+    sample_rate: int,
+    mod1_feedback: float,
+    mod2_feedback: float,
+    carrier_feedback: float,
+) -> None:
+    """Two independent modulators summed into one carrier, DX-style."""
+    carrier_phase = 0.0
+    mod1_phase = 0.0
+    mod2_phase = 0.0
+    prev_mod1 = 0.0
+    prev_mod2 = 0.0
+    prev_carrier = 0.0
+    two_pi_over_sr = 2.0 * math.pi / sample_rate
+
+    for i in range(out.shape[0]):
+        mod1_sample = math.sin(mod1_phase + mod1_feedback * prev_mod1)
+        mod2_sample = math.sin(mod2_phase + mod2_feedback * prev_mod2)
+        prev_mod1 = mod1_sample
+        prev_mod2 = mod2_sample
+
+        carrier_sample = math.sin(
+            carrier_phase
+            + mod1_index_profile[i] * mod1_sample
+            + mod2_index_profile[i] * mod2_sample
+            + carrier_feedback * prev_carrier
+        )
+        prev_carrier = carrier_sample
+        out[i] = carrier_sample
+
+        carrier_phase += carrier_freq_profile[i] * two_pi_over_sr
+        mod1_phase += mod1_freq_profile[i] * two_pi_over_sr
+        mod2_phase += mod2_freq_profile[i] * two_pi_over_sr
+
+
+def fm_modulate_2op(
+    carrier_freq_profile: np.ndarray,
+    *,
+    mod1_ratio: float,
+    mod1_index: float,
+    mod2_ratio: float,
+    mod2_index: float,
+    sample_rate: int,
+    mod1_feedback: float = 0.0,
+    mod2_feedback: float = 0.0,
+    carrier_feedback: float = 0.0,
+    index_envelope: np.ndarray | None = None,
+) -> np.ndarray:
+    """Two parallel modulators feeding one carrier (DX-style 2-op FM).
+
+    Both modulators contribute to the carrier phase simultaneously
+    (additive, not cascaded), which produces a distinct sound from
+    chaining two single-modulator calls. Each modulator has independent
+    self-feedback, and the carrier can also feed back into itself for
+    a ring-like growl.
+
+    Args:
+        carrier_freq_profile: Per-sample carrier frequency in Hz.
+        mod1_ratio: First modulator frequency as ratio of carrier.
+        mod1_index: First modulator peak index.
+        mod2_ratio: Second modulator frequency as ratio of carrier.
+        mod2_index: Second modulator peak index.
+        sample_rate: Audio sample rate.
+        mod1_feedback: Self-feedback on modulator 1 (0.0-1.0).
+        mod2_feedback: Self-feedback on modulator 2 (0.0-1.0).
+        carrier_feedback: Self-feedback on the carrier (0.0-1.0).
+        index_envelope: Optional per-sample index multiplier applied
+            to BOTH modulator indices.  When None, flat 1.0 is used.
+
+    Returns:
+        FM-modulated signal as float64 array.
+    """
+    carrier_freq_profile = np.asarray(carrier_freq_profile, dtype=np.float64)
+    n_samples = carrier_freq_profile.shape[0]
+
+    if mod1_ratio <= 0:
+        raise ValueError("mod1_ratio must be positive")
+    if mod2_ratio < 0:
+        raise ValueError("mod2_ratio must be non-negative")
+    if mod2_ratio == 0.0 and mod2_index != 0:
+        raise ValueError(
+            "mod2_ratio=0 disables the second modulator and requires mod2_index=0; "
+            f"got mod2_index={mod2_index!r}"
+        )
+    if mod1_index < 0:
+        raise ValueError("mod1_index must be non-negative")
+    if mod2_index < 0:
+        raise ValueError("mod2_index must be non-negative")
+    if not 0.0 <= mod1_feedback <= 1.0:
+        raise ValueError(
+            f"mod1_feedback must be in [0.0, 1.0]; got {mod1_feedback!r}. "
+            "Higher values push the FM recursion into chaotic noise."
+        )
+    if not 0.0 <= mod2_feedback <= 1.0:
+        raise ValueError(
+            f"mod2_feedback must be in [0.0, 1.0]; got {mod2_feedback!r}. "
+            "Higher values push the FM recursion into chaotic noise."
+        )
+    if not 0.0 <= carrier_feedback <= 1.0:
+        raise ValueError(
+            f"carrier_feedback must be in [0.0, 1.0]; got {carrier_feedback!r}. "
+            "Higher values push the FM recursion into chaotic noise."
+        )
+    if not np.all(np.isfinite(carrier_freq_profile)):
+        raise ValueError(
+            "carrier_freq_profile contains non-finite values (NaN or Inf); "
+            "FM output would silently propagate non-finite samples."
+        )
+
+    mod1_freq_profile = carrier_freq_profile * mod1_ratio
+    mod2_freq_profile = carrier_freq_profile * mod2_ratio
+
+    if index_envelope is not None:
+        index_env = np.asarray(index_envelope, dtype=np.float64)
+        if index_env.shape[0] != n_samples:
+            raise ValueError(
+                f"index_envelope length ({index_env.shape[0]}) must match "
+                f"carrier_freq_profile length ({n_samples})"
+            )
+        mod1_index_profile = mod1_index * index_env
+        mod2_index_profile = mod2_index * index_env
+    else:
+        mod1_index_profile = np.full(n_samples, mod1_index, dtype=np.float64)
+        mod2_index_profile = np.full(n_samples, mod2_index, dtype=np.float64)
+
+    out = np.empty(n_samples, dtype=np.float64)
+    _fm_modulate_2op_loop(
+        out,
+        carrier_freq_profile,
+        mod1_freq_profile,
+        mod2_freq_profile,
+        mod1_index_profile,
+        mod2_index_profile,
+        sample_rate,
+        mod1_feedback,
+        mod2_feedback,
+        carrier_feedback,
+    )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# N-operator phase-modulation primitive for EFM-style cymbal layers
+# ---------------------------------------------------------------------------
+
+
+@numba.njit(cache=True)
+def _phase_modulate_nop_loop(
+    out: np.ndarray,
+    carrier_freq_profile: np.ndarray,
+    op_freq_profiles: np.ndarray,
+    op_index_profiles: np.ndarray,
+    op_feedbacks: np.ndarray,
+    sample_rate: int,
+) -> None:
+    """N phase-modulation operators feeding a single sine carrier in parallel."""
+    n_ops = op_freq_profiles.shape[0]
+    n_samples = out.shape[0]
+
+    carrier_phase = 0.0
+    op_phases = np.zeros(n_ops, dtype=np.float64)
+    prev_op_samples = np.zeros(n_ops, dtype=np.float64)
+    two_pi_over_sr = 2.0 * math.pi / sample_rate
+
+    for i in range(n_samples):
+        total_mod = 0.0
+        for j in range(n_ops):
+            op_sample = math.sin(op_phases[j] + op_feedbacks[j] * prev_op_samples[j])
+            prev_op_samples[j] = op_sample
+            total_mod += op_index_profiles[j, i] * op_sample
+
+        out[i] = math.sin(carrier_phase + total_mod)
+
+        carrier_phase += carrier_freq_profile[i] * two_pi_over_sr
+        for j in range(n_ops):
+            op_phases[j] += op_freq_profiles[j, i] * two_pi_over_sr
+
+
+def phase_modulate_nop(
+    carrier_freq_profile: np.ndarray,
+    *,
+    op_ratios: np.ndarray,
+    op_indices: np.ndarray,
+    op_feedbacks: np.ndarray,
+    sample_rate: int,
+    op_envelopes: np.ndarray | None = None,
+) -> np.ndarray:
+    """N parallel phase-modulation operators feeding one sine carrier.
+
+    Each operator runs at its own ratio of the carrier frequency, with
+    optional self-feedback and optional per-op per-sample index
+    envelope.  All operators sum into the carrier phase additively.
+    Useful for EFM-style cymbal/metallic layers where several
+    inharmonic operators build up a dense, noisy spectrum.
+
+    Args:
+        carrier_freq_profile: Per-sample carrier frequency in Hz,
+            shape (T,).
+        op_ratios: Per-op frequency ratios of the carrier, shape (N,).
+        op_indices: Per-op peak modulation indices, shape (N,).
+        op_feedbacks: Per-op self-feedback amounts in [0.0, 1.0],
+            shape (N,).
+        sample_rate: Audio sample rate.
+        op_envelopes: Optional per-op per-sample index multipliers,
+            shape (N, T).  When None, flat unity envelopes are used.
+
+    Returns:
+        Phase-modulated signal as float64 array, shape (T,).
+    """
+    carrier_freq_profile = np.ascontiguousarray(carrier_freq_profile, dtype=np.float64)
+    op_ratios = np.ascontiguousarray(op_ratios, dtype=np.float64)
+    op_indices = np.ascontiguousarray(op_indices, dtype=np.float64)
+    op_feedbacks = np.ascontiguousarray(op_feedbacks, dtype=np.float64)
+    n_samples = carrier_freq_profile.shape[0]
+    n_ops = op_ratios.shape[0]
+
+    if op_indices.shape[0] != n_ops:
+        raise ValueError(
+            f"op_indices length ({op_indices.shape[0]}) must match "
+            f"op_ratios length ({n_ops})"
+        )
+    if op_feedbacks.shape[0] != n_ops:
+        raise ValueError(
+            f"op_feedbacks length ({op_feedbacks.shape[0]}) must match "
+            f"op_ratios length ({n_ops})"
+        )
+    if np.any(op_ratios <= 0):
+        raise ValueError("all op_ratios must be positive")
+    if np.any(op_indices < 0):
+        raise ValueError("all op_indices must be non-negative")
+    if np.any((op_feedbacks < 0.0) | (op_feedbacks > 1.0)):
+        raise ValueError(
+            "all op_feedbacks must be in [0.0, 1.0]; higher values push the "
+            "PM recursion into chaotic noise."
+        )
+    if not np.all(np.isfinite(carrier_freq_profile)):
+        raise ValueError(
+            "carrier_freq_profile contains non-finite values (NaN or Inf)."
+        )
+
+    op_freq_profiles = np.empty((n_ops, n_samples), dtype=np.float64)
+    for j in range(n_ops):
+        op_freq_profiles[j, :] = carrier_freq_profile * op_ratios[j]
+
+    if op_envelopes is not None:
+        env = np.ascontiguousarray(op_envelopes, dtype=np.float64)
+        if env.ndim != 2:
+            raise ValueError(
+                f"op_envelopes must be 2D with shape (n_ops, n_samples); "
+                f"got ndim={env.ndim}"
+            )
+        if env.shape != (n_ops, n_samples):
+            raise ValueError(
+                f"op_envelopes shape {env.shape} must match "
+                f"(n_ops={n_ops}, n_samples={n_samples})"
+            )
+        op_index_profiles = op_indices.reshape(n_ops, 1) * env
+    else:
+        op_index_profiles = np.broadcast_to(
+            op_indices.reshape(n_ops, 1), (n_ops, n_samples)
+        ).copy()
+
+    op_index_profiles = np.ascontiguousarray(op_index_profiles, dtype=np.float64)
+
+    out = np.empty(n_samples, dtype=np.float64)
+    _phase_modulate_nop_loop(
+        out,
+        carrier_freq_profile,
+        op_freq_profiles,
+        op_index_profiles,
+        op_feedbacks,
+        sample_rate,
+    )
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Shared analog character helpers
 # ---------------------------------------------------------------------------
 
 
-def extract_analog_params(params: dict[str, Any]) -> dict[str, float]:
+def extract_analog_params(params: dict[str, Any]) -> dict[str, Any]:
     """Extract analog character parameters with defaults.
 
     Returns a flat dict of the common analog-character knobs that
@@ -745,7 +1073,181 @@ def extract_analog_params(params: dict[str, Any]) -> dict[str, float]:
         "osc_softness": float(params.get("osc_softness", 0.0)),
         "osc_dc_offset": float(params.get("osc_dc_offset", 0.0)),
         "osc_shape_drift": float(params.get("osc_shape_drift", 0.0)),
+        "quality": str(params.get("quality", "great")),
     }
+
+
+# ---------------------------------------------------------------------------
+# Engine-level quality modes
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class QualityConfig:
+    """Engine-level quality configuration.
+
+    Controls the ladder filter solver, Newton iteration budget, and the
+    internal oversampling factor applied around the filter + feedback +
+    dither block.  Oscillators are generated at the base rate (BLEP
+    already handles oscillator aliasing) — oversampling is strictly for
+    the filter section.
+    """
+
+    solver: str
+    max_newton_iters: int
+    newton_tolerance: float
+    oversample_factor: int
+
+
+_SUPPORTED_QUALITIES: set[str] = {"draft", "fast", "great", "divine"}
+
+
+def resolve_quality_mode(quality: str) -> QualityConfig:
+    """Return the `QualityConfig` for a named quality mode.
+
+    Supported modes: ``draft`` (ADAA, 1x), ``fast`` (Newton 2 iters, 2x),
+    ``great`` (Newton 4 iters, 2x), ``divine`` (Newton 8 iters, 4x).
+    """
+    if quality == "draft":
+        return QualityConfig("adaa", 0, 0.0, 1)
+    if quality == "fast":
+        return QualityConfig("newton", 2, 1e-8, 2)
+    if quality == "great":
+        return QualityConfig("newton", 4, 1e-9, 2)
+    if quality == "divine":
+        return QualityConfig("newton", 8, 1e-10, 4)
+    raise ValueError(
+        f"Unknown quality mode: {quality!r}. Supported: {sorted(_SUPPORTED_QUALITIES)}"
+    )
+
+
+_OVERSAMPLE_RESAMPLE_WINDOW = ("kaiser", 8.6)
+
+
+def apply_filter_oversampled(
+    signal: np.ndarray,
+    *,
+    cutoff_profile: np.ndarray,
+    sample_rate: int,
+    oversample_factor: int,
+    resonance_q: float = 0.707,
+    filter_mode: str = "lowpass",
+    filter_drive: float = 0.0,
+    filter_even_harmonics: float = 0.0,
+    filter_topology: str = "svf",
+    bass_compensation: float = 0.0,
+    filter_morph: float = 0.0,
+    hpf_cutoff_hz: float = 0.0,
+    hpf_resonance_q: float = 0.707,
+    feedback_amount: float = 0.0,
+    feedback_saturation: float = 0.3,
+    filter_solver: str = "adaa",
+    max_newton_iters: int = 4,
+    newton_tolerance: float = 1e-9,
+) -> np.ndarray:
+    """Run `apply_filter` at ``oversample_factor * sample_rate``.
+
+    Upsamples ``signal`` and ``cutoff_profile`` via polyphase resampling
+    (Kaiser window), runs the filter at the higher rate, then downsamples
+    the output back to ``sample_rate``.
+
+    When ``oversample_factor == 1`` this short-circuits to a direct
+    `apply_filter` call with no resample roundtrip.
+    """
+    if oversample_factor < 1:
+        raise ValueError("oversample_factor must be >= 1")
+
+    if oversample_factor == 1:
+        return apply_filter(
+            signal,
+            cutoff_profile=cutoff_profile,
+            resonance_q=resonance_q,
+            sample_rate=sample_rate,
+            filter_mode=filter_mode,
+            filter_drive=filter_drive,
+            filter_even_harmonics=filter_even_harmonics,
+            filter_topology=filter_topology,
+            bass_compensation=bass_compensation,
+            filter_morph=filter_morph,
+            hpf_cutoff_hz=hpf_cutoff_hz,
+            hpf_resonance_q=hpf_resonance_q,
+            feedback_amount=feedback_amount,
+            feedback_saturation=feedback_saturation,
+            filter_solver=filter_solver,
+            max_newton_iters=max_newton_iters,
+            newton_tolerance=newton_tolerance,
+        )
+
+    n_base = int(signal.shape[0])
+    if n_base == 0:
+        return np.zeros(0, dtype=np.float64)
+
+    signal_up = resample_poly(
+        signal, up=oversample_factor, down=1, window=_OVERSAMPLE_RESAMPLE_WINDOW
+    ).astype(np.float64)
+    cutoff_up = resample_poly(
+        cutoff_profile,
+        up=oversample_factor,
+        down=1,
+        window=_OVERSAMPLE_RESAMPLE_WINDOW,
+    ).astype(np.float64)
+
+    n_up_expected = n_base * oversample_factor
+    if signal_up.shape[0] != n_up_expected:
+        if signal_up.shape[0] > n_up_expected:
+            signal_up = signal_up[:n_up_expected]
+        else:
+            signal_up = np.concatenate(
+                [signal_up, np.zeros(n_up_expected - signal_up.shape[0])]
+            )
+    if cutoff_up.shape[0] != n_up_expected:
+        if cutoff_up.shape[0] > n_up_expected:
+            cutoff_up = cutoff_up[:n_up_expected]
+        else:
+            pad_value = cutoff_profile[-1] if cutoff_profile.shape[0] > 0 else 1000.0
+            cutoff_up = np.concatenate(
+                [
+                    cutoff_up,
+                    np.full(n_up_expected - cutoff_up.shape[0], float(pad_value)),
+                ]
+            )
+
+    nyquist_up = (sample_rate * oversample_factor) / 2.0
+    cutoff_up = np.clip(cutoff_up, 20.0, nyquist_up * 0.98)
+
+    filtered_up = apply_filter(
+        signal_up,
+        cutoff_profile=cutoff_up,
+        resonance_q=resonance_q,
+        sample_rate=sample_rate * oversample_factor,
+        filter_mode=filter_mode,
+        filter_drive=filter_drive,
+        filter_even_harmonics=filter_even_harmonics,
+        filter_topology=filter_topology,
+        bass_compensation=bass_compensation,
+        filter_morph=filter_morph,
+        hpf_cutoff_hz=hpf_cutoff_hz,
+        hpf_resonance_q=hpf_resonance_q,
+        feedback_amount=feedback_amount,
+        feedback_saturation=feedback_saturation,
+        filter_solver=filter_solver,
+        max_newton_iters=max_newton_iters,
+        newton_tolerance=newton_tolerance,
+    )
+
+    filtered = resample_poly(
+        filtered_up,
+        up=1,
+        down=oversample_factor,
+        window=_OVERSAMPLE_RESAMPLE_WINDOW,
+    ).astype(np.float64)
+
+    if filtered.shape[0] != n_base:
+        if filtered.shape[0] > n_base:
+            filtered = filtered[:n_base]
+        else:
+            filtered = np.concatenate([filtered, np.zeros(n_base - filtered.shape[0])])
+    return filtered
 
 
 _NEUTRAL_VC_OFFSETS: dict[str, float] = {
@@ -933,114 +1435,217 @@ def voice_card_offsets(voice_name: str) -> dict[str, float]:
     return offsets
 
 
-# --- Shared drift bus --------------------------------------------------------
-#
-# The Surge XT ``DriftLFO`` class (``OscillatorDriftUnisonCharacter.h`` in
-# sst-basic-blocks) describes a glacial random walk driven by a single-pole
-# filter with a gain-compensation factor of ``m = sqrt(1/filter)``. The math
-# itself (single-pole filtered uniform noise with RMS-preserving gain) is a
-# public-domain technique; we re-implement it here from the published
-# description without copying code (Surge is GPL-3; this repo is MIT).
-#
-# The bus is intended as a slow, shared modulation source that correlates
-# pitch drift across voices — the "modular rack patched to one S&H" feel.
-
-_DRIFT_BUS_FILTER_COEFF: float = 1.0e-5
-_DRIFT_BUS_DOWNSAMPLE_HZ: float = 1000.0
+# ---------------------------------------------------------------------------
+# OB-Xd-style fast per-sample CV dither
+# ---------------------------------------------------------------------------
 
 
-def _drift_bus_seed(seed: int | None, rate_hz: float) -> int:
-    material = f"drift_bus|{seed if seed is not None else 0}|{round(rate_hz, 6)}"
-    return int.from_bytes(
-        sha256(material.encode("utf-8")).digest()[:8], byteorder="big"
-    )
+@numba.njit(cache=True)
+def _one_pole_lowpass_inplace(raw: np.ndarray, a: float) -> np.ndarray:
+    """Single-pole IIR lowpass: y[n] = b*x[n] + a*y[n-1], b = 1-a."""
+    n = raw.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    b = 1.0 - a
+    y = 0.0
+    for i in range(n):
+        y = b * raw[i] + a * y
+        out[i] = y
+    return out
 
 
-def build_drift_bus(
+def fast_cv_dither(
+    n_samples: int,
     *,
-    times: np.ndarray,
-    rate_hz: float,
-    depth_cents: float,
-    sample_rate: int,
-    seed: int | None = None,
+    amount: float,
+    rng: np.random.Generator,
+    lowpass_cutoff_hz: float = _CV_DITHER_LOWPASS_HZ,
+    sample_rate: int = 44100,
 ) -> np.ndarray:
-    """Generate a shared, slow, surge-style drift bus trajectory.
+    """Per-sample CV dither for OB-Xd-style fast pitch/cutoff wobble.
 
-    The bus is a single-pole filtered uniform-noise random walk.  It runs at a
-    low internal rate (independent of the audio ``sample_rate``) and is sampled
-    at the requested ``times`` (in seconds, monotonically non-decreasing).
+    Returns a length-``n_samples`` array with values approximately in
+    ``[-amount, +amount]`` after a gentle one-pole lowpass so the dither is
+    warm audible-band noise rather than pure white.  Callers scale the output
+    by the desired full-scale range (semitones, fractional cutoff, etc.).
 
-    The returned array is a multiplicative ratio (around 1.0) derived from
-    cents via ``2 ** (cents / 1200)``; it is safe to multiply directly into a
-    frequency trajectory, matching the convention from :func:`build_drift`.
-
-    Args:
-        times: Sample times in seconds.  Must be non-negative and finite.
-        rate_hz: Characteristic rate of the drift (0.05-0.5 Hz is the
-            musically useful range).  Higher values produce slightly faster
-            wobble; the filter coefficient is fixed, so the effective shape
-            is close to constant — ``rate_hz`` primarily disambiguates seeds.
-        depth_cents: Peak-ish excursion in cents.  0.0 returns all-ones.
-        sample_rate: Audio sample rate (used only to scale the internal
-            downsampled walk length; the bus itself runs at ~1 kHz).
-        seed: Optional deterministic seed.
-
-    Reference: Surge XT ``sst::basic_blocks::dsp::DriftLFO``
-    (``filter = 1e-5; m = sqrt(1/filter); state = state*(1-filter) +
-    rand11*filter; output = state * m``).
+    The dither is a second layer on top of the stable ``voice_card_offsets``
+    per-voice calibration: the stable layer shifts the voice's anchor, and
+    the dither adds fast rustle around that anchor.  Deterministic given
+    ``rng``.
     """
-    if depth_cents < 0.0:
-        raise ValueError("depth_cents must be non-negative")
-    if rate_hz <= 0.0:
-        raise ValueError("rate_hz must be positive")
-    if sample_rate <= 0:
-        raise ValueError("sample_rate must be positive")
+    if amount <= 0.0 or n_samples <= 0:
+        return np.zeros(max(n_samples, 0), dtype=np.float64)
+    raw = rng.uniform(-1.0, 1.0, size=n_samples).astype(np.float64)
+    alpha = math.exp(-2.0 * math.pi * lowpass_cutoff_hz / max(sample_rate, 1))
+    smoothed = _one_pole_lowpass_inplace(raw, alpha)
+    return smoothed * amount
 
-    times = np.asarray(times, dtype=np.float64)
-    if times.size == 0:
-        return np.zeros(0, dtype=np.float64)
-    if depth_cents == 0.0:
-        return np.ones(times.shape[0], dtype=np.float64)
 
-    total_duration = float(np.max(times))
-    total_duration = max(total_duration, 0.0)
-    # Pad to avoid indexing past the end when times == total_duration exactly.
-    pad_seconds = 1.0 + 2.0 / _DRIFT_BUS_DOWNSAMPLE_HZ
-    internal_rate = _DRIFT_BUS_DOWNSAMPLE_HZ
-    n_internal = int(math.ceil((total_duration + pad_seconds) * internal_rate)) + 2
+def apply_fast_cv_dither(
+    freq_profile: np.ndarray,
+    cutoff_profile: np.ndarray | None,
+    *,
+    amount: float,
+    rng: np.random.Generator,
+    sample_rate: int,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Apply per-sample pitch and cutoff dither to shaped profiles.
 
-    rng = np.random.default_rng(_drift_bus_seed(seed, rate_hz))
-    # Surge's rand11 is uniform on [-1, 1]. Scale the filter coefficient to the
-    # internal rate so the characteristic time is consistent regardless of how
-    # finely we sample.
-    noise = rng.uniform(-1.0, 1.0, size=n_internal).astype(np.float64)
+    ``amount`` is typically ``analog_jitter`` scaled by
+    ``voice_card_spread`` — 0 disables, 1.0 gives +/-0.05 semitone pitch
+    and +/-3% cutoff at full scale.  When ``cutoff_profile`` is ``None``
+    (e.g., the FM engine) the cutoff dither is skipped.
+    """
+    if amount <= 0.0:
+        return freq_profile, cutoff_profile
+    n = freq_profile.shape[0]
+    pitch_dither = fast_cv_dither(
+        n,
+        amount=amount * _CV_DITHER_PITCH_SEMITONES,
+        rng=rng,
+        sample_rate=sample_rate,
+    )
+    freq_profile = freq_profile * np.power(2.0, pitch_dither / 12.0)
+    if cutoff_profile is not None:
+        cutoff_dither = fast_cv_dither(
+            n,
+            amount=amount * _CV_DITHER_CUTOFF_FRAC,
+            rng=rng,
+            sample_rate=sample_rate,
+        )
+        cutoff_profile = cutoff_profile * (1.0 + cutoff_dither)
+    return freq_profile, cutoff_profile
 
-    # Convert the per-sample filter coefficient (1e-5 at ~48 kHz) to one that
-    # produces a similar cutoff at our downsampled rate. At f_c ≈ 0.08 Hz in
-    # Surge's native scaling, the effective cutoff is filter * sr / (2*pi).
-    # We preserve that effective cutoff at our internal rate: the downsampled
-    # filter coefficient alpha satisfies alpha ≈ 2 * pi * f_c / internal_rate.
-    # For the default 1e-5 at 48 kHz this gives an effective cutoff of
-    # ~0.076 Hz; rate_hz scales that center proportionally.
-    cutoff_hz = max(_DRIFT_BUS_FILTER_COEFF * 48000.0 / (2.0 * math.pi), 1e-6)
-    cutoff_hz *= rate_hz / 0.2  # 0.2 Hz is the musical center of the spec
-    alpha = 1.0 - math.exp(-2.0 * math.pi * cutoff_hz / internal_rate)
-    alpha = float(np.clip(alpha, 1e-9, 1.0))
-    gain = math.sqrt(1.0 / max(alpha, 1e-12))
 
-    state = np.empty(n_internal, dtype=np.float64)
-    state[0] = 0.0
-    one_minus_alpha = 1.0 - alpha
-    for i in range(1, n_internal):
-        state[i] = state[i - 1] * one_minus_alpha + noise[i] * alpha
-    walk = state * gain
+def apply_pitch_cv_dither(
+    freq_profile: np.ndarray,
+    *,
+    analog_jitter: float,
+    freq: float,
+    duration: float,
+    amp: float,
+    sample_rate: int,
+    n_samples: int,
+) -> np.ndarray:
+    """Multiply ``freq_profile`` by an OB-Xd-style per-sample pitch dither.
 
-    # Normalize so depth_cents is roughly the RMS excursion in cents.
-    walk_rms = float(np.sqrt(np.mean(walk**2)))
-    if walk_rms > 1e-12:
-        walk = walk / walk_rms
-    cents = walk * depth_cents
+    No-op when ``analog_jitter <= 0``.  Deterministically seeded per note via
+    ``rng_for_note(extra_seed='cv_dither_pitch')`` — kept decorrelated from
+    the sibling cutoff dither and from any other per-note RNG draw.
+    """
+    if analog_jitter <= 0.0:
+        return freq_profile
+    rng = rng_for_note(
+        freq=freq,
+        duration=duration,
+        amp=amp,
+        sample_rate=sample_rate,
+        extra_seed="cv_dither_pitch",
+    )
+    dither = fast_cv_dither(
+        n_samples,
+        amount=analog_jitter * _CV_DITHER_PITCH_SEMITONES,
+        rng=rng,
+        sample_rate=sample_rate,
+    )
+    return freq_profile * np.power(2.0, dither / 12.0)
 
-    internal_times = np.arange(n_internal, dtype=np.float64) / internal_rate
-    sampled_cents = np.interp(times, internal_times, cents)
-    return np.power(2.0, sampled_cents / 1200.0)
+
+def apply_cutoff_cv_dither(
+    cutoff_profile: np.ndarray,
+    *,
+    analog_jitter: float,
+    freq: float,
+    duration: float,
+    amp: float,
+    sample_rate: int,
+    n_samples: int,
+    nyquist: float,
+) -> np.ndarray:
+    """Multiply ``cutoff_profile`` by an OB-Xd-style per-sample cutoff dither.
+
+    Clipped to ``[20, nyquist * 0.98]`` after modulation.  No-op when
+    ``analog_jitter <= 0``.  Deterministically seeded per note via
+    ``rng_for_note(extra_seed='cv_dither_cutoff')``.
+    """
+    if analog_jitter <= 0.0:
+        return cutoff_profile
+    rng = rng_for_note(
+        freq=freq,
+        duration=duration,
+        amp=amp,
+        sample_rate=sample_rate,
+        extra_seed="cv_dither_cutoff",
+    )
+    dither = fast_cv_dither(
+        n_samples,
+        amount=analog_jitter * _CV_DITHER_CUTOFF_FRAC,
+        rng=rng,
+        sample_rate=sample_rate,
+    )
+    return np.clip(cutoff_profile * (1.0 + dither), 20.0, nyquist * 0.98)
+
+
+# ---------------------------------------------------------------------------
+# Shared per-engine keytracked cutoff + voice-card post-offset helpers
+# ---------------------------------------------------------------------------
+
+
+def build_keytracked_cutoff_profile(
+    *,
+    cutoff_hz: float,
+    keytrack: float,
+    reference_freq_hz: float,
+    filter_env_amount: float,
+    filter_env_decay: float,
+    duration: float,
+    n_samples: int,
+    freq_profile: np.ndarray,
+    nyquist: float,
+) -> np.ndarray:
+    """Build a per-sample filter cutoff profile with exp-decay envelope + keytrack.
+
+    Shared by the polyblep / filtered_stack / va engines — they all compute
+
+        t = linspace(0, duration, n_samples)
+        env = max(1 + filter_env_amount * exp(-t / filter_env_decay), 0.05)
+        keytracked = cutoff_hz * (freq_profile / reference_freq_hz) ** keytrack
+        profile = clip(keytracked * env, 20, nyquist * 0.98)
+
+    with identical behavior in each engine.  The result is the "base" cutoff
+    profile before any cutoff drift or CV dither is applied on top.
+    """
+    t = np.linspace(0.0, duration, n_samples, endpoint=False)
+    env = np.maximum(
+        1.0 + filter_env_amount * np.exp(-t / filter_env_decay),
+        0.05,
+    )
+    keytracked = cutoff_hz * np.power(freq_profile / reference_freq_hz, keytrack)
+    return np.clip(keytracked * env, 20.0, nyquist * 0.98)
+
+
+def apply_voice_card_post_offsets(
+    resonance_q: float,
+    drift_rate_hz: float,
+    vc_offsets: dict[str, float],
+) -> tuple[float, float]:
+    """Apply voice_card's resonance + drift-rate offsets.
+
+    Shared by polyblep / filtered_stack / va — the common post-``apply_voice_card``
+    coda where the voice-card spread's residual resonance and drift-rate
+    percentages are folded into the final scalar values.  Enforces the
+    ``resonance_q >= 0.5`` floor.
+
+    Returns ``(resonance_q, drift_rate_hz)``.
+    """
+    resonance_q = max(
+        0.5, resonance_q * (1.0 + vc_offsets["resonance_offset_pct"] / 100.0)
+    )
+    drift_rate_hz *= 1.0 + vc_offsets["drift_rate_offset_pct"] / 100.0
+    return resonance_q, drift_rate_hz
+
+
+# --- Shared drift bus --------------------------------------------------------
+# DSP + builder live in code_musics.humanize next to DriftBusSpec. A top-level
+# re-export of build_drift_bus keeps existing ``from _dsp_utils import ...``
+# call sites working.

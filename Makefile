@@ -65,8 +65,19 @@ list:
 	$(UV_RUN) python main.py --list
 
 .PHONY: lint
-lint:
+lint: lint-py lint-md
+
+.PHONY: lint-py
+lint-py:
 	$(UV_RUN) ruff check .
+
+.PHONY: lint-md
+lint-md:
+	@if command -v markdownlint-cli2 >/dev/null 2>&1; then \
+		markdownlint-cli2 "docs/*.md" "*.md"; \
+	else \
+		echo "markdownlint-cli2 not installed — skipping markdown lint (install via: brew install markdownlint-cli2)"; \
+	fi
 
 .PHONY: format-check
 format-check:

@@ -98,6 +98,8 @@ class TestHarmonicDrift:
 
         start_chord = [3 / 2]
         end_chord = [7 / 4]
+        # Pass glide_ms=None to drift across the entire note duration so the
+        # linear-in-log check can compare against uniform progress.
         lanes = harmonic_drift(
             start_chord=start_chord,
             end_chord=end_chord,
@@ -105,6 +107,7 @@ class TestHarmonicDrift:
             attraction=0.0,
             smoothness=0.0,
             wander=0.0,
+            glide_ms=None,
         )
         lane = lanes[0]
         n_segments = len(lane.segments)
@@ -118,6 +121,7 @@ class TestHarmonicDrift:
 
         max_deviation = 0.0
         for segment in lane.segments:
+            assert segment.start_value is not None and segment.end_value is not None
             mid_time = (segment.start + segment.end) / 2.0
             progress = mid_time / 4.0
             expected_log = log_start + progress * (log_end - log_start)
@@ -131,6 +135,57 @@ class TestHarmonicDrift:
             f"Zero-attraction path deviates {max_deviation:.4f} from linear (log-pitch)"
         )
 
+    def test_glide_window_holds_unity_before_glide(self) -> None:
+        """With default glide_ms, the note holds start pitch until the glide window."""
+        from code_musics.harmonic_drift import harmonic_drift
+
+        lanes = harmonic_drift(
+            start_chord=[1.0],
+            end_chord=[5 / 4],  # major third — under the interval cap
+            duration=4.0,
+            attraction=0.0,
+            smoothness=0.0,
+            wander=0.0,
+            glide_ms=250.0,
+        )
+        lane = lanes[0]
+        # Leading segment holds unity until glide start (3.75s in).
+        first = lane.segments[0]
+        assert first.shape == "hold"
+        assert math.isclose(first.value or 0.0, 1.0, abs_tol=1e-9)
+        assert math.isclose(first.start, 0.0, abs_tol=1e-9)
+        assert math.isclose(first.end, 3.75, abs_tol=1e-3)
+        # Subsequent glide segments land in the last 250 ms.
+        for seg in lane.segments[1:]:
+            assert seg.start >= 3.75 - 1e-6
+            assert seg.end <= 4.0 + 1e-6
+        # Final end value reaches the target ratio.
+        assert math.isclose(lane.segments[-1].end_value or 0.0, 5 / 4, rel_tol=1e-3)
+
+    def test_large_interval_skips_drift(self) -> None:
+        """Voices whose interval exceeds max_interval_cents emit flat unity lanes."""
+        from code_musics.harmonic_drift import harmonic_drift
+
+        # 1.0 -> 4.0 is 2 octaves = 2400 cents, well over the 700-cent default.
+        lanes = harmonic_drift(
+            start_chord=[1.0, 3 / 2],
+            end_chord=[4.0, 7 / 4],  # first voice: leap; second: under cap
+            duration=4.0,
+            attraction=0.0,
+            smoothness=0.0,
+            wander=0.0,
+            glide_ms=None,
+        )
+        # First voice skipped: single hold segment at 1.0.
+        skipped = lanes[0]
+        assert len(skipped.segments) == 1
+        assert skipped.segments[0].shape == "hold"
+        assert math.isclose(skipped.segments[0].value or 0.0, 1.0, abs_tol=1e-9)
+        # Second voice still drifts: ends near 7/6 (= (7/4) / (3/2)).
+        assert math.isclose(
+            lanes[1].segments[-1].end_value or 0.0, (7 / 4) / (3 / 2), rel_tol=1e-3
+        )
+
     def test_high_attraction_lingers_near_ji(self) -> None:
         from code_musics.harmonic_drift import harmonic_drift
 
@@ -139,6 +194,9 @@ class TestHarmonicDrift:
         end_chord = [2.0]
         duration = 4.0
 
+        # Use glide_ms=None and a permissive max_interval_cents because
+        # start=1.0 -> end=2.0 is a whole octave (1200 cents) and would
+        # otherwise skip drift under the default 700-cent cap.
         lanes_low = harmonic_drift(
             start_chord=start_chord,
             end_chord=end_chord,
@@ -146,6 +204,8 @@ class TestHarmonicDrift:
             attraction=0.0,
             smoothness=0.0,
             wander=0.0,
+            glide_ms=None,
+            max_interval_cents=10_000.0,
         )
         lanes_high = harmonic_drift(
             start_chord=start_chord,
@@ -154,6 +214,8 @@ class TestHarmonicDrift:
             attraction=0.9,
             smoothness=0.0,
             wander=0.0,
+            glide_ms=None,
+            max_interval_cents=10_000.0,
         )
 
         ji_ratios = enumerate_ji_ratios(1.0, 2.0, prime_limit=7, max_height=6.0)
@@ -163,6 +225,7 @@ class TestHarmonicDrift:
             count_near = 0
             total = 0
             for segment in lane.segments:
+                assert segment.start_value is not None and segment.end_value is not None
                 for frac in [0.0, 0.5, 1.0]:
                     value = segment.start_value + frac * (
                         segment.end_value - segment.start_value
@@ -193,16 +256,21 @@ class TestHarmonicDrift:
 
         start_chord = [5 / 4, 3 / 2]
         end_chord = [9 / 7, 7 / 4]
+        # glide_ms=None so the trajectory starts at t=0 and the first segment
+        # is the initial linear step (not a leading hold).
         lanes = harmonic_drift(
             start_chord=start_chord,
             end_chord=end_chord,
             duration=4.0,
+            glide_ms=None,
         )
 
         for i, lane in enumerate(lanes):
             expected_end_ratio = end_chord[i] / start_chord[i]
             first_seg = lane.segments[0]
             last_seg = lane.segments[-1]
+            assert first_seg.start_value is not None
+            assert last_seg.end_value is not None
             assert math.isclose(first_seg.start_value, 1.0, rel_tol=1e-3), (
                 f"Voice {i}: first segment start_value={first_seg.start_value}, expected ~1.0"
             )
@@ -214,7 +282,7 @@ class TestHarmonicDrift:
     def test_deterministic_with_seed(self) -> None:
         from code_musics.harmonic_drift import harmonic_drift
 
-        kwargs = dict(
+        lanes_a = harmonic_drift(
             start_chord=[1.0, 5 / 4],
             end_chord=[3 / 2, 7 / 4],
             duration=4.0,
@@ -222,8 +290,14 @@ class TestHarmonicDrift:
             wander=0.3,
             seed=42,
         )
-        lanes_a = harmonic_drift(**kwargs)
-        lanes_b = harmonic_drift(**kwargs)
+        lanes_b = harmonic_drift(
+            start_chord=[1.0, 5 / 4],
+            end_chord=[3 / 2, 7 / 4],
+            duration=4.0,
+            attraction=0.5,
+            wander=0.3,
+            seed=42,
+        )
 
         for la, lb in zip(lanes_a, lanes_b, strict=True):
             assert len(la.segments) == len(lb.segments)
@@ -253,5 +327,10 @@ class TestHarmonicDrift:
             wander=0.0,
         )
         for segment in lanes[0].segments:
-            assert math.isclose(segment.start_value, 1.0, abs_tol=1e-6)
-            assert math.isclose(segment.end_value, 1.0, abs_tol=1e-6)
+            if segment.shape == "hold":
+                assert segment.value is not None
+                assert math.isclose(segment.value, 1.0, abs_tol=1e-6)
+            else:
+                assert segment.start_value is not None and segment.end_value is not None
+                assert math.isclose(segment.start_value, 1.0, abs_tol=1e-6)
+                assert math.isclose(segment.end_value, 1.0, abs_tol=1e-6)

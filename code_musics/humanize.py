@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import numba
 import numpy as np
 
-DriftStyle = Literal["random_walk", "smooth_noise", "lfo", "sample_hold"]
+DriftStyle = Literal[
+    "random_walk", "smooth_noise", "lfo", "sample_hold", "smoothed_random"
+]
 
 _SUPPORTED_DRIFT_STYLES: set[DriftStyle] = {
     "random_walk",
     "smooth_noise",
     "lfo",
     "sample_hold",
+    "smoothed_random",
 }
 
 _TIMING_PRESETS: dict[str, dict[str, Any]] = {
@@ -150,6 +155,101 @@ class DriftBusSpec:
             raise ValueError("DriftBusSpec.rate_hz must be positive")
         if self.depth_cents < 0:
             raise ValueError("DriftBusSpec.depth_cents must be non-negative")
+
+
+# --- Shared drift bus DSP ----------------------------------------------------
+# Re-implemented from the public description of Surge XT's ``DriftLFO``
+# (``sst::basic_blocks::dsp::DriftLFO``): single-pole filtered uniform noise
+# with RMS-preserving gain.  Not a line-for-line port.
+_DRIFT_BUS_FILTER_COEFF: float = 1.0e-5
+_DRIFT_BUS_DOWNSAMPLE_HZ: float = 1000.0
+
+
+@numba.njit(cache=True)
+def _drift_bus_filter(
+    noise: np.ndarray, alpha: float, gain: float
+) -> tuple[np.ndarray, float]:
+    """Single-pole lowpass with RMS-preserving gain and sum-of-squares accumulator.
+
+    Returns ``(walk, sum_sq)`` where ``sum_sq`` is the accumulator for
+    RMS = sqrt(sum_sq / len(walk)).  Folding the accumulator into the filter
+    loop avoids a second O(n) pass over the walk.
+    """
+    n = noise.shape[0]
+    walk = np.empty(n, dtype=np.float64)
+    one_minus_alpha = 1.0 - alpha
+    state = 0.0
+    sum_sq = 0.0
+    walk[0] = 0.0
+    for i in range(1, n):
+        state = state * one_minus_alpha + noise[i] * alpha
+        value = state * gain
+        walk[i] = value
+        sum_sq += value * value
+    return walk, sum_sq
+
+
+def build_drift_bus(
+    *,
+    times: np.ndarray,
+    rate_hz: float,
+    depth_cents: float,
+    sample_rate: int,
+    seed: int | None = None,
+) -> np.ndarray:
+    """Generate a shared, slow, Surge-style drift bus trajectory.
+
+    Returns a multiplicative ratio array (around 1.0) via ``2 ** (cents / 1200)``,
+    safe to multiply directly into a frequency trajectory.  The bus is
+    deterministic from ``(seed, rate_hz)`` and always normalized against its
+    own internal window, so repeated calls with different ``times`` windows
+    remain mutually consistent under resampling.
+
+    Args:
+        times: Sample times in seconds (non-negative, finite).
+        rate_hz: Characteristic rate of the drift (0.05-0.5 Hz musically).
+        depth_cents: RMS excursion in cents.  ``0.0`` returns all-ones.
+        sample_rate: Audio sample rate (validated only).
+        seed: Optional deterministic seed.
+    """
+    if depth_cents < 0.0:
+        raise ValueError("depth_cents must be non-negative")
+    if rate_hz <= 0.0:
+        raise ValueError("rate_hz must be positive")
+    if sample_rate <= 0:
+        raise ValueError("sample_rate must be positive")
+
+    times = np.asarray(times, dtype=np.float64)
+    if times.size == 0:
+        return np.zeros(0, dtype=np.float64)
+    if depth_cents == 0.0:
+        return np.ones(times.shape[0], dtype=np.float64)
+
+    total_duration = max(float(np.max(times)), 0.0)
+    pad_seconds = 1.0 + 2.0 / _DRIFT_BUS_DOWNSAMPLE_HZ
+    internal_rate = _DRIFT_BUS_DOWNSAMPLE_HZ
+    n_internal = int(math.ceil((total_duration + pad_seconds) * internal_rate)) + 2
+
+    rng = np.random.default_rng(_stable_seed("drift_bus", seed or 0, round(rate_hz, 6)))
+    noise = rng.uniform(-1.0, 1.0, size=n_internal).astype(np.float64)
+
+    # Preserve Surge's effective cutoff at our downsampled rate, scaling with
+    # rate_hz (musical center = 0.2 Hz).
+    cutoff_hz = max(_DRIFT_BUS_FILTER_COEFF * 48000.0 / (2.0 * math.pi), 1e-6)
+    cutoff_hz *= rate_hz / 0.2
+    alpha = 1.0 - math.exp(-2.0 * math.pi * cutoff_hz / internal_rate)
+    alpha = float(np.clip(alpha, 1e-9, 1.0))
+    gain = math.sqrt(1.0 / max(alpha, 1e-12))
+
+    walk, sum_sq = _drift_bus_filter(noise, alpha, gain)
+    walk_rms = math.sqrt(sum_sq / n_internal) if n_internal > 0 else 0.0
+    if walk_rms > 1e-12:
+        walk = walk / walk_rms
+    cents = walk * depth_cents
+
+    internal_times = np.arange(n_internal, dtype=np.float64) / internal_rate
+    sampled_cents = np.interp(times, internal_times, cents)
+    return np.power(2.0, sampled_cents / 1200.0)
 
 
 @dataclass(frozen=True)
@@ -763,8 +863,41 @@ def _sample_drift_curve(
         indices = np.clip(indices, 0, anchor_times.size - 1)
         return _normalize_curve(anchor_values[indices])
 
+    if spec.style == "smoothed_random":
+        return _normalize_curve(
+            _smoothed_random_curve(bounded_times, anchor_times, anchor_values)
+        )
+
     curve = np.interp(bounded_times, anchor_times, anchor_values)
     return _normalize_curve(curve)
+
+
+def _smoothed_random_curve(
+    bounded_times: np.ndarray,
+    anchor_times: np.ndarray,
+    anchor_values: np.ndarray,
+) -> np.ndarray:
+    """Helm-style smoothed-random drift.
+
+    Generates random anchor values at the drift rate and crossfades between
+    consecutive anchors with a raised-cosine (Hann) window.  Produces an
+    organic wobble distinct from ``sample_hold`` (steppy) and ``smooth_noise``
+    (linear-interp of smoothed anchors).
+    """
+    indices = np.searchsorted(anchor_times, bounded_times, side="right") - 1
+    indices = np.clip(indices, 0, anchor_times.size - 1)
+    next_indices = np.clip(indices + 1, 0, anchor_times.size - 1)
+    anchor_left = anchor_times[indices]
+    anchor_right = anchor_times[next_indices]
+    segment = anchor_right - anchor_left
+    # Avoid division by zero at the final segment (where indices saturate).
+    safe_segment = np.where(segment > 0.0, segment, 1.0)
+    frac = np.clip((bounded_times - anchor_left) / safe_segment, 0.0, 1.0)
+    # Raised-cosine (Hann) crossfade weight: 0 at frac=0, 1 at frac=1.
+    weight = 0.5 - 0.5 * np.cos(np.pi * frac)
+    return (1.0 - weight) * anchor_values[indices] + weight * anchor_values[
+        next_indices
+    ]
 
 
 def _smooth_anchor_values(values: np.ndarray, smoothness: float) -> np.ndarray:

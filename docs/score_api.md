@@ -739,6 +739,143 @@ Behavior:
 - saves the figure if `path` is provided
 - returns `(figure, axis)`
 
+## Modulation Matrix
+
+`code_musics/modulation.py` implements a Vital-style per-connection
+modulation matrix.  Every routing is a first-class `ModConnection`
+object with `amount`, `bipolar`, `stereo`, `power`, optional
+`breakpoints`, and a combine `mode`.  Connections attach at voice
+scope (`Voice.modulations`) or score scope (`Score.modulations`).
+
+### Sources
+
+All sources expose a common `sample(times, context) -> np.ndarray`
+interface; each subclass advertises its natural output domain
+(bipolar `[-1, 1]` or unipolar `[0, 1]`).
+
+| Source | Output | Per-note | Notes |
+|---|---|---|---|
+| `LFOSource(rate_hz, waveshape, phase_rad, retrigger, seed)` | bipolar | optional | waveshapes: `sine`, `triangle`, `saw_up`, `saw_down`, `square`, `smoothed_random` |
+| `EnvelopeSource(attack, hold, decay, sustain, release, *_power)` | unipolar | always | triggered at note onset; mirrors synth ADSR curve powers |
+| `MacroSource(name)` | unipolar | shared | resolved via `Score.add_macro(name, default, automation)` |
+| `VelocitySource(velocity_scale)` | unipolar | always | wraps the resolved (humanized) note velocity |
+| `RandomSource(rate_hz, retrigger, seed)` | bipolar | optional | seeded sample-and-hold |
+| `ConstantSource(value)` | bipolar | no | used for stereo pan-split tricks (`value=1.0`, `amount=+0.55` on one voice, `-0.55` on another) |
+| `DriftAdapter(style, rate_hz, smoothness, seed)` | bipolar | no | reuses `humanize.DriftSpec` curves so drift sources are routable |
+
+### `ModConnection`
+
+```python
+@dataclass(frozen=True)
+class ModConnection:
+    source: ModSource
+    target: AutomationTarget       # same (kind, name) as AutomationSpec
+    amount: float = 1.0
+    bipolar: bool = True           # False rectifies bipolar sources to >= 0
+    stereo: bool = False           # reserved for stereo-aware destinations
+    power: float = 0.0             # Vital sign-magnitude curve, [-20, 20]
+    breakpoints: tuple[tuple[float, float], ...] | None = None
+    mode: AutomationMode = "add"   # "replace" | "add" | "multiply"
+    name: str | None = None        # inspection label
+```
+
+Shaping pipeline applied per connection:
+`raw = source.sample(...)` -> optional bipolar rectification ->
+`power` curve -> `breakpoints` -> `amount` scaling.
+
+### Combine order at a destination
+
+When multiple connections target the same destination, evaluation
+proceeds:
+
+1. existing `AutomationSpec` lanes apply to the base value first
+   (unchanged from the pre-matrix behavior);
+2. matrix contributions are then combined in order: all `replace`
+   connections (last wins), then `multiply`, then `add`.
+
+This matches Vital's precedence: a hard override fully replaces, then
+envelope/LFO scaling, then additive LFO/macro bias.
+
+### Destination namespace
+
+Targets reuse `AutomationTarget`:
+
+- `kind="synth"` — any name in
+  `_SUPPORTED_SYNTH_AUTOMATION_PARAMS`;
+- `kind="control"` — `mix_db`, `pan`, `send_db`, `return_db`,
+  `pre_fx_gain_db`, `wet`, `mix`, `wet_level`;
+- `kind="pitch_ratio"` — the dedicated `pitch_ratio` target.
+
+### Time resolution
+
+Destinations decide the time resolution:
+
+- **Per-sample** — all control targets, `pitch_ratio`, and the
+  per-sample synth whitelist below.
+- **Per-note scalar** — every other synth target is sampled at note
+  onset and folded into the synth params dict alongside
+  `apply_synth_automation`.
+
+The **per-sample synth whitelist** for MVP is a single destination:
+`cutoff_hz` on the `polyblep` engine, via the engine's
+`param_profiles` kwarg.  Engines opt in explicitly via
+`register_param_profile_support(engine_name)`; engines that don't opt
+in silently ignore profiles and use the scalar value.
+
+See `FUTURE.md` under "Modulation architecture" for the deferred
+per-sample destinations.
+
+### Macros
+
+```python
+score.add_macro("brightness", default=0.5, automation=<AutomationSpec>)
+```
+
+Macros are shared `[0, 1]` scalars resolved via `MacroSource(name)`.
+The optional `automation` must target `kind="control"` and can ride
+the timeline the same way voice/score automations do.
+
+### `Score.describe_modulations()`
+
+Returns a flat list of dicts summarizing every registered connection
+(scope, source type, destination, shaping fields).  Useful for
+inspection / analysis without having to walk the voice graph.
+
+### Example
+
+```python
+score = Score(f0_hz=174.614, master_effects=DEFAULT_MASTER_EFFECTS)
+score.add_macro("brightness", default=0.0, automation=AutomationSpec(
+    target=AutomationTarget(kind="control", name="mix"),
+    segments=(AutomationSegment(
+        start=0.0, end=30.0, shape="linear",
+        start_value=0.0, end_value=1.0,
+    ),),
+))
+score.add_voice(
+    "lead",
+    synth_defaults={"engine": "polyblep", "cutoff_hz": 1400.0},
+    modulations=[
+        ModConnection(
+            source=LFOSource(rate_hz=0.7, waveshape="sine"),
+            target=AutomationTarget(kind="synth", name="cutoff_hz"),
+            amount=600.0, power=-4.0, mode="add",
+        ),
+        ModConnection(
+            source=VelocitySource(),
+            target=AutomationTarget(kind="synth", name="resonance_q"),
+            amount=0.6, bipolar=False,
+            breakpoints=((0.0, 0.0), (0.6, 0.15), (1.0, 1.0)),
+            mode="add",
+        ),
+    ],
+)
+```
+
+See `code_musics/pieces/mod_matrix_study.py` for a full end-to-end
+demo piece covering LFO, Macro, Velocity, DriftAdapter, and
+stereo-split `ConstantSource` use cases.
+
 ## Render-Time Resolution Order
 
 The practical render path for one note is:

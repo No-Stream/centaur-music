@@ -12,12 +12,14 @@ filter morphing, feedback path, serial HPF, and VCA nonlinearity.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from code_musics.automation import AutomationSegment, AutomationSpec, AutomationTarget
+from code_musics.composition import augment, diminish
 from code_musics.generative.cloud import stochastic_cloud
 from code_musics.generative.tone_pool import TonePool
-from code_musics.harmonic_drift import harmonic_drift
+from code_musics.harmonic_drift import (
+    drifted_chord_events,
+    progression_drift_lanes,
+)
 from code_musics.humanize import (
     EnvelopeHumanizeSpec,
     TimingHumanizeSpec,
@@ -35,6 +37,7 @@ from code_musics.score import (
     VoiceSend,
 )
 from code_musics.smear import strum, thicken
+from code_musics.synth import db_to_amp
 
 # ---------------------------------------------------------------------------
 # Timing
@@ -47,12 +50,12 @@ TOTAL_BARS = 82
 F0 = 46.25  # F#1
 
 # Section boundaries (bar numbers, 1-indexed)
-_COLD_BAR = 1  # 8 bars
-_WARM_BAR = 9  # 12 bars
-_SEARCH_BAR = 21  # 14 bars — unstable, utonal, drift overshoot
-_ARRIVE_BAR = 35  # 16 bars — locks in, lead enters
-_EUPH_BAR = 51  # 32 bars — full warmth, 5-limit ending
-_END_BAR = 83
+COLD_BAR = 1  # 8 bars
+WARM_BAR = 9  # 12 bars
+SEARCH_BAR = 21  # 14 bars — unstable, utonal, drift overshoot
+ARRIVE_BAR = 35  # 16 bars — locks in, lead enters
+EUPH_BAR = 51  # 32 bars — full warmth, 5-limit ending
+END_BAR = 83
 
 
 def _pos(bar: int, beat: float = 1.0) -> float:
@@ -60,12 +63,20 @@ def _pos(bar: int, beat: float = 1.0) -> float:
 
 
 # Section timestamps
-T_COLD = _pos(_COLD_BAR)
-T_WARM = _pos(_WARM_BAR)
-T_SEARCH = _pos(_SEARCH_BAR)
-T_ARRIVE = _pos(_ARRIVE_BAR)
-T_EUPH = _pos(_EUPH_BAR)
-T_END = _pos(_END_BAR)
+T_COLD = _pos(COLD_BAR)
+T_WARM = _pos(WARM_BAR)
+T_SEARCH = _pos(SEARCH_BAR)
+T_ARRIVE = _pos(ARRIVE_BAR)
+T_EUPH = _pos(EUPH_BAR)
+T_END = _pos(END_BAR)
+
+# Post-end release tails per voice family. Notes/drones may extend past T_END
+# so their envelopes breathe out naturally instead of cutting at the bar line.
+RELEASE_TAIL_S = 2.0  # lead + thickened lead copies
+TEXTURE_RELEASE_TAIL_S = (
+    6.0  # sustained drone/texture layers — extended to let hall reverb ring out
+)
+GHOST_RELEASE_TAIL_S = 6.0  # long reverb-soaked ghost echoes
 
 # ---------------------------------------------------------------------------
 # Tuning — 7-limit JI partial ratios relative to F#
@@ -297,106 +308,63 @@ def _ctrl(name: str, segs: tuple[AutomationSegment, ...]) -> AutomationSpec:
     )
 
 
-def _lin(t0: float, t1: float, v0: float, v1: float) -> AutomationSegment:
+def _lin(t0: float, t1: float, start: float, end: float) -> AutomationSegment:
+    """Linear-ramp automation segment. Prefer kw args for readability at call sites."""
     return AutomationSegment(
-        start=t0, end=t1, shape="linear", start_value=v0, end_value=v1
+        start=t0, end=t1, shape="linear", start_value=start, end_value=end
     )
 
 
-def _exp(t0: float, t1: float, v0: float, v1: float) -> AutomationSegment:
+def _exp(t0: float, t1: float, start: float, end: float) -> AutomationSegment:
+    """Exponential-ramp automation segment. Prefer kw args for readability."""
     return AutomationSegment(
-        start=t0, end=t1, shape="exp", start_value=v0, end_value=v1
+        start=t0, end=t1, shape="exp", start_value=start, end_value=end
     )
 
 
-def _hold(t0: float, t1: float, v: float) -> AutomationSegment:
-    return AutomationSegment(start=t0, end=t1, shape="hold", value=v)
+def _hold(t0: float, t1: float, value: float) -> AutomationSegment:
+    """Hold-value automation segment."""
+    return AutomationSegment(start=t0, end=t1, shape="hold", value=value)
 
 
 def _lfo(
     t0: float, t1: float, hz: float, depth: float, offset: float = 0.0
 ) -> AutomationSegment:
+    """Sine-LFO automation segment. Prefer kw args for hz/depth/offset."""
     return AutomationSegment(
         start=t0, end=t1, shape="sine_lfo", freq_hz=hz, depth=depth, offset=offset
     )
 
 
-# ---------------------------------------------------------------------------
-# Harmonic drift helpers
-# ---------------------------------------------------------------------------
+def _add_bounded_note(
+    score: Score,
+    voice: str,
+    bar: int,
+    beat: float,
+    partial: float,
+    dur_beats: float,
+    *,
+    amp_db: float,
+    velocity: float,
+    time_limit: float,
+    pitch_motion: PitchMotionSpec | None = None,
+) -> None:
+    """Add a note to ``voice`` if its start time is before ``time_limit``.
 
-# Chord function type alias for readability.
-type _ChordFn = Callable[[], list[tuple[float, float]]]
-
-
-def _make_drifted_chord_events(
-    chord_partials_db: list[tuple[float, float]],
-    duration: float,
-    drift_lanes: list[AutomationSpec] | None,
-    amp_db_offset: float = 0.0,
-) -> tuple[NoteEvent, ...]:
-    """Build NoteEvents for a chord, optionally attaching per-note pitch drift.
-
-    Chord tones are sorted low-to-high by partial so that drift lane indices
-    match the sorted order used in ``_compute_section_drift``.
+    Consolidates the bass/lead bounded-add closures so every voice uses the
+    same guard against notes spilling past the piece end.
     """
-    sorted_pairs = sorted(chord_partials_db, key=lambda x: x[0])
-    events: list[NoteEvent] = []
-    for i, (p, db) in enumerate(sorted_pairs):
-        auto: list[AutomationSpec] = []
-        if drift_lanes and i < len(drift_lanes):
-            auto.append(drift_lanes[i])
-        events.append(
-            NoteEvent(
-                start=0.0,
-                duration=duration,
-                partial=p,
-                amp_db=db + amp_db_offset,
-                automation=auto,
-            )
+    t = _pos(bar, beat)
+    if t < time_limit:
+        score.add_note(
+            voice,
+            start=t,
+            duration=dur_beats * BEAT,
+            partial=partial,
+            amp_db=amp_db,
+            velocity=velocity,
+            pitch_motion=pitch_motion,
         )
-    return tuple(events)
-
-
-def _compute_section_drift(
-    prog: list[_ChordFn],
-    chord_dur: float,
-    attraction: float,
-    wander: float,
-    smoothness: float = 0.85,
-    seed_base: int = 0,
-) -> list[list[AutomationSpec] | None]:
-    """Compute drift lanes for consecutive chords in a progression.
-
-    Returns one entry per chord: a list of AutomationSpec (drift toward the
-    next chord) or None for the last chord.
-    """
-    result: list[list[AutomationSpec] | None] = []
-    chords_data = [ch() for ch in prog]
-
-    for i, chord_a in enumerate(chords_data):
-        if i >= len(chords_data) - 1:
-            result.append(None)
-            continue
-        chord_b = chords_data[i + 1]
-
-        sorted_a = sorted([p for p, _db in chord_a])
-        sorted_b = sorted([p for p, _db in chord_b])
-        n = min(len(sorted_a), len(sorted_b))
-
-        lanes = harmonic_drift(
-            start_chord=sorted_a[:n],
-            end_chord=sorted_b[:n],
-            duration=chord_dur,
-            attraction=attraction,
-            wander=wander,
-            smoothness=smoothness,
-            prime_limit=7,
-            seed=seed_base + i,
-        )
-        result.append(lanes)
-
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -487,7 +455,20 @@ def build_score() -> Score:
             "release": 1.2,
         },
         effects=[
-            EffectSpec("chorus", {"rate_hz": 0.4, "depth_ms": 2.0, "mix": 0.2}),
+            EffectSpec(
+                "chorus",
+                {"rate_hz": 0.4, "depth_ms": 2.0, "mix": 0.2},
+                automation=[
+                    _ctrl(
+                        "mix",
+                        (
+                            _hold(T_COLD, _pos(6), 0.05),  # dry, just waking
+                            _lin(_pos(6), T_WARM, 0.05, 0.2),  # subtle creep in
+                            _hold(T_WARM, T_END, 0.2),
+                        ),
+                    )
+                ],
+            ),
             EffectSpec(
                 "eq",
                 {
@@ -517,8 +498,9 @@ def build_score() -> Score:
             _synth_auto(
                 "analog_jitter",
                 (
-                    _hold(T_COLD, T_WARM, 0.0),
-                    _lin(T_WARM, T_SEARCH, 0.0, 0.5),
+                    _hold(T_COLD, _pos(5), 0.0),
+                    _lin(_pos(5), T_WARM, 0.0, 0.05),  # subtle awakening
+                    _lin(T_WARM, T_SEARCH, 0.05, 0.5),
                     _lin(T_SEARCH, T_ARRIVE, 0.5, 1.5),  # overshoot
                     _lin(T_ARRIVE, T_EUPH, 1.5, 1.0),
                     _hold(T_EUPH, T_END, 1.0),
@@ -555,8 +537,9 @@ def build_score() -> Score:
             _synth_auto(
                 "osc_shape_drift",
                 (
-                    _hold(T_COLD, T_WARM, 0.0),
-                    _lin(T_WARM, T_SEARCH, 0.0, 0.15),
+                    _hold(T_COLD, _pos(6), 0.0),
+                    _lin(_pos(6), T_WARM, 0.0, 0.02),  # barely perceptible creep
+                    _lin(T_WARM, T_SEARCH, 0.02, 0.15),
                     _lin(T_SEARCH, T_ARRIVE, 0.15, 0.45),  # overshoot
                     _lin(T_ARRIVE, T_EUPH, 0.45, 0.3),
                     _hold(T_EUPH, T_END, 0.3),
@@ -568,6 +551,17 @@ def build_score() -> Score:
                     _hold(T_COLD, T_WARM, 0.0),
                     _lin(T_WARM, T_ARRIVE, 0.0, 0.1),
                     _hold(T_ARRIVE, T_END, 0.1),
+                ),
+            ),
+            # Resonance bloom at the Warming→Searching boundary —
+            # transient spike as the filter destabilizes before Searching.
+            _synth_auto(
+                "resonance_q",
+                (
+                    _hold(T_COLD, _pos(20), 1.2),
+                    _lin(_pos(20), _pos(20, 3), 1.2, 2.5),  # bloom up
+                    _lin(_pos(20, 3), T_SEARCH, 2.5, 1.4),  # fall back
+                    _hold(T_SEARCH, T_END, 1.4),
                 ),
             ),
             # Voice card spread: opens, overshoots in Search, settles
@@ -622,9 +616,16 @@ def build_score() -> Score:
             _synth_auto(
                 "cutoff_hz",
                 (
-                    _hold(T_COLD, T_WARM, 2800.0),
-                    _exp(T_WARM, T_SEARCH, 2800.0, 3200.0),
-                    _exp(T_SEARCH, T_ARRIVE, 3200.0, 2200.0),  # closes in search
+                    _hold(T_COLD, _pos(5), 2800.0),
+                    _exp(_pos(5), T_WARM, 2800.0, 2900.0),  # tiny opening late Cold
+                    _exp(T_WARM, _pos(19), 2900.0, 3200.0),
+                    # Warming→Searching destabilization: brief dip/close at bar 19-20
+                    _exp(_pos(19), _pos(20, 3), 3200.0, 2400.0),  # close on overshoot
+                    _exp(_pos(20, 3), T_SEARCH, 2400.0, 3200.0),  # bounce back
+                    # Searching: sweep, then pre-arrival pull-back
+                    _exp(T_SEARCH, _pos(34), 3200.0, 2200.0),
+                    _exp(_pos(34), _pos(34, 3), 2200.0, 1500.0),  # dip before arrival
+                    _exp(_pos(34, 3), T_ARRIVE, 1500.0, 2200.0),  # recover into Arrive
                     _exp(T_ARRIVE, T_EUPH, 2200.0, 3500.0),
                     _hold(T_EUPH, T_END, 3500.0),
                 ),
@@ -661,9 +662,25 @@ def build_score() -> Score:
                 "mix_db",
                 (
                     _hold(T_COLD, T_SEARCH, -3.0),
-                    _lin(T_SEARCH, T_ARRIVE, -3.0, -4.5),
-                    _lin(T_ARRIVE, T_EUPH, -4.5, -1.5),
-                    _hold(T_EUPH, T_END, -1.5),
+                    # Searching: drift toward -4.5 then pull back harder before Arrive
+                    _lin(T_SEARCH, _pos(33), -3.0, -4.5),
+                    _lin(_pos(33), _pos(34, 3), -4.5, -5.5),  # pre-arrival pullback
+                    _lin(_pos(34, 3), T_ARRIVE, -5.5, -4.5),  # recover
+                    # Arriving: push forward, with a last-bar swell before Euphoria
+                    _lin(T_ARRIVE, _pos(49), -4.5, -2.0),
+                    _lin(_pos(49), _pos(50), -2.0, -1.0),  # pre-Euphoria swell
+                    _lin(_pos(50), T_EUPH, -1.0, -1.5),
+                    # Euphoria: hold, mid-section lull, final breath
+                    _hold(T_EUPH, _pos(63), -1.5),
+                    _lin(_pos(63), _pos(64), -1.5, -2.5),  # dip into lull
+                    _hold(_pos(64), _pos(65), -2.5),
+                    _lin(_pos(65), _pos(66), -2.5, -1.5),  # return
+                    _hold(_pos(66), _pos(70, 3), -1.5),
+                    _lin(_pos(70, 3), _pos(72), -1.5, -3.0),  # breath before final
+                    _lin(_pos(72), _pos(73), -3.0, -1.5),  # recover for final
+                    _hold(_pos(73), _pos(78), -1.5),
+                    _lin(_pos(78), _pos(80), -1.5, -2.5),  # final breath
+                    _lin(_pos(80), T_END, -2.5, -1.5),  # rise into final held chord
                 ),
             ),
         ],
@@ -789,8 +806,8 @@ def build_score() -> Score:
             _ctrl(
                 "mix_db",
                 (
-                    _hold(T_COLD, _pos(_WARM_BAR + 4), -20.0),
-                    _lin(_pos(_WARM_BAR + 4), T_SEARCH, -20.0, -10.0),
+                    _hold(T_COLD, _pos(WARM_BAR + 4), -20.0),
+                    _lin(_pos(WARM_BAR + 4), T_SEARCH, -20.0, -10.0),
                     _hold(T_SEARCH, T_ARRIVE, -10.0),
                     _lin(T_ARRIVE, T_EUPH, -10.0, -4.0),
                     _hold(T_EUPH, T_END, -4.0),
@@ -854,8 +871,10 @@ def build_score() -> Score:
         envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog"),
         velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
         velocity_to_params={
-            "cutoff_hz": VelocityParamMap(min_value=2800.0, max_value=4000.0),
-            "filter_env_amount": VelocityParamMap(min_value=1.4, max_value=2.2),
+            # Narrower range so the "spacious descent" (bars 65-68) doesn't
+            # swing brightness too wildly across its 0.55-0.95 velocity span.
+            "cutoff_hz": VelocityParamMap(min_value=3000.0, max_value=3700.0),
+            "filter_env_amount": VelocityParamMap(min_value=1.5, max_value=2.0),
         },
         automation=[
             _synth_auto(
@@ -883,8 +902,8 @@ def build_score() -> Score:
                 "resonance_q",
                 (
                     _hold(T_ARRIVE, T_EUPH, 1.3),
-                    _lin(T_EUPH, _pos(_EUPH_BAR + 16), 1.3, 2.0),
-                    _lin(_pos(_EUPH_BAR + 16), T_END, 2.0, 1.5),
+                    _lin(T_EUPH, _pos(EUPH_BAR + 16), 1.3, 2.0),
+                    _lin(_pos(EUPH_BAR + 16), T_END, 2.0, 1.5),
                 ),
             ),
             _synth_auto(
@@ -905,8 +924,11 @@ def build_score() -> Score:
                 "send_db",
                 (
                     _hold(T_ARRIVE, T_EUPH, -8.0),
-                    _lin(T_EUPH, _pos(_EUPH_BAR + 16), -8.0, -5.0),
-                    _lin(_pos(_EUPH_BAR + 16), T_END, -5.0, -7.0),
+                    _lin(T_EUPH, _pos(63), -8.0, -6.0),
+                    _lin(_pos(63), _pos(64), -6.0, -7.5),  # dip into mid-Euph lull
+                    _hold(_pos(64), _pos(65), -7.5),
+                    _lin(_pos(65), _pos(EUPH_BAR + 16), -7.5, -5.0),  # recover & climax
+                    _lin(_pos(EUPH_BAR + 16), T_END, -5.0, -7.0),
                 ),
             ),
         ],
@@ -969,11 +991,20 @@ def build_score() -> Score:
             _ctrl(
                 "mix_db",
                 (
-                    _hold(T_COLD, T_WARM, -10.0),
+                    # Cold awakening: silent at first, barely audible crawl in
+                    _hold(T_COLD, _pos(5), -20.0),
+                    _lin(_pos(5), T_WARM, -20.0, -10.0),
                     _lin(T_WARM, T_SEARCH, -10.0, -7.0),
                     _hold(T_SEARCH, T_ARRIVE, -7.0),
                     _lin(T_ARRIVE, T_EUPH, -7.0, -5.0),
-                    _hold(T_EUPH, T_END, -5.0),
+                    # Mid-Euphoria lull and final breath
+                    _hold(T_EUPH, _pos(63), -5.0),
+                    _lin(_pos(63), _pos(64), -5.0, -6.5),  # dip into lull
+                    _hold(_pos(64), _pos(65), -6.5),
+                    _lin(_pos(65), _pos(66), -6.5, -5.0),  # return
+                    _hold(_pos(66), _pos(78), -5.0),
+                    _lin(_pos(78), _pos(80), -5.0, -6.0),  # final breath
+                    _lin(_pos(80), T_END, -6.0, -5.0),
                 ),
             ),
             _ctrl("pan", (_lfo(T_COLD, T_END, 0.05, 0.2),)),
@@ -1033,10 +1064,10 @@ def build_score() -> Score:
                 "mix_db",
                 (
                     _hold(T_COLD, T_ARRIVE, -30.0),
-                    _lin(T_ARRIVE, _pos(_ARRIVE_BAR + 4), -30.0, -10.0),
-                    _hold(_pos(_ARRIVE_BAR + 4), T_EUPH, -10.0),
-                    _lin(T_EUPH, _pos(_EUPH_BAR + 16), -10.0, -7.0),
-                    _lin(_pos(_EUPH_BAR + 16), T_END, -7.0, -12.0),
+                    _lin(T_ARRIVE, _pos(ARRIVE_BAR + 4), -30.0, -10.0),
+                    _hold(_pos(ARRIVE_BAR + 4), T_EUPH, -10.0),
+                    _lin(T_EUPH, _pos(EUPH_BAR + 16), -10.0, -7.0),
+                    _lin(_pos(EUPH_BAR + 16), T_END, -7.0, -12.0),
                 ),
             ),
         ],
@@ -1061,7 +1092,7 @@ def build_score() -> Score:
 def _place_pad(score: Score) -> None:
     # Cold (1-8): clean SVF, 2-bar chords — no drift (digital/precise narrative)
     for i, ch in enumerate(PROG_COLD):
-        t = _pos(_COLD_BAR + i * 2)
+        t = _pos(COLD_BAR + i * 2)
         for p, db in ch():
             score.add_note("pad", start=t, duration=2 * BAR - 0.1, partial=p, amp_db=db)
 
@@ -1070,18 +1101,21 @@ def _place_pad(score: Score) -> None:
     overlap_w = 0.3 * BAR
     warm_dur = 2 * BAR + overlap_w - 0.1
     warm_prog = PROG_WARM_1 + list(PROG_WARM_2)
-    warm_drift = _compute_section_drift(
+    warm_drift = progression_drift_lanes(
         warm_prog,
         chord_dur=warm_dur,
         attraction=0.6,
         wander=0.1,
         smoothness=0.85,
         seed_base=100,
+        target_time=2 * BAR,  # glide reaches end_ratio at the next chord boundary
+        # Sparse accents: iv→V in the first cycle, vi→I_open at start of second
+        glide_transitions={1, 3},
     )
-    bar = _WARM_BAR
+    bar = WARM_BAR
     for i, ch in enumerate(warm_prog):
         t = _pos(bar)
-        events = _make_drifted_chord_events(ch(), warm_dur, warm_drift[i])
+        events = drifted_chord_events(ch(), warm_dur, warm_drift[i])
         strummed = strum(Phrase(events=events), spread_ms=20, direction="down")
         score.add_phrase("pad", strummed, start=t, synth=syn_w)
         bar += 2
@@ -1091,19 +1125,29 @@ def _place_pad(score: Score) -> None:
     syn_s = {"filter_topology": "ladder", "bass_compensation": 0.3}
     overlap_s = 0.5 * BAR
     search_dur = 2 * BAR + overlap_s - 0.1
-    search_drift = _compute_section_drift(
+    search_drift = progression_drift_lanes(
         PROG_SEARCH,
         chord_dur=search_dur,
-        attraction=0.3,
-        wander=0.3,
-        smoothness=0.7,
+        # Lower attraction + higher wander so the glides feel genuinely
+        # unsettled — these are now placed accents rather than continuous,
+        # so each one can carry more character.
+        attraction=0.15,
+        wander=0.55,
+        smoothness=0.65,
         seed_base=200,
+        target_time=2 * BAR,
+        # Two accents: utonal_iv→utonal_i (dark-descending) and
+        # utonal_i→open_fifth_i (exposed/unsettled).
+        glide_transitions={1, 4},
     )
-    bar = _SEARCH_BAR
+    bar = SEARCH_BAR
     for i, ch in enumerate(PROG_SEARCH):
         t = _pos(bar)
-        events = _make_drifted_chord_events(ch(), search_dur, search_drift[i])
-        strummed = strum(Phrase(events=events), spread_ms=35, direction="random")
+        events = drifted_chord_events(ch(), search_dur, search_drift[i])
+        # "out" strum keeps the attacks consistent bar-to-bar; "random"
+        # produced a stutter-like feel because every chord had a different
+        # pattern and the Searching overlap=0.5*BAR let them pile up.
+        strummed = strum(Phrase(events=events), spread_ms=25, direction="out")
         score.add_phrase("pad", strummed, start=t, synth=syn_s)
         bar += 2
 
@@ -1116,17 +1160,20 @@ def _place_pad(score: Score) -> None:
     }
     overlap_a = 0.5 * BAR
     arrive_dur = 4 * BAR + overlap_a - 0.1
-    arrive_drift = _compute_section_drift(
+    arrive_drift = progression_drift_lanes(
         PROG_ARRIVE,
         chord_dur=arrive_dur,
         attraction=0.7,
         wander=0.1,
         smoothness=0.85,
         seed_base=300,
+        target_time=4 * BAR,
+        # Single accent on I→IV at the start — an early "locking in" gesture
+        glide_transitions={0},
     )
     for i, ch in enumerate(PROG_ARRIVE):
-        t = _pos(_ARRIVE_BAR + i * 4)
-        events = _make_drifted_chord_events(ch(), arrive_dur, arrive_drift[i])
+        t = _pos(ARRIVE_BAR + i * 4)
+        events = drifted_chord_events(ch(), arrive_dur, arrive_drift[i])
         strummed = strum(Phrase(events=events), spread_ms=20, direction="down")
         score.add_phrase("pad", strummed, start=t, synth=syn_a)
 
@@ -1140,17 +1187,20 @@ def _place_pad(score: Score) -> None:
     }
     overlap_e = 0.4 * BAR
     euph1_dur = 3.5 * BAR + overlap_e - 0.1
-    euph1_drift = _compute_section_drift(
+    euph1_drift = progression_drift_lanes(
         PROG_EUPH_1,
         chord_dur=euph1_dur,
         attraction=0.8,
         wander=0.05,
         smoothness=0.9,
         seed_base=400,
+        target_time=3 * BAR,  # next chord attacks 3 bars in; overlap runs 0.5 more
+        # No glides — the "locked in" section breathes cleanly between chords
+        glide_transitions=set(),
     )
-    bar = _EUPH_BAR
+    bar = EUPH_BAR
     for i, ch in enumerate(PROG_EUPH_1):
-        events = _make_drifted_chord_events(
+        events = drifted_chord_events(
             ch(), euph1_dur, euph1_drift[i], amp_db_offset=1.0
         )
         strummed = strum(Phrase(events=events), spread_ms=25, direction="out")
@@ -1158,16 +1208,19 @@ def _place_pad(score: Score) -> None:
         bar += 3
 
     euph2_dur = 3.5 * BAR + overlap_e - 0.1
-    euph2_drift = _compute_section_drift(
+    euph2_drift = progression_drift_lanes(
         PROG_EUPH_2,
         chord_dur=euph2_dur,
         attraction=0.8,
         wander=0.05,
         smoothness=0.9,
         seed_base=500,
+        target_time=3 * BAR,
+        # Single accent on V→I toward the end — one color gesture
+        glide_transitions={2},
     )
     for i, ch in enumerate(PROG_EUPH_2):
-        events = _make_drifted_chord_events(
+        events = drifted_chord_events(
             ch(), euph2_dur, euph2_drift[i], amp_db_offset=1.0
         )
         strummed = strum(Phrase(events=events), spread_ms=25, direction="out")
@@ -1182,19 +1235,20 @@ def _place_pad(score: Score) -> None:
     ]
     # Use first chord's duration for drift computation (close enough for the
     # penultimate transition; the last chord has no drift anyway)
-    euph_end_drift = _compute_section_drift(
+    euph_end_drift = progression_drift_lanes(
         PROG_EUPH_END,
         chord_dur=euph_end_durs[0],
         attraction=0.8,
         wander=0.05,
         smoothness=0.9,
         seed_base=600,
+        target_time=4 * BAR,  # chord-to-chord boundary in final sequence
+        # No glides — the final resolution should be clean, no blur
+        glide_transitions=set(),
     )
     for i, ch in enumerate(PROG_EUPH_END):
         dur = euph_end_durs[i]
-        events = _make_drifted_chord_events(
-            ch(), dur, euph_end_drift[i], amp_db_offset=1.0
-        )
+        events = drifted_chord_events(ch(), dur, euph_end_drift[i], amp_db_offset=1.0)
         strummed = strum(Phrase(events=events), spread_ms=25, direction="out")
         score.add_phrase("pad", strummed, start=_pos(bar), synth=syn_e)
         bar += 4 if ch != PROG_EUPH_END[-1] else 5
@@ -1211,20 +1265,21 @@ def _place_bass(score: Score) -> None:
         db: float = -6.0,
         vel: float = 0.85,
     ) -> None:
-        t = _pos(bar, beat)
-        if t < T_END:
-            score.add_note(
-                "bass",
-                start=t,
-                duration=dur * BEAT,
-                partial=partial,
-                amp_db=db,
-                velocity=vel,
-            )
+        _add_bounded_note(
+            score,
+            "bass",
+            bar,
+            beat,
+            partial,
+            dur,
+            amp_db=db,
+            velocity=vel,
+            time_limit=T_END,
+        )
 
     # Cold: sustained roots
     for i, root in enumerate([P1 * 2, P_5_3, P_4_3, P1 * 2]):
-        _bn(_COLD_BAR + i * 2, 1.0, root, 7.5, -8.0)
+        _bn(COLD_BAR + i * 2, 1.0, root, 7.5, -8.0)
 
     # Warming: root + fifth per chord
     warm_roots = [
@@ -1235,7 +1290,7 @@ def _place_bass(score: Score) -> None:
         (P1 * 2, P_5_4 * 2),
         (P_5_3, P_3_2 * 2),
     ]
-    bar = _WARM_BAR
+    bar = WARM_BAR
     for root, fifth in warm_roots:
         _bn(bar, 1.0, root, 3.5, -6.0, 0.85)
         _bn(bar, 4.5, fifth, 2.0, -8.0, 0.7)
@@ -1243,7 +1298,7 @@ def _place_bass(score: Score) -> None:
 
     # Searching: sparse open fifths, exposed
     search_roots = [P1 * 2, P_4_3, P1 * 2, P_4_3, P1 * 2, P1 * 2, P_4_3]
-    bar = _SEARCH_BAR
+    bar = SEARCH_BAR
     for root in search_roots:
         _bn(bar, 1.0, root, 6.0, -7.0, 0.75)
         bar += 2
@@ -1313,15 +1368,15 @@ def _place_bass(score: Score) -> None:
             _bn(bar, beat, partial, dur, -5.0, vel)
 
     # Final sustained root
-    _bn(_END_BAR - 5, 1.0, P1 * 2, 20.0, -5.0)
+    _bn(END_BAR - 5, 1.0, P1 * 2, 20.0, -5.0)
 
 
 def _place_sub(score: Score) -> None:
     """Sine sub — enters mid-Warming, drops to drone in Searching, blooms in Euphoria."""
     roots_warm = [P1, P_4_3 / 2, P_3_2 / 2, P_5_3 / 2]
-    bar = _WARM_BAR + 4
+    bar = WARM_BAR + 4
     for root in roots_warm:
-        if bar >= _SEARCH_BAR:
+        if bar >= SEARCH_BAR:
             break
         score.add_note(
             "sub", start=_pos(bar), duration=4 * BAR - 0.1, partial=root, amp_db=-8.0
@@ -1341,7 +1396,7 @@ def _place_sub(score: Score) -> None:
     for i, root in enumerate([P1, P_4_3 / 2, P_3_2 / 2, P_5_3 / 2]):
         score.add_note(
             "sub",
-            start=_pos(_ARRIVE_BAR + i * 4),
+            start=_pos(ARRIVE_BAR + i * 4),
             duration=4 * BAR - 0.1,
             partial=root,
             amp_db=-6.0,
@@ -1349,9 +1404,9 @@ def _place_sub(score: Score) -> None:
 
     # Euphoria
     euph_roots = [P_4_3 / 2, P_3_2 / 2, P1, P_5_3 / 2, P1, P_4_3 / 2, P_3_2 / 2, P1]
-    bar = _EUPH_BAR
+    bar = EUPH_BAR
     for root in euph_roots:
-        if bar >= _END_BAR - 3:
+        if bar >= END_BAR - 3:
             break
         score.add_note(
             "sub", start=_pos(bar), duration=3 * BAR - 0.1, partial=root, amp_db=-5.0
@@ -1360,7 +1415,7 @@ def _place_sub(score: Score) -> None:
 
     # Final drone
     score.add_note(
-        "sub", start=_pos(_END_BAR - 5), duration=5 * BAR + 2.0, partial=P1, amp_db=-5.0
+        "sub", start=_pos(END_BAR - 5), duration=5 * BAR + 2.0, partial=P1, amp_db=-5.0
     )
 
 
@@ -1377,29 +1432,30 @@ def _place_lead(score: Score) -> None:
         vel: float,
         pm: PitchMotionSpec | None = None,
     ) -> None:
-        t = _pos(base_bar + bar_off, beat)
-        if t < T_END + 2.0:
-            score.add_note(
-                "lead",
-                start=t,
-                duration=dur * BEAT,
-                partial=partial,
-                amp_db=db,
-                velocity=vel,
-                pitch_motion=pm,
-            )
+        _add_bounded_note(
+            score,
+            "lead",
+            base_bar + bar_off,
+            beat,
+            partial,
+            dur,
+            amp_db=db,
+            velocity=vel,
+            time_limit=T_END + RELEASE_TAIL_S,
+            pitch_motion=pm,
+        )
 
     # Searching: tentative fragment, solo, lower register, sparse
     _glide_flat = PitchMotionSpec.ratio_glide(start_ratio=0.996)
     _vib_tentative = PitchMotionSpec.vibrato(depth_ratio=0.003, rate_hz=4.0)
-    _n(_SEARCH_BAR, 4, 2.0, P_3_2 * 4, 3.0, -8.0, 0.6, _glide_flat)
-    _n(_SEARCH_BAR, 5, 2.0, P_5_4 * 4, 2.0, -9.0, 0.55)
-    _n(_SEARCH_BAR, 6, 1.0, P_7_4 * 4, 4.0, -7.5, 0.65, _vib_tentative)
-    _n(_SEARCH_BAR, 8, 2.0, P1 * 4, 3.0, -8.5, 0.58, _glide_flat)
-    _n(_SEARCH_BAR, 9, 2.0, P_5_4 * 4, 2.5, -9.0, 0.55)
-    _n(_SEARCH_BAR, 10, 1.0, P_3_2 * 4, 5.0, -7.0, 0.62, _vib_tentative)
+    _n(SEARCH_BAR, 4, 2.0, P_3_2 * 4, 3.0, -8.0, 0.6, _glide_flat)
+    _n(SEARCH_BAR, 5, 2.0, P_5_4 * 4, 2.0, -9.0, 0.55)
+    _n(SEARCH_BAR, 6, 1.0, P_7_4 * 4, 4.0, -7.5, 0.65, _vib_tentative)
+    _n(SEARCH_BAR, 8, 2.0, P1 * 4, 3.0, -8.5, 0.58, _glide_flat)
+    _n(SEARCH_BAR, 9, 2.0, P_5_4 * 4, 2.5, -9.0, 0.55)
+    _n(SEARCH_BAR, 10, 1.0, P_3_2 * 4, 5.0, -7.0, 0.62, _vib_tentative)
 
-    # Arriving melody (bar_off from _ARRIVE_BAR)
+    # Arriving melody (bar_off from ARRIVE_BAR)
     arrive = [
         (0, 1.0, P_7_4 * 8, 2.5, -6.0, 0.85),
         (0, 3.5, P_5_3 * 8, 0.5, -9.0, 0.6),
@@ -1433,9 +1489,9 @@ def _place_lead(score: Score) -> None:
             pm = PitchMotionSpec.vibrato(depth_ratio=0.004, rate_hz=5.0)
         elif dur >= 2.5:
             pm = PitchMotionSpec.vibrato(depth_ratio=0.004, rate_hz=4.8)
-        _n(_ARRIVE_BAR, bo, bt, p, dur, db, vel, pm)
+        _n(ARRIVE_BAR, bo, bt, p, dur, db, vel, pm)
 
-    # Euphoria melody (bar_off from _EUPH_BAR)
+    # Euphoria melody (bar_off from EUPH_BAR)
     euphoria = [
         (0, 1.0, P_5_4 * 8, 1.0, -7.0, 0.78),
         (0, 2.0, P_4_3 * 8, 0.5, -9.0, 0.6),
@@ -1498,7 +1554,7 @@ def _place_lead(score: Score) -> None:
         elif dur >= 1.5:
             # Medium notes — lighter vibrato
             pm = PitchMotionSpec.vibrato(depth_ratio=0.003, rate_hz=5.0)
-        _n(_EUPH_BAR, bo, bt, p, dur, db, vel, pm)
+        _n(EUPH_BAR, bo, bt, p, dur, db, vel, pm)
 
 
 def _place_lead_motif_echoes(score: Score) -> None:
@@ -1509,8 +1565,6 @@ def _place_lead_motif_echoes(score: Score) -> None:
     versions are placed into quiet moments of the Euphoria melody so the
     lead has thematic continuity without sounding looped.
     """
-    from code_musics.composition import augment, diminish
-    from code_musics.synth import db_to_amp
 
     # Core motif: the Arrive opening gesture (relative times, octave 8).
     # Uses amp (not amp_db) so augment/diminish can use dataclasses.replace
@@ -1557,14 +1611,14 @@ def _place_lead_motif_echoes(score: Score) -> None:
 
     # Echo 1 (bar_off ~2, beat 2): augmented 1.3x, sits in the gap before bar 3
     echo1 = augment(core, 1.3)
-    score.add_phrase("lead", echo1, start=_pos(_EUPH_BAR + 2, 2.0))
+    score.add_phrase("lead", echo1, start=_pos(EUPH_BAR + 2, 2.0))
 
     # Echo 2 (bar_off ~9, beat 1): diminished 0.8x, compressed into the gap at bar 9
     echo2 = diminish(core, 1.25)
-    score.add_phrase("lead", echo2, start=_pos(_EUPH_BAR + 9, 1.0))
+    score.add_phrase("lead", echo2, start=_pos(EUPH_BAR + 9, 1.0))
 
     # Echo 3 (bar_off ~19, beat 2): original tempo, fills the quiet before the final
-    score.add_phrase("lead", core, start=_pos(_EUPH_BAR + 19, 2.0))
+    score.add_phrase("lead", core, start=_pos(EUPH_BAR + 19, 2.0))
 
 
 def _place_lead_thicken(score: Score) -> None:
@@ -1588,10 +1642,10 @@ def _place_lead_thicken(score: Score) -> None:
         (21, 4.5, P2 * 8, 6.0, -6.0),
     ]
     # Build phrase with times relative to the thickening start point (bar_off 6)
-    base_time = _pos(_EUPH_BAR + 6)
+    base_time = _pos(EUPH_BAR + 6)
     events = tuple(
         NoteEvent(
-            start=_pos(_EUPH_BAR + bo, bt) - base_time,
+            start=_pos(EUPH_BAR + bo, bt) - base_time,
             duration=dur * BEAT,
             partial=p,
             amp_db=db,
@@ -1602,8 +1656,8 @@ def _place_lead_thicken(score: Score) -> None:
     copies = thicken(
         phrase,
         n=3,
-        detune_cents=6.0,
-        spread_ms=12.0,
+        detune_cents=5.0,
+        spread_ms=6.0,  # tighter — was 12.0, which read as "loose" at bar 57
         stereo_width=0.4,
         amp_taper_db=-3.0,
         seed=42,
@@ -1611,7 +1665,7 @@ def _place_lead_thicken(score: Score) -> None:
     for copy in copies:
         for ev in copy.phrase.events:
             t = base_time + ev.start
-            if ev.partial and t < T_END + 2.0:
+            if ev.partial and t < T_END + RELEASE_TAIL_S:
                 score.add_note(
                     "lead",
                     start=t,
@@ -1628,22 +1682,22 @@ def _place_ghost(score: Score) -> None:
     # (bar_base, bar_off, beat, partial_octave_below, dur_beats, amp_db)
     ghost_notes: list[tuple[int, int, float, float, float, float]] = [
         # Arriving echoes — sparse, most memorable lead moments
-        (_ARRIVE_BAR, 0, 3.0, P_7_4 * 4, 4.0, -8.0),
-        (_ARRIVE_BAR, 3, 2.0, P_7_4 * 4, 5.0, -7.0),
-        (_ARRIVE_BAR, 6, 2.5, P_7_4 * 4, 4.0, -7.5),
-        (_ARRIVE_BAR, 9, 1.5, P1 * 4, 6.0, -7.0),
+        (ARRIVE_BAR, 0, 3.0, P_7_4 * 4, 4.0, -8.0),
+        (ARRIVE_BAR, 3, 2.0, P_7_4 * 4, 5.0, -7.0),
+        (ARRIVE_BAR, 6, 2.5, P_7_4 * 4, 4.0, -7.5),
+        (ARRIVE_BAR, 9, 1.5, P1 * 4, 6.0, -7.0),
         # Euphoria echoes — more present
-        (_EUPH_BAR, 0, 2.5, P_7_4 * 4, 4.0, -7.0),
-        (_EUPH_BAR, 3, 2.8, P_4_3 * 4, 3.5, -7.5),
-        (_EUPH_BAR, 7, 3.5, P_7_4 * 4, 4.0, -6.5),
-        (_EUPH_BAR, 11, 4.5, P2 * 4, 4.0, -7.0),
-        (_EUPH_BAR, 14, 4.0, P_7_4 * 4, 4.0, -7.0),
-        (_EUPH_BAR, 18, 3.0, P1 * 4, 6.0, -6.5),
-        (_EUPH_BAR, 21, 4.0, P1 * 4, 8.0, -7.0),
+        (EUPH_BAR, 0, 2.5, P_7_4 * 4, 4.0, -7.0),
+        (EUPH_BAR, 3, 2.8, P_4_3 * 4, 3.5, -7.5),
+        (EUPH_BAR, 7, 3.5, P_7_4 * 4, 4.0, -6.5),
+        (EUPH_BAR, 11, 4.5, P2 * 4, 4.0, -7.0),
+        (EUPH_BAR, 14, 4.0, P_7_4 * 4, 4.0, -7.0),
+        (EUPH_BAR, 18, 3.0, P1 * 4, 6.0, -6.5),
+        (EUPH_BAR, 21, 4.0, P1 * 4, 8.0, -7.0),
     ]
     for base, bo, bt, p, dur, db in ghost_notes:
         t = _pos(base + bo, bt)
-        if t < T_END + 4.0:
+        if t < T_END + GHOST_RELEASE_TAIL_S:
             score.add_note(
                 "ghost",
                 start=t,
@@ -1666,21 +1720,60 @@ def _place_texture(score: Score) -> None:
         # Arriving onward
         (T_ARRIVE, T_END, P_7_4 * 2, -14.0),
         # Euphoria: full bloom
-        (T_EUPH, T_END + 3.0, P1 * 2, -10.0),
-        (T_EUPH, T_END + 3.0, P_5_4 * 2, -12.0),
-        (T_EUPH, T_END + 3.0, P_3_2 * 2, -12.0),
-        (T_EUPH, T_END + 3.0, P_7_4 * 2, -11.0),
+        (T_EUPH, T_END + TEXTURE_RELEASE_TAIL_S, P1 * 2, -10.0),
+        (T_EUPH, T_END + TEXTURE_RELEASE_TAIL_S, P_5_4 * 2, -12.0),
+        (T_EUPH, T_END + TEXTURE_RELEASE_TAIL_S, P_3_2 * 2, -12.0),
+        (T_EUPH, T_END + TEXTURE_RELEASE_TAIL_S, P_7_4 * 2, -11.0),
         # High shimmer
-        (_pos(_EUPH_BAR + 8), T_END + 3.0, P1 * 8, -16.0),
-        (_pos(_EUPH_BAR + 8), T_END + 3.0, P_5_4 * 8, -17.0),
+        (_pos(EUPH_BAR + 8), T_END + TEXTURE_RELEASE_TAIL_S, P1 * 8, -16.0),
+        (_pos(EUPH_BAR + 8), T_END + TEXTURE_RELEASE_TAIL_S, P_5_4 * 8, -17.0),
     ]
     for start, end, p, db in layers:
         score.add_note(
             "texture", start=start, duration=end - start, partial=p, amp_db=db
         )
 
+    # Warming→Searching overshoot gesture: brief high filtered sweep emerging
+    # from bar 20 beat 3 through the Searching boundary. Subtle, just a hint of
+    # the instability to come.
+    score.add_note(
+        "texture",
+        start=_pos(20, 3),
+        duration=2 * BAR,
+        partial=P_3_2 * 8,
+        amp_db=-14.0,
+    )
+
+    # Searching→Arriving riser: high-register drone rising in amplitude from
+    # bar 33 beat 1 through bar 34 beat 4. This is the "locking in" riser.
+    score.add_note(
+        "texture",
+        start=_pos(33),
+        duration=2 * BAR - 0.1,
+        partial=P1 * 16,
+        amp_db=-14.0,
+    )
+
+    # Arriving→Euphoria swell: texture push in last 2 bars of Arriving
+    score.add_note(
+        "texture",
+        start=_pos(49),
+        duration=2 * BAR - 0.1,
+        partial=P_5_4 * 8,
+        amp_db=-14.0,
+    )
+
+    # Euphoria 16-bar boundary shimmer (bar 66.5-67.5) — brief gesture
+    score.add_note(
+        "texture",
+        start=_pos(66, 3),
+        duration=BAR,
+        partial=P_3_2 * 16,
+        amp_db=-17.0,
+    )
+
     # Euphoria shimmer — sparse high-register stochastic sparkle
-    shimmer_start = _pos(_EUPH_BAR + 8)
+    shimmer_start = _pos(EUPH_BAR + 8)
     shimmer_pool = TonePool.weighted(
         {
             P1 * 16: 3.0,
@@ -1694,7 +1787,7 @@ def _place_texture(score: Score) -> None:
     )
     shimmer = stochastic_cloud(
         tones=shimmer_pool,
-        duration=T_END - shimmer_start + 3.0,
+        duration=T_END - shimmer_start + TEXTURE_RELEASE_TAIL_S,
         density=[(0.0, 0.15), (0.4, 0.3), (0.8, 0.25), (1.0, 0.1)],
         amp_db_range=(-20.0, -14.0),
         note_dur_range=(1.5, 4.0),

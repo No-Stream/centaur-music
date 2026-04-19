@@ -8,15 +8,21 @@ import numpy as np
 
 from code_musics.engines._dsp_utils import (
     apply_analog_post_processing,
+    apply_cutoff_cv_dither,
+    apply_filter_oversampled,
     apply_note_jitter,
+    apply_pitch_cv_dither,
     apply_voice_card,
+    apply_voice_card_post_offsets,
     build_cutoff_drift,
     build_drift,
+    build_keytracked_cutoff_profile,
     extract_analog_params,
     nyquist_fade,
+    resolve_quality_mode,
     rng_for_note,
 )
-from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_filter
+from code_musics.engines._filters import _SUPPORTED_FILTER_MODES
 
 
 def render(
@@ -28,7 +34,16 @@ def render(
     params: dict[str, Any],
     freq_trajectory: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Render a harmonic-rich source shaped by a ZDF state-variable filter."""
+    """Render a harmonic-rich source shaped by a ZDF state-variable filter.
+
+    The ``quality`` param selects the ladder solver + oversampling factor
+    applied to the filter + feedback + dither block:
+
+    - ``draft`` — ADAA ladder, no oversampling
+    - ``fast`` — Newton ladder (2 iters), 2x oversampling
+    - ``great`` — Newton ladder (4 iters), 2x oversampling (default)
+    - ``divine`` — Newton ladder (8 iters), 4x oversampling
+    """
     if duration <= 0:
         raise ValueError("duration must be positive")
     if sample_rate <= 0:
@@ -57,6 +72,7 @@ def render(
     noise_floor_level = analog["noise_floor"]
     drift_rate_hz = analog["drift_rate_hz"]
     cutoff_drift_amount = analog["cutoff_drift"]
+    quality_config = resolve_quality_mode(str(analog["quality"]))
 
     if n_harmonics < 1:
         raise ValueError("n_harmonics must be at least 1")
@@ -80,7 +96,6 @@ def render(
     if n_samples == 0:
         return np.zeros(0)
 
-    t = np.linspace(0.0, duration, n_samples, endpoint=False)
     if freq_trajectory is not None:
         freq_trajectory = np.asarray(freq_trajectory, dtype=np.float64)
         if freq_trajectory.ndim != 1:
@@ -115,9 +130,6 @@ def render(
     jittered = apply_note_jitter(params, rng, analog_jitter)
     cutoff_hz = float(jittered.get("cutoff_hz", cutoff_hz))
     resonance_q = float(jittered.get("resonance_q", resonance_q))
-    resonance_q = max(
-        0.5, resonance_q * (1.0 + vc_offsets["resonance_offset_pct"] / 100.0)
-    )
     filter_env_decay = float(jittered.get("filter_env_decay", filter_env_decay))
     start_phase = float(jittered.get("_phase_offset", 0.0))
     amp_jitter_db = float(jittered.get("_amp_jitter_db", 0.0))
@@ -130,7 +142,9 @@ def render(
         pulse_width = min(
             0.99, max(0.01, pulse_width + vc_offsets["pulse_width_offset"])
         )
-    drift_rate_hz *= 1.0 + vc_offsets["drift_rate_offset_pct"] / 100.0
+    resonance_q, drift_rate_hz = apply_voice_card_post_offsets(
+        resonance_q, drift_rate_hz, vc_offsets
+    )
 
     if pitch_drift > 0:
         drift_multiplier = build_drift(
@@ -142,6 +156,19 @@ def render(
             rng=rng,
         )
         freq_profile = freq_profile * drift_multiplier
+
+    # OB-Xd-style per-sample CV dither on pitch (layered on top of stable
+    # voice_card offsets).  Shares the ``analog_jitter`` knob with the
+    # per-note jitter so there's no new surface to reason about.
+    freq_profile = apply_pitch_cv_dither(
+        freq_profile,
+        analog_jitter=analog_jitter,
+        freq=freq,
+        duration=duration,
+        amp=amp,
+        sample_rate=sample_rate,
+        n_samples=n_samples,
+    )
 
     # Build the raw additive signal (unfiltered sum of harmonics).
     signal = np.zeros(n_samples, dtype=np.float64)
@@ -181,11 +208,16 @@ def render(
         signal = signal / np.sqrt(power_estimate)
 
     # Build per-sample cutoff profile with keytracking and filter envelope.
-    cutoff_envelope = 1.0 + filter_env_amount * np.exp(-t / filter_env_decay)
-    cutoff_envelope = np.maximum(cutoff_envelope, 0.05)
-    keytracked_cutoff = cutoff_hz * np.power(freq_profile / reference_freq_hz, keytrack)
-    cutoff_profile = np.clip(
-        keytracked_cutoff * cutoff_envelope, 20.0, nyquist_hz * 0.98
+    cutoff_profile = build_keytracked_cutoff_profile(
+        cutoff_hz=cutoff_hz,
+        keytrack=keytrack,
+        reference_freq_hz=reference_freq_hz,
+        filter_env_amount=filter_env_amount,
+        filter_env_decay=filter_env_decay,
+        duration=duration,
+        n_samples=n_samples,
+        freq_profile=freq_profile,
+        nyquist=nyquist_hz,
     )
 
     if cutoff_drift_amount > 0:
@@ -207,11 +239,25 @@ def render(
             cutoff_profile * cutoff_modulation, 20.0, nyquist_hz * 0.98
         )
 
-    filtered = apply_filter(
+    # OB-Xd-style per-sample CV dither on the filter cutoff.  Same knob as
+    # the pitch dither (``analog_jitter``), different target.
+    cutoff_profile = apply_cutoff_cv_dither(
+        cutoff_profile,
+        analog_jitter=analog_jitter,
+        freq=freq,
+        duration=duration,
+        amp=amp,
+        sample_rate=sample_rate,
+        n_samples=n_samples,
+        nyquist=nyquist_hz,
+    )
+
+    filtered = apply_filter_oversampled(
         signal,
         cutoff_profile=cutoff_profile,
         resonance_q=resonance_q,
         sample_rate=sample_rate,
+        oversample_factor=quality_config.oversample_factor,
         filter_mode=filter_mode,
         filter_drive=filter_drive,
         filter_even_harmonics=filter_even_harmonics,
@@ -220,6 +266,9 @@ def render(
         filter_morph=filter_morph,
         hpf_cutoff_hz=hpf_cutoff_hz,
         hpf_resonance_q=hpf_resonance_q,
+        filter_solver=quality_config.solver,
+        max_newton_iters=quality_config.max_newton_iters,
+        newton_tolerance=quality_config.newton_tolerance,
     )
 
     filtered = apply_analog_post_processing(

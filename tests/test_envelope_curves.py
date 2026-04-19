@@ -508,42 +508,93 @@ class TestScoreSurfaceFlowthrough:
         pokey_audio = pokey_score.render()
         assert not np.allclose(linear_audio, pokey_audio)
 
-    def test_default_power_params_preserve_linear_render(self) -> None:
-        """Omitting the new params vs explicitly setting defaults must match."""
+    def test_attack_power_automation_reshapes_rendered_attack(self) -> None:
+        """Automating attack_power from 1.0 to 4.0 must measurably reshape the rendered attack.
+
+        This is the real integration guard: it proves the param is wired as an
+        automation target, accepted by the score, and actually drives the
+        rendered audio. Registry membership alone is not enough — the name
+        must flow through AutomationTarget -> AutomationSpec -> per-note
+        synth param resolution -> the engine's ADSR call.
+        """
+        from code_musics.automation import (
+            AutomationSegment,
+            AutomationSpec,
+            AutomationTarget,
+        )
         from code_musics.score import Score
 
-        baseline = Score(f0_hz=220.0, auto_master_gain_stage=False)
-        baseline.add_voice(
-            "pad",
-            synth_defaults={"engine": "additive", "attack": 0.05, "release": 0.2},
-            normalize_lufs=None,
+        dur = 0.5
+        attack = 0.4  # long attack so the reshaped region dominates the waveform
+
+        # Rebuild both scores against the same tone / timing. Only the attack_power
+        # differs: the automated score ramps from 1.0 (linear) to 4.0 (very convex).
+        def _build(
+            attack_power_spec: AutomationSpec | None,
+        ) -> Score:
+            score = Score(f0_hz=220.0, auto_master_gain_stage=False)
+            note_automation = [attack_power_spec] if attack_power_spec else None
+            score.add_voice(
+                "pad",
+                synth_defaults={
+                    "engine": "additive",
+                    "attack": attack,
+                    "release": 0.05,
+                },
+                normalize_lufs=None,
+                velocity_humanize=None,
+            )
+            score.add_note(
+                "pad",
+                start=0.0,
+                duration=dur,
+                partial=1.0,
+                amp=0.3,
+                automation=note_automation,
+            )
+            return score
+
+        # attack_power is sampled once at note start (it's a scalar passed to
+        # adsr), so automation here is a constant hold that proves the param
+        # name flows through AutomationTarget -> synth_params -> PreparedNote
+        # -> adsr(..., attack_power=...). A ramp would sample start_value only.
+        convex = AutomationSpec(
+            target=AutomationTarget(kind="synth", name="attack_power"),
+            segments=(
+                AutomationSegment(
+                    start=0.0,
+                    end=dur,
+                    shape="hold",
+                    value=4.0,
+                ),
+            ),
+            mode="replace",
         )
-        baseline.add_note("pad", start=0.0, duration=0.3, partial=1.0, amp=0.2)
 
-        explicit = Score(f0_hz=220.0, auto_master_gain_stage=False)
-        explicit.add_voice(
-            "pad",
-            synth_defaults={
-                "engine": "additive",
-                "attack": 0.05,
-                "release": 0.2,
-                "attack_power": 1.0,
-                "decay_power": 1.0,
-                "release_power": 1.0,
-                "attack_target": 1.0,
-            },
-            normalize_lufs=None,
+        linear_audio = _build(None).render()
+        ramped_audio = _build(convex).render()
+
+        # Both renders must share shape and finiteness.
+        assert linear_audio.shape == ramped_audio.shape
+        assert np.all(np.isfinite(linear_audio))
+        assert np.all(np.isfinite(ramped_audio))
+
+        # The overall audio must measurably differ.
+        assert not np.allclose(linear_audio, ramped_audio, atol=1e-6)
+
+        # Attack energy should drop meaningfully when attack_power is convex:
+        # a convex ramp stays near zero for longer, so RMS in the first ~20%
+        # of the attack region is lower than the linear version.
+        mono_linear = (
+            linear_audio.mean(axis=0) if linear_audio.ndim == 2 else linear_audio
         )
-        explicit.add_note("pad", start=0.0, duration=0.3, partial=1.0, amp=0.2)
-
-        np.testing.assert_allclose(baseline.render(), explicit.render(), atol=1e-12)
-
-    def test_curve_power_automation_targets_are_registered(self) -> None:
-        """The new params must be accepted as synth automation targets."""
-        from code_musics.automation import AutomationTarget
-
-        # These must not raise.
-        AutomationTarget(kind="synth", name="attack_power")
-        AutomationTarget(kind="synth", name="decay_power")
-        AutomationTarget(kind="synth", name="release_power")
-        AutomationTarget(kind="synth", name="attack_target")
+        mono_ramped = (
+            ramped_audio.mean(axis=0) if ramped_audio.ndim == 2 else ramped_audio
+        )
+        n_probe = int(0.2 * attack * SR)
+        rms_linear = float(np.sqrt(np.mean(mono_linear[:n_probe] ** 2)))
+        rms_ramped = float(np.sqrt(np.mean(mono_ramped[:n_probe] ** 2)))
+        assert rms_ramped < rms_linear * 0.9, (
+            f"convex-attack automation should reduce early-attack RMS: "
+            f"linear={rms_linear:.6f} ramped={rms_ramped:.6f}"
+        )

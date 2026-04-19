@@ -4429,26 +4429,36 @@ def _bbd_chorus_stereo_loop(
     delay_base_samples: float,
     mod_depth_samples: float,
     lfo_omega_per_sample: float,
-    lfo_phase_left: float,
-    lfo_phase_right: float,
+    stage_phases_left: np.ndarray,
+    stage_phases_right: np.ndarray,
     cross_feedback: float,
     compander_k: float,
+    stage_scale: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Stereo BBD delay with quadrature LFOs, cross-feedback, and compander.
 
-    Walks the two delay lines sample-by-sample so cross-feedback stays causal.
+    Walks the delay lines sample-by-sample so cross-feedback stays causal.
     Uses 3-point Lagrange interpolation for the fractional read, which is
     cheap and clean enough to avoid the "digital zipper" artifacts linear
     interpolation creates when the read position is continuously moving.
+
+    Supports an arbitrary number of stacked stages in a single pass: each
+    stage has its own pair of LFO phases (``stage_phases_left`` /
+    ``stage_phases_right``) and its own pair of delay-line buffers. This
+    avoids paying the numba dispatch + buffer-allocation cost once per
+    stage when using Juno I+II-style stacked presets.
     """
     n_samples = input_left.shape[0]
-    out_left = np.empty(n_samples, dtype=np.float64)
-    out_right = np.empty(n_samples, dtype=np.float64)
-    buffer_left = np.zeros(buffer_size, dtype=np.float64)
-    buffer_right = np.zeros(buffer_size, dtype=np.float64)
+    n_stages = stage_phases_left.shape[0]
+    out_left = np.zeros(n_samples, dtype=np.float64)
+    out_right = np.zeros(n_samples, dtype=np.float64)
+    # One pair of delay-line buffers per stage. 2D layout keeps things
+    # numba-friendly (no nested Python lists inside the JIT loop).
+    buffers_left = np.zeros((n_stages, buffer_size), dtype=np.float64)
+    buffers_right = np.zeros((n_stages, buffer_size), dtype=np.float64)
+    prev_out_left = np.zeros(n_stages, dtype=np.float64)
+    prev_out_right = np.zeros(n_stages, dtype=np.float64)
     write_pos = 0
-    prev_out_left = 0.0
-    prev_out_right = 0.0
 
     # Guardrails on the delay read position: never less than 1 sample,
     # and leave a 2-sample margin before the far edge so Lagrange has
@@ -4457,72 +4467,85 @@ def _bbd_chorus_stereo_loop(
     max_delay = float(buffer_size - 3)
 
     for i in range(n_samples):
-        # Quadrature LFOs (bipolar sine, phase-offset per channel).
-        phase_left = lfo_omega_per_sample * i + lfo_phase_left
-        phase_right = lfo_omega_per_sample * i + lfo_phase_right
-        delay_left = delay_base_samples + mod_depth_samples * math.sin(phase_left)
-        delay_right = delay_base_samples + mod_depth_samples * math.sin(phase_right)
-        if delay_left < min_delay:
-            delay_left = min_delay
-        elif delay_left > max_delay:
-            delay_left = max_delay
-        if delay_right < min_delay:
-            delay_right = min_delay
-        elif delay_right > max_delay:
-            delay_right = max_delay
+        dry_sample_left = input_left[i]
+        dry_sample_right = input_right[i]
+        sample_omega = lfo_omega_per_sample * i
+        for s in range(n_stages):
+            # Quadrature LFOs (bipolar sine, phase-offset per channel).
+            phase_left = sample_omega + stage_phases_left[s]
+            phase_right = sample_omega + stage_phases_right[s]
+            delay_left = delay_base_samples + mod_depth_samples * math.sin(phase_left)
+            delay_right = delay_base_samples + mod_depth_samples * math.sin(phase_right)
+            if delay_left < min_delay:
+                delay_left = min_delay
+            elif delay_left > max_delay:
+                delay_left = max_delay
+            if delay_right < min_delay:
+                delay_right = min_delay
+            elif delay_right > max_delay:
+                delay_right = max_delay
 
-        # 3-point Lagrange read for left channel.
-        read_pos_l = write_pos - delay_left
-        if read_pos_l < 0.0:
-            read_pos_l += buffer_size
-        base_l = int(read_pos_l)
-        frac_l = read_pos_l - base_l
-        il_minus = (base_l - 1) % buffer_size
-        il_zero = base_l % buffer_size
-        il_plus = (base_l + 1) % buffer_size
-        wl_minus = 0.5 * frac_l * (frac_l - 1.0)
-        wl_zero = (1.0 - frac_l) * (1.0 + frac_l)
-        wl_plus = 0.5 * frac_l * (frac_l + 1.0)
-        delayed_l = (
-            wl_minus * buffer_left[il_minus]
-            + wl_zero * buffer_left[il_zero]
-            + wl_plus * buffer_left[il_plus]
-        )
+            # 3-point Lagrange read for left channel.
+            read_pos_l = write_pos - delay_left
+            if read_pos_l < 0.0:
+                read_pos_l += buffer_size
+            base_l = int(read_pos_l)
+            frac_l = read_pos_l - base_l
+            il_minus = (base_l - 1) % buffer_size
+            il_zero = base_l % buffer_size
+            il_plus = (base_l + 1) % buffer_size
+            wl_minus = 0.5 * frac_l * (frac_l - 1.0)
+            wl_zero = (1.0 - frac_l) * (1.0 + frac_l)
+            wl_plus = 0.5 * frac_l * (frac_l + 1.0)
+            delayed_l = (
+                wl_minus * buffers_left[s, il_minus]
+                + wl_zero * buffers_left[s, il_zero]
+                + wl_plus * buffers_left[s, il_plus]
+            )
 
-        # 3-point Lagrange read for right channel.
-        read_pos_r = write_pos - delay_right
-        if read_pos_r < 0.0:
-            read_pos_r += buffer_size
-        base_r = int(read_pos_r)
-        frac_r = read_pos_r - base_r
-        ir_minus = (base_r - 1) % buffer_size
-        ir_zero = base_r % buffer_size
-        ir_plus = (base_r + 1) % buffer_size
-        wr_minus = 0.5 * frac_r * (frac_r - 1.0)
-        wr_zero = (1.0 - frac_r) * (1.0 + frac_r)
-        wr_plus = 0.5 * frac_r * (frac_r + 1.0)
-        delayed_r = (
-            wr_minus * buffer_right[ir_minus]
-            + wr_zero * buffer_right[ir_zero]
-            + wr_plus * buffer_right[ir_plus]
-        )
+            # 3-point Lagrange read for right channel.
+            read_pos_r = write_pos - delay_right
+            if read_pos_r < 0.0:
+                read_pos_r += buffer_size
+            base_r = int(read_pos_r)
+            frac_r = read_pos_r - base_r
+            ir_minus = (base_r - 1) % buffer_size
+            ir_zero = base_r % buffer_size
+            ir_plus = (base_r + 1) % buffer_size
+            wr_minus = 0.5 * frac_r * (frac_r - 1.0)
+            wr_zero = (1.0 - frac_r) * (1.0 + frac_r)
+            wr_plus = 0.5 * frac_r * (frac_r + 1.0)
+            delayed_r = (
+                wr_minus * buffers_right[s, ir_minus]
+                + wr_zero * buffers_right[s, ir_zero]
+                + wr_plus * buffers_right[s, ir_plus]
+            )
 
-        # Optional compander: tanh(k*x)/k gives gentle soft-limiting that
-        # mimics BBD input/output companding without a full expander pair.
-        # compander_k=0 is pure bypass (identity).
-        if compander_k > 0.0:
-            delayed_l = math.tanh(compander_k * delayed_l) / compander_k
-            delayed_r = math.tanh(compander_k * delayed_r) / compander_k
+            # Optional compander: tanh(k*x)/k gives gentle soft-limiting that
+            # mimics BBD input/output companding without a full expander pair.
+            # compander_k=0 is pure bypass (identity).
+            if compander_k > 0.0:
+                delayed_l = math.tanh(compander_k * delayed_l) / compander_k
+                delayed_r = math.tanh(compander_k * delayed_r) / compander_k
 
-        out_left[i] = delayed_l
-        out_right[i] = delayed_r
+            # Accumulate this stage's wet contribution (pre-scaled so the
+            # summed multi-stage output keeps its energy comparable to a
+            # single-stage pass).
+            out_left[i] += stage_scale * delayed_l
+            out_right[i] += stage_scale * delayed_r
 
-        # Write into buffers AFTER reading. Cross-feedback comes from the
-        # previous sample of the opposite channel, guaranteeing stability.
-        buffer_left[write_pos] = input_left[i] + cross_feedback * prev_out_right
-        buffer_right[write_pos] = input_right[i] + cross_feedback * prev_out_left
-        prev_out_left = delayed_l
-        prev_out_right = delayed_r
+            # Write into buffers AFTER reading. Cross-feedback comes from
+            # the previous sample of the opposite channel on THIS stage,
+            # guaranteeing stability and keeping stages independent.
+            buffers_left[s, write_pos] = (
+                dry_sample_left + cross_feedback * prev_out_right[s]
+            )
+            buffers_right[s, write_pos] = (
+                dry_sample_right + cross_feedback * prev_out_left[s]
+            )
+            prev_out_left[s] = delayed_l
+            prev_out_right[s] = delayed_r
+
         write_pos = (write_pos + 1) % buffer_size
 
     return out_left, out_right
@@ -4575,9 +4598,10 @@ def apply_bbd_chorus(
     code was copied; this is a from-concept implementation.
     """
     if preset is not None:
-        if preset not in _BBD_CHORUS_PRESETS:
-            raise ValueError(f"Unknown bbd_chorus preset: {preset!r}")
-        preset_vals = _BBD_CHORUS_PRESETS[preset]
+        # Route through the shared resolver so the preset handling matches the
+        # rest of the effect surface. Preset values win over the kwargs to
+        # preserve the historical behavior of this function.
+        preset_vals = _resolve_effect_params("bbd_chorus", {"preset": preset})
         mix = float(preset_vals.get("mix", mix))
         rate_hz = float(preset_vals.get("rate_hz", rate_hz))
         depth_ms = float(preset_vals.get("depth_ms", depth_ms))
@@ -4609,7 +4633,6 @@ def apply_bbd_chorus(
         )
 
     dry_signal = _ensure_stereo(signal)
-    n_samples = dry_signal.shape[-1]
     if mix == 0.0:
         return dry_signal
 
@@ -4636,32 +4659,34 @@ def apply_bbd_chorus(
 
     # Stage LFO phase pairs per stack. First stage: L=0, R=pi/2 (true quadrature).
     # Second stage: staggered by pi/3 to keep it decorrelated from stage 1.
-    stage_phases: list[tuple[float, float]] = [(0.0, 0.5 * np.pi)]
     if stack_count == 2:
-        stage_phases.append((np.pi / 3.0, np.pi / 3.0 + 0.5 * np.pi))
+        stage_phases_left = np.array([0.0, np.pi / 3.0], dtype=np.float64)
+        stage_phases_right = np.array(
+            [0.5 * np.pi, np.pi / 3.0 + 0.5 * np.pi], dtype=np.float64
+        )
+    else:
+        stage_phases_left = np.array([0.0], dtype=np.float64)
+        stage_phases_right = np.array([0.5 * np.pi], dtype=np.float64)
 
     channel_left = np.asarray(pre_filtered[0], dtype=np.float64)
     channel_right = np.asarray(pre_filtered[1], dtype=np.float64)
 
-    wet_left = np.zeros(n_samples, dtype=np.float64)
-    wet_right = np.zeros(n_samples, dtype=np.float64)
-
-    stage_scale = 1.0 / math.sqrt(len(stage_phases))
-    for phase_left, phase_right in stage_phases:
-        stage_wet_left, stage_wet_right = _bbd_chorus_stereo_loop(
-            channel_left,
-            channel_right,
-            buffer_size,
-            delay_base_samples,
-            mod_depth_samples,
-            lfo_omega,
-            phase_left,
-            phase_right,
-            cross_feedback,
-            compander_k,
-        )
-        wet_left += stage_scale * stage_wet_left
-        wet_right += stage_scale * stage_wet_right
+    # Pre-scale stages so a multi-stage sum keeps energy comparable to a
+    # single-stage pass (historical 1/sqrt(N) stage weighting).
+    stage_scale = 1.0 / math.sqrt(stage_phases_left.shape[0])
+    wet_left, wet_right = _bbd_chorus_stereo_loop(
+        channel_left,
+        channel_right,
+        buffer_size,
+        delay_base_samples,
+        mod_depth_samples,
+        lfo_omega,
+        stage_phases_left,
+        stage_phases_right,
+        cross_feedback,
+        compander_k,
+        stage_scale,
+    )
 
     wet_signal = np.stack([wet_left, wet_right])
     # Post-delay bandlimit (BBD output filter) + low-end cleanup.

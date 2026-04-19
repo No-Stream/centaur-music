@@ -89,7 +89,8 @@ class TestExtractAnalogParams:
         result = extract_analog_params({"waveform": "saw", "cutoff_hz": 1200.0})
         assert "waveform" not in result
         assert "cutoff_hz" not in result
-        assert len(result) == 15
+        # 15 analog-character floats plus the engine 'quality' string.
+        assert len(result) == 16
 
 
 # ---------------------------------------------------------------------------

@@ -704,6 +704,7 @@ def _serialize_value(value: Any) -> Any:
         return {
             field_name: _serialize_value(field_value)
             for field_name, field_value in value.__dict__.items()
+            if not field_name.startswith("_")
         }
     if isinstance(value, Path):
         return str(value)
@@ -711,6 +712,8 @@ def _serialize_value(value: Any) -> Any:
         return {str(key): _serialize_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_serialize_value(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
     if isinstance(value, np.generic):
         return value.item()
     return value

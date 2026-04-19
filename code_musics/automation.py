@@ -70,6 +70,21 @@ _SUPPORTED_SYNTH_AUTOMATION_PARAMS = {
     "voice_card_envelope_spread",
     "voice_card_osc_spread",
     "voice_card_level_spread",
+    # va engine: supersaw / spectralwave / drive / comb params
+    "supersaw_detune",
+    "supersaw_mix",
+    "spectral_position",
+    "spectral_morph_amount",
+    "drive_amount",
+    "comb_feedback",
+    "comb_damping",
+    "comb_keytrack",
+    "comb_mix",
+    "comb_delay_ms",
+    "filter1_cutoff_hz",
+    "filter1_resonance_q",
+    "filter2_cutoff_hz",
+    "filter2_resonance_q",
 }
 
 _SUPPORTED_CONTROL_AUTOMATION_PARAMS = {

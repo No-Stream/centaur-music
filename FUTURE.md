@@ -160,6 +160,18 @@ Most promising directions:
 - "aisatsana"
 - four tet-y arps + colundi scale - think these could blend really well. with some more organic additive, fm, or other textures (we can also add engines)
 
+### Sample player
+
+both for drums (supported I think already) and for foley/atmospheric bits
+
+### 90s/00s VA Voice
+
+Let's build something inspired by the Virus C and TI, Waldorf Q, and Roland JP8k.  
+I'm looking for the sweetness, satisfyingly plasticky texture, maybe customizable aliasing, efficient supersaw, etc.  
+(We should research what's known about their code to produce something similar; the algos should be pretty basic.)
+Relatedly but not equivalently - a voice inspired by Spire, or a variation of the VA engine.
+Relatedly but not equivalently - a perfect VA voice - clean, mathematically accurate, not an analog emulation or 90s/00s VA.
+
 ### Slop, swing, and drift extensions — Groove Implemented
 
 Timing, envelope, and velocity humanization were already in place.
@@ -250,15 +262,56 @@ Remaining follow-up:
 Ideas for the modulation wiring layer itself (not new sources — see below
 for those).
 
-- **Per-connection modulation remap (Vital-style)** — our automation is
-  rich at the segment level but per-target-per-voice wiring is ad hoc.
-  Vital's pattern: every mod connection is a first-class object with
-  `amount`, `bipolar: bool`, `stereo: bool`, `power ∈ [-20, 20]`, and
-  an optional drawable `curve`. A single system-wide matrix (~32-64
-  slots) with these fields replaces scattered one-off mod wiring.
-  Stereo "constant" sources (`(1, 0)` poly_float) become a mod source
-  you can pan-split anything with. Integrates naturally with our
-  existing `AutomationSpec` and humanization system.
+- ~~**Per-connection modulation remap (Vital-style)**~~ — shipped in
+  `code_musics/modulation.py` as `ModSource` + `ModConnection`
+  (bipolar/stereo/power/breakpoints/mode) with `Voice.modulations`,
+  `Score.modulations`, and `Score.add_macro(...)`. See
+  `docs/score_api.md` for the surface.
+
+  **Deferred from the MVP (crisp list):**
+  - **Per-sample coverage of more synth destinations.** Only
+    `cutoff_hz` is lifted to per-sample in MVP via engine
+    `param_profiles`. All other synth destinations
+    (`filter_morph`, `resonance_q`, `hpf_cutoff_hz`,
+    `filter_env_amount`, `filter1/2_*`, `comb_*`,
+    `feedback_amount`, `drive_amount`, `vibrato_depth`,
+    `vibrato_chorus`, and the rest of
+    `_SUPPORTED_SYNTH_AUTOMATION_PARAMS`) are still sampled **once
+    at note onset**. Lifting these requires per-engine profile
+    plumbing in `polyblep` / `filtered_stack` / `va` / `organ` and
+    friends. The next wave should go after `filter_morph` and
+    `resonance_q` since they already ride alongside `cutoff_hz` in
+    the filter block.
+  - **Stereo for mono synth destinations.** `stereo=True` only
+    affects stereo-aware destinations (`pan`, stereo control
+    lanes). Mono engine params currently collapse to the mono sum.
+    Future work: engine support for stereo profiles (e.g., per-L/R
+    cutoff split, per-L/R detune) to make the `ConstantSource`
+    pan-split trick work for any destination.
+  - **Unification of humanization into the matrix.** Humanization
+    (`TimingHumanizeSpec` / `EnvelopeHumanizeSpec` /
+    `VelocityHumanizeSpec`) keeps its existing surface; its
+    `DriftSpec` is exposed via `DriftAdapter` so the curve is
+    reusable, but humanization itself is not yet a matrix
+    connection. Deferred because the current humanization
+    ergonomics are good and a forced migration would churn every
+    existing piece.
+  - **`VelocityParamMap` -> matrix migration.** Kept as sugar.
+    Future work: auto-lower to a `VelocitySource` connection so
+    there's one preferred path.
+  - **Per-sample macros on note-local time.** Macros evaluate
+    against the absolute render time grid. If a future use case
+    wants a macro that retriggers per note or snaps to note-local
+    time, we need a dedicated "per-note macro" variant.
+  - **Beat-synced LFO rates.** `LFOSource.rate_hz` is free-run in
+    seconds. Beat-synced rates (e.g., `1/4`, `1/8T`) would need
+    meter/timeline integration — tracked against the broader
+    tempo-maps entry below.
+  - **Drawable curve editor UX.** `ModConnection.breakpoints`
+    accepts hand-authored `(x, y)` pairs but there's no graphical
+    editor or library of named curve shapes. Low priority until we
+    feel the pain.
+
   Source: Vital `ModulationConnectionProcessor`.
 - **Diva-style global `accuracy` dial** — one user-facing quality
   parameter with named tiers (`draft`/`fast`/`great`/`divine`) that
@@ -749,6 +802,23 @@ We've focused primarily on otonal composition and JI, utonal seems worth explori
 ### Creative drum voices
 
 Weird, unique, strange, creative drum voices. Think utonic VST or Elektron's OG machinedrum.
+
+**Done this session (Machinedrum-inspired extension):** `drum_voice` now covers
+EFM 2-op FM bodies (`tone_type="efm"`), EFM cymbals
+(`metallic_type="efm_cymbal"`), PI modal resonator banks driven by
+`code_musics/spectra.py` mode tables (`tone_type="modal"` /
+`metallic_type="modal_bank"`), E12-style sample exciters
+(`exciter_type="sample"`), and digital-character voice shapers (`bit_crush`,
+`rate_reduce`, `digital_clip`), plus `pi_hardness` / `pi_tension` /
+`pi_damping` / `pi_damping_tilt` / `pi_position` macros. 15 new presets
+cover kicks / snares / toms / cowbells / cymbals / bells / glass / bowl / lo-fi
+digital variants. See `docs/synth_api.md` for the parameter surface.
+
+**Follow-ups still open:**
+
+- TRX-style perceptual kernel (explicitly skipped in this round).
+- Parameter-lock live macros for the PI kernel — per-step macro overrides
+  layered on top of the base preset.
 
 ---
 

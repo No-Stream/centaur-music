@@ -34,45 +34,53 @@ def _resonator_body(
 ) -> np.ndarray:
     """Time-varying 2-pole bandpass resonator for kick/tom body synthesis.
 
-    Implements a biquad bandpass with per-sample coefficient updates from
-    freq_profile, allowing pitch sweep through resonator coefficient
-    modulation rather than oscillator frequency change.
+    Uses the ZDF/TPT state-variable topology (same integrator structure as
+    the project's main SVF) with per-sample coefficient updates from
+    ``freq_profile``.  The trapezoidal integrators carry state cleanly under
+    pitch modulation — unlike bilinear biquads, whose internal `x1/x2/y1/y2`
+    memory accumulates phase error during fast sweeps.
+
+    Parameter mapping to match the previous bilinear-biquad interface:
+    - Cutoff: ``freq_profile[i]``
+    - Damping (1/Q): ``1.0 / q``  (matches the `alpha = sin_w0 / (2q)`
+      RBJ bandpass Q in the linear regime near cutoff)
+    - Gain normalization: scale output by ``sin(w0)/(2q)`` so the constant-
+      0dB-peak behavior of the previous implementation is preserved —
+      a raw SVF bandpass has unity gain at its peak regardless of Q,
+      whereas the RBJ constant-0dB-peak form has peak gain = Q.  We
+      re-apply the `sin(w0)/(2q)` envelope to match the kick/tom body
+      loudness calibration the surrounding code expects.
     """
     n = excitation.shape[0]
     out = np.zeros(n, dtype=np.float64)
-    x1 = 0.0
-    x2 = 0.0
-    y1 = 0.0
-    y2 = 0.0
-    two_pi = 2.0 * np.pi
+    low_state = 0.0
+    band_state = 0.0
+    damping = 1.0 / max(q, 1e-6)
+    pi_over_sr = np.pi / sample_rate
 
     for i in range(n):
-        w0 = two_pi * freq_profile[i] / sample_rate
-        sin_w0 = np.sin(w0)
-        cos_w0 = np.cos(w0)
-        alpha = sin_w0 / (2.0 * q)
+        fc = freq_profile[i]
+        # Clamp cutoff to a safe fraction of Nyquist (matches _filters
+        # convention) so tan() stays well-behaved even on edge-case sweeps.
+        fc_clamped = fc if fc < 0.45 * sample_rate else 0.45 * sample_rate
+        g = np.tan(pi_over_sr * fc_clamped)
 
-        # Bandpass (constant-0dB-peak) biquad coefficients
-        b0 = alpha
-        b1 = 0.0
-        b2 = -alpha
-        a0 = 1.0 + alpha
-        a1_coeff = -2.0 * cos_w0
-        a2_coeff = 1.0 - alpha
+        x = excitation[i]
+        high = (x - (2.0 * damping + g) * band_state - low_state) / (
+            1.0 + 2.0 * damping * g + g * g
+        )
+        band = g * high + band_state
+        low = g * band + low_state
+        band_state = band + g * high
+        low_state = low + g * band
 
-        # Normalize
-        b0 /= a0
-        b2 /= a0
-        a1_coeff /= a0
-        a2_coeff /= a0
-
-        x0 = excitation[i]
-        out[i] = b0 * x0 + b1 * x1 + b2 * x2 - a1_coeff * y1 - a2_coeff * y2
-
-        x2 = x1
-        x1 = x0
-        y2 = y1
-        y1 = out[i]
+        # Rescale band output to match the constant-0dB-peak gain of the
+        # original RBJ biquad (peak gain = Q there; unity in raw SVF).
+        # alpha = sin(w0)/(2q) where w0 = 2*pi*fc/sr — compute directly from g.
+        # At small fc, g ≈ pi*fc/sr, so 2*g/(1+g²) ≈ 2*pi*fc/sr ≈ sin(w0) to 1st order.
+        sin_w0_approx = 2.0 * g / (1.0 + g * g)
+        alpha_rbj = sin_w0_approx / (2.0 * q)
+        out[i] = band * alpha_rbj
 
     return out
 

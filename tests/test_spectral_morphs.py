@@ -21,6 +21,7 @@ from code_musics.engines._spectral_morphs import (
     apply_spectral_morph,
 )
 from code_musics.engines.registry import render_note_signal
+from code_musics.score import Score
 from code_musics.spectra import ratio_spectrum
 
 # ---------------------------------------------------------------------------
@@ -247,16 +248,20 @@ class TestRandomAmplitudes:
 
 
 class TestSigmaApproximation:
-    def test_single_partial_passes_through(self) -> None:
+    def test_single_partial_applies_sinc_one_half(self) -> None:
+        """Single partial receives the Lanczos sigma = sinc(1 / (max_k + 1)).
+
+        For one partial, max_k = 1 and k = 1, so the factor is sinc(1 / 2).
+        This pins down the actual numeric behavior instead of merely checking
+        the output is finite and positive (which any passthrough would satisfy).
+        """
         partials = [{"ratio": 1.0, "amp": 1.0}]
         result = apply_sigma_approximation(partials)
 
-        # Single partial: max_k = 1, so weight = sinc(1/2) != 1, which is fine for
-        # consistency. We require at least that the output is finite and positive.
         assert len(result) == 1
         assert result[0]["ratio"] == pytest.approx(partials[0]["ratio"])
-        assert np.isfinite(result[0]["amp"])
-        assert result[0]["amp"] > 0.0
+        expected_amp = float(partials[0]["amp"] * np.sinc(1.0 / 2.0))
+        assert result[0]["amp"] == pytest.approx(expected_amp)
 
     def test_upper_partials_attenuated_more(self) -> None:
         partials = _sample_partials()
@@ -510,3 +515,48 @@ def test_engine_phase_disperse_changes_waveform_not_spectrum_much() -> None:
     ratio = morphed_energy / max(baseline_energy, 1e-12)
     # Loose bound: within 2x in either direction.
     assert 0.4 < ratio < 2.5
+
+
+# ---------------------------------------------------------------------------
+# Score-level end-to-end smoke
+# ---------------------------------------------------------------------------
+
+
+def test_spectral_morph_through_score_render_produces_audio() -> None:
+    """End-to-end: a Score voice with a spectral_morph_type renders clean audio.
+
+    Ensures the additive-engine morph params flow through synth_defaults,
+    per-note engine dispatch, normalization, and the Score render path without
+    corrupting the signal (NaN/Inf) or collapsing to silence.
+    """
+    score = Score(f0_hz=220.0, auto_master_gain_stage=False)
+    score.add_voice(
+        "morph_pad",
+        synth_defaults={
+            "engine": "additive",
+            "partials": [
+                {"ratio": 1.0, "amp": 1.0},
+                {"ratio": 2.0, "amp": 0.5},
+                {"ratio": 3.0, "amp": 0.33},
+                {"ratio": 4.0, "amp": 0.25},
+                {"ratio": 5.0, "amp": 0.2},
+            ],
+            "spectral_morph_type": "inharmonic_scale",
+            "spectral_morph_amount": 0.3,
+            "sigma_approximation": True,
+            "attack": 0.02,
+            "release": 0.1,
+        },
+        velocity_humanize=None,
+    )
+    score.add_note("morph_pad", start=0.0, duration=0.5, partial=1.0, amp=0.3)
+    audio = score.render()
+    # Score.render() returns 1-D mono for a single un-panned voice; (2, N)
+    # stereo when pan or stereo effects are present. Accept either.
+    assert audio.ndim in (1, 2), (
+        f"expected 1-D or (2, N) output, got shape {audio.shape}"
+    )
+    assert np.all(np.isfinite(audio))
+    peak = float(np.max(np.abs(audio)))
+    assert peak > 1e-3, f"rendered audio should not be silent; peak={peak}"
+    assert peak < 1.5, f"rendered audio peak {peak:.3f} is too hot"

@@ -165,9 +165,25 @@
   try `attack_target=1.2`. See `docs/synth_api.md` for the full surface.
 - `timing_humanize` is score-level. Use it for ensemble looseness and shared drift,
   not for rewriting rhythmic structure.
+- `DriftSpec.style` supports `random_walk`, `smooth_noise`, `lfo`, `sample_hold`,
+  and `smoothed_random` (Helm-style: random anchors at `rate_hz` crossfaded with
+  a raised-cosine window — organic wobble distinct from the steppy `sample_hold`
+  and the pink-ish `smooth_noise`).
 - automation is the explicit parameter-motion surface. Use it for deliberate
   sweeps, bends, timbral motion, and wet/send/pan rides; use humanization for
   subtle living variation.
+- `code_musics/modulation.py` adds a Vital-style per-connection modulation
+  matrix. Every routing is a `ModConnection` (source -> destination with
+  `amount`, `bipolar`, `stereo`, `power`, optional `breakpoints`, combine
+  `mode`). Sources: `LFOSource`, `EnvelopeSource`, `MacroSource`,
+  `VelocitySource`, `RandomSource`, `ConstantSource` (stereo pan-split),
+  `DriftAdapter`. Attach via `Voice.modulations` or `Score.modulations`;
+  register shared scalars via `Score.add_macro(name, default, automation)`.
+  Complements `AutomationSpec` (timeline curves) rather than replacing it —
+  matrix contributions combine after base automation per destination. MVP
+  per-sample synth coverage is `cutoff_hz` on `polyblep` via engine
+  `param_profiles`; other synth targets are sampled per-note at onset. See
+  `docs/score_api.md` and `FUTURE.md` for full details and deferred work.
 - **Pitch motion is a standard part of the composition surface**, not an optional
   extra. Melodic and sustained voices should almost always use `PitchMotionSpec`:
   lead voices get vibrato on sustained notes (increasing depth/rate with
@@ -192,7 +208,7 @@ interpreter and will fail with import errors.
 
 **Always use one of:**
 
-```
+```bash
 make all                           # default quality gate: format-check, lint, compile, typecheck, full tests
 make check                         # alias for make all
 make list                          # list registered pieces
@@ -227,7 +243,7 @@ make inspire                       # oblique strategy / musical inspiration prom
 If you need to run a one-off Python command, prefix it with `uv run` and set
 `PYTHONPATH=.`:
 
-```
+```bash
 PYTHONPATH=. uv run python main.py --list
 PYTHONPATH=. uv run pytest tests/
 ```
@@ -321,6 +337,18 @@ See `FUTURE.md` for way more ideas.
   `smear_drone` / `shepard_bells` / `chaos_cloud` demo presets for usage.
 - The `polyblep` engine supports an optional second oscillator via `osc2_*`
   parameters for detuned stacks and sub layers.
+- The `va` engine provides 90s/00s Virtual Analog-flavored synthesis with two
+  oscillator modes: `supersaw` (Szabo-accurate JP-8000 detune/mix law + 7-voice
+  PolyBLEP bank with random phase and optional hard-sync) and `spectralwave`
+  (partial-bank with continuous saw→spectral→square `spectral_position` plus
+  optional `_spectral_morphs` layering). Supports dual-filter routing
+  (single/serial/parallel/split), pre-filter waveshaper drive, and a resonant
+  comb filter slot with keytracking for karplus-strong-ish bell character.
+  Presets cover JP-8000 (`jp8000_hoover`, `jp8000_lead`, `supersaw_pad`),
+  Access Virus (`virus_pad`, `virus_bass`, `virus_lead`), and Waldorf Q
+  (`q_comb_pad`, `q_comb_bell`, `q_spectral_lead`) flavors. The new
+  `apply_comb(...)` primitive in `_filters.py` is available to future engines.
+  See `docs/synth_api.md` and `code_musics/pieces/va_showcase.py`.
 - The `polyblep` and `filtered_stack` engines support `filter_topology="ladder"`
   for a 4-pole (24 dB/oct) Moog-style ladder filter with per-stage saturation
   and `bass_compensation` for restoring low-frequency energy at high resonance.
@@ -329,12 +357,20 @@ See `FUTURE.md` for way more ideas.
   `polyblep` and `filtered_stack` engines.
 - `voice_card_spread` (0-3) replaces the old `voice_card` param for controlling
   inter-voice calibration variation, with named tiers from JI-conservative (1.0)
-  through Oberheim-level (3.0).
+  through Oberheim-level (3.0). When set explicitly on a voice it also drives
+  multiplicative per-voice attack/release scaling at the Score level (OB-Xd-
+  style); `voice_card_envelope_spread` overrides that dimension independently.
+- `analog_jitter` now also drives an OB-Xd-style per-sample CV dither layer
+  (pitch ±0.05 semitone, cutoff ±3% at amount=1.0, 4 kHz one-pole smoothed)
+  on polyblep + filtered_stack, stacked on top of the stable voice_card
+  offsets; `analog_jitter=0` disables it.
 - `filter_morph` enables continuous blending between filter modes (SVF:
   LP/BP/HP/Notch cycle; ladder: pole-tap blending for 24 -> 6 dB/oct slope
   control). Automatable.
 - `feedback_amount` and `feedback_saturation` model Minimoog-style
-  post-filter -> pre-filter feedback for thickening and growl.
+  post-filter -> pre-filter feedback for thickening and growl. Ladder and
+  SVF feedback summations inject deterministic 1e-6 bootstrap noise (seeded
+  from the signal) so high-Q self-oscillation can wake from silence.
 - `hpf_cutoff_hz` adds a serial 2-pole ZDF highpass before the main filter,
   modeling CS80/Jupiter-8 dual-filter architecture.
 - `vca_nonlinearity` adds gain-dependent envelope saturation for OTA-based VCA
@@ -389,8 +425,14 @@ See `FUTURE.md` for way more ideas.
   with any other. Presets from all original engines are available. Shaper slots can
   dispatch to waveshaper algorithms, the modern saturation effect, or the preamp
   transformer model. Three ergonomic macros (punch, decay_shape, character) provide
-  high-level perceptual control. See `docs/synth_api.md` for the full parameter
-  surface.
+  high-level perceptual control. `drum_voice` now also covers Machinedrum-inspired
+  kernels: EFM 2-op FM bodies (`tone_type="efm"`), PI modal resonator banks driven
+  by `spectra.py` mode tables (`tone_type="modal"` / `metallic_type="modal_bank"`),
+  EFM cymbals (`metallic_type="efm_cymbal"`), E12-style sample exciters
+  (`exciter_type="sample"`), and digital-character voice shapers (`shaper="bit_crush"`
+  / `"rate_reduce"` / `"digital_clip"`), with `pi_hardness` / `pi_tension` /
+  `pi_damping` / `pi_damping_tilt` / `pi_position` macros for quick perceptual
+  shaping. See `docs/synth_api.md` for the full parameter surface.
 - The waveshaper module (`_waveshaper.py`) now includes first-order ADAA
   anti-aliasing for 7 of 11 algorithms and optional 2x oversampling for the
   remaining fold-type algorithms.
@@ -601,7 +643,7 @@ some tuning schemes -
 - otonal
 - meantone and other historical tunings (constraints are good)
 
-```
+```text
 ! 7-limit JI.scl
 !
 7-limit Just Intonation scale. Simple 5-limit JI with septimal tritone (7/5) and septimal seventh (7/4).
@@ -621,7 +663,7 @@ some tuning schemes -
 2/1
 ```
 
-```
+```text
 ! colundi_ji_core.scl
 !
 Approximate Colundi-inspired 7-note JI scale
@@ -641,7 +683,10 @@ Approximate Colundi-inspired 7-note JI scale
 - Bohlen Pierce?
 - Other?
 
-**typically stick in the keys of F through G# for songs with an electronic kick for maximum impact. for more ambient/chill pieces, there are no restrictions, but don't default to Cmaj/Amin, consider randomizing the key or picking one intentionally**
+Note: typically stick in the keys of F through G# for songs with an
+electronic kick for maximum impact. For more ambient/chill pieces, there are
+no restrictions, but don't default to Cmaj/Amin — consider randomizing the
+key or picking one intentionally.
 
 ### Automation Ideas
 

@@ -1,15 +1,21 @@
 """Per-oscillator waveshaping distortion algorithms for drum engines.
 
-Eleven distortion algorithms inspired by Geonkick, each implemented as a
-numba-compiled inner loop.  The public entry point is :func:`apply_waveshaper`,
-which handles drive mapping, optional per-sample drive envelopes, dry/wet mix,
-output-level compensation, and first-order ADAA anti-aliasing.
+Fourteen distortion algorithms inspired by Geonkick (analog-flavoured) and
+Machinedrum / SP-1200 (digital-flavoured), each implemented as a numba-compiled
+inner loop.  The public entry point is :func:`apply_waveshaper`, which handles
+drive mapping, optional per-sample drive envelopes, dry/wet mix, output-level
+compensation, and first-order ADAA anti-aliasing.
 
 Algorithms with closed-form antiderivatives (tanh, atan, hard_clip, exponential,
 logarithmic, half_wave_rect, full_wave_rect) use analytical first-order ADAA.
 Folding algorithms (foldback, linear_fold, sine_fold) rely on the ``oversample``
 parameter for alias reduction.  The polynomial algorithm uses direct evaluation
 since it already limits input to the monotone region.
+
+The digital-character algorithms (bit_crush, rate_reduce, digital_clip) are
+inherently discontinuous / piecewise and are not amenable to first-order ADAA.
+Callers that care about alias reduction for these three should pass
+``oversample=2`` — the oversample path handles them transparently.
 
 This module is for per-oscillator use *inside* drum engines.  The voice-level
 saturation effect in ``synth.py`` is a separate post-render concern.
@@ -42,6 +48,9 @@ _ID_HALF_WAVE_RECT: int = 7
 _ID_FULL_WAVE_RECT: int = 8
 _ID_LINEAR_FOLD: int = 9
 _ID_SINE_FOLD: int = 10
+_ID_BIT_CRUSH: int = 11
+_ID_RATE_REDUCE: int = 12
+_ID_DIGITAL_CLIP: int = 13
 
 # ---------------------------------------------------------------------------
 # Drive mapping: user-facing 0-1 -> internal gain
@@ -212,6 +221,88 @@ def _sine_fold(signal: np.ndarray, drive_gain: float) -> np.ndarray:
     out = np.empty(n, dtype=np.float64)
     for i in range(n):
         out[i] = math.sin(signal[i] * drive_gain * math.pi)
+    return out
+
+
+@numba.njit(cache=True)
+def _bit_crush(signal: np.ndarray, drive_gain: float, bits: float) -> np.ndarray:
+    """Symmetric signed bit-crusher.
+
+    ``bits`` is a float param (1.0-16.0).  Real levels = ``2**round(bits)``.
+    At bits<=1 -> 2 levels (harsh one-bit).  At bits>=12 -> near-transparent.
+    Quantization is symmetric around zero (signed-integer style).
+    """
+    n = signal.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    # Real level count: rounded, clamped to [2, 65536]
+    b_int = int(round(bits))
+    if b_int < 1:
+        b_int = 1
+    if b_int > 16:
+        b_int = 16
+    levels = 1 << b_int  # 2**b_int
+    # Signed quantization: max positive value is levels/2 - 1; step = 1 / (levels/2)
+    half = levels // 2
+    step = 1.0 / max(float(half), 1.0)
+    inv_gain = 1.0 / drive_gain if drive_gain > 0.0 else 1.0
+    for i in range(n):
+        x = signal[i] * drive_gain
+        # Clamp to [-1, 1] prior to quantization
+        if x > 1.0:
+            x = 1.0
+        elif x < -1.0:
+            x = -1.0
+        # Symmetric quantizer: round(x * half) / half, clipped to representable range
+        q = math.floor(x * half + 0.5)
+        if q > half - 1:
+            q = float(half - 1)
+        elif q < -half:
+            q = float(-half)
+        out[i] = q * step * inv_gain
+    return out
+
+
+@numba.njit(cache=True)
+def _rate_reduce(
+    signal: np.ndarray, drive_gain: float, reduce_ratio: float
+) -> np.ndarray:
+    """Integer-ratio sample-and-hold.
+
+    Holds every Nth sample where N = floor(reduce_ratio), N >= 1.
+    Drive is pre-gain, compensated on output.
+    """
+    n = signal.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    n_hold = int(math.floor(reduce_ratio))
+    if n_hold < 1:
+        n_hold = 1
+    inv_gain = 1.0 / drive_gain if drive_gain > 0.0 else 1.0
+    held = 0.0
+    for i in range(n):
+        if i % n_hold == 0:
+            held = signal[i] * drive_gain
+        out[i] = held * inv_gain
+    return out
+
+
+@numba.njit(cache=True)
+def _digital_clip(signal: np.ndarray, drive_gain: float) -> np.ndarray:
+    """Asymmetric hard clip: +1.0 / -0.95 rails.
+
+    Drive is pre-gain, compensated on output.
+    """
+    n = signal.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    inv_gain = 1.0 / drive_gain if drive_gain > 0.0 else 1.0
+    pos_rail = 1.0
+    neg_rail = -0.95
+    for i in range(n):
+        x = signal[i] * drive_gain
+        if x > pos_rail:
+            x = pos_rail
+        elif x < neg_rail:
+            x = neg_rail
+        out[i] = x * inv_gain
     return out
 
 
@@ -471,6 +562,9 @@ _ALGORITHMS: dict[str, Callable[..., np.ndarray]] = {
     "full_wave_rect": _full_wave_rect,
     "linear_fold": _linear_fold,
     "sine_fold": _sine_fold,
+    "bit_crush": _bit_crush,
+    "rate_reduce": _rate_reduce,
+    "digital_clip": _digital_clip,
 }
 
 _NAME_TO_ID: dict[str, int] = {
@@ -485,9 +579,28 @@ _NAME_TO_ID: dict[str, int] = {
     "full_wave_rect": _ID_FULL_WAVE_RECT,
     "linear_fold": _ID_LINEAR_FOLD,
     "sine_fold": _ID_SINE_FOLD,
+    "bit_crush": _ID_BIT_CRUSH,
+    "rate_reduce": _ID_RATE_REDUCE,
+    "digital_clip": _ID_DIGITAL_CLIP,
 }
 
+# Digital-character algorithms are not amenable to first-order ADAA (they are
+# discontinuous / piecewise).  They run through a direct-dispatch path, and
+# callers should pass ``oversample=2`` when alias reduction matters.
+_DIGITAL_IDS: frozenset[int] = frozenset(
+    {_ID_BIT_CRUSH, _ID_RATE_REDUCE, _ID_DIGITAL_CLIP}
+)
+
 ALGORITHM_NAMES: frozenset[str] = frozenset(_ALGORITHMS)
+
+# Sentinel used to detect the default ``oversample`` value.  When a caller
+# leaves ``oversample`` unset and chooses one of the digital-character algos
+# (bit_crush / rate_reduce / digital_clip), the entry point auto-upgrades to
+# ``oversample=2`` because these algos cannot use ADAA and otherwise alias
+# audibly.  Callers that explicitly pass ``oversample=1`` keep the naive
+# behavior — useful for tests and for engines that want the raw "deliberately
+# lo-fi" character.
+_DEFAULT_OVERSAMPLE: int = -1
 
 
 # ---------------------------------------------------------------------------
@@ -502,7 +615,11 @@ def apply_waveshaper(
     drive: float,
     drive_envelope: np.ndarray | None = None,
     mix: float = 1.0,
-    oversample: int = 1,
+    oversample: int = _DEFAULT_OVERSAMPLE,
+    # Extra scalar params: only consumed when ``algorithm`` is the matching
+    # digital-character algo; ignored otherwise.
+    bit_depth: float = 8.0,
+    reduce_ratio: float = 2.0,
 ) -> np.ndarray:
     """Apply a waveshaping distortion algorithm to *signal*.
 
@@ -517,6 +634,15 @@ def apply_waveshaper(
         oversample: Oversampling factor (1 or 2).  When 2, the signal is
             upsampled before processing and downsampled after, reducing
             aliasing for folding algorithms that lack analytical ADAA.
+            When unset, defaults to 1 for ADAA-friendly algorithms and to 2
+            for the digital-character algorithms (``bit_crush``,
+            ``rate_reduce``, ``digital_clip``) since those cannot use ADAA
+            and otherwise alias audibly.  Pass ``oversample=1`` explicitly
+            to opt out of the auto-upgrade and keep the raw lo-fi character.
+        bit_depth: Effective bit-depth for ``bit_crush`` (1.0-16.0).  Ignored
+            by other algorithms.
+        reduce_ratio: Integer-ratio sample-and-hold factor for ``rate_reduce``
+            (>= 1.0).  Ignored by other algorithms.
 
     Returns:
         Processed signal, level-compensated to roughly match input RMS.
@@ -526,6 +652,10 @@ def apply_waveshaper(
             f"Unknown waveshaper algorithm {algorithm!r}. "
             f"Choose from: {sorted(ALGORITHM_NAMES)}"
         )
+
+    algo_id = _NAME_TO_ID[algorithm]
+    if oversample == _DEFAULT_OVERSAMPLE:
+        oversample = 2 if algo_id in _DIGITAL_IDS else 1
 
     drive = float(np.clip(drive, 0.0, 1.0))
     mix = float(np.clip(mix, 0.0, 1.0))
@@ -555,9 +685,19 @@ def apply_waveshaper(
         sig_proc = sig
         env_proc = env
 
-    # Compute wet signal (ADAA is built into both paths)
-    algo_id = _NAME_TO_ID[algorithm]
-    if env_proc is not None:
+    # Compute wet signal
+    if algo_id in _DIGITAL_IDS:
+        # Digital-character algos bypass ADAA; drive_envelope is not supported
+        # since these algos are piecewise-constant / discontinuous and the ADAA
+        # envelope path would be meaningless for them.
+        drive_gain = _drive_to_gain(drive)
+        if algo_id == _ID_BIT_CRUSH:
+            wet = _bit_crush(sig_proc, drive_gain, float(bit_depth))
+        elif algo_id == _ID_RATE_REDUCE:
+            wet = _rate_reduce(sig_proc, drive_gain, float(reduce_ratio))
+        else:  # _ID_DIGITAL_CLIP
+            wet = _digital_clip(sig_proc, drive_gain)
+    elif env_proc is not None:
         wet = _apply_with_envelope(sig_proc, algo_id, drive, env_proc)
     else:
         wet = _apply_adaa(sig_proc, algo_id, _drive_to_gain(drive))
