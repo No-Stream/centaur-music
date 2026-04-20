@@ -32,8 +32,11 @@ The rendering path is frequency-first:
 - [code_musics/engines/organ.py](code_musics/engines/organ.py)
 - [code_musics/engines/piano.py](code_musics/engines/piano.py)
 - [code_musics/engines/piano_additive.py](code_musics/engines/piano_additive.py)
+- [code_musics/engines/polyblep.py](code_musics/engines/polyblep.py)
+- [code_musics/engines/sample.py](code_musics/engines/sample.py)
 - [code_musics/engines/snare.py](code_musics/engines/snare.py)
 - [code_musics/engines/surge_xt.py](code_musics/engines/surge_xt.py)
+- [code_musics/engines/va.py](code_musics/engines/va.py)
 - [code_musics/engines/vital.py](code_musics/engines/vital.py)
 
 ## Canonical Authoring Shape
@@ -385,6 +388,10 @@ Available engines:
 
 - `additive`
 - `clap`
+- `drum_voice` — unified composable percussion engine (four mixable layers:
+  exciter, tone, noise, metallic). Covers all kick/snare/clap/hat/metallic
+  territory plus Machinedrum-inspired EFM, PI modal, and digital-character
+  kernels. Recommended successor to the five separate drum engines.
 - `fm`
 - `filtered_stack`
 - `harpsichord`
@@ -395,8 +402,14 @@ Available engines:
 - `piano`
 - `piano_additive`
 - `polyblep`
+- `sample` — WAV-playback engine with pitch tracking, optional filter slot,
+  retrigger/flam, and Machinedrum-E12-style bend/ring/bit-crush macros.
+  Useful for one-shot samples outside the `drum_voice` layer architecture.
 - `snare`
 - `surge_xt`
+- `va` — 90s/00s Virtual Analog (JP-8000 supersaw and Waldorf Q-style
+  spectralwave oscillator modes). Dual filter slots, pre-filter drive,
+  optional resonant comb. Presets for Roland / Access / Waldorf flavors.
 - `vital`
 
 ## Presets
@@ -836,6 +849,206 @@ score.add_voice(
     effects=[EffectSpec("stereo_width", {"width": 1.5})],
 )
 ```
+
+### `delay`
+
+Implementation: [code_musics/synth.py](code_musics/synth.py)
+
+Simple feedback delay, backed by pedalboard's built-in `Delay`. Useful when
+all you need is a short slap or a longer echo with no modulation. For
+modulated / filtered repeats prefer `mod_delay`; for stereo cross-feedback
+and BBD character prefer `bbd_chorus`.
+
+Parameters:
+
+- `delay_seconds: float`
+  Delay time in seconds. Default `0.35`.
+- `feedback: float`
+  Feedback amount `[0, ~1]`. Default `0.35`. Values near or above `0.95`
+  can self-oscillate.
+- `mix: float`
+  Dry/wet blend `[0, 1]`. Default `0.30`.
+
+Example:
+
+```python
+score.add_voice(
+    "lead",
+    effects=[EffectSpec("delay", {"delay_seconds": 0.42, "feedback": 0.4, "mix": 0.25})],
+)
+```
+
+### `reverb`
+
+Implementation: [code_musics/synth.py](code_musics/synth.py)
+
+Simple Freeverb-style algorithmic reverb via pedalboard's built-in `Reverb`.
+For more realistic tails prefer `bricasti` (convolution) or `dragonfly` /
+`tal_reverb2` plugin wrappers.
+
+Parameters:
+
+- `room_size: float`
+  Reverb size `[0, 1]`. Default `0.75`.
+- `damping: float`
+  High-frequency damping `[0, 1]`. Higher values darken the tail. Default
+  `0.4`.
+- `wet_level: float`
+  Wet amount `[0, 1]`. Default `0.25`. Dry level is set internally to
+  `1 - wet_level`.
+
+Example:
+
+```python
+score = Score(
+    f0=110.0,
+    master_effects=[EffectSpec("reverb", {"room_size": 0.6, "damping": 0.5, "wet_level": 0.18})],
+)
+```
+
+### `mod_delay`
+
+Implementation: [code_musics/synth.py](code_musics/synth.py)
+
+Native modulated delay with LFO-modulated read position, lowpass-filtered
+feedback, and stereo phase offset — a chorus/delay hybrid that sits in the
+longer-delay territory that `bbd_chorus` does not cover. Uses cubic
+Hermite interpolation on the fractional delay read to avoid the
+high-frequency roll-off naïve linear interpolation gives on continuously
+moving taps.
+
+Parameters:
+
+- `preset: str`
+  Supported presets: `dream_echo`, `shimmer_slap`, `tape_wander`.
+- `delay_ms: float`
+  Base delay time (50–500 ms typical musical range). Default `200.0`.
+- `mod_rate_hz: float`
+  LFO rate. Default `0.2`. Musical range `0.03`–`3.0`.
+- `mod_depth_ms: float`
+  LFO depth around the base delay. Default `5.0`. Musical range
+  `0.5`–`30`.
+- `feedback: float`
+  Feedback amount `[0, 0.92]` (hard-clipped internally for stability).
+  Default `0.35`.
+- `feedback_lpf_hz: float`
+  Lowpass cutoff inside the feedback loop. Lower values darken the
+  repeats further and tame runaway. Default `4000.0`.
+- `stereo_offset_deg: float`
+  LFO phase offset between left and right channels, producing stereo
+  spread from mono input. Default `90.0`.
+- `mix: float`
+  Dry/wet blend `[0, 1]`. Default `0.30`.
+
+Notes:
+
+- Promotes mono to stereo via the channel phase offset.
+- `dream_echo` is the safest longer-delay ambient default;
+  `shimmer_slap` is shorter and slap-like; `tape_wander` pushes into
+  tape-style wobble.
+
+Example:
+
+```python
+score.add_voice(
+    "pad",
+    effects=[EffectSpec("mod_delay", {"preset": "dream_echo", "mix": 0.25})],
+)
+```
+
+### `phaser`
+
+Implementation: [code_musics/synth.py](code_musics/synth.py)
+
+Wrapper around ChowDSP's ChowPhaser VST3 stereo phaser. Returns the signal
+unchanged (with a warning) when ChowPhaser is not installed.
+
+Parameters:
+
+- `preset: str`
+  Optional named preset from the phaser preset table.
+- `rate_hz: float`
+  LFO rate in Hz. Internally clamped to `[0, 16]`. Default `0.3`.
+- `depth: float`
+  Modulation depth `[0, 1]`. Default `0.5`. Maps to both the plugin's LFO
+  depth (scaled to the plugin's max of 0.95) and its modulation control.
+- `feedback: float`
+  Feedback amount `[0, 1]`, scaled to the plugin's max of 0.95. Default
+  `0.4`.
+- `mix: float`
+  Dry/wet blend `[0, 1]`. Default `0.35`.
+
+Notes:
+
+- Requires `~/.vst3/ChowPhaser.vst3` (or the stereo variant) to be
+  installed; missing plugins fall back to a passthrough with a logged
+  warning rather than a crash.
+
+### `gate`
+
+Implementation: [code_musics/synth.py](code_musics/synth.py)
+
+Single-channel-aware noise gate with an attack/hold/release gain envelope
+and a 2 ms RMS key-signal smoother. Useful for tightening percussion tails
+and silencing sustained noise floors between phrases.
+
+Parameters:
+
+- `threshold_db: float`
+  Gate opens when the smoothed level exceeds this. Default `-40.0`.
+- `attack_ms: float`
+  Ramp time from floor to full gain once the gate opens. Default `0.5`.
+  Must be positive.
+- `hold_ms: float`
+  Minimum time the gate stays open after the signal drops below
+  threshold. Default `40.0`. Must be non-negative.
+- `release_ms: float`
+  Ramp time from full gain back to floor once hold expires. Default
+  `20.0`. Must be positive.
+- `floor_db: float`
+  Attenuation when the gate is fully closed. Default `-80.0` (effectively
+  silent).
+
+Notes:
+
+- Stereo signals are gated per channel. For strict L/R link use a
+  pre-summing bus or route through a compressor with a peak detector
+  instead.
+- Render analysis records threshold/hold/release/floor when
+  `return_analysis=True` is requested internally.
+
+Example:
+
+```python
+score.add_voice(
+    "snare",
+    effects=[EffectSpec("gate", {"threshold_db": -32.0, "hold_ms": 25.0})],
+)
+```
+
+### `pan`
+
+Implementation: [code_musics/synth.py](code_musics/synth.py)
+
+Equal-power static pan. Promotes mono input to stereo and places it in
+the L/R field.
+
+Parameters:
+
+- `pan: float`
+  Pan position `[-1, 1]`. `-1` is full left, `0` is center, `1` is full
+  right. Default `0.0`.
+
+Notes:
+
+- Unlike `Voice.pan` (which is a voice-level placement value), `pan` as
+  an `EffectSpec` is a real insert effect and can be automated through
+  the automation surface. Prefer `Voice.pan` for simple static placement
+  and the `pan` effect when you need automation or want to insert pan
+  between other effects.
+- For per-sample moving pan curves the effect chain uses the internal
+  `apply_pan_automation` path — the static `pan` parameter is replaced
+  by the automation curve.
 
 ### `saturation`
 
@@ -1363,6 +1576,118 @@ score.add_voice(
 )
 ```
 
+## Plugin Toolbox
+
+Dedicated effect-kind wrappers for plugins that are not covered by a
+named section above. Each wrapper is a thin passthrough to an underlying
+VST3, so parameter semantics match the upstream plugin — the entries
+below document the Python-side surface exposed via `EffectSpec`. All of
+them obey the plugin-missing fallback behavior: if the plugin isn't
+installed, the effect is skipped with a loud warning rather than
+crashing.
+
+### Valhalla
+
+- `valhalla_supermassive` — Valhalla Supermassive hybrid reverb/delay.
+  Good for lush, "supermassive" ambient tails that start to overlap
+  with delay territory.
+  Parameters: `mix` (0–100, percent), `delay_ms`, `feedback` (0–100),
+  `density` (0–100), `width` (0–100), `low_cut`, `high_cut`, `mod_rate`
+  (Hz), `mod_depth` (0–100).
+- `valhalla_freq_echo` — Valhalla FreqEcho frequency-shifting delay.
+  Signature "spiraling" echoes from a frequency shifter in the feedback
+  path.
+  Parameters: `mix`, `shift`, `delay`, `feedback`, `low_cut`, `high_cut`.
+- `valhalla_space_mod` — Valhalla SpaceModulator flanging / modulation.
+  Parameters: `mix` (0–100), `rate` (Hz), `depth` (0–100),
+  `feedback` (0–100).
+
+### Compressors / leveling
+
+- `tdr_kotelnikov` — TDR Kotelnikov transparent mastering compressor.
+  Parameters: `threshold_db`, `ratio`, `attack_ms`, `release_rms_ms`,
+  `makeup_db`, `soft_knee_db`, `peak_crest_db`, `dry_wet` (0 = fully
+  compressed wet).
+- `mjuc_jr` — MJUCjr vari-mu compressor (Klanghelm).
+  Parameters: `compress` (0–48 dB), `makeup` (0–48 dB),
+  `timing` (`"slow"` / `"fast"`).
+- `fetish` — FETish 1176-style FET compressor.
+  Parameters: `input_db`, `output_db`, `attack_us` (microseconds!),
+  `release_ms`, `ratio`, `mix` (0–100), `hpf_hz` (sidechain).
+- `lala` — LALA LA-2A-style optical compressor.
+  Parameters: `gain` (0–100), `peak_reduction` (0–100), `hf` (0–100),
+  `mode` (1.0 = compress, other values = limit).
+- `kolin` — Kolin SSL-style bus compressor.
+  Parameters: `input_db`, `output_db`, `attack_ms` (1–50),
+  `release_ms` (100–3000), `mix` (0–100), `hpf_hz` (sidechain).
+- `laea` — LAEA LA-3A-style leveling amplifier.
+  Parameters: `gain` (0–100), `reduction` (0–100), `mix` (0–100),
+  `limit` (bool — True for limit mode, False for compress).
+- `britpressor` — Britpressor Neve 2254-style compressor/limiter.
+  Parameters: `compressor_threshold` (−20 to 10 dB),
+  `ratio` (discrete string, e.g. `"3:1"`), `gain` (0–20),
+  `mix` (23-step string like `"0/100"`), `compressor_recovery_time`
+  (discrete string, `"100ms"` … `"Auto-2"`),
+  `limit_level` (4–15), `level_recovery_time` (discrete string),
+  `high` (−6..6, 3 dB steps), `mid` (−6..6, 3 dB steps),
+  `high_pass_filter` (discrete string, `"OFF"` … `"360Hz"`).
+
+### EQ / channel
+
+- `brit_channel` — BritChannel Neve 1073-style channel strip.
+  Parameters: `preamp_gain_db` (−24…24), `output_trim_db` (−24…24),
+  `highpass` / `low_freq` / `mid_freq` (discrete strings),
+  `low_gain_db` / `mid_gain_db` / `high_gain_db` (−15…15).
+- `brit_pre` — BritPre Neve-style preamp.
+  Parameters: `gain` (−20…40, 5 dB steps), `output_db` (−24…24),
+  `highpass_filter` / `lowpass_filter` (discrete strings).
+- `merica` — MERICA American-style 3-band EQ.
+  Parameters: `low_gain_db` / `mid_gain_db` / `high_gain_db` (−12…12),
+  `low_freq` / `mid_freq` / `high_freq` (discrete Hz values),
+  `input_db`, `output_db`.
+- `rare_se` — RareSE Pultec-style passive EQ (L/M section).
+  Parameters: `low_boost` (0–10), `low_atten` (0–10),
+  `high_boost` (0–10), `high_atten` (0–10),
+  `high_bandwidth` (1–10), `output_db`, `low_frequency` (20–100 Hz),
+  `high_frequency` (3000–16000 Hz), `high_atten_frequency` (up to
+  20000 Hz).
+
+### Drive / distortion / coloring
+
+- `ivgi` — IVGI saturation/distortion (Klanghelm).
+  Parameters: `drive` (0–10), `trim` (0–10), `output` (0–10),
+  `asymmetry` (0–10), `freq_response` (0–10).
+- `distox` — Distox multi-mode distortion.
+  Parameters: `input_db` (−30…30), `output_db` (−30…30),
+  `mix` (0–100), `hpf_hz` (5–2000), `lpf_khz` (10–20),
+  `mode` (discrete string, e.g. `"Op-Amp 1"`, `"Tube 3"`).
+- `fet_drive` — FetDrive FET-style saturation.
+  Parameters: `drive_db` (0–50), `tone` (0–100),
+  `output_db` (−15…15), `mix` (0–100).
+- `prebox` — PreBOX preamp saturation.
+  Parameters: `input_db` (−24…24), `output_db` (−24…24),
+  `model` (0–10, 11 discrete models), `hpf` (0/1/2/3),
+  `lpf` (0/1), `agc` (`"AGC Off"` / `"AGC On"`).
+- `tuba` — TUBA tube amplifier.
+  Parameters: `level` (1–20), `output_db` (−96…12),
+  `gain` (`"Low Gain"` / `"High Gain"`), `high_gain`
+  (discrete −6/0/3/6), `low_gain` (discrete −6/0/6).
+
+Notes:
+
+- These wrappers live alongside the named-section plugins (`chow_tape`,
+  `byod`, `chow_centaur`, `airwindows`, `tal_chorus_lx`, `tal_reverb2`,
+  `bricasti`, `dragonfly`) in the same `_SIMPLE_EFFECT_DISPATCH` table.
+  Pick whichever is installed.
+- Plugin availability is a per-machine question — see the
+  Linux/macOS palette notes in `AGENTS.md`. On Linux the Analog
+  Obsession / Acustica-style plugins are the commonly-installed set;
+  on macOS the ChowDSP / TAL / Dragonfly stack is broader.
+- Each wrapper passes parameters straight through to the plugin via
+  `_apply_plugin_processor` — the Python-side param names above match
+  the VST3 parameter names (with underscoring / lowercasing applied by
+  pedalboard).
+
 ## Shared Drum DSP Infrastructure
 
 All drum engines share common DSP primitives:
@@ -1653,6 +1978,172 @@ score.add_voice(
     },
 )
 ```
+
+## Spectral Builders API
+
+Implementation: [code_musics/spectra.py](code_musics/spectra.py)
+
+`code_musics.spectra` exposes helpers for building the `partials` /
+`attack_partials` lists consumed by the `additive` engine and the `modal`
+mode tables consumed by `drum_voice`. Every builder returns a standard
+shape: a list of `{"ratio": float > 0, "amp": float >= 0}` dicts, sorted
+by ratio. Mode-table helpers return raw `list[float]` ratio tables.
+
+See also: the additive engine's `partials` / `attack_partials` /
+`spectral_morph_type` params, and the `drum_voice` engine's
+`tone_type="modal"` / `metallic_type="modal_bank"` paths which consume
+these builders.
+
+### Mode tables
+
+- `get_mode_table(name) -> list[float]`
+  Returns a copy of a named physical-model ratio table. Valid names:
+  `"membrane"`, `"bar_wood"`, `"bar_metal"`, `"bar_glass"`, `"plate"`,
+  `"bowl"`, `"stopped_pipe"`. The three `bar_*` variants share the same
+  Euler-Bernoulli ratio table — the material name is documentation for
+  the caller (damping / decay is a property of the consumer, not the
+  table). Passing `"custom"` is not allowed — supply ratios directly.
+
+### Core builders
+
+- `ratio_spectrum(ratios, amps=None) -> list[dict]`
+  Build an explicit additive spectrum from ratio and optional amplitude
+  lists. Amplitudes default to 1.0. Raises if any ratio is ≤ 0 or any
+  amp < 0, or if the lengths do not match.
+- `harmonic_spectrum(*, n_partials, harmonic_rolloff=0.5, brightness_tilt=0.0, odd_even_balance=0.0) -> list[dict]`
+  Harmonic-series spectrum matching the additive engine's legacy
+  `n_harmonics` / `harmonic_rolloff` / `brightness_tilt` /
+  `odd_even_balance` semantics. Use this when you want the default
+  harmonic stack but wrapped as an explicit `partials` list so you can
+  post-process it (morphs, gravity, formant shaping).
+  `n_partials >= 1`; `odd_even_balance` clamped internally to
+  `[-0.95, 0.95]`.
+- `stretched_spectrum(*, n_partials, stretch_exponent, harmonic_rolloff=0.5, brightness_tilt=0.0) -> list[dict]`
+  Stretched / compressed overtone family: ratios follow
+  `partial_index ** stretch_exponent`. `stretch_exponent > 1` stretches
+  (piano-like), `< 1` compresses. Raises if `stretch_exponent <= 0`.
+
+### Physical-model spectra
+
+- `membrane_spectrum(*, n_modes=12, damping=0.3) -> list[dict]`
+  Circular drumhead modes from Bessel zeros (normalized to the
+  fundamental). `damping` drives exponential amplitude rolloff
+  `exp(-damping * i)`. `n_modes` capped at 16 (the table's length).
+- `bar_spectrum(*, n_modes=8, material="wood") -> list[dict]`
+  Euler-Bernoulli free-free bar modes (marimba/xylophone). `material`
+  chooses damping: `"wood"` (fastest decay), `"metal"` (slowest),
+  `"glass"` (moderate). `n_modes` capped at 8.
+- `plate_spectrum(*, n_modes=12, aspect_ratio=1.0) -> list[dict]`
+  Rectangular plate modes from `f_{m,n} = C * (m^2/a^2 + n^2/b^2)`.
+  `aspect_ratio=1.0` (square) is maximally degenerate; other values
+  break degeneracy for richer spectra. Amplitudes are `1/(m*n)`.
+- `tube_spectrum(*, n_modes=8, open_ends="both") -> list[dict]`
+  Cylindrical tube modes. `open_ends="both"` (flute-like) gives
+  `[1, 2, 3, ...]`; `"one"` (clarinet-like) gives odd-only
+  `[1, 3, 5, ...]`; `"neither"` (stopped pipe) uses the slightly shifted
+  tabulated ratios. Amplitude rolloff `1 / (1 + 0.3 * i)`.
+- `bowl_spectrum(*, n_modes=8) -> list[dict]`
+  Singing bowl / Tibetan bowl modes from published acoustics
+  measurements. Amplitude rolloff `1 / (1 + 0.5 * i)`. `n_modes` capped
+  at 8.
+
+### Combinators
+
+- `spectral_convolve(spec_a, spec_b, *, max_partials=32, merge_tolerance_cents=10.0, min_amp_db=-60.0) -> list[dict]`
+  Cross-product of two partial lists — every pair `(a, b)` produces a
+  product partial at `a.ratio * b.ratio` with amp `a.amp * b.amp`.
+  Near-coincident partials (within `merge_tolerance_cents`) are merged
+  via amplitude-weighted geometric-mean ratio and summed amplitudes.
+  Result is pruned below `min_amp_db` relative to peak, capped at
+  `max_partials`, and peak-normalized to 1.0. Musically useful for JI
+  spectra because cross-products of JI ratios stay in the ratio family.
+- `fractal_spectrum(seed, *, depth=2, level_rolloff=0.5, max_partials=32) -> list[dict]`
+  Self-similar spectrum via iterated self-convolution. Each level
+  convolves `seed` with the previous level and scales amplitudes by
+  `level_rolloff ** level`. All levels merge into a single
+  peak-normalized spectrum capped at `max_partials`. `depth=0` returns
+  a normalized copy of the seed.
+
+### Formant shaping
+
+- `vowel_formants(name) -> list[(center_hz, gain, bandwidth_hz)]`
+  Return named vowel formant data. Valid names: `"a"`, `"e"`, `"i"`,
+  `"o"`, `"u"`. The returned list is suitable for `formant_shape` and
+  `formant_morph`.
+- `formant_weight(abs_freq, formants) -> float`
+  Sum of Gaussian resonance peaks at `abs_freq` for the given formant
+  list. Useful when computing per-partial amplitudes manually or for
+  custom formant envelopes.
+- `formant_shape(partials, f0, formants, *, bandwidth_hz=100.0) -> list[dict]`
+  Shape an existing partial spectrum through formant resonance peaks at
+  absolute frequencies (via `partial.ratio * f0`). `formants` is either
+  a vowel name string (looked up via `vowel_formants`) or an explicit
+  list of `(center_hz, gain, bandwidth_hz)` tuples. When a string is
+  passed, per-formant bandwidths are overridden by `bandwidth_hz`.
+- `formant_morph(partials, f0, vowel_sequence, morph_times=None) -> list[dict]`
+  Generate per-partial envelopes for time-varying vowel morphs. Each
+  returned partial carries an `"envelope"` key with `{time, value}`
+  keyframes suitable for the additive engine's per-partial envelope
+  feature. `morph_times` defaults to evenly spaced `[0, 1/(N-1), …, 1]`
+  values. Note that partial amplitudes are preserved — the envelopes
+  modulate them multiplicatively.
+
+## Filter primitives
+
+Reusable DSP primitives from `code_musics.engines._filters` that
+engine authors can call directly. Keeping them listed here so future
+engines can reuse proven primitives instead of reimplementing.
+
+### `apply_comb`
+
+Resonant comb filter with per-sample delay and damped feedback. Used by
+the `va` engine's comb slot; available for any future engine that wants
+karplus-strong-ish resonance, flange-like motion, or tuned resonator
+coloring.
+
+Signature:
+
+```python
+apply_comb(
+    signal: np.ndarray,               # 1-D input
+    *,
+    delay_samples_profile: np.ndarray,  # per-sample delay length in samples
+    feedback: float,                    # [0, 0.99]; soft-clipped internally
+    damping: float,                     # [0, 1]; feedback-path 1-pole LPF
+    mix: float,                         # [0, 1]; dry/wet balance
+    sample_rate: int,
+) -> np.ndarray
+```
+
+Parameter semantics:
+
+- `delay_samples_profile` — 1-D array, must match `signal` length.
+  Values `< 1.0` clamp to 1.0; values above one second's worth of
+  samples clamp to `sample_rate`. A frequency-tracked delay
+  (`sample_rate / freq`) produces karplus-strong-ish bell tones.
+- `feedback` — `[0, 0.99]`. Above ~0.95 with low damping the loop
+  self-oscillates. Soft-clipped internally so runaway values fail
+  gracefully rather than exploding.
+- `damping` — `[0, 1]`. 0 is bright sustained resonance; higher values
+  progressively darken and shorten the decay. Internally clamped below
+  1.0 so the feedback-path 1-pole always receives a nonzero fraction
+  of the delayed signal — damping=1.0 approaches fully muted feedback
+  without freezing state.
+- `mix` — `[0, 1]`. 0 returns the input unchanged; 1 returns pure wet.
+- `sample_rate` — Samples per second. Sets the hard cap on delay
+  length (one second).
+
+Intended use:
+
+- Pair with `delay_samples_profile = sample_rate / freq_profile` for a
+  pitched comb resonator (bell / karplus-strong / string-in-pipe
+  character).
+- Use a static `delay_samples_profile` for a fixed-frequency comb
+  coloration.
+
+Raises `ValueError` when `feedback`, `damping`, or `mix` fall outside
+their ranges, when `delay_samples_profile` length does not match
+`signal`, or when `signal` is not 1-D.
 
 ## `clap`
 
@@ -2688,12 +3179,29 @@ individually.
   At `1.0`: deranged. Default `0.0`. Range `[0, 1]`. Ignored by non-k35
   topologies.
 
+#### Filter Solver
+
+- `filter_solver: str`
+  Direct control over which solver the topology uses for its delay-free
+  feedback loop. Accepted values are `"newton"` (default) and `"adaa"`.
+  Most users should leave this at the default and pick a `quality` preset
+  instead — `quality` sets `filter_solver` plus Newton iteration counts,
+  tolerance, and oversampling together. Set `filter_solver` explicitly
+  when you want to force the legacy one-step-delay ADAA character on a
+  single voice without dropping the rest of the quality stack.
+  Applies to `"ladder"`, `"jupiter"`, and `"diode"` topologies. Ignored
+  by topologies that do not have a per-sample implicit feedback solve
+  (`"svf"`, `"sallen_key"`, `"cascade"`, `"sem"`, `"k35"` — the K35
+  uses a closed-form alpha-compensation path and does not need Newton).
+
 #### Quality Modes
 
 - `quality: str`
-  Engine-level quality control for the ladder solver and internal oversampling.
+  Engine-level quality control for the filter solver and internal oversampling.
   Default `"great"`. Raising quality gives more accurate feedback behavior
-  and less aliasing under drive, at linearly proportional CPU cost.
+  and less aliasing under drive, at linearly proportional CPU cost. Acts as
+  a single-knob preset over `filter_solver`, `max_newton_iters`,
+  `newton_tolerance`, and the per-engine oversampling factor.
 
   | mode | solver | Newton iters | tol | oversample |
   |-|-|-|-|-|
@@ -2702,12 +3210,23 @@ individually.
   | `"great"` | Newton | 4 | 1e-9 | 2x |
   | `"divine"` | Newton | 8 | 1e-10 | 4x |
 
-  The Newton solver resolves the ladder's delay-free feedback loop implicitly
+  The Newton solver resolves the filter's delay-free feedback loop implicitly
   at the current sample (Diva/Zavalishin-style), rather than using the prior
   sample's state as the feedback input. This is audible at high resonance
   (cleaner self-oscillation onset), high drive (less intermodulation
   between drive nonlinearity and resonance), and fast cutoff modulation.
-  SVF topology ignores the solver; oversampling still applies.
+  Topologies without an implicit solve path (see `filter_solver`) ignore
+  the solver selection; oversampling still applies.
+
+  Newton mode also closes the **external feedback loop** (`feedback_amount`)
+  implicitly on six topologies: `svf`, `cascade`, `sem`, `sallen_key`,
+  `ladder`, `jupiter`. The scalar residual uses the shared
+  `_solve_ext_feedback_newton` helper (linear-body topologies) or a
+  combined internal-plus-outer-tanh residual (`ladder`, `jupiter`).
+  Without this, the `feedback_amount` path used a one-sample delay that
+  damped high-resonance behaviour and smeared fast transients. Remaining
+  unit-delay hold-outs (see `FUTURE.md`): `k35`, `diode`, and the driven
+  SVF path (`filter_drive > 0`).
 
   The ladder k-mapping differs per solver so both reach self-oscillation at
   appropriate user-facing Q values: `k_adaa = min(3.98, 4(1 - 1/(2q)))`,
@@ -2741,17 +3260,24 @@ individually.
 
 - `feedback_amount: float`
   Minimoog-style post-filter -> pre-filter feedback. At 0.3: subtle thickening.
-  At 0.7: aggressive growl. Works with both SVF and ladder topologies. Default
+  At 0.7: aggressive growl. Works with every filter topology. Default
   `0.0`. Range `[0, 1]`.
 - `feedback_saturation: float`
   Saturation in the feedback path (tanh). Tames feedback and adds harmonics.
   Default `0.3`. Range `[0, 1]`.
 
-Ladder and SVF feedback summations inject a deterministic ~1e-6 (120 dB below
-unity) bootstrap noise buffer — seeded from a hash of the input signal, so
-identical inputs produce identical noise. Without it, a silent input into a
-high-Q self-oscillating ladder would stay silent; with it, the filter can wake
-up from exact silence. Inaudible on normal material.
+All feedback summations inject a deterministic ~1e-6 (120 dB below unity)
+bootstrap noise seed — derived from a hash of the input signal, so identical
+inputs produce identical noise. Without it, a silent input into a high-Q
+self-oscillating filter would stay silent; with it, the filter can wake up
+from exact silence. Inaudible on normal material.
+
+The external feedback loop is solved implicitly under `filter_solver="newton"`
+(the default) on `svf`, `cascade`, `sem`, `sallen_key`, `ladder`, `jupiter` —
+eliminating the one-sample delay that otherwise damps high-resonance behaviour.
+`k35` and `diode` still use unit-delay external feedback (see `FUTURE.md`).
+The `"adaa"` solver stays on unit-delay everywhere for bit-identical legacy
+behaviour.
 
 #### VCA Nonlinearity
 
@@ -2971,8 +3497,15 @@ Parameters:
   `_spectral_morphs.py` for semantics.
 - `sigma_approximation: bool` — Apply Lanczos sigma factors against Gibbs
   ringing. Default `False`.
-- `osc2_level: float` — Optional simple osc2 stack. Default `0.0` (disabled).
-- `osc2_semitones: float`, `osc2_detune_cents: float` — osc2 tuning offsets.
+- `osc2_level: float` — Optional simple osc2 stack level in `[0, 1]`.
+  Default `0.0` (disabled). Mixed as `(osc1 + osc2_level * osc2) /
+  (1 + osc2_level)` so enabling it does not raise overall loudness.
+- `osc2_semitones: float` — Coarse tuning offset for osc2 in semitones.
+  Default `0.0`. `-12` / `+12` give sub and octave-up stacks; negative
+  values work fine. No clamped range.
+- `osc2_detune_cents: float` — Fine tuning offset for osc2 in cents.
+  Default `0.0`. Musical range roughly `±30`; larger values turn the
+  stack into a detuned unison.
 
 ### Pre-filter drive stage
 
@@ -2996,7 +3529,11 @@ slope).
 Key per-slot params: `cutoff_hz`, `resonance_q`, `keytrack`, `reference_freq_hz`,
 `filter_env_amount`, `filter_env_decay`, `filter_mode`, `filter_drive`,
 `filter_topology`, `bass_compensation`, `filter_morph`, `hpf_cutoff_hz`,
-`hpf_resonance_q`, `feedback_amount`, `feedback_saturation`.
+`hpf_resonance_q`, `feedback_amount`, `feedback_saturation`,
+`k35_feedback_asymmetry` (K35-topology-only; see Filter Topology). All
+eight topologies from the shared Filter Topology surface are accepted
+on each slot, and the top-level shorthand routes into filter 1 for
+polyblep-style authoring.
 
 ### Comb filter slot
 
@@ -3392,6 +3929,9 @@ Key routing:
 | `filter_q` | `float` | `0.707` | Filter resonance (>= 0.5) |
 | `filter_drive` | `float` | `0.0` | Filter drive amount |
 | `filter_envelope` | `list[dict]` | `None` | Multi-point envelope for cutoff modulation (values = Hz) |
+| `filter_topology` | `str` | `"svf"` | Any of the eight shared topologies — `"svf"`, `"ladder"`, `"sallen_key"`, `"cascade"`, `"sem"`, `"jupiter"`, `"k35"`, `"diode"`. Same semantics as the polyblep/va filter topology surface. |
+| `filter_morph` | `float` | `0.0` | Continuous pole-tap / mode blend. Range and behavior are topology-dependent; see the Filter Mode Morphing section under polyblep. |
+| `k35_feedback_asymmetry` | `float` | `0.0` | K35-only feedback-diode asymmetry `[0, 1]`. Ignored by other topologies. |
 
 **Voice shaper** (post-mix, optional):
 
@@ -3962,3 +4502,178 @@ score.add_voice(
     },
 )
 ```
+
+## `synth_voice`
+
+Implementation: [code_musics/engines/synth_voice.py](code_musics/engines/synth_voice.py)
+
+Composable tonal synthesizer with four independent, mixable source slots —
+`osc`, `partials`, `fm`, `noise` — summed into a shared post-chain (HPF →
+dual filter → VCA → voice shaper). Designed for cross-pollination: stack a
+supersaw under additive partials with a 2-op FM bell on top, run the result
+through a Moog ladder, and get a voice no prior single engine could
+produce.
+
+**Prefer `synth_voice` for new tonal composition.** The older engines
+(`polyblep`, `va`, `additive`, `fm`, `filtered_stack`, `organ`, `piano`,
+`piano_additive`, `harpsichord`) remain registered — existing pieces keep
+working — but `synth_voice` is the recommended default for new voices that
+don't need the physically-modeled hammer/pluck topology of piano/harpsichord.
+
+### synth_voice architecture
+
+```text
+   osc ─→[shaper]─┐
+                   │
+   partials ─→[sh]─┤
+                   ├─×level×env─→ SUM ─→ HPF ─→ FILTER ─→ VCA ─→ VOICE_SHAPER ─→ OUT
+   fm ─→[shaper]──┤
+                   │
+   noise ─→[sh]───┘
+```
+
+Any `{slot}_type=None` (or omitted) disables the slot. Slot renderers
+compose existing engine primitives rather than reimplementing DSP.
+
+### Slot types
+
+**`osc`** — time-domain bandlimited oscillators
+
+- `polyblep` — single PolyBLEP saw/square/triangle/sine, optional osc2
+  layer (`osc2_level`, `osc2_wave`, `osc2_detune_cents`, `osc2_freq_ratio`)
+- `supersaw` — Szabo-law 7-voice PolyBLEP bank (`osc_spread_cents` 0–100,
+  `osc_mix` 0–1)
+- `pulse` — PolyBLEP square with `osc_pulse_width` (0.05–0.95)
+
+**`partials`** — frequency-domain partial banks
+
+- `additive` — harmonic series via `partials_n_harmonics`,
+  `partials_harmonic_rolloff`, `partials_brightness_tilt`,
+  `partials_odd_even_balance`, or an explicit `partials_partials` list of
+  `{"ratio", "amp", "phase"}` dicts
+- `spectralwave` — VA saw→formant→square morph via
+  `partials_spectral_position` (0..1)
+- `drawbars` — Hammond-style 9-stop additive; override ratios via
+  `partials_drawbar_ratios` and amps via `partials_drawbar_amps`
+
+**`fm`** — 2-op FM
+
+- `two_op` — carrier + modulator with feedback and index envelope.
+  Params: `fm_carrier_ratio`, `fm_ratio` (modulator), `fm_index`,
+  `fm_feedback`, `fm_index_decay`, `fm_index_sustain`
+
+**`noise`** — aperiodic texture
+
+- `white` — gaussian white
+- `pink` — 1/f-shaped via rfft weighting
+- `bandpass` — FFT-bandpassed around `noise_center_hz` (defaults to note
+  frequency), `noise_bandwidth_ratio`
+- `flow` — Mutable Elements rare-event S&H exciter; `noise_flow_density`
+  0..1
+
+### Per-slot common params
+
+Every slot uniformly exposes:
+
+- `{slot}_type` — type selector, `None` disables
+- `{slot}_level` — mix level (default 1.0 for tonal slots, 0.1 for noise)
+- `{slot}_envelope` — optional multi-point envelope override (falls back
+  to the voice ADSR shaping)
+- `{slot}_shaper` — optional per-slot nonlinearity (any waveshaper algo,
+  `saturation`, or `preamp`); plus `{slot}_shaper_drive` / `_mix`
+
+### Voice post-chain
+
+- **HPF**: `hpf_cutoff_hz` (0 = disabled; CS80/Jupiter-style 2-pole ZDF)
+- **Main filter**: `filter_mode` (`lowpass`/`highpass`/`bandpass`/...),
+  `filter_topology` (any of the 8 from `_filters.py` —
+  svf/ladder/sallen_key/cascade/sem/jupiter/k35/diode), `filter_cutoff_hz`,
+  `resonance_q`, `filter_drive`, `filter_morph`, `k35_feedback_asymmetry`,
+  `filter_envelope` (multi-point cutoff curve)
+- **Voice shaper**: `shaper` (any waveshaper algo, `saturation`, or
+  `preamp`), `shaper_drive`, `shaper_mix`, `shaper_mode`, `bit_depth`,
+  `reduce_ratio`
+- **Voice ADSR**: `attack`, `release` apply simple fades to suppress edge
+  clicks; richer amp shaping is owned by the Score layer
+
+### Perceptual macros
+
+Four macros, all default to `None` (inactive). Each fans out to underlying
+params via `_set_if_absent` — explicit preset or user values always win.
+Resolution order: **preset params → macro fill-in → user kwargs win.**
+Macro keys are popped before render-time extraction. Value range
+convention: 0.2 subtle, 0.33 clear-but-subtle, 0.5 moderate, 0.66 strong,
+0.8–1.0 intense-but-musical.
+
+| Macro | Fans out to |
+|---|---|
+| `brightness` | `filter_cutoff_hz` (exp-scaled 400→8000 Hz), `partials_brightness_tilt`, `fm_index` and `osc_spread_cents` bumps above 0.5 |
+| `movement` | `filter_env_amount`, `partials_smear`, `partials_phase_disperse`, `chorus_mix` |
+| `body` | `hpf_cutoff_hz` (inverse — high body pushes HPF down), `resonance_q` bump, `osc2_sub_level`, `partials_odd_even_balance` toward even |
+| `dirt` | `shaper` mode (saturation → preamp → hard_clip at thresholds), `shaper_drive`, `shaper_mix`, `feedback_amount` bump above 0.8 |
+
+### synth_voice presets
+
+15 curated presets ship with the engine, split between 5 basic starters
+and 10 cross-pollination specialties. Use by name:
+
+```python
+synth_defaults={"engine": "synth_voice", "preset": "fm_bell_over_supersaw"}
+```
+
+**Basic starters**: `bright_saw_lead`, `warm_pad`, `soft_bass`, `glass_pad`,
+`two_op_bell`.
+
+**Cross-pollination specialties**: `fm_bell_over_supersaw`,
+`additive_pad_through_ladder`, `drawbar_diode_acid`, `stiff_piano_sub`,
+`flow_exciter_pad`, `spectralwave_jupiter`, `chaos_cloud_texture`,
+`virus_hybrid_pad`, `formant_vowel_lead`, `tonewheel_drive`.
+
+### Usage example
+
+```python
+voice = Voice(
+    name="hybrid_pad",
+    synth_defaults={
+        "engine": "synth_voice",
+        # Stack supersaw + additive partials + FM bell + pink noise
+        "osc_type": "supersaw",
+        "osc_level": 0.5,
+        "osc_spread_cents": 20.0,
+        "partials_type": "additive",
+        "partials_level": 0.4,
+        "partials_harmonic_rolloff": 0.75,
+        "partials_brightness_tilt": 0.1,
+        "fm_type": "two_op",
+        "fm_level": 0.3,
+        "fm_ratio": 3.0,
+        "fm_index": 1.5,
+        "fm_index_decay": 0.7,
+        "noise_type": "pink",
+        "noise_level": 0.08,
+        # Post-chain
+        "filter_mode": "lowpass",
+        "filter_topology": "ladder",
+        "filter_cutoff_hz": 1900.0,
+        "resonance_q": 0.85,
+        "hpf_cutoff_hz": 50.0,
+        # Ergonomic macros fill any unset params
+        "movement": 0.35,
+        "body": 0.45,
+    },
+)
+```
+
+### What does `synth_voice` *not* cover?
+
+Piano, harpsichord, and organ stay as dedicated engines because their
+physical topology (hammer-contact / pluck → modal-resonator bank, organ
+tonewheel crosstalk) doesn't fit the source→filter→VCA model. Drawbar
+*additive spectra* are covered via `partials_type="drawbars"`, but
+full Hammond character (key-click, crosstalk, scanner vibrato) remains
+in the `organ` engine.
+
+Future extensions tracked in `FUTURE.md`: modal/physical resonator
+"operator" slots, 4-op/6-op FM algorithm matrices, a routing matrix for
+cross-slot modulation, and "two-of-a-kind" slots for e.g. two supersaws
+stacked in one voice.

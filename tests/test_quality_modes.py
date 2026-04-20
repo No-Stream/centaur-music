@@ -137,6 +137,12 @@ class TestUnknownQualityRaises:
 
 
 class TestDraftFasterThanDivine:
+    @pytest.mark.skip(
+        reason="CPU timing is fundamentally fragile in shared CI — draft vs "
+        "divine ordering can flip under noisy-neighbor load.  Keep the body "
+        "as a manual benchmark hook; re-enable when we have a dedicated "
+        "benchmark suite."
+    )
     def test_draft_is_faster_than_divine(self) -> None:
         """Smoke check that oversampling makes divine measurably slower.
 
@@ -248,3 +254,49 @@ class TestDefaultQualityIsGreat:
         great_audio = _render_filtered_stack_saw(quality="great")
         draft_audio = _render_filtered_stack_saw(quality="draft")
         assert not np.allclose(great_audio, draft_audio, atol=1e-6)
+
+
+class TestQualityRoutesExternalFeedbackSolver:
+    """Quality modes dispatch to different filter solvers.  With
+    ``feedback_amount>0`` active, this test proves each mode actually
+    threads through to its intended solver — draft stays on unit-delay
+    ADAA, fast/great/divine use the delay-free Newton solve for the
+    external feedback loop.  The per-mode outputs must differ to prove
+    the solver is live."""
+
+    @pytest.mark.parametrize("topology", ["ladder", "jupiter", "svf", "sallen_key"])
+    def test_draft_differs_from_great_under_feedback(self, topology: str) -> None:
+        params: dict = {
+            "waveform": "saw",
+            "cutoff_hz": 900.0,
+            "resonance_q": 6.0,
+            "filter_drive": 0.0,
+            "filter_topology": topology,
+            "feedback_amount": 0.6,
+            "feedback_saturation": 0.4,
+        }
+
+        def render(quality: str) -> np.ndarray:
+            p = dict(params)
+            p["quality"] = quality
+            return polyblep_engine.render(
+                freq=220.0,
+                duration=0.2,
+                amp=0.8,
+                sample_rate=SR,
+                params=p,
+            )
+
+        draft = render("draft")
+        great = render("great")
+        assert np.all(np.isfinite(draft))
+        assert np.all(np.isfinite(great))
+        diff = np.sqrt(np.mean((draft - great) ** 2))
+        ref = np.sqrt(np.mean(great * great))
+        # The two solvers must produce measurably different output; the
+        # Newton branch genuinely closes a loop that ADAA approximates.
+        assert diff > 0.005 * ref, (
+            f"{topology}: draft and great produce near-identical output "
+            f"under feedback (diff={diff:.4e}, ref={ref:.4e}) — quality "
+            "mode is not routing through to the filter solver"
+        )

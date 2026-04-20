@@ -214,6 +214,24 @@ inputs:
 They are additive APIs, not replacements. Use the original seconds-based
 helpers when direct control is clearer.
 
+### `MeteredSectionSpec`
+
+`MeteredSectionSpec` is the bar-measured counterpart to `ContextSectionSpec`.
+`metered_sections(...)` takes a sequence of these plus a `Timeline` and a
+`base_tonic` and resolves them into the same `ContextSection` tuple that the
+seconds-based `build_context_sections(...)` produces.
+
+Fields:
+
+- `bars: float` -- section length in bars on the given timeline; must be
+  positive. Fractional bar counts are allowed.
+- `tonic_ratio: float = 1.0` -- multiplicative offset applied to `base_tonic`
+  for this section, matching `ContextSectionSpec.tonic_ratio`.
+- `name: str | None = None` -- optional section label.
+
+Use this when section boundaries should snap to the bar grid rather than being
+expressed in raw seconds.
+
 ### `bar_automation(...)`
 
 Builds a voice-automation lane from musical bar/beat anchor points.
@@ -272,16 +290,113 @@ articulation mechanism; envelope scaling is a secondary shaping tool.
 
 ### `PitchMotionSpec`
 
-Note-level pitch motion attached to a `NoteEvent`.
+Note-level pitch motion attached to a `NoteEvent`. Lives in
+`code_musics.pitch_motion`. A `PitchMotionSpec` is frozen and deterministic:
+given a base frequency, duration, and sample rate, it produces a per-sample
+frequency trajectory that the renderer integrates into oscillator phase.
 
-Available constructors:
+Fields:
 
-- `PitchMotionSpec.linear_bend(...)`
-- `PitchMotionSpec.ratio_glide(...)`
-- `PitchMotionSpec.vibrato(...)`
+- `kind: Literal["linear_bend", "ratio_glide", "vibrato"]`
+- `params: dict[str, Any]`
 
-Prefer `ratio_glide(...)` when you want motion that stays clearly grounded in
-ratio space.
+Prefer the classmethod constructors over building specs directly; each
+constructor validates its own parameter set at construction time.
+
+#### `PitchMotionSpec.linear_bend(...)`
+
+Linear bend from the note's base frequency to a single target pitch.
+Exactly one of the following keyword arguments must be supplied:
+
+- `target_freq: float | None = None` -- absolute target frequency in Hz.
+- `target_partial: float | None = None` -- target resolved as
+  `Score.f0_hz * target_partial`.
+- `target_ratio: float | None = None` -- target resolved as
+  `Score.f0_hz * target_ratio` (same underlying math as `target_partial`;
+  use the name that matches how the rest of the phrase is authored --
+  partial-space vs. ratio-space).
+
+Returns a `PitchMotionSpec` with `kind="linear_bend"`. The bend is linear
+in frequency (not pitch), so large-interval bends will feel faster at the
+bottom and slower at the top. Use `ratio_glide(...)` when you want motion
+that stays clearly grounded in ratio space.
+
+#### `PitchMotionSpec.ratio_glide(...)`
+
+Logarithmic glide that interpolates evenly in ratio (pitch) space.
+
+- `start_ratio: float = 1.0` -- starting multiplier on the note's base
+  frequency.
+- `end_ratio: float = 1.0` -- ending multiplier on the note's base
+  frequency.
+
+Returns a `PitchMotionSpec` with `kind="ratio_glide"`. Both ratios must be
+positive. Prefer this for JI-aware voice leading: an octave glide here is
+the same perceptual rate as a semitone glide.
+
+#### `PitchMotionSpec.vibrato(...)`
+
+Small deterministic sinusoidal vibrato around the base frequency.
+
+- `depth_ratio: float = 0.01` -- peak deviation as a multiplicative fraction
+  of the base frequency. Must be in `(0, 0.25)`. Typical musical values are
+  `0.003`-`0.015`; values above `~0.02` start to feel like modulation rather
+  than vibrato.
+- `rate_hz: float = 5.5` -- vibrato rate in Hz. Must be positive.
+- `phase_rad: float = 0.0` -- starting phase in radians. Use a per-note value
+  if you want multiple voices to desynchronize.
+
+Returns a `PitchMotionSpec` with `kind="vibrato"`.
+
+#### `PitchMotionSpec.target_frequency(score_f0_hz)`
+
+Resolve the absolute target frequency for a `linear_bend` spec against the
+score root. Raises `ValueError` when called on non-`linear_bend` motions.
+
+#### `build_frequency_trajectory(...)`
+
+Low-level helper that turns a `PitchMotionSpec` into a dense per-sample
+frequency trajectory. Pieces usually do not call this directly -- the
+renderer does. It is exposed for DSP utilities, analysis, and custom engines.
+
+```python
+def build_frequency_trajectory(
+    *,
+    base_freq: float,
+    duration: float,
+    sample_rate: int,
+    motion: PitchMotionSpec,
+    score_f0_hz: float,
+) -> np.ndarray
+```
+
+- `base_freq` -- the note's resolved base frequency in Hz (must be positive).
+- `duration` -- note duration in seconds (must be positive).
+- `sample_rate` -- sample rate in Hz (must be positive).
+- `motion` -- the `PitchMotionSpec` to realize.
+- `score_f0_hz` -- score root, used to resolve partial/ratio bend targets.
+
+Returns a 1-D `np.ndarray` of strictly positive, finite frequencies of
+length `int(duration * sample_rate)`. Returns an empty array when the
+integer sample count is zero.
+
+#### `phase_from_frequency_trajectory(...)`
+
+Integrate a frequency trajectory into an oscillator phase trajectory.
+
+```python
+def phase_from_frequency_trajectory(
+    freq_trajectory: np.ndarray,
+    *,
+    sample_rate: int,
+) -> np.ndarray
+```
+
+- `freq_trajectory` -- 1-D frequency samples (Hz).
+- `sample_rate` -- sample rate in Hz.
+
+Returns a 1-D `np.ndarray` of cumulative phase values in radians, starting
+at `0.0`. Useful for feeding any oscillator that consumes phase directly.
 
 ### `NoteEvent`
 
@@ -379,6 +494,33 @@ The main rule of thumb:
 - velocity humanization changes resolved per-note velocity multipliers
 
 All of them are deterministic for a given seed.
+
+### `DriftSpec`
+
+`DriftSpec` is the reusable drift generator shared by the humanization specs
+below (`ensemble_drift` on timing, `drift` on envelope and velocity).
+
+Fields:
+
+- `style: DriftStyle = "random_walk"`
+- `rate_hz: float = 0.035`
+- `smoothness: float = 0.84`
+- `seed: int | None = None`
+
+Accepted `style` values:
+
+- `random_walk` -- cumulative Gaussian increments; slow wandering drift without
+  a central tendency.
+- `smooth_noise` -- smoothed random anchors linearly interpolated; pink-ish
+  organic variation.
+- `lfo` -- deterministic sinusoidal oscillation at `rate_hz` with a seeded
+  starting phase.
+- `sample_hold` -- steppy piecewise-constant values drawn at each anchor; holds
+  until the next crossing.
+- `smoothed_random` -- Helm-style: random anchors at `rate_hz` crossfaded with
+  a raised-cosine (Hann) window. Distinct from the steppy `sample_hold` and
+  from `smooth_noise`'s linearly interpolated smoothed anchors; produces
+  organic wobble that neither neighbor captures.
 
 ### `TimingHumanizeSpec`
 
@@ -718,11 +860,21 @@ These all return new phrases and do not mutate the source:
 - `with_gate(...)`
 - `with_accent_pattern(...)`
 - `with_tail_breath(...)`
+- `with_synth_ramp(...)`
 - `staccato(...)`
 - `legato(...)`
 - `echo(...)`
 - `concat(...)`
 - `overlay(...)`
+
+**`with_synth_ramp(phrase, *, start_params, end_params)`** -- interpolate synth
+parameters linearly across successive events. `start_params` and `end_params`
+are dicts of matching parameter keys (e.g. `{"cutoff_hz": 400.0}` and
+`{"cutoff_hz": 1800.0}`); each event receives a synth override with every key
+evenly interpolated between its `start` and `end` value. The first event gets
+the start values, the last event gets the end values, and a single-event
+phrase gets the start values. Useful for timbral sweeps (filter opens,
+brightness rises, detune widens) without hand-authoring every note.
 
 Use them when a phrase is already built and you want a fast re-articulation pass
 without rewriting the note list.
@@ -829,6 +981,13 @@ section.
 - `voiced_ratio_chord(...)` resolves ratios into a register-aware voicing,
   including `drop2` and `drop3` alongside the earlier `close`, `open`, and
   `spread` modes.
+- `place_ratio_chord(...)` resolves a list of ratios against a `ContextSection`
+  and places them as simultaneous or slightly staggered notes on a voice.
+  Parameters: `score`, `voice_name`, `section`, `ratios`, `duration`,
+  `offset=0.0`, `gap=0.0` (stagger between successive notes in seconds),
+  `amp` (scalar or per-note sequence), `amp_db`, `velocity=1.0`, `synth`,
+  `labels`. Returns the list of placed `NoteEvent`s. Use `gap > 0` for
+  arpeggiated/strummed chords, `gap = 0` for block chords.
 - `progression(...)` places simple harmonic accompaniment patterns from a list
   of sections and ratio chords.
 
@@ -844,6 +1003,357 @@ For `pattern="arpeggio"`, `arpeggio_order` can be:
 - `"descending"`
 - `"inside_out"`
 - an explicit index order into the voiced/sorted chord
+
+## Harmonic Drift
+
+`code_musics.harmonic_drift` provides JI-aware pitch drift automation shaped by
+consonance. It generates slow, smooth `pitch_ratio` automation lanes that
+glide between chords while lingering near pure JI intervals and moving quickly
+through rough zones -- useful for pad voice leading that stays audibly tuned
+rather than sliding generically between targets.
+
+Two layers:
+
+- `harmonic_drift(...)` is the low-level engine: given two chords, it returns
+  one `AutomationSpec` per voice (chord tone).
+- `progression_drift_lanes(...)` sits on top for multi-chord progressions,
+  returning per-chord lane lists.
+- `drifted_chord_events(...)` builds `NoteEvent` tuples for a chord and
+  attaches drift lanes per voice in matching sorted order.
+
+All three cooperate through one convention: **chord tones are sorted low-to-high
+by partial before lanes are generated or attached**, so lane indices line up
+with the sorted order used by `drifted_chord_events`.
+
+### `harmonic_drift(...)`
+
+```python
+def harmonic_drift(
+    start_chord: list[float],
+    end_chord: list[float],
+    duration: float,
+    attraction: float = 0.5,
+    prime_limit: int = 7,
+    wander: float = 0.0,
+    smoothness: float = 0.8,
+    resolution_ms: float = 50.0,
+    seed: int = 0,
+    glide_ms: float | None = 250.0,
+    max_interval_cents: float = 700.0,
+    target_time: float | None = None,
+) -> list[AutomationSpec]
+```
+
+Generate `pitch_ratio` automation lanes that drift between two JI chords.
+
+- `start_chord` -- list of starting partial ratios, one per voice.
+- `end_chord` -- list of ending partial ratios, same length as `start_chord`.
+- `duration` -- total automation duration in seconds. Must be positive.
+- `attraction` -- strength of consonance pull, in `[0, 1]`. `0.0` gives a
+  straight geometric interpolation; higher values warp the trajectory to
+  linger near JI waypoints of bounded Tenney height.
+- `prime_limit` -- JI prime limit for the waypoint search (default `7`).
+- `wander` -- optional smoothed Brownian deviation biased toward nearby JI
+  ratios, in `[0, 1]`. `0.0` is a direct glide.
+- `smoothness` -- exponential smoothing factor on the final trajectory, in
+  `[0, 1]`. Higher values produce slower, glassier motion.
+- `resolution_ms` -- internal trajectory time step in milliseconds.
+- `seed` -- deterministic seed for the wander noise.
+- `glide_ms` -- glide window in ms before the glide target time. The voice
+  holds at `start_ratio` for most of the note and only glides in the final
+  `glide_ms` before the target. Pass `None` to glide across the entire
+  duration (legacy behavior). Defaults to `250.0` ms, which is short enough
+  to read as portamento rather than a riser.
+- `max_interval_cents` -- voices whose pitch change exceeds this magnitude
+  skip pitch drift and emit a flat unity lane. Default `700.0` (roughly a
+  perfect fifth). Prevents multi-octave slides when chord voicings pair
+  voices from very different registers.
+- `target_time` -- time (in seconds, from the note's start) at which the
+  glide must reach `end_ratio`. After this time the lane holds at
+  `end_ratio` for the rest of the note. Defaults to `duration`. Use the
+  boundary time of the next chord for overlapping transitions so the glide
+  settles before the next chord attacks and the two voices don't beat.
+
+Returns one `AutomationSpec` per voice, each targeting `pitch_ratio` in
+`"multiply"` mode.
+
+Raises `ValueError` when `start_chord` and `end_chord` differ in length,
+when `duration <= 0`, or when any of `attraction`, `wander`, `smoothness`
+falls outside `[0, 1]`, or when `glide_ms <= 0`, `max_interval_cents < 0`,
+or `target_time` falls outside `(0, duration]`.
+
+### `progression_drift_lanes(...)`
+
+```python
+def progression_drift_lanes(
+    progression: list[ChordVoicingFn],
+    chord_dur: float,
+    attraction: float,
+    wander: float,
+    smoothness: float = 0.85,
+    seed_base: int = 0,
+    glide_ms: float | None = 250.0,
+    max_interval_cents: float = 700.0,
+    target_time: float | None = None,
+    glide_transitions: set[int] | None = None,
+) -> list[list[AutomationSpec] | None]
+```
+
+Compute drift lanes for consecutive chords in a progression.
+
+- `progression` -- list of chord voicing callables. Each callable takes no
+  arguments and returns `list[tuple[float, float]]`, i.e. a list of
+  `(partial_ratio, amp_db)` tuples for that chord.
+- `chord_dur` -- duration of each chord (shared across the progression).
+- `attraction`, `wander`, `smoothness`, `glide_ms`, `max_interval_cents`,
+  `target_time` -- forwarded to `harmonic_drift(...)`; see above.
+- `seed_base` -- base seed; chord `i` uses `seed_base + i`.
+- `glide_transitions` -- optional set of chord indices whose outgoing
+  transition should glide. If `None`, every transition glides (default). Use
+  this to place drift as an accent on specific transitions rather than a
+  continuous effect across the section.
+
+Returns one entry per chord. Each entry is either a list of `AutomationSpec`
+(one per voice in sorted order, describing drift toward the next chord) or
+`None` for the last chord and for chords whose transition is not selected by
+`glide_transitions`.
+
+### `drifted_chord_events(...)`
+
+```python
+def drifted_chord_events(
+    chord_partials_db: list[tuple[float, float]],
+    duration: float,
+    drift_lanes: list[AutomationSpec] | None,
+    amp_db_offset: float = 0.0,
+) -> tuple[NoteEvent, ...]
+```
+
+Build `NoteEvent`s for a chord, optionally attaching per-note pitch drift.
+
+- `chord_partials_db` -- `(partial_ratio, amp_db)` pairs for the chord. Tones
+  are sorted low-to-high by partial so the sort order matches the lanes
+  produced by `progression_drift_lanes`.
+- `duration` -- per-note duration in seconds.
+- `drift_lanes` -- list of automation specs (one per voice in sorted order),
+  or `None` to skip drift for this chord.
+- `amp_db_offset` -- additive dB offset applied uniformly to every chord
+  tone (e.g. for a per-chord swell).
+
+Returns a tuple of `NoteEvent`s all starting at `0.0`, each with its
+matching drift lane attached as note-local automation.
+
+### Type alias
+
+- `ChordVoicingFn = Callable[[], list[tuple[float, float]]]` -- a zero-arg
+  callable returning `(partial_ratio, amp_db)` pairs for one chord.
+
+## Smearing and Textural Thickening
+
+`code_musics.smear` provides loveless-inspired tools for pitch smearing,
+textural thickening, and slow orchestration moves. It is the companion to
+`harmonic_drift` for shoegaze / dream-pop writing: where `harmonic_drift`
+shapes voice-leading trajectories in pitch space, `smear` shapes the
+grain and density of the sound by stacking micro-detuned copies and
+pushing notes through pitch wobble and chord-strum gestures.
+
+All functions are deterministic for a given seed.
+
+### `ThickenedCopy`
+
+```python
+@dataclass(frozen=True)
+class ThickenedCopy:
+    phrase: Phrase
+    pan: float
+    amp_offset_db: float
+```
+
+One micro-detuned, panned copy produced by `thicken(...)`.
+
+- `phrase` -- the detuned, time-offset `Phrase` for this copy.
+- `pan` -- pan position in `[-1, 1]` suggested for the copy.
+- `amp_offset_db` -- suggested amplitude offset in dB (typically negative
+  at the outer copies to taper the stack).
+
+The caller decides how to route copies -- typically one voice per copy with
+`pan` and a `mix_db` trim applied from `amp_offset_db`.
+
+### `strum(...)`
+
+```python
+def strum(
+    phrase: Phrase,
+    spread_ms: float = 40.0,
+    direction: str = "down",
+    seed: int = 0,
+) -> Phrase
+```
+
+Stagger simultaneous chord notes across a time spread.
+
+- `phrase` -- input phrase (typically a chord with all notes starting at
+  `0.0`).
+- `spread_ms` -- total time spread in milliseconds across all notes. Must
+  be non-negative.
+- `direction` -- `"down"` (low-to-high), `"up"` (high-to-low), `"out"`
+  (center outward), or `"random"` (seeded deterministic).
+- `seed` -- seed for `"random"` direction.
+
+Returns a new `Phrase` whose note start times are staggered to simulate a
+strum. Single-note phrases are returned unchanged.
+
+Raises `ValueError` for negative `spread_ms` or unrecognized `direction`.
+
+### `thicken(...)`
+
+```python
+def thicken(
+    phrase: Phrase,
+    n: int = 5,
+    detune_cents: float = 8.0,
+    spread_ms: float = 20.0,
+    stereo_width: float = 0.7,
+    amp_taper_db: float = -2.0,
+    seed: int = 0,
+) -> list[ThickenedCopy]
+```
+
+Create micro-detuned, time-staggered, pan-spread copies of a phrase.
+
+- `phrase` -- the source phrase to thicken.
+- `n` -- number of copies to produce. Must be at least `1`.
+- `detune_cents` -- total detune spread in cents (distributed across
+  `+/- detune_cents / 2`).
+- `spread_ms` -- total time stagger in ms (each copy's offset is a seeded
+  uniform draw in `+/- spread_ms / 2`).
+- `stereo_width` -- pan spread; copies are distributed evenly across
+  `[-stereo_width, +stereo_width]`.
+- `amp_taper_db` -- amplitude reduction in dB applied to the outermost
+  copies; the center copy is unattenuated.
+- `seed` -- deterministic seed for time offsets.
+
+Returns a list of `ThickenedCopy`. The caller is responsible for placing
+each copy on a voice (or on the same voice with pan overrides). Copies
+with `partial`-authored notes have their detune applied through an injected
+`freq_scale` synth override; copies with `freq`-authored notes have the
+scaling baked into `freq`.
+
+### `pitch_wobble(...)`
+
+```python
+def pitch_wobble(
+    duration: float,
+    rate_hz: float = 0.15,
+    depth_cents: float = 12.0,
+    style: str = "smooth",
+    start_time: float = 0.0,
+    seed: int = 0,
+    depth_curve: list[tuple[float, float]] | None = None,
+    segment_interval: float = 0.05,
+) -> AutomationSpec
+```
+
+Generate a continuous pitch-modulation automation lane targeting
+`pitch_ratio` in `"multiply"` mode. Good for gentle tremolo-bar motion,
+tape-flutter feel, or slow whole-voice drift.
+
+- `duration` -- length of the wobble in seconds. Must be positive.
+- `rate_hz` -- modulation rate. For `"lfo"` it is the sine frequency; for
+  `"smooth"` it is the approximate spectral center of the filtered noise;
+  for `"drunk"` it sets the damping on the random-walk dynamics.
+- `depth_cents` -- modulation depth in cents. For `"lfo"` it is the peak
+  deviation (`+/- depth_cents / 2`); for `"smooth"` / `"drunk"` it is the
+  RMS deviation.
+- `style` -- `"lfo"` (sine), `"smooth"` (filtered Brownian motion), or
+  `"drunk"` (random walk with momentum).
+- `start_time` -- absolute start time for the automation segments.
+- `seed` -- deterministic seed for `"smooth"` / `"drunk"` styles.
+- `depth_curve` -- optional list of `(time, depth_cents)` pairs for
+  time-varying depth. Times are measured relative to `start_time`; the
+  curve is linearly interpolated.
+- `segment_interval` -- approximate time between automation segments in
+  seconds. Smaller values give smoother motion at the cost of more
+  segments.
+
+Returns an `AutomationSpec` built from a sequence of linear segments.
+
+Raises `ValueError` for non-positive `duration` or `rate_hz`, negative
+`depth_cents`, or an unrecognized `style`.
+
+### `smear_progression(...)`
+
+```python
+def smear_progression(
+    chords: Sequence[Sequence[float]],
+    durations: Sequence[float],
+    overlap: float = 0.5,
+    voice_behavior: Sequence[str] | None = None,
+) -> list[Phrase]
+```
+
+Build gliding voice phrases from a chord progression. Returns one `Phrase`
+per voice index (i.e. per chord tone position across all chords). Notes use
+`partial` values so they resolve against `Score.f0_hz`.
+
+- `chords` -- list of chord ratio lists, e.g.
+  `[[1.0, 5/4, 3/2], [1.0, 6/5, 3/2]]`. Every chord must have the same
+  length.
+- `durations` -- per-chord duration in seconds. Must match `chords` in
+  length; all values must be positive.
+- `overlap` -- fraction of the next chord's duration that the previous
+  chord continues to sound for. `0.0` gives a gap between chords, `0.5`
+  gives half-chord overlap, `1.0` gives full legato carry-through.
+- `voice_behavior` -- optional per-voice-index behavior list. Each entry is
+  either `"glide"` (default; attach a `ratio_glide` `PitchMotionSpec` that
+  lands on the next chord tone during the overlap) or `"reattack"` (cut
+  clean at the chord boundary and re-articulate). If provided, its length
+  must match the chord voice count.
+
+Returns a list of `Phrase`, one per voice index. The final chord always
+reattacks since there is no next chord to glide into.
+
+Raises `ValueError` for empty `chords`, mismatched `chords` / `durations`
+lengths, non-positive durations, non-uniform chord sizes, or a
+`voice_behavior` list whose length does not match the chord voice count.
+
+### `bloom(...)`
+
+```python
+def bloom(
+    score: Score,
+    voice_specs: Sequence[dict[str, Any]],
+    center_time: float,
+    grow_dur: float = 4.0,
+    peak_dur: float = 8.0,
+    fade_dur: float = 4.0,
+) -> Score
+```
+
+Orchestration helper for gradual layer introduction and dissolution. Staggers
+voice entries across `grow_dur`, sustains all voices during `peak_dur`, then
+staggers exits across `fade_dur`. Each voice gets amplitude-envelope shaping
+so layers fade in and out smoothly instead of popping.
+
+- `score` -- the `Score` to add voices to.
+- `voice_specs` -- list of voice specification dicts. Required keys:
+  `"name"` (str), `"phrase"` (`Phrase`). Optional keys: `"synth_defaults"`
+  (dict, default `{}`), `"pan"` (float, default `0.0`). Any other keys are
+  forwarded verbatim as `Score.add_voice(...)` kwargs.
+- `center_time` -- midpoint of the peak section in seconds.
+- `grow_dur` -- duration over which voices stagger their entries. Must be
+  non-negative.
+- `peak_dur` -- duration during which all voices sound. Must be
+  non-negative.
+- `fade_dur` -- duration over which voices stagger their exits. Must be
+  non-negative.
+
+Returns the mutated `Score`. The helper registers each voice via
+`Score.add_voice(...)` and then inserts amplitude-shaped `add_note(...)`
+calls across the bloom window, repeating the source phrase as needed to
+fill the voice's active span.
+
+Raises `ValueError` for empty `voice_specs` or any negative duration.
 
 ## Recipes
 

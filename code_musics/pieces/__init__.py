@@ -7,6 +7,7 @@ from code_musics.pieces.bell_pulse import PIECES as _BELL_PULSE_PIECES
 from code_musics.pieces.breath_study import PIECES as _BREATH_STUDY_PIECES
 from code_musics.pieces.bwv_846 import PIECES as _BWV_846_PIECES
 from code_musics.pieces.bwv_846_fugue import PIECES as _BWV_846_FUGUE_PIECES
+from code_musics.pieces.clock_of_7 import PIECES as _CLOCK_OF_7_PIECES
 from code_musics.pieces.coltrane_studies import PIECES as _COLTRANE_PIECES
 from code_musics.pieces.colundi_sequence import PIECES as _COLUNDI_SEQUENCE_PIECES
 from code_musics.pieces.comma_pump import PIECES as _COMMA_PUMP_PIECES
@@ -50,6 +51,7 @@ from code_musics.pieces.techno_studies import PIECES as _TECHNO_PIECES
 from code_musics.pieces.texture_studies import PIECES as _TEXTURE_STUDY_PIECES
 from code_musics.pieces.trance_studies import PIECES as _TRANCE_PIECES
 from code_musics.pieces.va_showcase import PIECES as _VA_SHOWCASE_PIECES
+from code_musics.pieces.va_trance import PIECES as _VA_TRANCE_PIECES
 from code_musics.pieces.velvet_wall import PIECES as _VELVET_WALL_PIECES
 from code_musics.pieces.warming_up import PIECES as _WARMING_UP_PIECES
 from code_musics.pieces.wtc_sketches import PIECES as _WTC_PIECES
@@ -101,8 +103,10 @@ PIECES = merge_piece_maps(
     _DIVA_STUDY_PIECES,
     _MD_STUDY_PIECES,
     _VA_SHOWCASE_PIECES,
+    _VA_TRANCE_PIECES,
     _MOD_MATRIX_STUDY_PIECES,
     _NEWTON_BLOOM_PIECES,
+    _CLOCK_OF_7_PIECES,
 )
 
 __all__ = ["PIECES"]

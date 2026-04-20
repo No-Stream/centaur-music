@@ -85,7 +85,7 @@ Fields:
 - `synth: dict[str, Any] | None = None`
 - `label: str | None = None`
 - `pitch_motion: PitchMotionSpec | None = None`
-- `automation: list[AutomationSpec] | None = None`
+- `automation: list[AutomationSpec] = []`
 
 Validation and behavior:
 
@@ -157,12 +157,17 @@ Convenience constructor for equally spaced partial-based phrases.
 Parameters:
 
 - `partials`
-- `note_dur`
-- `step`
+- `duration` — duration of each note event in seconds
+- `onset_interval` — time between successive note onsets in seconds
 - `amp`
 - `amp_db`
 - `velocity`
 - `synth_defaults`
+
+Deprecated aliases:
+
+- `note_dur` — use `duration` instead; still accepted but emits a `DeprecationWarning`
+- `step` — use `onset_interval` instead; still accepted but emits a `DeprecationWarning`
 
 This is a quick sketching helper, not the only way to build phrases.
 
@@ -179,6 +184,7 @@ Parameters:
 - `start=0.0`
 - `time_scale=1.0`
 - `partial_shift=0.0`
+- `freq_scale=1.0`
 - `amp_scale=1.0`
 - `reverse=False`
 
@@ -187,6 +193,7 @@ Behavior:
 - does not mutate the source phrase
 - scales both onset times and durations
 - shifts partial-space material by addition
+- multiplies absolute-frequency material (notes authored with `freq`) by `freq_scale`; defaults to `1.0` (no change), must be positive
 - multiplies resolved linear amplitude
 - preserves other note metadata such as `velocity` and `pitch_motion`
 - if `reverse=True`, mirrors phrase event placement in time before applying `start`
@@ -271,7 +278,8 @@ Practical interpretation:
 
 - `synth_defaults` is the baseline sound
 - `effects` is the per-voice processing chain
-- `envelope_humanize` is the ADSR variation layer
+- `envelope_humanize` is the ADSR variation layer; it drifts attack/decay/sustain/release times only. The per-stage curve powers (`attack_power`, `decay_power`, `release_power`) and VCV-style `attack_target` overshoot are synth params (see `docs/synth_api.md`) and are NOT drifted by envelope humanization.
+- when `voice_card_spread` (or the legacy `voice_card`) is explicitly set on the voice's synth params, an OB-Xd-style helper multiplicatively scales per-voice attack and release times at render time from the deterministic voice-card offsets — opt-in only, so voices that never set either knob keep their exact authored ADSR times. Use the optional `voice_card_envelope_spread` synth param to override the envelope-rate dimension independently (e.g. spread cutoffs by the full amount but leave envelope times untouched by setting it to `0.0`).
 - `velocity_humanize` is the render-time dynamic variation layer
 - `velocity_group` links multiple voices into a shared velocity-drift family
 - `velocity_to_params` makes louder/softer notes timbrally different
@@ -414,7 +422,7 @@ Behavior:
 
 Fields:
 
-- `f0: float`
+- `f0_hz: float`
 - `sample_rate: int = synth.SAMPLE_RATE`
 - `timing_humanize: TimingHumanizeSpec | None = None`
 - `auto_master_gain_stage: bool = True`
@@ -424,6 +432,8 @@ Fields:
 - `master_effects: list[EffectSpec] = []`
 - `send_buses: list[SendBusSpec] = []`
 - `drift_buses: dict[str, DriftBusSpec] = {}`
+- `macros: dict[str, MacroDefinition] = {}`
+- `modulations: list[ModConnection] = []`
 - `voices: dict[str, Voice] = {}`
 
 ### `Score.add_voice(...)`
@@ -524,6 +534,29 @@ or modulation return instead of duplicating similar insert chains per voice.
 In normal authoring, prefer balancing the effect with voice `mix_db` and per-voice
 `send_db`, leaving `return_db=0.0` unless you explicitly want a global return trim.
 
+### `Score.add_macro(...)`
+
+Registers a named macro scalar for use with `MacroSource` connections in the
+modulation matrix. Macros are shared `[0, 1]` scalars resolved by name; an
+optional `AutomationSpec` lets the macro ride the timeline like any other
+control-scope automation.
+
+Parameters:
+
+- `name: str` — macro name referenced by `MacroSource(name)`
+- `default: float = 0.0` — value used when no automation is attached
+- `automation: AutomationSpec | None = None` — optional control-scope
+  automation (`target.kind == "control"`) that drives the macro over score time
+
+Behavior:
+
+- macros are stored in `Score.macros` as `MacroDefinition` instances keyed by name
+- calling `add_macro(...)` with an existing name replaces the existing definition
+- macros are resolved through `MacroSource(name)` at matrix-sample time; an
+  unregistered name raises at render time
+
+See the Modulation Matrix section below for end-to-end use.
+
 ### `Score.add_drift_bus(...)`
 
 Adds or replaces a named shared pitch-drift bus definition. Voices that set
@@ -557,14 +590,18 @@ for voice_name in ("lead", "alto", "bass"):
     )
 ```
 
-### `Score.get_voice(name)`
+### `Score.get_or_create_voice(name)`
 
-Returns an existing voice or creates a blank `Voice(name=name)` if missing.
+Returns an existing voice or creates a blank `Voice(name=name)` with no
+defaults if missing. `add_note(...)` and `add_phrase(...)` call this
+internally, so pieces that only author notes rarely need to invoke it
+directly.
 
-This is the escape hatch when you want to mutate a voice directly:
+This is the escape hatch when you want to mutate a voice in place without
+going through `add_voice(...)`:
 
 ```python
-voice = score.get_voice("lead")
+voice = score.get_or_create_voice("lead")
 voice.velocity_humanize = None
 ```
 
@@ -600,6 +637,7 @@ Parameters:
 - `partial_shift`
 - `amp_scale`
 - `reverse`
+- `synth` — optional dict of synth overrides merged into each placed note as a base layer; note-level `synth` entries win on conflict. Useful for applying a per-placement articulation tweak (e.g. `synth={"attack_scale": 0.5}`) to an entire phrase without mutating the underlying `Phrase`.
 
 Use this for phrase-first composition. It returns the placed `NoteEvent`s.
 
@@ -679,6 +717,26 @@ Useful for:
 - inspecting per-voice rendering
 - feeding into `export_stem_bundle()` for per-voice WAV export
 
+### `Score.render_stems_with_effect_analysis()`
+
+Renders each voice independently (same as `render_stems()`) and also
+returns per-voice effect diagnostics — the same effect-analysis entries
+the `render_with_effect_analysis()` path emits, but scoped to voice
+inserts only (no send-bus or master-bus analysis).
+
+Returns:
+
+- `tuple[dict[str, np.ndarray], dict[str, list[dict[str, Any]]]]` —
+  `(stems, voice_effects)` where `stems[voice_name]` is the rendered
+  voice stem and `voice_effects[voice_name]` is a list of
+  `EffectAnalysisEntry.to_dict()` payloads describing each insert
+  effect's gain reduction, clipping density, activity level, etc.
+
+Useful when you want stem-level audio alongside actionable diagnostics
+for voice inserts — for example, to flag a compressor that is running
+mostly inactive on a given voice — without paying for a full master-bus
+render.
+
 ### `Score.render_for_stem_export(dry=False)`
 
 Renders all components needed for audio stem WAV export in a single pass.
@@ -755,7 +813,8 @@ interface; each subclass advertises its natural output domain
 
 | Source | Output | Per-note | Notes |
 |---|---|---|---|
-| `LFOSource(rate_hz, waveshape, phase_rad, retrigger, seed)` | bipolar | optional | waveshapes: `sine`, `triangle`, `saw_up`, `saw_down`, `square`, `smoothed_random` |
+| `LFOSource(rate_hz, waveshape, phase_rad, retrigger, seed)` | bipolar | optional | waveshapes: `sine`, `triangle`, `saw_up`, `saw_down`, `square`, `smoothed_random`. `smoothed_random` raises `ValueError` if `rate_hz > 200` (capped below audio rate); use `OscillatorSource` for audio-rate modulation |
+| `OscillatorSource(rate_hz, waveshape, phase, stereo, stereo_phase_offset)` | bipolar | no | audio-rate sibling to `LFOSource` with no sub-audio cap, intended for per-sample synth destinations (PWM, osc2 detune FM, supersaw spread). Waveshapes limited to `sine`, `saw`, `triangle`; no anti-aliasing, so rates near Nyquist will alias (lean on engine oversampling). `stereo=True` returns a `(2, n)` array with the right channel phase-shifted by `stereo_phase_offset` cycles |
 | `EnvelopeSource(attack, hold, decay, sustain, release, *_power)` | unipolar | always | triggered at note onset; mirrors synth ADSR curve powers |
 | `MacroSource(name)` | unipolar | shared | resolved via `Score.add_macro(name, default, automation)` |
 | `VelocitySource(velocity_scale)` | unipolar | always | wraps the resolved (humanized) note velocity |
@@ -891,7 +950,7 @@ The practical render path for one note is:
 6. build pitch trajectory if `pitch_motion` is present
 7. render the raw engine signal
 8. convert velocity into a dB offset using `velocity_db_per_unit`
-9. resolve ADSR with `envelope_humanize`
+9. resolve ADSR with `envelope_humanize` (drifts attack/decay/sustain/release times only; the per-stage curve powers `attack_power` / `decay_power` / `release_power` and `attack_target` overshoot are synth params and are NOT drifted here — see `docs/synth_api.md`)
 10. place the note in time using `timing_humanize`
 11. if `max_polyphony` is set, apply voice-level note allocation; in strict mono this can truncate older notes, and `legato=True` suppresses attack retriggers on overlapped note changes
 12. mix notes into the dry voice stem

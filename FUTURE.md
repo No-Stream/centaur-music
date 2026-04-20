@@ -244,7 +244,40 @@ Remaining follow-up:
 
 ### More voice engine unification
 
-As with our drum voices, let's be able to share pieces b/w our synth voices.
+The unified `synth_voice` engine shipped (see `docs/synth_api.md`). Four
+parallel slots — `osc` / `partials` / `fm` / `noise` — summed into a
+shared post-chain, with four perceptual macros and 15 curated
+cross-pollination presets. Deferred extensions, in priority order:
+
+- **(med) Modal / physical resonator as an operator slot.** Add a
+  `physical` or `resonator` slot type that exposes the modal-bank +
+  hammer/pluck primitives already in `piano.py` / `harpsichord.py` /
+  `_modal.py` as composable layers. End state: `physical_type="pluck"`
+  - `osc_type="supersaw"` + ladder filter as a single voice, instead of
+  having to choose between the `harpsichord` and `synth_voice` engines.
+  Biggest win in unification terms.
+- **(med) Hard-sync and per-slot cross-modulation.** `osc_hard_sync`
+  currently raises `NotImplementedError` when `osc2_level > 0` — the
+  full hard-sync path from `polyblep.py` needs porting. Also useful:
+  FM modulator feeding osc detune or filter cutoff without going
+  through the full `ModConnection` matrix.
+- **(low-med) 4-op / 6-op FM algorithm matrix.** Today's `fm_type="two_op"`
+  covers DX bells, Rhodes-ish tines, modulator-as-timbre. DX7-style
+  4-op / 6-op needs an algorithm-selection surface (carrier-modulator
+  graphs). Non-trivial UX design — defer until a piece actually wants it.
+- **(low) Full modular patching / routing matrix.** Named source nodes
+  routed through named filter/shaper nodes with arbitrary feedback, à
+  la Surge XT / Reaktor. The existing `ModConnection` matrix handles
+  slow-rate modulation; this would cover audio-rate cross-patching.
+  Explicitly out of v1 scope.
+- **(low) "Two of a kind" slots.** Stack two supersaws in one voice, or
+  two additive banks at different octaves. Today you'd use two voices;
+  a wildcard `extra_a` / `extra_b` slot would keep it in one voice. Only
+  worth it when a piece actually feels constrained by one-slot-per-type.
+- **(low) Organ full parity.** Drawbar spectra are covered by
+  `partials_type="drawbars"`; key-click, tonewheel crosstalk, and the
+  scanner vibrato would need explicit slots or preset bundling. Probably
+  better left to `organ.py` — flagged so we don't forget the scope call.
 
 ### Timbre and mix automation
 
@@ -337,17 +370,36 @@ for those).
   `draft`/`fast`/`great`/`divine` controlling oversampling (1/2/2/4x) and
   the ladder solver (ADAA vs Newton-iterated ZDF). See
   `docs/synth_api.md` "Quality Modes".
-- **Iterative Newton solver on external filter feedback loop.** Currently
-  `_filters.py` uses unit-delay `y += tanh((1+3k)·y_prev)` on the
-  feedback_amount path (SVF, ladder, Sallen-Key, cascade). Replace with
-  1–2 Newton steps on the implicit `y = H(x + k·tanh(y))` to eliminate
-  the one-sample delay that damps high-resonance behavior. The
-  intra-filter resonance loop already uses Newton (ladder) / implicit
-  (Sallen-Key); external feedback is the last unit-delay hold-out.
-  Source: u-he "RePro Filters Unveiled" PDF; Urs notes unit-delay
-  approaches smooth/damp feedback behavior and that Newton is
-  well-behaved even near Nyquist. Main beneficiaries: high-resonance
-  self-oscillation character, feedback-growl leads.
+- ~~**Iterative Newton solver on external filter feedback loop.**~~
+  **Partially implemented.** `_filters.py` now closes the external
+  feedback loop implicitly for the six highest-priority topologies
+  (linear SVF, cascade, SEM, Sallen-Key, ladder-Newton, Jupiter-Newton)
+  via a shared `_solve_ext_feedback_newton` helper and combined scalar
+  Newton residuals on the Newton-inner kernels. The default
+  `FilterParams.filter_solver` is now `"newton"` so pieces get the
+  delay-free feedback path by default. Remaining unit-delay hold-outs:
+  - **K35 (MS-20 diode-feedback Sallen-Key).** Uses `_diode_shape` on
+    the feedback instead of `tanh`, so the Newton Jacobian needs the
+    diode-derivative path rather than `sech²`. Self-oscillation
+    character is core to K35, so doing this right matters; low
+    priority because K35 is rarely used.
+  - **Diode 3-pole (TB-303).** Both ADAA and Newton inner paths still
+    use unit-delay on the external feedback. The internal diode feedback
+    tap already uses Newton; extending the solver to include the outer
+    `tanh(ext_fb_drive · y)` is the same pattern as ladder/Jupiter.
+  - **Driven SVF path (`filter_drive > 0`).** The pre-filter `tanh(x)`
+    shape makes the instantaneous input-to-output map nonlinear in `x`,
+    so the affine-collapse derivation used for the clean linear path
+    does not apply. Drive + ext FB is a rare combination; if tackled,
+    consider a two-pass fixed-point iteration around the affine
+    linearisation instead of closed-form Newton.
+
+  Reuse `_solve_ext_feedback_newton(y_warm, affine_const, fb_scale,
+  fb_drive, max_iters, tol)` for pure-affine-body topologies. For
+  topologies with an additional internal tanh feedback (ladder, Jupiter,
+  diode), extend their existing scalar Newton residuals with the
+  outer-feedback term following the pattern in
+  `_apply_ladder_filter_newton_inner` (`outer_newton` branch).
 
 ### Modulation sources and aliveness
 

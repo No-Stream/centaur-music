@@ -82,25 +82,6 @@ _LEAD_7_PHRASE: tuple[float, ...] = (
 # Acid bass line — 16 steps at sub-octave partials.  Accents every 4th step.
 _BASS_16_PATTERN: tuple[float | None, ...] = (
     0.5,
-    1 * None,
-    0.5,
-    None,  # type: ignore[operator]
-    7 / 12,
-    None,
-    0.5,
-    7 / 8 * 0.5,  # 7/8 of the octave-down tonic
-    2 / 3,
-    None,
-    0.5,
-    None,
-    7 / 12,
-    0.5,
-    7 / 16,
-    None,
-)
-# Fix the accidental `1 * None` — use explicit None entries.
-_BASS_16_PATTERN = (
-    0.5,
     None,
     0.5,
     None,
@@ -226,10 +207,7 @@ def _add_hats(score: Score) -> None:
     step_dur = BEAT / 2.0  # 8th notes
     for bar in range(TOTAL_BARS):
         # Thin out during breakdown.
-        if S4_BAR <= bar < S5_BAR:
-            hat_attenuation_db = -8.0
-        else:
-            hat_attenuation_db = 0.0
+        hat_attenuation_db = -8.0 if S4_BAR <= bar < S5_BAR else 0.0
         # Drop hats for the first 4 bars of the breakdown entirely.
         if S4_BAR <= bar < S4_BAR + 4:
             continue
@@ -647,24 +625,6 @@ def _build_pad_spectral_position_automation() -> AutomationSpec:
     )
 
 
-def _build_bass_drive_automation() -> AutomationSpec:
-    """voice_dist_drive ramps into the final 16 bars of groove + apex."""
-    return AutomationSpec(
-        target=AutomationTarget(kind="synth", name="cutoff_drift"),
-        # Using cutoff_drift as a proxy since voice_dist_drive isn't yet in
-        # the supported synth automation param set.  Drive automation for
-        # voice_dist_drive would need a registry addition.
-        segments=(
-            AutomationSegment(
-                start=0.0,
-                end=TOTAL_DUR,
-                shape="hold",
-                value=0.3,
-            ),
-        ),
-    )
-
-
 def _build_pad_mix_automation() -> AutomationSpec:
     """Pad fades in through intro, peaks in apex, fades out in outro."""
     return AutomationSpec(
@@ -881,7 +841,7 @@ def build_score() -> Score:
             "filter_topology": "diode",
             "filter_solver": "newton",
             "quality": "great",
-            "transient_mode": "vcf_reset",
+            "transient_mode": "osc_reset",
             "cutoff_hz": 320.0,
             "resonance_q": 8.0,
             "filter_drive": 0.8,
@@ -936,7 +896,7 @@ def build_score() -> Score:
             "filter_topology": "ladder",
             "filter_solver": "newton",
             "quality": "divine",
-            "transient_mode": "vcf_reset",
+            "transient_mode": "osc_reset",
             "cutoff_hz": 800.0,
             "resonance_q": 22.0,  # matrix adds up to +14 at apex
             "filter_drive": 0.5,

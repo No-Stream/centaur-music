@@ -83,6 +83,8 @@ def render(
     voice_dist_drive = float(params.get("voice_dist_drive", 0.5))
     voice_dist_mix = float(params.get("voice_dist_mix", 1.0))
     voice_dist_tone = float(params.get("voice_dist_tone", 0.0))
+    feedback_amount = float(params.get("feedback_amount", 0.0))
+    feedback_saturation = float(params.get("feedback_saturation", 0.3))
     analog = extract_analog_params(params)
     pitch_drift = analog["pitch_drift"]
     analog_jitter = analog["analog_jitter"]
@@ -295,6 +297,8 @@ def render(
         hpf_cutoff_hz=hpf_cutoff_hz,
         hpf_resonance_q=hpf_resonance_q,
         k35_feedback_asymmetry=k35_feedback_asymmetry,
+        feedback_amount=feedback_amount,
+        feedback_saturation=feedback_saturation,
         filter_solver=quality_config.solver,
         max_newton_iters=quality_config.max_newton_iters,
         newton_tolerance=quality_config.newton_tolerance,

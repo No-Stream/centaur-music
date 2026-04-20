@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections.abc import Callable
-from dataclasses import dataclass, fields
-from typing import Any
+from dataclasses import dataclass
 
 import numba
 import numpy as np
@@ -35,14 +33,7 @@ _DEFAULT_NEWTON_TOLERANCE: float = 1e-9
 
 @dataclass(frozen=True)
 class FilterParams:
-    """Bundles every kwarg accepted by :func:`apply_filter`.
-
-    Engine code constructs this via :meth:`FilterParams.from_engine_params`
-    and passes it through :func:`apply_filter_oversampled` /
-    :func:`apply_filter`.  Each topology wrapper consumes the subset it
-    cares about; unused fields are silently ignored (mirrors how
-    ``bass_compensation`` is ladder-only today).
-    """
+    """Bundles every kwarg accepted by :func:`apply_filter`."""
 
     resonance_q: float = 0.707
     filter_mode: str = "lowpass"
@@ -60,26 +51,6 @@ class FilterParams:
     newton_tolerance: float = _DEFAULT_NEWTON_TOLERANCE
     # Reserved for future k35 topology asymmetric-feedback tuning.
     k35_feedback_asymmetry: float = 0.0
-
-    @classmethod
-    def from_engine_params(
-        cls, params: dict[str, Any], *, defaults: FilterParams | None = None
-    ) -> FilterParams:
-        """Build :class:`FilterParams` from a user-facing engine param dict.
-
-        Reads each field name (exactly matching the dataclass field) from
-        ``params`` with the current default as fallback.  ``defaults`` lets
-        an engine pin its own defaults (e.g. a different ``filter_topology``)
-        before user overrides are applied.
-        """
-        base = defaults if defaults is not None else cls()
-        values: dict[str, Any] = {}
-        for f in fields(cls):
-            if f.name in params:
-                values[f.name] = params[f.name]
-            else:
-                values[f.name] = getattr(base, f.name)
-        return cls(**values)
 
 
 # Amplitude of bootstrap noise injected into feedback summations so that
@@ -267,13 +238,13 @@ _DRIVE_BLEND_EPSILON: float = 0.05
 
 
 def _drive_sat_blend(filter_drive: float) -> float:
-    """Return the smoothstep blend coefficient used by driven filter kernels.
+    """Smoothstep blend coefficient for driven filter kernels.
 
-    At ``filter_drive <= 0`` the coefficient is exactly ``0.0`` so the clean
-    integrator path is preserved.  At ``filter_drive >= _DRIVE_BLEND_EPSILON``
-    the coefficient is exactly ``1.0`` so the existing driven-path numerics
-    are reproduced byte-for-byte.  Between those endpoints the classic
-    smoothstep ``3t² - 2t³`` produces a C¹-continuous ramp.
+    Endpoints preserved exactly: 0 at ``filter_drive <= 0``, 1 at
+    ``filter_drive >= _DRIVE_BLEND_EPSILON``.  Body mirrors
+    :func:`code_musics.engines._dsp_utils.smoothstep_blend`; duplicated
+    here to avoid a circular import (_dsp_utils already imports
+    :class:`FilterParams` from this module).
     """
     if filter_drive <= 0.0:
         return 0.0
@@ -2632,17 +2603,20 @@ def _apply_k35_inner(
 ) -> np.ndarray:
     """Korg35 LP: two ZDF 1-poles inside a positive-feedback resonance loop.
 
-    Closed-form ZDF solve using the alpha-compensation identity from
-    Will Pirkle's K35 chapter / sst-filters' implementation:
+    Hybrid solver: the two series 1-pole stages use ZDF/TPT integration,
+    and an ``alpha = 1 + k * g_1p^2`` pre-scale approximates the
+    implicit-solve denominator, but the diode-shaped feedback term reads
+    ``y_prev`` (one-sample-delayed output) rather than the true current
+    ``y``.  Self-oscillation threshold is therefore tuned empirically
+    rather than matching the textbook ``k = 2`` of a fully-implicit K35.
+    A proper closed-form solve would require Newton iteration on the
+    diode nonlinearity inside each sample; the empirical tuning here
+    preserves the MS-20 character without that cost.
 
-        y = LP2(LP1((x + k * diode(y_prev)) / alpha))
-        alpha = 1 + k * g_1p * g_1p
-
-    where ``g_1p = g / (1 + g)`` is the one-pole TPT gain.  The output
-    feedback is shaped by the asymmetric diode (``_diode_shape``) rather
-    than a tanh — this is the defining MS-20 nonlinearity.  Input-stage
-    drive also uses asymmetric soft-clip so the filter "crunches" at
-    moderate drives (the real MS-20 is famously easy to overload).
+    Output feedback shape: ``_diode_shape`` (asymmetric) rather than
+    ``tanh`` — the defining MS-20 nonlinearity.  Input-stage drive
+    adds an asymmetric soft-clip so the filter "crunches" at moderate
+    drives.
 
     HP mode mirrors the LP topology with an HPF stage inside the loop
     and an LPF on the output — MS-20's 12 dB/oct HP character.
@@ -2721,14 +2695,8 @@ def _apply_k35_inner(
         else:  # LP (also BP/notch coerce)
             # K35 LP: two LPs in series inside the positive-feedback loop.
             u = alpha * (x + k_feedback * fb)
-            # First LPF stage.
-            v1 = (u - s_a) / (1.0 + g)
-            lp1 = v1 + s_a + g * v1  # = g_1p * u + (1-g_1p) * s_a rewritten
-            # Use the clean ZDF form directly:
-            # Actually compute lp1 via the TPT 1-pole update:
             lp1 = g_1p * u + one_minus * s_a
             s_a = 2.0 * lp1 - s_a  # TPT trapezoidal state update
-            # Second LPF stage.
             lp2 = g_1p * lp1 + one_minus * s_b
             s_b = 2.0 * lp2 - s_b
             y = lp2
@@ -3152,219 +3120,6 @@ def _apply_diode_filter(
 # if/elif tree used so audio behavior is identical.
 
 
-def _dispatch_svf(
-    signal: np.ndarray,
-    *,
-    cutoff_profile: np.ndarray,
-    sample_rate: int,
-    fp: FilterParams,
-) -> np.ndarray:
-    morph = max(0.0, float(fp.filter_morph))
-    if morph == 0.0:
-        return apply_zdf_svf(
-            signal,
-            cutoff_profile=cutoff_profile,
-            resonance_q=fp.resonance_q,
-            sample_rate=sample_rate,
-            filter_mode=fp.filter_mode,
-            filter_drive=fp.filter_drive,
-            filter_even_harmonics=fp.filter_even_harmonics,
-            feedback_amount=fp.feedback_amount,
-            feedback_saturation=fp.feedback_saturation,
-            solver=fp.filter_solver,
-            max_newton_iters=fp.max_newton_iters,
-            newton_tolerance=fp.newton_tolerance,
-        )
-    return _apply_svf_with_morph(
-        signal,
-        cutoff_profile=cutoff_profile,
-        resonance_q=fp.resonance_q,
-        sample_rate=sample_rate,
-        filter_mode=fp.filter_mode,
-        filter_drive=fp.filter_drive,
-        filter_even_harmonics=fp.filter_even_harmonics,
-        feedback_amount=fp.feedback_amount,
-        feedback_saturation=fp.feedback_saturation,
-        morph=morph,
-        solver=fp.filter_solver,
-        max_newton_iters=fp.max_newton_iters,
-        newton_tolerance=fp.newton_tolerance,
-    )
-
-
-def _dispatch_ladder(
-    signal: np.ndarray,
-    *,
-    cutoff_profile: np.ndarray,
-    sample_rate: int,
-    fp: FilterParams,
-) -> np.ndarray:
-    morph = max(0.0, float(fp.filter_morph))
-    return _apply_ladder_filter(
-        signal,
-        cutoff_profile=cutoff_profile,
-        resonance_q=fp.resonance_q,
-        sample_rate=sample_rate,
-        filter_mode=fp.filter_mode,
-        filter_drive=fp.filter_drive,
-        bass_compensation=fp.bass_compensation,
-        filter_even_harmonics=fp.filter_even_harmonics,
-        feedback_amount=fp.feedback_amount,
-        feedback_saturation=fp.feedback_saturation,
-        filter_morph=morph,
-        solver=fp.filter_solver,
-        max_newton_iters=fp.max_newton_iters,
-        newton_tolerance=fp.newton_tolerance,
-    )
-
-
-def _dispatch_sallen_key(
-    signal: np.ndarray,
-    *,
-    cutoff_profile: np.ndarray,
-    sample_rate: int,
-    fp: FilterParams,
-) -> np.ndarray:
-    return _apply_sallen_key(
-        signal,
-        cutoff_profile=cutoff_profile,
-        resonance_q=fp.resonance_q,
-        sample_rate=sample_rate,
-        filter_mode=fp.filter_mode,
-        filter_drive=fp.filter_drive,
-        feedback_amount=fp.feedback_amount,
-        feedback_saturation=fp.feedback_saturation,
-    )
-
-
-def _dispatch_cascade(
-    signal: np.ndarray,
-    *,
-    cutoff_profile: np.ndarray,
-    sample_rate: int,
-    fp: FilterParams,
-) -> np.ndarray:
-    morph = max(0.0, float(fp.filter_morph))
-    return _apply_cascade(
-        signal,
-        cutoff_profile=cutoff_profile,
-        resonance_q=fp.resonance_q,
-        sample_rate=sample_rate,
-        filter_mode=fp.filter_mode,
-        filter_drive=fp.filter_drive,
-        feedback_amount=fp.feedback_amount,
-        feedback_saturation=fp.feedback_saturation,
-        filter_morph=morph,
-        solver=fp.filter_solver,
-        max_newton_iters=fp.max_newton_iters,
-        newton_tolerance=fp.newton_tolerance,
-    )
-
-
-_TopologyDispatch = Callable[..., np.ndarray]
-
-
-def _dispatch_sem(
-    signal: np.ndarray,
-    *,
-    cutoff_profile: np.ndarray,
-    sample_rate: int,
-    fp: FilterParams,
-) -> np.ndarray:
-    return _apply_sem(
-        signal,
-        cutoff_profile=cutoff_profile,
-        resonance_q=fp.resonance_q,
-        sample_rate=sample_rate,
-        filter_mode=fp.filter_mode,
-        filter_drive=fp.filter_drive,
-        feedback_amount=fp.feedback_amount,
-        feedback_saturation=fp.feedback_saturation,
-        filter_morph=fp.filter_morph,
-        solver=fp.filter_solver,
-        max_newton_iters=fp.max_newton_iters,
-        newton_tolerance=fp.newton_tolerance,
-    )
-
-
-def _dispatch_jupiter(
-    signal: np.ndarray,
-    *,
-    cutoff_profile: np.ndarray,
-    sample_rate: int,
-    fp: FilterParams,
-) -> np.ndarray:
-    return _apply_jupiter_filter(
-        signal,
-        cutoff_profile=cutoff_profile,
-        resonance_q=fp.resonance_q,
-        sample_rate=sample_rate,
-        filter_mode=fp.filter_mode,
-        filter_drive=fp.filter_drive,
-        feedback_amount=fp.feedback_amount,
-        feedback_saturation=fp.feedback_saturation,
-        filter_morph=fp.filter_morph,
-        solver=fp.filter_solver,
-        max_newton_iters=fp.max_newton_iters,
-        newton_tolerance=fp.newton_tolerance,
-    )
-
-
-def _dispatch_k35(
-    signal: np.ndarray,
-    *,
-    cutoff_profile: np.ndarray,
-    sample_rate: int,
-    fp: FilterParams,
-) -> np.ndarray:
-    return _apply_k35(
-        signal,
-        cutoff_profile=cutoff_profile,
-        resonance_q=fp.resonance_q,
-        sample_rate=sample_rate,
-        filter_mode=fp.filter_mode,
-        filter_drive=fp.filter_drive,
-        k35_feedback_asymmetry=fp.k35_feedback_asymmetry,
-        feedback_amount=fp.feedback_amount,
-        feedback_saturation=fp.feedback_saturation,
-    )
-
-
-def _dispatch_diode(
-    signal: np.ndarray,
-    *,
-    cutoff_profile: np.ndarray,
-    sample_rate: int,
-    fp: FilterParams,
-) -> np.ndarray:
-    return _apply_diode_filter(
-        signal,
-        cutoff_profile=cutoff_profile,
-        resonance_q=fp.resonance_q,
-        sample_rate=sample_rate,
-        filter_mode=fp.filter_mode,
-        filter_drive=fp.filter_drive,
-        feedback_amount=fp.feedback_amount,
-        feedback_saturation=fp.feedback_saturation,
-        filter_morph=fp.filter_morph,
-        solver=fp.filter_solver,
-        max_newton_iters=fp.max_newton_iters,
-        newton_tolerance=fp.newton_tolerance,
-    )
-
-
-_TOPOLOGY_DISPATCH: dict[str, _TopologyDispatch] = {
-    "svf": _dispatch_svf,
-    "ladder": _dispatch_ladder,
-    "sallen_key": _dispatch_sallen_key,
-    "cascade": _dispatch_cascade,
-    "sem": _dispatch_sem,
-    "jupiter": _dispatch_jupiter,
-    "k35": _dispatch_k35,
-    "diode": _dispatch_diode,
-}
-
-
 def apply_filter(
     signal: np.ndarray,
     *,
@@ -3446,12 +3201,143 @@ def apply_filter(
             False,
         )
 
-    return _TOPOLOGY_DISPATCH[fp.filter_topology](
-        sig,
-        cutoff_profile=cutoff_profile,
-        sample_rate=sample_rate,
-        fp=fp,
-    )
+    topology = fp.filter_topology
+    morph = max(0.0, float(fp.filter_morph))
+    if topology == "svf":
+        if morph == 0.0:
+            return apply_zdf_svf(
+                sig,
+                cutoff_profile=cutoff_profile,
+                resonance_q=fp.resonance_q,
+                sample_rate=sample_rate,
+                filter_mode=fp.filter_mode,
+                filter_drive=fp.filter_drive,
+                filter_even_harmonics=fp.filter_even_harmonics,
+                feedback_amount=fp.feedback_amount,
+                feedback_saturation=fp.feedback_saturation,
+                solver=fp.filter_solver,
+                max_newton_iters=fp.max_newton_iters,
+                newton_tolerance=fp.newton_tolerance,
+            )
+        return _apply_svf_with_morph(
+            sig,
+            cutoff_profile=cutoff_profile,
+            resonance_q=fp.resonance_q,
+            sample_rate=sample_rate,
+            filter_mode=fp.filter_mode,
+            filter_drive=fp.filter_drive,
+            filter_even_harmonics=fp.filter_even_harmonics,
+            feedback_amount=fp.feedback_amount,
+            feedback_saturation=fp.feedback_saturation,
+            morph=morph,
+            solver=fp.filter_solver,
+            max_newton_iters=fp.max_newton_iters,
+            newton_tolerance=fp.newton_tolerance,
+        )
+    if topology == "ladder":
+        return _apply_ladder_filter(
+            sig,
+            cutoff_profile=cutoff_profile,
+            resonance_q=fp.resonance_q,
+            sample_rate=sample_rate,
+            filter_mode=fp.filter_mode,
+            filter_drive=fp.filter_drive,
+            bass_compensation=fp.bass_compensation,
+            filter_even_harmonics=fp.filter_even_harmonics,
+            feedback_amount=fp.feedback_amount,
+            feedback_saturation=fp.feedback_saturation,
+            filter_morph=morph,
+            solver=fp.filter_solver,
+            max_newton_iters=fp.max_newton_iters,
+            newton_tolerance=fp.newton_tolerance,
+        )
+    if topology == "sallen_key":
+        return _apply_sallen_key(
+            sig,
+            cutoff_profile=cutoff_profile,
+            resonance_q=fp.resonance_q,
+            sample_rate=sample_rate,
+            filter_mode=fp.filter_mode,
+            filter_drive=fp.filter_drive,
+            feedback_amount=fp.feedback_amount,
+            feedback_saturation=fp.feedback_saturation,
+            solver=fp.filter_solver,
+            max_newton_iters=fp.max_newton_iters,
+            newton_tolerance=fp.newton_tolerance,
+        )
+    if topology == "cascade":
+        return _apply_cascade(
+            sig,
+            cutoff_profile=cutoff_profile,
+            resonance_q=fp.resonance_q,
+            sample_rate=sample_rate,
+            filter_mode=fp.filter_mode,
+            filter_drive=fp.filter_drive,
+            feedback_amount=fp.feedback_amount,
+            feedback_saturation=fp.feedback_saturation,
+            filter_morph=morph,
+            solver=fp.filter_solver,
+            max_newton_iters=fp.max_newton_iters,
+            newton_tolerance=fp.newton_tolerance,
+        )
+    if topology == "sem":
+        return _apply_sem(
+            sig,
+            cutoff_profile=cutoff_profile,
+            resonance_q=fp.resonance_q,
+            sample_rate=sample_rate,
+            filter_mode=fp.filter_mode,
+            filter_drive=fp.filter_drive,
+            feedback_amount=fp.feedback_amount,
+            feedback_saturation=fp.feedback_saturation,
+            filter_morph=fp.filter_morph,
+            solver=fp.filter_solver,
+            max_newton_iters=fp.max_newton_iters,
+            newton_tolerance=fp.newton_tolerance,
+        )
+    if topology == "jupiter":
+        return _apply_jupiter_filter(
+            sig,
+            cutoff_profile=cutoff_profile,
+            resonance_q=fp.resonance_q,
+            sample_rate=sample_rate,
+            filter_mode=fp.filter_mode,
+            filter_drive=fp.filter_drive,
+            feedback_amount=fp.feedback_amount,
+            feedback_saturation=fp.feedback_saturation,
+            filter_morph=fp.filter_morph,
+            solver=fp.filter_solver,
+            max_newton_iters=fp.max_newton_iters,
+            newton_tolerance=fp.newton_tolerance,
+        )
+    if topology == "k35":
+        return _apply_k35(
+            sig,
+            cutoff_profile=cutoff_profile,
+            resonance_q=fp.resonance_q,
+            sample_rate=sample_rate,
+            filter_mode=fp.filter_mode,
+            filter_drive=fp.filter_drive,
+            k35_feedback_asymmetry=fp.k35_feedback_asymmetry,
+            feedback_amount=fp.feedback_amount,
+            feedback_saturation=fp.feedback_saturation,
+        )
+    if topology == "diode":
+        return _apply_diode_filter(
+            sig,
+            cutoff_profile=cutoff_profile,
+            resonance_q=fp.resonance_q,
+            sample_rate=sample_rate,
+            filter_mode=fp.filter_mode,
+            filter_drive=fp.filter_drive,
+            feedback_amount=fp.feedback_amount,
+            feedback_saturation=fp.feedback_saturation,
+            filter_morph=fp.filter_morph,
+            solver=fp.filter_solver,
+            max_newton_iters=fp.max_newton_iters,
+            newton_tolerance=fp.newton_tolerance,
+        )
+    raise ValueError(f"Unknown filter_topology: {topology!r}")
 
 
 @numba.njit(cache=True)

@@ -401,14 +401,21 @@ See `FUTURE.md` for way more ideas.
   the full per-topology parameter surface, and
   `code_musics/pieces/filter_palette_study.py` for an 8-topology A/B tour.
 - The ladder filter supports a Diva-style **Newton-iterated ZDF solver**
-  (`filter_solver="newton"`) that resolves the delay-free feedback loop
-  implicitly per-sample. Engine-level `quality` param (`"draft"` / `"fast"`
-  / `"great"` / `"divine"`, default `"great"`) picks the solver + internal
-  oversampling factor. Audibly cleaner self-oscillation and drive behavior
-  vs. the prior one-step-delay ADAA path. See `docs/synth_api.md` Quality
-  Modes for the full mapping and `diva_bass_resonance`, `cs80_attack`,
-  `prophet_pad`, `moog_acid_newton`, `sk_bite_lead`, `cascade_bass` presets
-  for showcase patches.
+  (`filter_solver="newton"`, now the default) that resolves the delay-free
+  feedback loop implicitly per-sample. Engine-level `quality` param
+  (`"draft"` / `"fast"` / `"great"` / `"divine"`, default `"great"`) picks
+  the solver + internal oversampling factor. Audibly cleaner self-oscillation
+  and drive behavior vs. the prior one-step-delay ADAA path. See
+  `docs/synth_api.md` Quality Modes for the full mapping and
+  `diva_bass_resonance`, `cs80_attack`, `prophet_pad`, `moog_acid_newton`,
+  `sk_bite_lead`, `cascade_bass` presets for showcase patches.
+- The Newton solver also closes the **external feedback loop**
+  (`feedback_amount`) implicitly on `svf`, `cascade`, `sem`, `sallen_key`,
+  `ladder`, `jupiter` — eliminating the unit-delay damping that previously
+  smoothed out high-resonance and feedback-growl leads. `k35` and `diode`
+  still use unit-delay ext feedback (see `FUTURE.md` for the
+  diode-derivative Jacobian they need). `filter_solver="adaa"` remains
+  bit-identical to the pre-change behaviour everywhere.
 - Oscillator imperfection params (`osc_asymmetry`, `osc_softness`,
   `osc_dc_offset`, `osc_shape_drift`) model analog VCO behavior in the
   `polyblep` and `filtered_stack` engines.
@@ -496,6 +503,21 @@ See `FUTURE.md` for way more ideas.
   sounds. Supports optional multi-point envelopes for body tail decay and
   overall amplitude shaping (gated claps). Presets: `909_clap`, `tight_clap`,
   `big_clap`, `finger_snap`. Use `engine="clap"` in `synth_defaults`.
+- The `synth_voice` engine is the unified composable tonal synthesizer —
+  **prefer it for new melodic/pad/lead voices**. Four parallel source slots
+  (`osc`: polyblep/supersaw/pulse; `partials`: additive/spectralwave/drawbars;
+  `fm`: 2-op; `noise`: white/pink/bandpass/flow) summed into a shared
+  post-chain (HPF → full `_filters.py` topology palette → VCA → voice shaper).
+  Flat-namespace params with slot prefixes, `{slot}_type=None` disables any
+  slot. Four perceptual macros — `brightness` / `movement` / `body` / `dirt` —
+  fill unset params via `_set_if_absent` (preset → macro → user kwargs wins).
+  15 curated cross-pollination presets ship (`fm_bell_over_supersaw`,
+  `additive_pad_through_ladder`, `drawbar_diode_acid`, …). The older tonal
+  engines (`polyblep`, `va`, `additive`, `fm`, `filtered_stack`, `organ`,
+  `piano`, `piano_additive`, `harpsichord`) stay registered for existing
+  pieces; piano and harpsichord remain dedicated engines because their
+  hammer/pluck → modal-resonator topology doesn't fit the source→filter→VCA
+  model. See `docs/synth_api.md` for the full surface.
 - The `drum_voice` engine is a unified composable percussion synthesizer with four
   independent layers (exciter, tone, noise, metallic). It replaces the five separate
   drum engines with a single architecture where any synthesis mode can be combined

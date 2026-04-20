@@ -1154,6 +1154,9 @@ def render(
     if comb_position == "pre_filter":
         pre = _comb(pre, mix=1.0)
 
+    # VA models late-90s/00s VSTi DSP, which used unit-delay ADAA feedback.
+    # Pin the solver so the engine keeps its period character even when the
+    # global FilterParams default is Newton.
     def _f1(sig: np.ndarray) -> np.ndarray:
         return apply_filter(
             sig,
@@ -1171,6 +1174,7 @@ def render(
             feedback_amount=filter1["feedback_amount"],
             feedback_saturation=filter1["feedback_saturation"],
             k35_feedback_asymmetry=filter1["k35_feedback_asymmetry"],
+            filter_solver="adaa",
         )
 
     def _f2(sig: np.ndarray) -> np.ndarray:
@@ -1190,6 +1194,7 @@ def render(
             feedback_amount=filter2["feedback_amount"],
             feedback_saturation=filter2["feedback_saturation"],
             k35_feedback_asymmetry=filter2["k35_feedback_asymmetry"],
+            filter_solver="adaa",
         )
 
     if filter_routing == "single":

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from code_musics.engines._waveshaper import apply_waveshaper
 from code_musics.engines.polyblep import render
 
 SR = 44100
@@ -125,15 +126,14 @@ class TestVoiceDistPreSumBeatsPostSum:
             )
             pre_sum += distorted_note
 
-        # Post-sum reference: same dry sum passed through an equivalent
-        # hard clip (scaled pre-gain matches the internal drive mapping of
-        # `apply_voice_dist` — drive=1.5 -> internal 0.75 -> hard clip
-        # with that drive).  We use a simple tanh-ish hard clip since
-        # exact shape doesn't matter; IMD presence does.
+        # Post-sum reference: same dry sum passed through the canonical
+        # hard-clip waveshaper with the same internal drive the voice_dist
+        # helper would apply (drive=1.5 -> internal 0.75).  Calling
+        # ``apply_waveshaper`` directly keeps this test honest if the
+        # gain law in ``_waveshaper`` ever gets retuned.
         peak = np.max(np.abs(dry_sum))
         normalized = dry_sum / max(peak, 1e-9)
-        pre_gain = 1.0 + 0.75 * 4.0  # matches apply_waveshaper hard_clip gain law
-        post_sum = np.clip(normalized * pre_gain, -1.0, 1.0)
+        post_sum = apply_waveshaper(normalized, algorithm="hard_clip", drive=0.75)
 
         # Focus on a set of IMD frequencies: pairwise |f_i +/- f_j|
         # excluding near-harmonic coincidences.  220+275=495, 220-275=55,

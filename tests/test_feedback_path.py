@@ -59,8 +59,11 @@ class TestFeedbackPath:
         feedback_hf = float(np.sum(np.abs(np.fft.rfft(feedback))[5:]))
         assert feedback_hf > clean_hf * 1.2
 
-    @pytest.mark.parametrize("topology", ["svf", "ladder"])
-    def test_feedback_works_both_topologies(self, topology: str) -> None:
+    @pytest.mark.parametrize(
+        "topology",
+        ["svf", "ladder", "sallen_key", "cascade", "sem", "jupiter", "k35", "diode"],
+    )
+    def test_feedback_works_all_topologies(self, topology: str) -> None:
         sig = _sine()
         cutoff = np.full(len(sig), 2000.0)
         result = apply_filter(

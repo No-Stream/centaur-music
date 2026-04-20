@@ -205,9 +205,11 @@ class TestOsc1Osc2NoiseIndependence:
         # With fully shared RNG streams: corr ~= 1.0 (perfectly correlated).
         # With independent streams: corr drops toward ~0.7 (since osc1's
         # noise is still a big component of both_noise, but osc2's
-        # decorrelated noise pulls it down).  We require a clear gap
-        # from 1.0.
-        assert corr < 0.95, (
+        # decorrelated noise pulls it down).  0.85 is halfway between the
+        # independent baseline and 1.0 — tight enough to catch a
+        # scaled-shared bug (``osc2 = 0.5 * osc1_noise`` → corr ≈ 0.95)
+        # while leaving headroom for natural RNG variance.
+        assert corr < 0.85, (
             f"osc1 and osc2 phase-noise streams appear correlated; "
             f"Pearson(osc1_noise, both_noise) = {corr:.4f}"
         )
