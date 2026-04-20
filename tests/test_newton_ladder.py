@@ -322,9 +322,10 @@ class TestNewtonIterations:
 
 
 class TestDispatchBackwardsCompatible:
-    def test_default_solver_remains_adaa(self) -> None:
-        """When filter_solver is omitted, behavior must equal the pre-change
-        ADAA ladder. Other call sites (drum_voice etc.) rely on this."""
+    def test_default_solver_is_newton(self) -> None:
+        """The default solver is Newton ('great' quality) so pieces get the
+        delay-free feedback path out of the box.  ``filter_solver="adaa"``
+        remains available for the lower-quality draft path."""
         sig = _test_signal(0.3)
         cutoff = np.full(len(sig), 1000.0)
         default = apply_filter(
@@ -334,15 +335,15 @@ class TestDispatchBackwardsCompatible:
             filter_topology="ladder",
             filter_drive=0.5,
         )
-        explicit_adaa = apply_filter(
+        explicit_newton = apply_filter(
             sig,
             cutoff_profile=cutoff,
             sample_rate=SR,
             filter_topology="ladder",
             filter_drive=0.5,
-            filter_solver="adaa",
+            filter_solver="newton",
         )
-        np.testing.assert_allclose(default, explicit_adaa)
+        np.testing.assert_allclose(default, explicit_newton)
 
     def test_unknown_solver_raises(self) -> None:
         sig = _test_signal(0.1)

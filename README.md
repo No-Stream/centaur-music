@@ -18,11 +18,34 @@ developed works. Not everything sounds good yet, and that's fine.
 works in frequency ratios, not MIDI note numbers. Phrases, voices, effects, and
 humanization are all tuning-agnostic from the ground up.
 
-**11 synth engines** designed for microtonal work: additive (with spectral
-partial control for timbre-harmony fusion), FM, filtered-stack, polyBLEP,
-modal piano, drawbar organ, pluck-excitation harpsichord, 808/909 kick and tom,
-noise percussion, legacy additive piano, and Surge XT (FM, VA) + Vital (wavetable)
-via VSTi hosting.
+**18 synth engines** (16 native + 2 plugin hosts) designed for microtonal work.
+Native tonal: `additive` (with spectral partial control for timbre-harmony
+fusion), `fm`, `filtered_stack`, `polyblep`, `va` (supersaw / spectral-wave
+with dual-filter routing, comb, and voice-level distortion), `organ` (drawbar
+with tonewheel drift and scanner chorus), `piano` (modal with hammer physics),
+`harpsichord` (pluck + modal resonators), and legacy `piano_additive`. Native
+percussive: `drum_voice` (unified composable drum engine with 808/909 presets
+plus Machinedrum-inspired EFM, PI modal, and sample-exciter kernels and a full
+shaper palette), plus the dedicated `kick_tom`, `snare`, `clap`,
+`metallic_perc`, `noise_perc`, and `sample` engines. Plugin hosts: Surge XT
+(FM, VA) and Vital (wavetable) via MPE-style VSTi hosting.
+
+**Vital-style modulation matrix.** Per-connection routing with source
+(LFO, envelope, macro, velocity, random, constant, drift, oscillator),
+destination, amount, bipolar/stereo/power shaping, and combine modes. A
+whitelisted subset of engine params (cutoff, pulse width, detune, osc
+spread) accepts per-sample audio-rate modulation.
+
+**Deep filter and analog-character palette.** Eight filter topologies
+(SVF, ladder, Sallen-Key, cascade, SEM, Jupiter, K35, diode), an optional
+Newton-iterated ZDF solver with quality modes, per-voice distortion slots
+(`voice_dist_mode`), and analog-character params covering voice-card
+spread, CV jitter, phase noise, and oscillator imperfections.
+
+**Physical-model spectrum builders.** `spectra.py` generates partial sets
+for membranes, bars, plates, tubes, bowls, vowel formants, and
+fractal/stretched spectra. Plug them straight into the additive or
+drum_voice engines for timbre-harmony co-design.
 
 **Phrase-first composition.** Build motifs with `line()` and `ratio_line()`,
 transform them with `concat`, `overlay`, `echo`, place them with `sequence` and
@@ -31,7 +54,10 @@ metered-time layer adds bar/beat grid helpers and swing.
 
 **Generative tools.** Weighted pitch pools, euclidean rhythms, probability gates,
 Markov chains, Turing machine sequencers, harmonic lattice walkers, and
-stochastic cloud generators. All seeded and deterministic.
+stochastic cloud generators. Rhythm helpers: `prob_rhythm` (weighted metric
+probability), `AksakPattern` (additive meter with Balkan/Turkish presets),
+`ca_rhythm` and `ca_rhythm_layers` (cellular-automata rhythms), and
+`mutate_rhythm` (stochastic groove variation). All seeded and deterministic.
 
 **Full MIDI export** with per-voice stems and shared tuning files (Scala, TUN,
 KBM) for loading into external synths and DAWs. Start your tracks here and finish
@@ -39,14 +65,19 @@ them in your favorite DAW. (Most early 2026 LLMs have poor or nonexistent audio 
 so fine-grained mixing tweaks are better done in a DAW, either on audio stems or from MIDI
 with tuning files / MPE.)
 
+**Audio stem export.** `make stems` writes per-voice wet or dry WAVs plus send
+bus returns and an optional mastered reference mix, alongside a JSON manifest
+describing the bundle. Pairs with MIDI export as a DAW on-ramp.
+
 **Render analysis and visual feedback.** Mel spectrograms, tuning-aware
 chromagrams, spectral contrast, artifact-risk warnings, effect-chain diagnostics,
 and timing-drift analysis, which are the primary feedback channel since most LLMs can't hear
 audio.
 
-**60+ registered pieces and studies** across JI, harmonic series, septimal,
+**85+ registered pieces and studies** across JI, harmonic series, septimal,
 Colundi-inspired, trance, and contrapuntal directions. Most are stubs, unfinished,
-or academic. A few sound decent, I think.
+or academic. A few sound decent, I think. Flagship pieces to start from:
+`slow_glass_v2`, `iron_pulse`, `tape_hymn`, `va_showcase`, `mod_matrix_study`.
 
 ## Quick start
 
@@ -90,16 +121,27 @@ code_musics/           main package
   pieces/              named musical works (studies, sketches, full pieces)
   tuning.py            JI, harmonic series, utonal, EDO helpers
   humanize.py          timing, envelope, velocity humanization
+  automation.py        AutomationSegment / AutomationSpec / AutomationTarget
+  modulation.py        Vital-style modulation matrix
+  pitch_motion.py      per-note pitch motion (glide, vibrato, bend)
   smear.py             loveless-inspired pitch smearing
   harmonic_drift.py    JI-aware pitch drift trajectories
+  spectra.py           physical-model spectral builders
+  drum_helpers.py      percussion voice/bus convenience helpers
   meter.py             Timeline, bar/beat, rhythmic values
   midi_export.py       MIDI export with tuning files
+  midi_import.py       MIDI file import into the score model
+  stem_export.py       audio stem export with send bus returns
   analysis.py          render analysis and visual feedback
+  inspection.py        timestamp inspector for score context
+  evaluate.py          LLM-based piece evaluation
+  eval_rubric.py       evaluation rubric and prompt templates
   render.py            named-piece orchestration layer
 docs/                  API reference
   synth_api.md         engines, presets, effects, parameters
   score_api.md         score model, render pipeline, expression
   composition_api.md   composition helpers, generative tools, humanization
+  midi_export.md       MIDI export reference
 main.py                CLI entrypoint
 FUTURE.md              roadmap and ideas
 ```
@@ -110,4 +152,5 @@ FUTURE.md              roadmap and ideas
 - `docs/synth_api.md`: synth engines, presets, and effect chain reference
 - `docs/score_api.md`: score model, render pipeline, expression controls
 - `docs/composition_api.md`: composition helpers, generative tools, humanization
+- `docs/midi_export.md`: MIDI export with per-voice stems and tuning files
 - `FUTURE.md`: roadmap, ideas, and things to explore

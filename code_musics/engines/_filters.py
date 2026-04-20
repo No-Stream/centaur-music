@@ -608,6 +608,9 @@ def apply_zdf_svf(
     filter_even_harmonics: float = 0.0,
     feedback_amount: float = 0.0,
     feedback_saturation: float = 0.0,
+    solver: str = "newton",
+    max_newton_iters: int = _DEFAULT_NEWTON_MAX_ITERS,
+    newton_tolerance: float = _DEFAULT_NEWTON_TOLERANCE,
 ) -> np.ndarray:
     """Apply a per-sample ZDF/TPT state-variable filter.
 
@@ -620,6 +623,11 @@ def apply_zdf_svf(
 
     When ``feedback_amount > 0``, post-filter output feeds back to the pre-filter
     input through a saturating tanh stage (Minimoog-style mixer feedback).
+
+    ``solver="newton"`` closes the external feedback loop implicitly on the
+    clean (``filter_drive=0``) linear path.  The driven branch stays on
+    unit-delay feedback — its pre-filter tanh shape breaks the affine-collapse
+    derivation, and drive+ext-FB is a rare combination in practice.
     """
     q = max(0.5, float(resonance_q))
     damping = 1.0 / q
@@ -640,6 +648,9 @@ def apply_zdf_svf(
     fb_sat = max(0.0, float(feedback_saturation))
     bootstrap_seed = _bootstrap_seed(sig, "svf")
     has_bootstrap = sig.shape[0] > 0
+    use_newton_fb = solver == "newton" and filter_drive <= 0.0
+    newton_iters = max(1, int(max_newton_iters))
+    newton_tol = max(1e-12, float(newton_tolerance))
 
     linear_filtered = _apply_linear_zdf_svf(
         sig,
@@ -654,6 +665,9 @@ def apply_zdf_svf(
         0.0,
         fb_amt,
         fb_sat,
+        use_newton_fb,
+        newton_iters,
+        newton_tol,
     )
 
     if filter_drive <= 0.0:
@@ -693,6 +707,9 @@ def _apply_svf_with_morph(
     feedback_amount: float = 0.0,
     feedback_saturation: float = 0.0,
     morph: float,
+    solver: str = "newton",
+    max_newton_iters: int = _DEFAULT_NEWTON_MAX_ITERS,
+    newton_tolerance: float = _DEFAULT_NEWTON_TOLERANCE,
 ) -> np.ndarray:
     """SVF path with mode morphing -- calls inner loops directly."""
     q = max(0.5, float(resonance_q))
@@ -714,6 +731,9 @@ def _apply_svf_with_morph(
     fb_sat = max(0.0, float(feedback_saturation))
     bootstrap_seed = _bootstrap_seed(sig, "svf_morph")
     has_bootstrap = sig.shape[0] > 0
+    use_newton_fb = solver == "newton" and filter_drive <= 0.0
+    newton_iters = max(1, int(max_newton_iters))
+    newton_tol = max(1e-12, float(newton_tolerance))
 
     linear_filtered = _apply_linear_zdf_svf(
         sig,
@@ -728,6 +748,9 @@ def _apply_svf_with_morph(
         morph,
         fb_amt,
         fb_sat,
+        use_newton_fb,
+        newton_iters,
+        newton_tol,
     )
 
     if filter_drive <= 0.0:
@@ -1307,6 +1330,9 @@ def _apply_sallen_key_inner(
     has_bootstrap: bool,
     feedback_amount: float,
     feedback_saturation: float,
+    use_newton_feedback: bool = False,
+    max_newton_iters: int = _DEFAULT_NEWTON_MAX_ITERS,
+    newton_tolerance: float = _DEFAULT_NEWTON_TOLERANCE,
 ) -> np.ndarray:
     """ZDF/TPT 2-pole Sallen-Key with biting CEM-3320 character.
 
@@ -1356,6 +1382,9 @@ def _apply_sallen_key_inner(
     bias_amount = 0.08 * filter_drive
 
     has_ext_fb = feedback_amount > 0.0
+    # Newton external feedback only in the clean (non-driven) body; the
+    # drive branch's pre-filter shape is nonlinear in x.
+    newton_feedback_active = has_ext_fb and use_newton_feedback and not apply_saturation
     ext_fb_drive = 1.0 + 3.0 * feedback_saturation
     prev_output = 0.0
     weyl_state = bootstrap_seed
@@ -1367,18 +1396,55 @@ def _apply_sallen_key_inner(
             fc = min(cutoff_profile[i], nyquist_limit)
             g = math.tan(math.pi * fc / sample_rate)
 
-        x = signal[i]
-        if has_ext_fb:
-            x = x + feedback_amount * math.tanh(ext_fb_drive * prev_output)
-        if has_bootstrap:
-            weyl_state = weyl_state + _WEYL_INCREMENT
-            x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
-                _BOOTSTRAP_NOISE_AMP * 2.0
+        if newton_feedback_active:
+            denom_svf = 1.0 + 2.0 * damping * g + g * g
+            state_term = (2.0 * damping + g) * band_state + low_state
+            high_in = 1.0 / denom_svf
+            high_off = -state_term / denom_svf
+            band_in = g * high_in
+            band_off = g * high_off + band_state
+            low_in = g * band_in
+            low_off = g * band_off + low_state
+            if mode_int == _LP:
+                A_out = low_in
+                B_out = low_off
+            elif mode_int == _BP:
+                A_out = band_in
+                B_out = band_off
+            else:
+                A_out = high_in
+                B_out = high_off
+            raw = signal[i]
+            if has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                raw = raw + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+            affine_const = A_out * raw + B_out
+            fb_scale = A_out * feedback_amount
+            y_solved = _solve_ext_feedback_newton(
+                prev_output,
+                affine_const,
+                fb_scale,
+                ext_fb_drive,
+                max_newton_iters,
+                newton_tolerance,
             )
-
-        if apply_saturation:
-            shaped = drive_gain * (math.tanh(x + bias_amount) - math.tanh(bias_amount))
-            x = sat_mix_clean * x + sat_blend * shaped
+            x = raw + feedback_amount * math.tanh(ext_fb_drive * y_solved)
+        else:
+            x = signal[i]
+            if has_ext_fb:
+                x = x + feedback_amount * math.tanh(ext_fb_drive * prev_output)
+            if has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+            if apply_saturation:
+                shaped = drive_gain * (
+                    math.tanh(x + bias_amount) - math.tanh(bias_amount)
+                )
+                x = sat_mix_clean * x + sat_blend * shaped
 
         # ZDF/TPT 2-pole SVF update — identical to the main SVF path.
         high = (x - (2.0 * damping + g) * band_state - low_state) / (
@@ -1420,6 +1486,9 @@ def _apply_sallen_key(
     filter_drive: float,
     feedback_amount: float = 0.0,
     feedback_saturation: float = 0.0,
+    solver: str = "newton",
+    max_newton_iters: int = _DEFAULT_NEWTON_MAX_ITERS,
+    newton_tolerance: float = _DEFAULT_NEWTON_TOLERANCE,
 ) -> np.ndarray:
     """Apply a Sallen-Key 2-pole filter (ZDF/TPT, CEM-3320-ish character).
 
@@ -1470,6 +1539,9 @@ def _apply_sallen_key(
         has_bootstrap,
         max(0.0, float(feedback_amount)),
         max(0.0, float(feedback_saturation)),
+        solver == "newton",
+        max(1, int(max_newton_iters)),
+        max(1e-12, float(newton_tolerance)),
     )
 
 
@@ -1808,6 +1880,9 @@ def _apply_cascade(
     feedback_amount: float = 0.0,
     feedback_saturation: float = 0.0,
     filter_morph: float = 0.0,
+    solver: str = "newton",
+    max_newton_iters: int = _DEFAULT_NEWTON_MAX_ITERS,
+    newton_tolerance: float = _DEFAULT_NEWTON_TOLERANCE,
 ) -> np.ndarray:
     """Apply a Cascade 4-pole filter (4 independent 1-poles + peaking
     resonance)."""
@@ -1848,6 +1923,9 @@ def _apply_cascade(
         max(0.0, float(feedback_amount)),
         max(0.0, float(feedback_saturation)),
         max(0.0, min(3.0, float(filter_morph))),
+        solver == "newton",
+        max(1, int(max_newton_iters)),
+        max(1e-12, float(newton_tolerance)),
     )
 
 
@@ -1872,6 +1950,9 @@ def _apply_sem_inner(
     feedback_amount: float,
     feedback_saturation: float,
     morph: float,
+    use_newton_feedback: bool = False,
+    max_newton_iters: int = _DEFAULT_NEWTON_MAX_ITERS,
+    newton_tolerance: float = _DEFAULT_NEWTON_TOLERANCE,
 ) -> np.ndarray:
     """Oberheim SEM 2-pole SVF: gentle OTA resonance, LP→Notch→HP morph.
 
@@ -1905,6 +1986,12 @@ def _apply_sem_inner(
     drive_gain = 1.0 + 0.9 * filter_drive if driven else 1.0
 
     has_ext_fb = feedback_amount > 0.0
+    # Newton external feedback is only well-defined in the clean (non-driven)
+    # linear body — the input-stage tanh(x) under drive makes the instantaneous
+    # map nonlinear in x and breaks the affine-collapse derivation.  Drive +
+    # ext FB is a rare combo, so we keep the driven path on the unit-delay
+    # branch.  Clean body + ext FB is the common case for pad feedback sweeps.
+    newton_feedback_active = has_ext_fb and use_newton_feedback and drive_blend <= 0.0
     ext_fb_drive = 1.0 + 3.0 * feedback_saturation
     prev_output = 0.0
     weyl_state = bootstrap_seed
@@ -1932,18 +2019,65 @@ def _apply_sem_inner(
             fc = min(cutoff_profile[i], nyquist_limit)
             g = math.tan(math.pi * fc / sample_rate)
 
-        x = signal[i]
-        if has_ext_fb:
-            x = x + feedback_amount * math.tanh(ext_fb_drive * prev_output)
-        if has_bootstrap:
-            weyl_state = weyl_state + _WEYL_INCREMENT
-            x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
-                _BOOTSTRAP_NOISE_AMP * 2.0
+        if newton_feedback_active:
+            # Affine-collapse the ZDF SVF body so output = A_out·x_in + B_out,
+            # then Newton-solve the closed implicit equation
+            # y = A_out·(raw + fb_amt·tanh(g_fb·y)) + B_out.
+            denom_svf = 1.0 + 2.0 * damping * g + g * g
+            state_term = (2.0 * damping + g) * band_state + low_state
+            high_in = 1.0 / denom_svf
+            high_off = -state_term / denom_svf
+            band_in = g * high_in
+            band_off = g * high_off + band_state
+            low_in = g * band_in
+            low_off = g * band_off + low_state
+            if use_morph:
+                notch_in = low_in + high_in
+                notch_off = low_off + high_off
+                A_out = lp_w * low_in + notch_w * notch_in + hp_w * high_in
+                B_out = lp_w * low_off + notch_w * notch_off + hp_w * high_off
+            elif mode_int == _LP:
+                A_out = low_in
+                B_out = low_off
+            elif mode_int == _BP:
+                A_out = band_in
+                B_out = band_off
+            elif mode_int == _HP:
+                A_out = high_in
+                B_out = high_off
+            else:
+                A_out = low_in + high_in
+                B_out = low_off + high_off
+            raw = signal[i]
+            if has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                raw = raw + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+            affine_const = A_out * raw + B_out
+            fb_scale = A_out * feedback_amount
+            y_solved = _solve_ext_feedback_newton(
+                prev_output,
+                affine_const,
+                fb_scale,
+                ext_fb_drive,
+                max_newton_iters,
+                newton_tolerance,
             )
-        if driven:
-            clean = x
-            shaped = drive_gain * math.tanh(x)
-            x = clean + drive_blend * (shaped - clean)
+            x = raw + feedback_amount * math.tanh(ext_fb_drive * y_solved)
+        else:
+            x = signal[i]
+            if has_ext_fb:
+                x = x + feedback_amount * math.tanh(ext_fb_drive * prev_output)
+            if has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+            if driven:
+                clean = x
+                shaped = drive_gain * math.tanh(x)
+                x = clean + drive_blend * (shaped - clean)
 
         high = (x - (2.0 * damping + g) * band_state - low_state) / (
             1.0 + 2.0 * damping * g + g * g
@@ -1988,6 +2122,9 @@ def _apply_sem(
     feedback_amount: float = 0.0,
     feedback_saturation: float = 0.0,
     filter_morph: float = 0.0,
+    solver: str = "newton",
+    max_newton_iters: int = _DEFAULT_NEWTON_MAX_ITERS,
+    newton_tolerance: float = _DEFAULT_NEWTON_TOLERANCE,
 ) -> np.ndarray:
     """Apply the SEM 2-pole state-variable filter.
 
@@ -2036,6 +2173,9 @@ def _apply_sem(
         max(0.0, float(feedback_amount)),
         max(0.0, float(feedback_saturation)),
         morph,
+        solver == "newton",
+        max(1, int(max_newton_iters)),
+        max(1e-12, float(newton_tolerance)),
     )
 
 
@@ -2200,6 +2340,7 @@ def _apply_jupiter_newton_inner(
     morph: float,
     max_iters: int,
     tolerance: float,
+    close_ext_feedback: bool,
 ) -> np.ndarray:
     """Jupiter 4-pole with per-sample Newton solve of the feedback tanh.
 
@@ -2247,13 +2388,16 @@ def _apply_jupiter_newton_inner(
         one_minus_alpha = 1.0 - alpha
 
         x = signal[i]
-        if has_ext_fb:
-            x = x + feedback_amount * math.tanh(ext_fb_drive * prev_ext_output)
         if has_bootstrap:
             weyl_state = weyl_state + _WEYL_INCREMENT
             x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
                 _BOOTSTRAP_NOISE_AMP * 2.0
             )
+        outer_newton = (
+            close_ext_feedback and has_ext_fb and morph <= 0.0 and mode_int == _LP
+        )
+        if has_ext_fb and not outer_newton:
+            x = x + feedback_amount * math.tanh(ext_fb_drive * prev_ext_output)
         x = drive_gain * x
 
         # Closed-form coefficients for the cascaded ZDF 1-poles relating
@@ -2269,16 +2413,40 @@ def _apply_jupiter_newton_inner(
             + one_minus_alpha * s3
         )
 
-        # Newton iterate y3.  f(y) = y - A*(x - k*tanh(y)) - B
-        #                 f'(y) = 1 + A * k * sech²(y) = 1 + A*k*(1 - tanh²(y))
         y = y3_guess
-        for _ in range(max_iters):
-            ty = math.tanh(y)
-            resid = y - a4 * (x - k_feedback * ty) - b_state
-            if math.fabs(resid) < tolerance:
-                break
-            deriv = 1.0 + a4 * k_feedback * (1.0 - ty * ty)
-            y = y - resid / deriv
+        if outer_newton:
+            # Output is y3 in this branch, so the closed implicit equation
+            # becomes a single scalar Newton in y3:
+            #   F(y3) = y3 - a4·(x_raw + D·tanh(g_fb·y3) - k·tanh(y3)) - b_state
+            # with x_raw = drive_gain·(signal[i] + bootstrap),
+            # D = drive_gain·fb_amt.
+            D_outer = drive_gain * feedback_amount
+            a4D = a4 * D_outer
+            a4k = a4 * k_feedback
+            for _ in range(max_iters):
+                ty = math.tanh(y)
+                gy = ext_fb_drive * y
+                th_g = math.tanh(gy)
+                sech2_inner = 1.0 - ty * ty
+                sech2_outer = 1.0 - th_g * th_g
+                resid = y - a4 * x - a4D * th_g + a4k * ty - b_state
+                if math.fabs(resid) < tolerance:
+                    break
+                deriv = 1.0 + a4k * sech2_inner - a4D * ext_fb_drive * sech2_outer
+                if deriv < 1e-6 and deriv > -1e-6:
+                    deriv = 1e-6 if deriv >= 0.0 else -1e-6
+                y = y - resid / deriv
+            # Replay x with the solved outer feedback so stage states advance
+            # with the implicit solution.
+            x = x + drive_gain * feedback_amount * math.tanh(ext_fb_drive * y)
+        else:
+            for _ in range(max_iters):
+                ty = math.tanh(y)
+                resid = y - a4 * (x - k_feedback * ty) - b_state
+                if math.fabs(resid) < tolerance:
+                    break
+                deriv = 1.0 + a4 * k_feedback * (1.0 - ty * ty)
+                y = y - resid / deriv
         y3_guess = y
 
         # Roll the stage states forward given the solved u.
@@ -2420,6 +2588,7 @@ def _apply_jupiter_filter(
             morph,
             max(1, int(max_newton_iters)),
             max(1e-12, float(newton_tolerance)),
+            True,
         )
     return _apply_jupiter_inner(
         sig,
@@ -3002,6 +3171,9 @@ def _dispatch_svf(
             filter_even_harmonics=fp.filter_even_harmonics,
             feedback_amount=fp.feedback_amount,
             feedback_saturation=fp.feedback_saturation,
+            solver=fp.filter_solver,
+            max_newton_iters=fp.max_newton_iters,
+            newton_tolerance=fp.newton_tolerance,
         )
     return _apply_svf_with_morph(
         signal,
@@ -3014,6 +3186,9 @@ def _dispatch_svf(
         feedback_amount=fp.feedback_amount,
         feedback_saturation=fp.feedback_saturation,
         morph=morph,
+        solver=fp.filter_solver,
+        max_newton_iters=fp.max_newton_iters,
+        newton_tolerance=fp.newton_tolerance,
     )
 
 
@@ -3080,6 +3255,9 @@ def _dispatch_cascade(
         feedback_amount=fp.feedback_amount,
         feedback_saturation=fp.feedback_saturation,
         filter_morph=morph,
+        solver=fp.filter_solver,
+        max_newton_iters=fp.max_newton_iters,
+        newton_tolerance=fp.newton_tolerance,
     )
 
 
@@ -3103,6 +3281,9 @@ def _dispatch_sem(
         feedback_amount=fp.feedback_amount,
         feedback_saturation=fp.feedback_saturation,
         filter_morph=fp.filter_morph,
+        solver=fp.filter_solver,
+        max_newton_iters=fp.max_newton_iters,
+        newton_tolerance=fp.newton_tolerance,
     )
 
 
@@ -3200,7 +3381,7 @@ def apply_filter(
     hpf_resonance_q: float = 0.707,
     feedback_amount: float = 0.0,
     feedback_saturation: float = 0.3,
-    filter_solver: str = "adaa",
+    filter_solver: str = "newton",
     max_newton_iters: int = _DEFAULT_NEWTON_MAX_ITERS,
     newton_tolerance: float = _DEFAULT_NEWTON_TOLERANCE,
     k35_feedback_asymmetry: float = 0.0,

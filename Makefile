@@ -104,6 +104,38 @@ test:
 test-selected:
 	$(UV_RUN) pytest $(TESTS)
 
+# Run a read-only smoke-test script under scratch/ without a permission prompt.
+#
+# INTENDED USE ONLY:
+#   - Read-only inspection (import a module, call a pure function, print the result)
+#   - DSP/engine smoke tests (render a short buffer, assert finite/bounded)
+#   - Character measurements (FFT a sine through a filter, print harmonic levels)
+#
+# NOT FOR:
+#   - Writing files to the repo (including logs, audio, plots, caches)
+#   - Running renders that touch `renders/`, `midi/`, `stems/`, etc.
+#   - Any DAG/piece render, evaluation, MIDI or stem export — use `make render`,
+#     `make midi`, `make stems`, `make evaluate` targets for those
+#   - Network calls, subprocess spawning, env mutation
+#   - Anything with side effects you wouldn't be happy running twice by accident
+#
+# The scratch/ directory is gitignored so these scripts never leave your tree.
+# If a script needs to grow beyond a pure smoke test, promote it to a proper
+# test under tests/ or a named make target instead.
+#
+# Usage:
+#   make scratch SCRIPT=scratch/smoke_filters.py
+.PHONY: scratch
+scratch:
+ifndef SCRIPT
+	$(error SCRIPT is required, for example `make scratch SCRIPT=scratch/smoke.py`)
+endif
+	@case "$(SCRIPT)" in \
+		scratch/*) ;; \
+		*) echo "SCRIPT must be under scratch/ (got: $(SCRIPT))"; exit 1 ;; \
+	esac
+	$(UV_RUN) python $(SCRIPT)
+
 .PHONY: render
 render:
 ifndef PIECE

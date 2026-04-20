@@ -18,6 +18,9 @@ from code_musics.pieces.crystal_canon import PIECES as _CRYSTAL_CANON_PIECES
 from code_musics.pieces.diva_study import PIECES as _DIVA_STUDY_PIECES
 from code_musics.pieces.effects_showcase import PIECES as _EFFECTS_SHOWCASE_PIECES
 from code_musics.pieces.emergence_reverse import PIECES as _EMERGENCE_REVERSE_PIECES
+from code_musics.pieces.filter_palette_study import (
+    PIECES as _FILTER_PALETTE_STUDY_PIECES,
+)
 from code_musics.pieces.forge import PIECES as _FORGE_PIECES
 from code_musics.pieces.harmonic_studies import PIECES as _HARMONIC_STUDY_PIECES
 from code_musics.pieces.iron_pulse import PIECES as _IRON_PULSE_PIECES
@@ -29,6 +32,7 @@ from code_musics.pieces.mellow_studies import PIECES as _MELLOW_PIECES
 from code_musics.pieces.mirror_dialogue import PIECES as _MIRROR_DIALOGUE_PIECES
 from code_musics.pieces.mod_matrix_study import PIECES as _MOD_MATRIX_STUDY_PIECES
 from code_musics.pieces.natural_steps import PIECES as _NATURAL_STEPS_PIECES
+from code_musics.pieces.newton_bloom import PIECES as _NEWTON_BLOOM_PIECES
 from code_musics.pieces.night_lattice import PIECES as _NIGHT_LATTICE_PIECES
 from code_musics.pieces.organ_passacaglia import PIECES as _ORGAN_CHORALE_PIECES
 from code_musics.pieces.phase_garden import PIECES as _PHASE_GARDEN_PIECES
@@ -66,6 +70,7 @@ PIECES = merge_piece_maps(
     _JI_PIECES,
     _COLTRANE_PIECES,
     _EFFECTS_SHOWCASE_PIECES,
+    _FILTER_PALETTE_STUDY_PIECES,
     _MELLOW_PIECES,
     _WTC_PIECES,
     _JUSTLY_INTONED_PIECES,
@@ -97,6 +102,7 @@ PIECES = merge_piece_maps(
     _MD_STUDY_PIECES,
     _VA_SHOWCASE_PIECES,
     _MOD_MATRIX_STUDY_PIECES,
+    _NEWTON_BLOOM_PIECES,
 )
 
 __all__ = ["PIECES"]

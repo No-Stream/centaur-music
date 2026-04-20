@@ -606,6 +606,10 @@ def render(
     if not 0.0 <= osc2_ring_mod <= 1.0:
         raise ValueError("osc2_ring_mod must lie in [0.0, 1.0]")
 
+    # Pre-declare for the end-of-note snapshot when osc2 isn't rendered.
+    osc2_start_phase: float = 0.0
+    osc2_phase: np.ndarray = np.zeros(0, dtype=np.float64)
+
     if needs_osc2:
         # Per-sample osc2 detune / freq ratio support.  When a profile is
         # supplied for either destination, osc2's effective frequency is

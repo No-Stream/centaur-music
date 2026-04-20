@@ -57,19 +57,17 @@ class TestResolveTransientMode:
         assert cfg.reset_phase is False
         assert cfg.reset_dc is True
 
-    def test_vcf_reset(self) -> None:
-        cfg = resolve_transient_mode("vcf_reset")
-        # vcf_reset does not reset osc state under Option C; documented on the
-        # dataclass.  It exists so downstream code can branch on
-        # ``reset_filter`` when we add filter-integrator carryover.
-        assert cfg.reset_phase is False
-        assert cfg.reset_dc is False
-        assert cfg.reset_filter is True
-
     def test_osc_reset(self) -> None:
         cfg = resolve_transient_mode("osc_reset")
         assert cfg.reset_phase is True
         assert cfg.reset_dc is True
+
+    def test_vcf_reset_removed(self) -> None:
+        # vcf_reset was removed — it was a stub that never consulted
+        # ``reset_filter``.  Filter-state carry-over is a separate future
+        # project.
+        with pytest.raises(ValueError, match="Unknown transient_mode"):
+            resolve_transient_mode("vcf_reset")
 
     def test_unknown_mode_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown transient_mode"):
@@ -79,40 +77,59 @@ class TestResolveTransientMode:
 class TestApplyTransientState:
     def test_none_voice_state_returns_fresh(self) -> None:
         cfg = resolve_transient_mode("analog")
-        phase, dc1, dc2 = apply_transient_state(
+        phase1, phase2, dc1, dc2 = apply_transient_state(
             None, transient_config=cfg, fresh_phase=0.42, fresh_dc_signs=(1.0, -1.0)
         )
-        assert phase == 0.42
+        assert phase1 == 0.42
+        assert phase2 == 0.42
         assert dc1 == 1.0
         assert dc2 == -1.0
 
     def test_analog_carries_prior_phase_and_dc(self) -> None:
         cfg = resolve_transient_mode("analog")
-        state = {"phase": 1.5, "dc_sign_osc1": -1.0, "dc_sign_osc2": 1.0}
-        phase, dc1, dc2 = apply_transient_state(
+        state = {
+            "phase_osc1": 1.5,
+            "phase_osc2": 2.5,
+            "dc_sign_osc1": -1.0,
+            "dc_sign_osc2": 1.0,
+        }
+        phase1, phase2, dc1, dc2 = apply_transient_state(
             state, transient_config=cfg, fresh_phase=0.42, fresh_dc_signs=(1.0, -1.0)
         )
-        assert phase == 1.5
+        assert phase1 == 1.5
+        assert phase2 == 2.5
         assert dc1 == -1.0
         assert dc2 == 1.0
 
     def test_dc_reset_keeps_phase_but_drops_dc(self) -> None:
         cfg = resolve_transient_mode("dc_reset")
-        state = {"phase": 1.5, "dc_sign_osc1": -1.0, "dc_sign_osc2": 1.0}
-        phase, dc1, dc2 = apply_transient_state(
+        state = {
+            "phase_osc1": 1.5,
+            "phase_osc2": 2.5,
+            "dc_sign_osc1": -1.0,
+            "dc_sign_osc2": 1.0,
+        }
+        phase1, phase2, dc1, dc2 = apply_transient_state(
             state, transient_config=cfg, fresh_phase=0.42, fresh_dc_signs=(1.0, -1.0)
         )
-        assert phase == 1.5
+        assert phase1 == 1.5
+        assert phase2 == 2.5
         assert dc1 == 1.0  # fresh
         assert dc2 == -1.0  # fresh
 
     def test_osc_reset_drops_both(self) -> None:
         cfg = resolve_transient_mode("osc_reset")
-        state = {"phase": 1.5, "dc_sign_osc1": -1.0, "dc_sign_osc2": 1.0}
-        phase, dc1, dc2 = apply_transient_state(
+        state = {
+            "phase_osc1": 1.5,
+            "phase_osc2": 2.5,
+            "dc_sign_osc1": -1.0,
+            "dc_sign_osc2": 1.0,
+        }
+        phase1, phase2, dc1, dc2 = apply_transient_state(
             state, transient_config=cfg, fresh_phase=0.42, fresh_dc_signs=(1.0, -1.0)
         )
-        assert phase == 0.42
+        assert phase1 == 0.42
+        assert phase2 == 0.42
         assert dc1 == 1.0
         assert dc2 == -1.0
 
@@ -120,10 +137,11 @@ class TestApplyTransientState:
         """On the first note of a voice, state dict is empty — everything fresh."""
         cfg = resolve_transient_mode("analog")
         state: dict = {}
-        phase, dc1, dc2 = apply_transient_state(
+        phase1, phase2, dc1, dc2 = apply_transient_state(
             state, transient_config=cfg, fresh_phase=0.42, fresh_dc_signs=(1.0, -1.0)
         )
-        assert phase == 0.42
+        assert phase1 == 0.42
+        assert phase2 == 0.42
         assert dc1 == 1.0
         assert dc2 == -1.0
 
@@ -132,15 +150,26 @@ class TestSnapshotVoiceState:
     def test_persists_fields(self) -> None:
         state: dict = {}
         snapshot_voice_state(
-            state, final_phase=2.71, dc_sign_osc1=-1.0, dc_sign_osc2=1.0
+            state,
+            final_phase_osc1=2.71,
+            final_phase_osc2=3.14,
+            dc_sign_osc1=-1.0,
+            dc_sign_osc2=1.0,
         )
-        assert state["phase"] == 2.71
+        assert state["phase_osc1"] == 2.71
+        assert state["phase_osc2"] == 3.14
         assert state["dc_sign_osc1"] == -1.0
         assert state["dc_sign_osc2"] == 1.0
 
     def test_noop_when_state_is_none(self) -> None:
         # Should not raise.
-        snapshot_voice_state(None, final_phase=2.71, dc_sign_osc1=1.0, dc_sign_osc2=1.0)
+        snapshot_voice_state(
+            None,
+            final_phase_osc1=2.71,
+            final_phase_osc2=3.14,
+            dc_sign_osc1=1.0,
+            dc_sign_osc2=1.0,
+        )
 
 
 class TestEngineVoiceStateIntegration:
@@ -171,7 +200,12 @@ class TestEngineVoiceStateIntegration:
         with osc_reset + a populated voice_state should match renders with
         voice_state=None."""
         params = {**_base_params("polyblep"), "transient_mode": "osc_reset"}
-        state = {"phase": 1.23, "dc_sign_osc1": -1.0, "dc_sign_osc2": -1.0}
+        state = {
+            "phase_osc1": 1.23,
+            "phase_osc2": 4.56,
+            "dc_sign_osc1": -1.0,
+            "dc_sign_osc2": -1.0,
+        }
         reset_audio = polyblep_engine.render(
             freq=220.0,
             duration=0.15,
@@ -208,13 +242,10 @@ class TestEngineVoiceStateIntegration:
             params=params,
             voice_state=state,
         )
-        assert state["phase"] != 0.0  # first render populated state
+        assert state["phase_osc1"] != 0.0  # first render populated state
 
-        # The second note's render will read state["phase"] as its
-        # start_phase when analog mode is active.  To verify, render the
-        # same note two ways: (a) letting voice_state feed it, vs.
-        # (b) bypassing with osc_reset and fresh voice_state — they
-        # must differ because the analog start_phase is non-zero.
+        # The second note's render reads state["phase_osc1"] as its
+        # start_phase when analog mode is active.
         analog_audio = polyblep_engine.render(
             freq=217.3,
             duration=0.1,
@@ -242,7 +273,6 @@ class TestEngineVoiceStateIntegration:
             "osc_dc_offset": 0.8,
         }
         state: dict = {}
-        # First note populates state + has DC sign applied
         audio_one = polyblep_engine.render(
             freq=220.0,
             duration=0.1,
@@ -251,8 +281,7 @@ class TestEngineVoiceStateIntegration:
             params=params,
             voice_state=state,
         )
-        # Snapshot phase but DC sign gets overwritten on next render
-        phase_after_one = state["phase"]
+        phase_after_one = state["phase_osc1"]
         dc_after_one = state["dc_sign_osc1"]
         audio_two = polyblep_engine.render(
             freq=220.0,
@@ -263,16 +292,35 @@ class TestEngineVoiceStateIntegration:
             voice_state=state,
         )
         # Phase should carry (dc_reset keeps phase).
-        # The snapshot happens at render end; after two renders state["phase"]
-        # has advanced past phase_after_one by the second render's duration.
-        assert state["phase"] != phase_after_one
-        # DC sign on each render is redrawn fresh (dc_reset), so both calls
-        # should use the same fresh DC signs (derived from note-local RNG),
-        # which in this case means state["dc_sign_osc1"] matches dc_after_one.
+        assert state["phase_osc1"] != phase_after_one
+        # DC sign is redrawn fresh each note; with identical RNG seeds the
+        # sign ends up the same both times.
         assert state["dc_sign_osc1"] == dc_after_one
-        # Audio outputs differ because the incoming phase differs.
         assert np.all(np.isfinite(audio_one))
         assert np.all(np.isfinite(audio_two))
+
+    def test_polyblep_voice_state_carries_osc2_phase(self) -> None:
+        """F2: osc2's phase must be snapshotted so dual-osc and hard-sync
+        patches don't glitch across note boundaries."""
+        params = {
+            **_base_params("polyblep"),
+            "transient_mode": "analog",
+            "osc2_level": 0.7,
+            "osc2_detune_cents": 700.0,
+        }
+        state: dict = {}
+        polyblep_engine.render(
+            freq=217.3,
+            duration=0.1,
+            amp=0.5,
+            sample_rate=SR,
+            params=params,
+            voice_state=state,
+        )
+        assert "phase_osc1" in state
+        assert "phase_osc2" in state
+        # osc2 runs at a detuned ratio so its final phase differs from osc1's.
+        assert state["phase_osc1"] != state["phase_osc2"]
 
     def test_filtered_stack_analog_mode_carries_phase(self) -> None:
         """Filtered-stack is additive (no DC), so analog mode should carry
@@ -287,9 +335,52 @@ class TestEngineVoiceStateIntegration:
             params=params,
             voice_state=state,
         )
-        assert "phase" in state
+        assert "phase_osc1" in state
         # After one note, phase has advanced from 0
-        assert state["phase"] != 0.0
+        assert state["phase_osc1"] != 0.0
+
+    def test_polyblep_empty_voice_state_matches_none(self) -> None:
+        """F24: voice_state={} under analog should produce identical output
+        to voice_state=None on the first note (no prior state to carry)."""
+        params = {**_base_params("polyblep"), "transient_mode": "analog"}
+        empty_audio = polyblep_engine.render(
+            freq=220.0,
+            duration=0.1,
+            amp=0.5,
+            sample_rate=SR,
+            params=params,
+            voice_state={},
+        )
+        none_audio = polyblep_engine.render(
+            freq=220.0,
+            duration=0.1,
+            amp=0.5,
+            sample_rate=SR,
+            params=params,
+            voice_state=None,
+        )
+        np.testing.assert_array_equal(empty_audio, none_audio)
+
+    def test_filtered_stack_empty_voice_state_matches_none(self) -> None:
+        """F24: same as above for filtered_stack."""
+        params = {**_base_params("filtered_stack"), "transient_mode": "analog"}
+        empty_audio = filtered_stack_engine.render(
+            freq=220.0,
+            duration=0.1,
+            amp=0.5,
+            sample_rate=SR,
+            params=params,
+            voice_state={},
+        )
+        none_audio = filtered_stack_engine.render(
+            freq=220.0,
+            duration=0.1,
+            amp=0.5,
+            sample_rate=SR,
+            params=params,
+            voice_state=None,
+        )
+        np.testing.assert_array_equal(empty_audio, none_audio)
 
 
 class TestRegistryThreading:
@@ -307,7 +398,8 @@ class TestRegistryThreading:
         )
         assert np.all(np.isfinite(audio))
         # polyblep should have snapshotted phase into the state dict
-        assert "phase" in state
+        assert "phase_osc1" in state
+        assert "phase_osc2" in state
 
     def test_render_note_signal_ignores_voice_state_for_non_subtractive(self) -> None:
         """Passing voice_state to an engine that doesn't accept it (e.g.

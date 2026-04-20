@@ -14,7 +14,7 @@ import pytest
 
 from code_musics.engines._dsp_utils import apply_polyblep_step_correction
 from code_musics.engines._oscillators import polyblep_saw
-from code_musics.engines.polyblep import render
+from code_musics.engines.polyblep import _find_sync_events, render
 
 SR = 44100
 
@@ -214,7 +214,6 @@ class TestPolyBLEPStepCorrectionHelper:
                 event_sample=int(pre_idx),
                 event_fraction=float(frac),
                 step_amplitude=step_amp,
-                phase_inc=phase_inc_scalar,
             )
 
         # Edge sample: the polyblep_saw mask_pre also fires on any sample
@@ -223,3 +222,63 @@ class TestPolyBLEPStepCorrectionHelper:
         # the result should match the reference bit-for-bit on interior samples.
         # Compare with a small tolerance for FP identity.
         np.testing.assert_allclose(naive[1:-1], reference[1:-1], atol=1e-12)
+
+
+class TestFindSyncEventsMultiWrap:
+    def test_multi_wrap_interval_emits_one_event_per_wrap(self) -> None:
+        """F34: when osc1 wraps multiple times in a single sample interval
+        (freq > sample_rate/2), ``_find_sync_events`` must emit one event per
+        integer boundary rather than collapsing them into one."""
+        n = 32
+        # phase_inc ~1.6 cycles per sample, so some intervals cross two
+        # integer boundaries in a single step.
+        phase_inc_scalar = 1.6
+        phase_inc = np.full(n, phase_inc_scalar, dtype=np.float64)
+        cumphase = np.cumsum(phase_inc)
+        sync_samples, sync_fractions = _find_sync_events(cumphase, phase_inc)
+
+        # We check intervals (i-1, i] for i in [1, n).  Sum the integer
+        # boundaries crossed in each interval — that must equal the number
+        # of emitted events.
+        floor_cum = np.floor(cumphase)
+        diffs = np.diff(floor_cum).astype(np.int64)
+        n_events_expected = int(np.sum(diffs))
+        assert sync_samples.size == n_events_expected
+        # Make sure we actually hit a multi-wrap interval in this test.
+        assert np.any(diffs >= 2)
+        # All fractions must be in [0, 1).
+        assert np.all(sync_fractions >= 0.0)
+        assert np.all(sync_fractions < 1.0)
+        assert np.all(np.isfinite(sync_fractions))
+        # Events are emitted with monotonically non-decreasing pre_idx.
+        assert np.all(np.diff(sync_samples) >= 0)
+
+    def test_multi_wrap_keeps_render_finite(self) -> None:
+        """Extreme freq-over-Nyquist osc2 sync doesn't blow up the render."""
+        params = {
+            "waveform": "saw",
+            "osc2_waveform": "saw",
+            "osc2_level": 0.8,
+            "osc2_sync": True,
+            "osc2_detune_cents": 2400.0,  # very wide
+            "cutoff_hz": 8000.0,
+            "resonance_q": 0.707,
+            "pitch_drift": 0.0,
+            "analog_jitter": 0.0,
+            "noise_floor": 0.0,
+            "cutoff_drift": 0.0,
+            "osc_asymmetry": 0.0,
+            "osc_softness": 0.0,
+            "osc_dc_offset": 0.0,
+            "osc_shape_drift": 0.0,
+            "voice_card_spread": 0.0,
+        }
+        out = render(
+            freq=18000.0,  # far beyond musical range — exercises the wrap path
+            duration=0.05,
+            amp=0.5,
+            sample_rate=SR,
+            params=params,
+        )
+        assert np.all(np.isfinite(out))
+        assert np.max(np.abs(out)) < 10.0

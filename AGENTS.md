@@ -183,7 +183,8 @@
   matrix contributions combine after base automation per destination. MVP
   per-sample synth coverage is `cutoff_hz` on `polyblep` via engine
   `param_profiles`; other synth targets are sampled per-note at onset. See
-  `docs/score_api.md` and `FUTURE.md` for full details and deferred work.
+  `docs/score_api.md` and `FUTURE.md` for full details and deferred work, and
+  `code_musics/pieces/mod_matrix_study.py` for a worked example.
 - **Pitch motion is a standard part of the composition surface**, not an optional
   extra. Melodic and sustained voices should almost always use `PitchMotionSpec`:
   lead voices get vibrato on sustained notes (increasing depth/rate with
@@ -229,6 +230,8 @@ make stems-snippet PIECE=ji_chorale AT=2:10 WINDOW=12  # export stem snippet
 make stems-window PIECE=ji_chorale START=130 DUR=12    # export exact stem window
 make test                          # run the full test suite
 make test-selected TESTS=tests/test_score.py  # run a focused subset while iterating
+make test-selected TESTS="tests/test_a.py tests/test_b.py"  # multiple files
+make scratch SCRIPT=scratch/smoke.py  # run a scratch script (no prompt; scratch/ only)
 make typecheck                     # basedpyright
 make compile                       # syntax / bytecode compilation check
 make lint                          # ruff check with bug-finding rules
@@ -240,8 +243,38 @@ make evaluate-all                  # evaluate all rendered pieces
 make inspire                       # oblique strategy / musical inspiration prompts
 ```
 
-If you need to run a one-off Python command, prefix it with `uv run` and set
-`PYTHONPATH=.`:
+For **read-only smoke-test scripts with zero side effects**, use `make scratch
+SCRIPT=scratch/foo.py`.  The `make *` pattern is allowlisted so `make scratch`
+runs without a permission prompt; raw `uv run python ...` invocations prompt
+every time.  The target refuses any path outside `scratch/` (which is
+gitignored).
+
+**Strict scope.** `make scratch` is only for read-only inspection, engine
+smoke tests, and character measurements — things you'd be happy running
+twice by accident.  Do NOT use it for:
+
+- writing files to the repo (including logs, audio, plots, caches)
+- piece renders, MIDI export, stem export, evaluation (use `make render`,
+  `make midi`, `make stems`, `make evaluate` — those have proper plumbing)
+- network calls, subprocess spawning, env mutation
+- anything you'd hesitate to run without reading carefully
+
+If a script outgrows that scope, promote it to a proper test in `tests/`
+or a named make target instead.
+
+```bash
+# Write the script first, then run via make:
+cat > scratch/smoke_filters.py <<'EOF'
+import numpy as np
+from code_musics.engines._filters import apply_filter
+y = apply_filter(np.random.randn(4410), cutoff_profile=np.full(4410, 1000.0),
+                 sample_rate=44100, filter_topology="k35", resonance_q=4.0)
+print(f"k35: peak={np.max(np.abs(y)):.3f}, finite={np.all(np.isfinite(y))}")
+EOF
+make scratch SCRIPT=scratch/smoke_filters.py
+```
+
+For edge cases where `make` targets don't fit, you can still fall back to:
 
 ```bash
 PYTHONPATH=. uv run python main.py --list
@@ -349,12 +382,24 @@ See `FUTURE.md` for way more ideas.
   (`q_comb_pad`, `q_comb_bell`, `q_spectral_lead`) flavors. The new
   `apply_comb(...)` primitive in `_filters.py` is available to future engines.
   See `docs/synth_api.md` and `code_musics/pieces/va_showcase.py`.
-- The `polyblep` and `filtered_stack` engines support four `filter_topology`
+- The `polyblep` and `filtered_stack` engines support eight `filter_topology`
   options: `"svf"` (2-pole ZDF state-variable, default), `"ladder"` (4-pole
   Moog-style with per-stage saturation + `bass_compensation`), `"sallen_key"`
   (Diva-style biting 2-pole with pre-filter asymmetric soft-clip under drive),
-  and `"cascade"` (4-pole Prophet-5-style cascade of independent 1-poles +
-  peaking bandpass — no global tanh growl).
+  `"cascade"` (4-pole Prophet-5-style cascade of independent 1-poles + peaking
+  bandpass — no global tanh growl), `"sem"` (Oberheim SEM-flavored 2-pole with
+  continuous LP→Notch→HP morph and bass-preserving gentle resonance),
+  `"jupiter"` (Roland IR3109-flavored 4-pole OTA cascade with single global
+  tanh feedback for creamy, less-peaky character; pair with `hpf_cutoff_hz`
+  for Jupiter-8 dual-filter or leave at 0 for Juno-106), `"k35"` (Korg MS-20
+  Sallen-Key with diode-clipped feedback via `k35_feedback_asymmetry` knob —
+  the screamer), and `"diode"` (TB-303 3-pole diode ladder with feedback
+  tap between stages 2 and 3 for acid squelch, ADAA + Newton solvers). The
+  drum_voice engine also honors `filter_topology` on its post-mix voice
+  filter so percussion voices can borrow any analog character (defaults to
+  `"svf"` — existing drum patches unchanged). See `docs/synth_api.md` for
+  the full per-topology parameter surface, and
+  `code_musics/pieces/filter_palette_study.py` for an 8-topology A/B tour.
 - The ladder filter supports a Diva-style **Newton-iterated ZDF solver**
   (`filter_solver="newton"`) that resolves the delay-free feedback loop
   implicitly per-sample. Engine-level `quality` param (`"draft"` / `"fast"`
@@ -465,6 +510,12 @@ See `FUTURE.md` for way more ideas.
   / `"rate_reduce"` / `"digital_clip"`), with `pi_hardness` / `pi_tension` /
   `pi_damping` / `pi_damping_tilt` / `pi_position` macros for quick perceptual
   shaping. See `docs/synth_api.md` for the full parameter surface.
+- The `sample` engine plays back WAV one-shots with pitch adjustment (map
+  note `freq` against `root_freq`), optional `decay_ms` / `amp_envelope`
+  shaping, a filter slot, and Machinedrum-E12-style macros (retrigger flams,
+  pitch bend envelope, ring modulation, rate reduction, bit-depth grit).
+  Samples resolve relative to the project root; loaded buffers are cached.
+  Use `engine="sample"` with a `sample_path` param in `synth_defaults`.
 - The waveshaper module (`_waveshaper.py`) now includes first-order ADAA
   anti-aliasing for 7 of 11 algorithms and optional 2x oversampling for the
   remaining fold-type algorithms.
@@ -572,14 +623,14 @@ See `FUTURE.md` for way more ideas.
   `code_musics/engines/_dsp_utils.py`.
 - Keep plugin notes here high-level. Detailed parameter semantics and any new
   `EffectSpec` integration still belong in `docs/synth_api.md`.
-- If you change score/expression parameters or presets, update the docs in the same
-  pass. `AGENTS.md` should mention the feature exists; the detailed semantics belong
-  in the docs, especially `docs/score_api.md` for score-surface changes.
-- When you add new functionality that future agents are likely to use, add a brief
-  high-level callout to `AGENTS.md` in the same pass so the capability persists
-  across sessions. Keep the mention short and intuitive here, and put the full API
-  semantics in `docs/composition_api.md`, `docs/score_api.md`, or
-  `docs/synth_api.md` as appropriate.
+- **Docs are part of implementation, not cleanup.** When you add, change, or
+  remove a public surface (engine, effect, score/composition API, generative
+  helper, export path, etc.), update the relevant docs in the same pass.
+  `AGENTS.md` gets a short high-level callout; the full parameter/signature
+  reference lives in `docs/synth_api.md`, `docs/score_api.md`,
+  `docs/composition_api.md`, or a dedicated `docs/<topic>.md` file. Do not
+  defer doc writes to a later pass — stale or missing docs cause future agent
+  work to stall. A code change is not complete until the docs match.
 - Timestamp inspection is part of the normal workflow. Prefer the timeline
   artifacts and `make inspect` when responding to comments like "2:10 in
   ji_chorale" instead of manually hunting through score code.

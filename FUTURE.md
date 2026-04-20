@@ -866,23 +866,25 @@ Still worthwhile, but not blocked on infrastructure:
 
 ### Additional subtractive color
 
-Useful later once the current filter palette has settled:
+The analog filter palette covers eight topologies now: `svf`, `ladder`,
+`sallen_key` (Diva Bite), `cascade` (Prophet/Juno), `sem` (Oberheim),
+`jupiter` (IR3109), `k35` (MS-20), and `diode` (TB-303). See
+`docs/synth_api.md` and `code_musics/pieces/filter_palette_study.py`.
 
-- a ladder-style low-pass flavor for `polyblep` or a related subtractive engine
-- potential other analog-inspired filters like SEM
-- more emphasis on musicality (analog influence can be useful but not required)
-- treat this as an additional flavor, not a replacement for the current filter
-  path
-- **K35 (Korg35) filter** — two first-order TPT filters in a resonant feedback
-  loop. Grittier, more aggressive resonance than SVF. LP mode:
-  `LPF1 → sum → LPF2 + HPF1(feedback)`. Resonance stabilized by
-  `alpha = 1/(1 - mk*G + mk*G²)`. Source: sst-filters / Surge.
-- **Diode filter** — 4-pole ladder with per-stage feedback injection and 2-pole
-  HP pre-filter. Distinct from Moog-style ladder (asymmetric clipping per
-  stage). Primary tanh at input, drive amplified by resonance. Source: Vital.
+Still open:
+
 - **Formant filter** — 4x 12dB SVF bandpass in series, 2D bilinear vowel
   interpolation (4 corner vowels on X/Y axes). Elegant and directly portable
   to existing SVF infrastructure. Source: Vital.
+- **Buchla LPG (lowpass gate)** — vactrol-coupled combined VCA + LPF where
+  the same control voltage darkens _and_ decays. Plucky/organic character
+  that's a different category than a pure filter topology — likely wants
+  a voice-level feature rather than a `filter_topology` entry.
+- **Prophet-5 SSM2040 / CEM3320** — distinct character from the existing
+  `cascade` (which is already Prophet-rev2-ish). Low marginal value since
+  `cascade` and `jupiter` already cover most of the ground, but a faithful
+  CEM3320 would be a clean extension. Reference: sst-filters CEM
+  implementation.
 
 Possible later additions:
 

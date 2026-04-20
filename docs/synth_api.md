@@ -2623,7 +2623,7 @@ individually.
 #### Filter Topology
 
 - `filter_topology: str`
-  Selects filter architecture. Four options:
+  Selects filter architecture. Eight options:
   - `"svf"` — 2-pole (12 dB/oct) ZDF state-variable filter. Default.
   - `"ladder"` — 4-pole (24 dB/oct) Moog-style ladder with per-stage saturation.
   - `"sallen_key"` — 2-pole Sallen-Key-flavored ZDF SVF with narrower resonance
@@ -2640,11 +2640,53 @@ individually.
     the character is smoother and less growly than the Moog ladder — closer
     to a Prophet-5 rev-2 or Juno VCF. Supports the same 4→3→2→1-pole morph
     as the ladder via `filter_morph`.
+  - `"sem"` — 2-pole (12 dB/oct) Oberheim SEM-flavored ZDF SVF. Wider
+    Q-to-damping curve than `"svf"` so resonance is gentler and the peak
+    "blooms" rather than spikes; per-integrator `_algebraic_sat` cap
+    models OTA saturation without ladder-style growl. Bass is preserved
+    through high Q (no sag). Supports a 3-stage `filter_morph ∈ [0, 2]`
+    that sweeps continuous LP→Notch→HP — the signature SEM "one knob"
+    morph (BP is available via `filter_mode="bandpass"` but sits outside
+    the continuous sweep, matching the real hardware).
+  - `"jupiter"` — 4-pole (24 dB/oct) OTA cascade modeling the Roland
+    IR3109. A single global tanh on the feedback summation (NOT per-stage
+    as in Moog ladder) plus a softer Q→k mapping (saturates at ≈2.6 vs
+    ladder's ~4.0) yield the creamy Jupiter-8 character — minimal bass
+    suction at high Q, cleaner self-oscillation than Moog, and a less
+    peaky resonance shape. Pair with `hpf_cutoff_hz > 0` for the
+    Jupiter-8 dual-filter architecture; leave the HPF at 0 for a
+    Juno-106. Supports `filter_morph ∈ [0, 3]` (24→18→12→6 dB/oct
+    pole-tap blend) and both `"adaa"` and `"newton"` solvers.
+  - `"k35"` — Korg MS-20 (Korg35) Sallen-Key with diode-clipped
+    feedback. Two TPT 1-poles inside a positive-feedback resonance
+    loop resolved with the alpha-compensation closed form (no Newton
+    needed). Feedback path is shaped by `_diode_shape(y_prev,
+    k35_feedback_asymmetry)` — a Shockley-like asymmetric shaper that
+    produces the defining MS-20 "snarl" of even-harmonic bias rising
+    with Q. `filter_drive > 0` engages an additional asymmetric
+    input-stage soft-clip for the classic MS-20 crunch (the real unit
+    overloads easily). LP and HP modes; BP/notch coerce to LP. No
+    `filter_morph` support (no pole taps to blend between).
+  - `"diode"` — 3-pole (18 dB/oct native) diode ladder modeling the
+    TB-303. Feedback tap between stages 2 and 3 (from state `s2`, not
+    from the output) is the defining topological quirk versus Moog —
+    it produces the bass-suck + squelch as Q rises, not a Moog-style
+    growl. Feedback shaped by `_diode_shape(s2, asym)` with asymmetry
+    scaling with drive, so cranking `filter_drive` amplifies the
+    acid-bark character rather than just compressing. LP only (other
+    modes coerce). Supports `filter_morph ∈ [0, 2]` (18→12→6 dB/oct
+    pole-tap blend) and both `"adaa"` and `"newton"` solvers — use
+    `"newton"` for most authentic high-Q squelch.
 - `bass_compensation: float`
   Ladder only. Restores low-frequency energy lost to resonance feedback. At 0:
   classic Moog behavior (bass loss at high resonance). At 1.0: full bass
   restoration. Based on Rossum's approach in the Subsequent 37. Default `0.0`.
   Range `[0, 1]`.
+- `k35_feedback_asymmetry: float`
+  K35 only. Controls the even-harmonic bias of the diode feedback path.
+  At `0.0`: symmetric diode (cleaner K35). At `0.5`: classic MS-20 snarl.
+  At `1.0`: deranged. Default `0.0`. Range `[0, 1]`. Ignored by non-k35
+  topologies.
 
 #### Quality Modes
 
@@ -2674,10 +2716,18 @@ individually.
 #### Filter Mode Morphing
 
 - `filter_morph: float`
-  Continuous blend between filter modes. For SVF: cycles through LP -> BP -> HP
-  -> Notch -> LP. For ladder: blends between pole taps (4-pole -> 3-pole ->
-  2-pole -> 1-pole), giving continuous slope control from 24 dB to 6 dB/oct.
-  Automatable. Default `0.0`. Range `[0, 3]`.
+  Continuous blend between filter modes. Semantics depend on topology:
+  - `"svf"`: cycles LP → BP → HP → Notch → LP over `[0, 3]`.
+  - `"ladder"`, `"cascade"`, `"jupiter"`: pole-tap blend (4→3→2→1 pole)
+    over `[0, 3]`, giving continuous slope control 24→18→12→6 dB/oct.
+  - `"diode"`: pole-tap blend (3→2→1 pole) over `[0, 2]`, giving
+    18→12→6 dB/oct. Clamped at 2.
+  - `"sem"`: 3-stage LP → Notch → HP sweep over `[0, 2]` — the SEM's
+    signature single-knob morph (BP is available via `filter_mode` but
+    sits outside the continuous sweep).
+  - `"sallen_key"`, `"k35"`: no morph support (no pole taps or morph
+    path to blend between). `filter_morph` is silently ignored.
+  Automatable. Default `0.0`.
 
 #### Serial Highpass Filter
 

@@ -211,6 +211,15 @@ class OscillatorSource(ModSource):
             raise ValueError(
                 "OscillatorSource.waveshape must be one of 'sine', 'saw', 'triangle'"
             )
+        # ``output_domain`` is inherited from ``ModSource`` for API symmetry
+        # but the sample path emits native bipolar waveforms.  Unipolar support
+        # would require a separate offset/scaling stage that nobody uses today
+        # — fail fast rather than silently ignore the field.
+        if self.output_domain != "bipolar":
+            raise ValueError(
+                "OscillatorSource.output_domain must be 'bipolar' "
+                f"(got {self.output_domain!r})"
+            )
 
     def sample(self, times: np.ndarray, context: SourceSamplingContext) -> np.ndarray:
         if times.size == 0:

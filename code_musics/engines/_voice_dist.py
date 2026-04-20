@@ -38,6 +38,11 @@ from __future__ import annotations
 
 import numpy as np
 
+from code_musics.engines._dsp_utils import (
+    alpha_from_cutoff,
+    iir_lowpass_1pole,
+    smoothstep_blend,
+)
 from code_musics.engines._waveshaper import apply_waveshaper
 
 # Mirrors ``code_musics.synth.SAMPLE_RATE`` as a module-local constant so
@@ -73,24 +78,12 @@ _TONE_HIGH_PIVOT_HZ: float = 1_000.0
 _TONE_LOW_PIVOT_HZ: float = 2_000.0
 
 
-@numba.njit(cache=True)
 def _onepole_lowpass(
     signal: np.ndarray, cutoff_hz: float, sample_rate: int
 ) -> np.ndarray:
-    """Numba-compiled one-pole lowpass.  Cheap, single-stage, good enough for tone tilt."""
-    n = signal.shape[0]
-    out = np.empty(n, dtype=np.float64)
-    if n == 0:
-        return out
-    # Standard RC-style coefficient: alpha = dt / (RC + dt), RC = 1/(2*pi*fc)
-    dt = 1.0 / float(sample_rate)
-    rc = 1.0 / (2.0 * np.pi * max(cutoff_hz, 1e-6))
-    alpha = dt / (rc + dt)
-    prev = signal[0]
-    for i in range(n):
-        prev = prev + alpha * (signal[i] - prev)
-        out[i] = prev
-    return out
+    """Single-pole lowpass via the shared RC-alpha + IIR helper."""
+    alpha = alpha_from_cutoff(cutoff_hz, sample_rate)
+    return iir_lowpass_1pole(signal, alpha)
 
 
 def _map_drive(drive: float) -> float:
@@ -116,17 +109,8 @@ def _map_drive(drive: float) -> float:
 
 
 def _blend_coefficient(drive: float) -> float:
-    """Smoothstep(drive / epsilon) for drive in [0, epsilon], 1.0 above.
-
-    Ensures wet/dry crossfade is continuous as drive automates across
-    zero.  Drive <= 0 is handled by the fast path so this sees only
-    positive drives.
-    """
-    if drive >= _BLEND_EPSILON:
-        return 1.0
-    t = drive / _BLEND_EPSILON
-    # Classic smoothstep: 3t^2 - 2t^3
-    return float(t * t * (3.0 - 2.0 * t))
+    """Smoothstep(drive / epsilon) for drive in [0, epsilon], 1.0 above."""
+    return smoothstep_blend(drive, _BLEND_EPSILON)
 
 
 def _apply_tone_stage(signal: np.ndarray, tone: float, sample_rate: int) -> np.ndarray:
