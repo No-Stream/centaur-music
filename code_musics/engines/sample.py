@@ -164,7 +164,7 @@ def render_sample_segment(
     filter_cutoff_hz = float(params.get("filter_cutoff_hz", 5000.0))
     filter_q = float(params.get("filter_q", 0.707))
     filter_topology = str(params.get("filter_topology", "svf")).lower()
-    bass_compensation = float(params.get("bass_compensation", 0.0))
+    bass_compensation = float(params.get("bass_compensation", 0.5))
 
     retrigger_count = int(params.get("retrigger_count", 1))
     retrigger_interval_ms = float(params.get("retrigger_interval_ms", 0.0))

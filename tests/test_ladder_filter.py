@@ -62,7 +62,12 @@ class TestLadderTopology:
         assert np.max(np.abs(result)) > 0.01
 
     def test_ladder_steeper_than_svf(self) -> None:
-        """Ladder (24dB/oct) should have more HF attenuation than SVF (12dB/oct)."""
+        """Ladder (24dB/oct) should have more HF attenuation than SVF (12dB/oct).
+
+        Uses ``bass_compensation=0.0`` to isolate the pure topology slope — the
+        default compensation adds some high-frequency energy back via the
+        ``(y0 - y3)`` term, which narrows the apples-to-apples slope gap.
+        """
         sig = _test_signal()
         cutoff = np.full(len(sig), 1000.0)
         svf = apply_filter(
@@ -78,6 +83,7 @@ class TestLadderTopology:
             sample_rate=SR,
             filter_mode="lowpass",
             filter_topology="ladder",
+            bass_compensation=0.0,
         )
         svf_hf = _band_energy(svf, 4000, 20000)
         ladder_hf = _band_energy(ladder, 4000, 20000)
@@ -124,6 +130,40 @@ class TestBassCompensation:
         no_comp_bass = _band_energy(no_comp, 20, 200)
         with_comp_bass = _band_energy(with_comp, 20, 200)
         assert with_comp_bass > no_comp_bass * 1.01  # measurable restoration
+
+    def test_default_matches_explicit_half(self) -> None:
+        """Default ladder should apply moderate bass compensation (0.5) —
+        bit-identical to an explicit ``bass_compensation=0.5`` and distinct
+        from a vintage ``0.0`` bass-suck render. Guards against accidental
+        default drift.
+        """
+        sig = _test_signal()
+        cutoff = np.full(len(sig), 1000.0)
+        default = apply_filter(
+            sig,
+            cutoff_profile=cutoff,
+            sample_rate=SR,
+            filter_topology="ladder",
+            resonance_q=12.0,
+        )
+        explicit_half = apply_filter(
+            sig,
+            cutoff_profile=cutoff,
+            sample_rate=SR,
+            filter_topology="ladder",
+            resonance_q=12.0,
+            bass_compensation=0.5,
+        )
+        no_comp = apply_filter(
+            sig,
+            cutoff_profile=cutoff,
+            sample_rate=SR,
+            filter_topology="ladder",
+            resonance_q=12.0,
+            bass_compensation=0.0,
+        )
+        np.testing.assert_allclose(default, explicit_half, rtol=0, atol=0)
+        assert not np.allclose(default, no_comp, atol=1e-6)
 
 
 class TestLadderDrive:

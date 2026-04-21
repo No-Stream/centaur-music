@@ -73,6 +73,8 @@ __all__ = [
     "rotate",
     "polyrhythm",
     "cross_rhythm",
+    "polymeter_layer",
+    "polymeter_alignment",
 ]
 
 
@@ -943,6 +945,121 @@ def cross_rhythm(
             )
         )
     return phrases
+
+
+def polymeter_layer(
+    phrase: Phrase,
+    *,
+    cycle: float,
+    total: float,
+    start: float = 0.0,
+) -> Phrase:
+    """Tile ``phrase`` end-to-end at its own cycle length over ``total`` time.
+
+    ``polyrhythm`` and ``cross_rhythm`` divide the *same* span into different
+    numbers of onsets. ``polymeter_layer`` is the complementary tool: it
+    layers a phrase at its *own* cycle length against an ambient bar
+    structure, so a 7-beat phrase will phase against a 16-beat drum grid.
+
+    Parameters
+    ----------
+    phrase:
+        Source material. Note starts inside one cycle (``0 <= event.start
+        < cycle``); notes whose start falls outside the cycle are an error
+        because the behaviour would be ambiguous. Note durations may extend
+        past ``cycle`` — the caller decides how much overlap is musical.
+    cycle:
+        One repetition length, in the same units as ``start`` / ``total``
+        (seconds by default, or beats if the caller is authoring in beats
+        and resolves later). For clean LCMs use beats.
+    total:
+        Total time to tile over, including ``start``. Notes whose start
+        falls at or after ``total`` are dropped. Partial final cycles are
+        included up to the boundary; note durations are not truncated —
+        the caller picks a ``total`` that lands on a cycle boundary when
+        exact endings matter.
+    start:
+        Absolute time at which the first cycle begins. Defaults to 0.
+
+    Returns
+    -------
+    Phrase
+        A new phrase whose events are absolute-time copies of the input,
+        tiled. ``beat_timings`` are dropped — they are bar-relative and
+        no longer meaningful after tiling. Events are sorted by start.
+    """
+    if cycle <= 0:
+        raise ValueError("cycle must be positive")
+    if total <= 0:
+        raise ValueError("total must be positive")
+    if start < 0:
+        raise ValueError("start must be non-negative")
+    if not phrase.events:
+        return Phrase(events=())
+    for event in phrase.events:
+        if event.start < 0 or event.start >= cycle:
+            raise ValueError(
+                f"phrase event start {event.start} falls outside one cycle "
+                f"[0, {cycle}); polymeter_layer expects a single-cycle source"
+            )
+
+    tiled: list[NoteEvent] = []
+    cursor = start
+    while cursor < total:
+        for event in phrase.events:
+            absolute_start = cursor + event.start
+            if absolute_start >= total:
+                continue
+            # NoteEvent.__post_init__ resolves amp_db into amp but keeps both
+            # fields set. Dataclass ``replace`` carries both forward and
+            # re-triggers the "amp or amp_db, not both" validation, so we
+            # explicitly pass the already-resolved amp and clear amp_db.
+            resolved_amp = _require_resolved_amp(event)
+            tiled.append(
+                replace(
+                    event,
+                    start=absolute_start,
+                    amp=resolved_amp,
+                    amp_db=None,
+                    synth=dict(event.synth) if event.synth is not None else None,
+                )
+            )
+        cursor += cycle
+    tiled.sort(key=lambda event: event.start)
+    return Phrase(events=tuple(tiled))
+
+
+def polymeter_alignment(cycles: Sequence[float], *, tolerance: float = 1e-6) -> float:
+    """Return the time at which all given cycles realign (LCM of cycles).
+
+    For integer beat lengths this is just the least common multiple.
+    ``polymeter_alignment([7, 16])`` returns 112. ``polymeter_alignment(
+    [16, 11, 9, 7])`` returns 11088 — they never realign within a
+    sensible section length, which is usually the point.
+
+    Floats are rounded to integer beats if they are within ``tolerance``
+    of an integer; otherwise a ``ValueError`` is raised, since LCM on
+    genuine floats is ill-defined.
+    """
+    if not cycles:
+        raise ValueError("cycles must not be empty")
+
+    integer_cycles: list[int] = []
+    for value in cycles:
+        if value <= 0:
+            raise ValueError(f"cycle values must be positive, got {value}")
+        rounded = round(value)
+        if abs(value - rounded) > tolerance or rounded <= 0:
+            raise ValueError(
+                f"cycle {value} is not close to a positive integer; "
+                f"pass beat counts rather than seconds for a meaningful LCM"
+            )
+        integer_cycles.append(rounded)
+
+    result = integer_cycles[0]
+    for value in integer_cycles[1:]:
+        result = result * value // math.gcd(result, value)
+    return float(result)
 
 
 def _inter_onset_intervals(events: list[NoteEvent]) -> list[float]:

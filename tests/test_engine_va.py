@@ -957,9 +957,9 @@ class TestPresets:
         update the expected values in this table.
         """
         expected = {
-            "jp8000_hoover": (0.126556, 2384.1348),
-            "virus_bass": (0.195136, 1515.1835),
-            "q_comb_bell": (0.256478, 2400.4853),
+            "jp8000_hoover": (0.136986, 3242.0285),
+            "virus_bass": (0.180186, 1701.4165),
+            "q_comb_bell": (0.256478, 2400.4854),
         }
         for preset_name, (exp_rms, exp_centroid) in expected.items():
             resolved = resolve_synth_params({"engine": "va", "preset": preset_name})

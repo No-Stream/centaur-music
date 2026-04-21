@@ -31,6 +31,7 @@ from code_musics.pieces.justly_intoned_synth import PIECES as _JUSTLY_INTONED_PI
 from code_musics.pieces.md_study import PIECES as _MD_STUDY_PIECES
 from code_musics.pieces.mellow_studies import PIECES as _MELLOW_PIECES
 from code_musics.pieces.mirror_dialogue import PIECES as _MIRROR_DIALOGUE_PIECES
+from code_musics.pieces.misty_pixel import PIECES as _MISTY_PIXEL_PIECES
 from code_musics.pieces.mod_matrix_study import PIECES as _MOD_MATRIX_STUDY_PIECES
 from code_musics.pieces.natural_steps import PIECES as _NATURAL_STEPS_PIECES
 from code_musics.pieces.newton_bloom import PIECES as _NEWTON_BLOOM_PIECES
@@ -107,6 +108,7 @@ PIECES = merge_piece_maps(
     _MOD_MATRIX_STUDY_PIECES,
     _NEWTON_BLOOM_PIECES,
     _CLOCK_OF_7_PIECES,
+    _MISTY_PIXEL_PIECES,
 )
 
 __all__ = ["PIECES"]

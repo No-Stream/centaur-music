@@ -65,7 +65,9 @@ class TestSallenKeyBasic:
 
     def test_sallen_key_steeper_than_nothing_but_gentler_than_ladder(self) -> None:
         """Sallen-Key is 12 dB/oct, ladder is 24 dB/oct.  At 4x cutoff, ladder
-        should attenuate notably more than SK."""
+        should attenuate notably more than SK. ``bass_compensation=0.0`` on the
+        ladder isolates the topology slope from the default compensation term.
+        """
         sig = _test_signal()
         cutoff = np.full(len(sig), 1000.0)
         sk = apply_filter(
@@ -79,6 +81,7 @@ class TestSallenKeyBasic:
             cutoff_profile=cutoff,
             sample_rate=SR,
             filter_topology="ladder",
+            bass_compensation=0.0,
         )
         # At 4 kHz (2 octaves above cutoff), ladder should have ~24 dB more
         # attenuation than SK.  Use a wider band and a loose ratio threshold.

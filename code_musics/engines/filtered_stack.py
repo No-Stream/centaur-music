@@ -74,7 +74,7 @@ def render(
     filter_drive = float(params.get("filter_drive", 0.0))
     filter_even_harmonics = float(params.get("filter_even_harmonics", 0.0))
     filter_topology = str(params.get("filter_topology", "svf")).lower()
-    bass_compensation = float(params.get("bass_compensation", 0.0))
+    bass_compensation = float(params.get("bass_compensation", 0.5))
     filter_morph = float(params.get("filter_morph", 0.0))
     hpf_cutoff_hz = float(params.get("hpf_cutoff_hz", 0.0))
     hpf_resonance_q = float(params.get("hpf_resonance_q", 0.707))

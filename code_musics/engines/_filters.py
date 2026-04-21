@@ -30,6 +30,14 @@ _SUPPORTED_LADDER_SOLVERS = {"adaa", "newton"}
 _DEFAULT_NEWTON_MAX_ITERS: int = 4
 _DEFAULT_NEWTON_TOLERANCE: float = 1e-9
 
+# Minimum magnitude for Newton Jacobian values before they are clamped away
+# from zero.  Well-posed Newton problems have |J| >> 0 on the stable branch;
+# this floor only matters at the self-oscillation edge where the Jacobian can
+# momentarily dip toward zero, and preserves the sign so the Newton step still
+# moves toward the correct root.  1e-6 is well below typical residual magnitudes
+# but large enough to keep the ``residual / jac`` step numerically sane.
+_NEWTON_JACOBIAN_FLOOR: float = 1e-6
+
 
 @dataclass(frozen=True)
 class FilterParams:
@@ -40,7 +48,7 @@ class FilterParams:
     filter_drive: float = 0.0
     filter_even_harmonics: float = 0.0
     filter_topology: str = "svf"
-    bass_compensation: float = 0.0
+    bass_compensation: float = 0.5
     filter_morph: float = 0.0
     hpf_cutoff_hz: float = 0.0
     hpf_resonance_q: float = 0.707
@@ -142,6 +150,20 @@ def _adaa_tanh(x_curr: float, x_prev: float) -> float:
 
 
 @numba.njit(cache=True)
+def _safe_jacobian(j: float) -> float:
+    """Clamp a Newton Jacobian away from zero, preserving its sign.
+
+    Small scalar helper so the three Newton loops in this module share a
+    single source of truth for the clamp floor.  Numba inlines this
+    trivially (scalar-in, scalar-out, ``cache=True``) so there is zero
+    runtime cost vs. the inline expression.
+    """
+    if j < _NEWTON_JACOBIAN_FLOOR and j > -_NEWTON_JACOBIAN_FLOOR:
+        return _NEWTON_JACOBIAN_FLOOR if j >= 0.0 else -_NEWTON_JACOBIAN_FLOOR
+    return j
+
+
+@numba.njit(cache=True)
 def _solve_ext_feedback_newton(
     y_warm: float,
     affine_const: float,
@@ -176,11 +198,40 @@ def _solve_ext_feedback_newton(
         if math.fabs(residual) < tol:
             break
         sech2 = 1.0 - ty * ty
-        jac = 1.0 - fb_scale * fb_drive * sech2
-        if jac < 1e-6 and jac > -1e-6:
-            jac = 1e-6 if jac >= 0.0 else -1e-6
+        jac = _safe_jacobian(1.0 - fb_scale * fb_drive * sech2)
         y = y - residual / jac
     return y
+
+
+@numba.njit(cache=True)
+def _svf_affine_taps(
+    g: float, damping: float, band_state: float, low_state: float
+) -> tuple[float, float, float, float, float, float]:
+    """Return the six affine taps of the ZDF/TPT 2-pole SVF body.
+
+    For a ZDF 2-pole SVF with gain ``g`` and damping ``damping``, each of
+    the three output modes (low/band/high) is affine in the instantaneous
+    input ``x`` given the current integrator states:
+
+        mode = input_gain * x + state_offset
+
+    This helper returns all six coefficients in a canonical order so
+    Newton external-feedback branches can pick the ones they need based
+    on ``filter_mode`` / morph weights without recomputing the underlying
+    algebra at every call site.
+
+    Returns ``(low_in, low_off, band_in, band_off, high_in, high_off)``.
+    Numba inlines tuple-returning scalar helpers at zero runtime cost.
+    """
+    denom = 1.0 + 2.0 * damping * g + g * g
+    state_term = (2.0 * damping + g) * band_state + low_state
+    high_in = 1.0 / denom
+    high_off = -state_term / denom
+    band_in = g * high_in
+    band_off = g * high_off + band_state
+    low_in = g * band_in
+    low_off = g * band_off + low_state
+    return low_in, low_off, band_in, band_off, high_in, high_off
 
 
 @numba.njit(cache=True)
@@ -327,42 +378,29 @@ def _apply_linear_zdf_svf(
         # once per sample so Newton can solve the implicit feedback equation
         # y = A_out * (raw + fb_amt * tanh(ext_fb_drive * y)) + B_out
         # = affine_const + fb_scale * tanh(ext_fb_drive * y).
-        denom = 1.0 + 2.0 * damping * g + g * g
-        state_term = (2.0 * damping + g) * band_state + low_state
-        high_input_gain = 1.0 / denom
-        high_state_offset = -state_term / denom
-        band_input_gain = g * high_input_gain
-        band_state_offset = g * high_state_offset + band_state
-        low_input_gain = g * band_input_gain
-        low_state_offset = g * band_state_offset + low_state
+        low_in, low_off, band_in, band_off, high_in, high_off = _svf_affine_taps(
+            g, damping, band_state, low_state
+        )
 
         if use_morph:
-            notch_input_gain = low_input_gain + high_input_gain
-            notch_state_offset = low_state_offset + high_state_offset
-            A_out = (
-                lp_w * low_input_gain
-                + bp_w * band_input_gain
-                + hp_w * high_input_gain
-                + notch_w * notch_input_gain
-            )
+            notch_in = low_in + high_in
+            notch_off = low_off + high_off
+            A_out = lp_w * low_in + bp_w * band_in + hp_w * high_in + notch_w * notch_in
             B_out = (
-                lp_w * low_state_offset
-                + bp_w * band_state_offset
-                + hp_w * high_state_offset
-                + notch_w * notch_state_offset
+                lp_w * low_off + bp_w * band_off + hp_w * high_off + notch_w * notch_off
             )
         elif mode_int == _LP:
-            A_out = low_input_gain
-            B_out = low_state_offset
+            A_out = low_in
+            B_out = low_off
         elif mode_int == _BP:
-            A_out = band_input_gain
-            B_out = band_state_offset
+            A_out = band_in
+            B_out = band_off
         elif mode_int == _HP:
-            A_out = high_input_gain
-            B_out = high_state_offset
+            A_out = high_in
+            B_out = high_off
         else:
-            A_out = low_input_gain + high_input_gain
-            B_out = low_state_offset + high_state_offset
+            A_out = low_in + high_in
+            B_out = low_off + high_off
 
         sample = signal[i]
         if has_ext_fb:
@@ -936,7 +974,7 @@ def _apply_ladder_filter_newton_inner(
     morph: float,
     max_iters: int,
     tolerance: float,
-    close_ext_feedback: bool,
+    use_newton_feedback: bool,
 ) -> np.ndarray:
     """Newton-iterated nonlinear ZDF ladder filter.
 
@@ -1031,7 +1069,7 @@ def _apply_ladder_filter_newton_inner(
         # unit-delay feedback for those paths since they are far less common
         # at high feedback (LP with no morph is the bass / lead use case).
         outer_newton = (
-            close_ext_feedback
+            use_newton_feedback
             and has_ext_fb
             and morph <= 0.0
             and mode_int == _LP
@@ -1066,11 +1104,11 @@ def _apply_ladder_filter_newton_inner(
                 F = y3 + A * th_k - AD_outer * th_g - B
                 if math.fabs(F) < tolerance:
                     break
-                Fp = 1.0 + Ak * sech2_k - AD_outer * ext_fb_drive * sech2_g
                 # Guard against a vanishing Jacobian (well-posed inputs have
                 # Fp >> 0; this only matters at the self-oscillation edge).
-                if Fp < 1e-6 and Fp > -1e-6:
-                    Fp = 1e-6 if Fp >= 0.0 else -1e-6
+                Fp = _safe_jacobian(
+                    1.0 + Ak * sech2_k - AD_outer * ext_fb_drive * sech2_g
+                )
                 y3 = y3 - F / Fp
             # Replay the loop input with the solved y3 so stage states advance
             # consistent with the implicit solution.
@@ -1368,14 +1406,9 @@ def _apply_sallen_key_inner(
             g = math.tan(math.pi * fc / sample_rate)
 
         if newton_feedback_active:
-            denom_svf = 1.0 + 2.0 * damping * g + g * g
-            state_term = (2.0 * damping + g) * band_state + low_state
-            high_in = 1.0 / denom_svf
-            high_off = -state_term / denom_svf
-            band_in = g * high_in
-            band_off = g * high_off + band_state
-            low_in = g * band_in
-            low_off = g * band_off + low_state
+            low_in, low_off, band_in, band_off, high_in, high_off = _svf_affine_taps(
+                g, damping, band_state, low_state
+            )
             if mode_int == _LP:
                 A_out = low_in
                 B_out = low_off
@@ -1994,14 +2027,9 @@ def _apply_sem_inner(
             # Affine-collapse the ZDF SVF body so output = A_out·x_in + B_out,
             # then Newton-solve the closed implicit equation
             # y = A_out·(raw + fb_amt·tanh(g_fb·y)) + B_out.
-            denom_svf = 1.0 + 2.0 * damping * g + g * g
-            state_term = (2.0 * damping + g) * band_state + low_state
-            high_in = 1.0 / denom_svf
-            high_off = -state_term / denom_svf
-            band_in = g * high_in
-            band_off = g * high_off + band_state
-            low_in = g * band_in
-            low_off = g * band_off + low_state
+            low_in, low_off, band_in, band_off, high_in, high_off = _svf_affine_taps(
+                g, damping, band_state, low_state
+            )
             if use_morph:
                 notch_in = low_in + high_in
                 notch_off = low_off + high_off
@@ -2311,7 +2339,7 @@ def _apply_jupiter_newton_inner(
     morph: float,
     max_iters: int,
     tolerance: float,
-    close_ext_feedback: bool,
+    use_newton_feedback: bool,
 ) -> np.ndarray:
     """Jupiter 4-pole with per-sample Newton solve of the feedback tanh.
 
@@ -2365,7 +2393,7 @@ def _apply_jupiter_newton_inner(
                 _BOOTSTRAP_NOISE_AMP * 2.0
             )
         outer_newton = (
-            close_ext_feedback and has_ext_fb and morph <= 0.0 and mode_int == _LP
+            use_newton_feedback and has_ext_fb and morph <= 0.0 and mode_int == _LP
         )
         if has_ext_fb and not outer_newton:
             x = x + feedback_amount * math.tanh(ext_fb_drive * prev_ext_output)
@@ -2403,9 +2431,9 @@ def _apply_jupiter_newton_inner(
                 resid = y - a4 * x - a4D * th_g + a4k * ty - b_state
                 if math.fabs(resid) < tolerance:
                     break
-                deriv = 1.0 + a4k * sech2_inner - a4D * ext_fb_drive * sech2_outer
-                if deriv < 1e-6 and deriv > -1e-6:
-                    deriv = 1e-6 if deriv >= 0.0 else -1e-6
+                deriv = _safe_jacobian(
+                    1.0 + a4k * sech2_inner - a4D * ext_fb_drive * sech2_outer
+                )
                 y = y - resid / deriv
             # Replay x with the solved outer feedback so stage states advance
             # with the implicit solution.
@@ -3130,7 +3158,7 @@ def apply_filter(
     filter_drive: float = 0.0,
     filter_even_harmonics: float = 0.0,
     filter_topology: str = "svf",
-    bass_compensation: float = 0.0,
+    bass_compensation: float = 0.5,
     filter_morph: float = 0.0,
     hpf_cutoff_hz: float = 0.0,
     hpf_resonance_q: float = 0.707,

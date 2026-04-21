@@ -871,29 +871,32 @@ def _metallic_partials(
             jitter = density * 0.03 * rng.uniform(-1.0, 1.0)
             jittered_ratios[i] = jittered_ratios[i] * (1.0 + jitter)
 
+    # Use the full time-varying freq_profile for partial frequencies so that
+    # drum_voice's tone_sweep_ratio (or any other freq-profile shaping) no
+    # longer drags partials off their intended ratios. Mirrors the pattern in
+    # _metallic_ring_mod.
     base_freq = float(np.mean(freq_profile[: max(1, n_samples // 10)]))
     nyquist = sample_rate / 2.0
     num_partials = len(jittered_ratios)
     signal = np.zeros(n_samples, dtype=np.float64)
 
     for i, ratio in enumerate(jittered_ratios):
-        partial_freq = base_freq * ratio
-        if partial_freq >= nyquist:
+        # Use base_freq only for the aliasing gate; actual synthesis uses the
+        # time-varying profile so sweeps stay on-ratio.
+        if base_freq * ratio >= nyquist:
             continue
         weight = brightness ** (i / max(1, num_partials - 1)) if i > 0 else 1.0
+        partial_freq_profile = freq_profile * ratio
 
         if oscillator_mode == "square":
-            norm_phase_inc = np.full(
-                n_samples, partial_freq / sample_rate, dtype=np.float64
-            )
+            norm_phase_inc = partial_freq_profile / sample_rate
             norm_cumphase = np.cumsum(norm_phase_inc)
             norm_phase = norm_cumphase % 1.0
             signal += weight * _polyblep_square(
                 norm_phase, norm_phase_inc, norm_cumphase, pulse_width=0.5
             )
         else:
-            phase_inc = 2.0 * np.pi * partial_freq / sample_rate
-            phase = np.cumsum(np.full(n_samples, phase_inc, dtype=np.float64))
+            phase = integrated_phase(partial_freq_profile, sample_rate=sample_rate)
             signal += weight * np.sin(phase)
 
     return signal

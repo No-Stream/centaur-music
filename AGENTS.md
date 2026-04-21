@@ -91,7 +91,10 @@
   `overlay(...)` / `echo(...)`. Rhythmic transforms: `augment(...)` /
   `diminish(...)` / `rhythmic_retrograde(...)` / `displace(...)` /
   `rotate(...)`. Polyrhythm builders: `polyrhythm(...)` /
-  `cross_rhythm(...)`. Placement: `sequence(...)` / `canon(...)`.
+  `cross_rhythm(...)` (same-span different-division) plus
+  `polymeter_layer(...)` and `polymeter_alignment(...)` for layering a
+  phrase at its *own* cycle length against an ambient bar grid (e.g. a
+  7-beat line phasing against 16). Placement: `sequence(...)` / `canon(...)`.
   Harmonic: `voiced_ratio_chord(...)` / `progression(...)`. The
   optional high-level timing layer adds `Timeline`, rhythmic values
   like `Q` / `E`, `Groove` templates with named presets and per-step
@@ -384,7 +387,9 @@ See `FUTURE.md` for way more ideas.
   See `docs/synth_api.md` and `code_musics/pieces/va_showcase.py`.
 - The `polyblep` and `filtered_stack` engines support eight `filter_topology`
   options: `"svf"` (2-pole ZDF state-variable, default), `"ladder"` (4-pole
-  Moog-style with per-stage saturation + `bass_compensation`), `"sallen_key"`
+  Moog-style with per-stage saturation + `bass_compensation`, defaulting to
+  `0.5` for moderate bass preservation — set to `0.0` for authentic Moog
+  bass-suck in acid-style patches), `"sallen_key"`
   (Diva-style biting 2-pole with pre-filter asymmetric soft-clip under drive),
   `"cascade"` (4-pole Prophet-5-style cascade of independent 1-poles + peaking
   bandpass — no global tanh growl), `"sem"` (Oberheim SEM-flavored 2-pole with

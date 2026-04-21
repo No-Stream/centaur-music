@@ -128,7 +128,7 @@ def render(
     body_filter_q = float(params.get("body_filter_q", 0.707))
     body_filter_drive = float(params.get("body_filter_drive", 0.0))
     body_filter_topology = str(params.get("body_filter_topology", "svf")).lower()
-    body_bass_compensation = float(params.get("body_bass_compensation", 0.0))
+    body_bass_compensation = float(params.get("body_bass_compensation", 0.5))
     body_filter_envelope_raw = params.get("body_filter_envelope")
 
     # FM body params

@@ -63,7 +63,7 @@ def render(
     filter_q = float(params.get("filter_q", 1.2))
     filter_mode = str(params.get("filter_mode", "bandpass"))
     filter_topology = str(params.get("filter_topology", "svf")).lower()
-    bass_compensation = float(params.get("bass_compensation", 0.0))
+    bass_compensation = float(params.get("bass_compensation", 0.5))
     click_amount = float(params.get("click_amount", 0.05))
     click_decay_s = float(params.get("click_decay", 0.003))
     noise_amount = float(params.get("noise_amount", 0.0))

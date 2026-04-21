@@ -968,6 +968,47 @@ phrases = cross_rhythm(
 # phrases[0] has 3 events, phrases[1] has 4, phrases[2] has 5
 ```
 
+### `polymeter_layer(phrase, *, cycle, total, start=0.0)`
+
+`polyrhythm` and `cross_rhythm` divide the *same* span into different numbers
+of onsets. `polymeter_layer` is the complementary tool: it tiles a single
+phrase at its *own* cycle length against an ambient bar structure, so a 7-beat
+phrase phases against a 16-beat drum grid.
+
+Parameters:
+
+- `phrase` — source material. Note starts must fall inside one cycle
+  (`0 <= event.start < cycle`). Durations may extend past `cycle`; the
+  caller decides how much overlap is musical.
+- `cycle` — one repetition length (seconds, or another unit if the caller is
+  working in beats and resolves later). For clean LCM math use beats.
+- `total` — total time to tile over, including `start`. Notes whose start
+  falls at or after `total` are dropped. Note durations are not truncated;
+  size `total` to a cycle boundary when exact endings matter.
+- `start` — absolute time at which the first cycle begins. Defaults to 0.
+
+Returns a new `Phrase` with absolute-time events sorted by start.
+
+```python
+from code_musics.composition import line, polymeter_layer, RhythmCell
+
+# 7-beat source phrase (one cycle)
+seven = line(
+    tones=[1.0, 7 / 6, 3 / 2, 7 / 4, 9 / 8, 5 / 3, 7 / 5],
+    rhythm=RhythmCell(spans=(0.25,) * 7),  # 7 sixteenths
+)
+# Tile over a 4-bar span, so the phrase phases against a 16-beat bar
+tiled = polymeter_layer(seven, cycle=7 * 0.25, total=4 * 16 * 0.25)
+```
+
+### `polymeter_alignment(cycles, *, tolerance=1e-6)`
+
+Return the point at which all given integer-beat cycles realign (LCM).
+`polymeter_alignment([7, 16])` → 112; `polymeter_alignment([16, 11, 9, 7])`
+→ 11088 — never realigns inside a sensible section, which is usually the
+point. Useful for compile-time checks that a piece actually commits to
+non-trivial phase relationships.
+
 ## Section Helpers
 
 These helpers are for moving from a single phrase or chord idea to a short

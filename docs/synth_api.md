@@ -2193,7 +2193,7 @@ Presets:
 | `tight_clap` | Short, snappy 3-tap clap |
 | `big_clap` | Wider 6-tap clap with longer body |
 | `finger_snap` | Quick 2-tap snap with narrow bandpass |
-| `hand_clap` | Natural 5-tap hand clap with crescendo |
+| `hand_clap` | Natural 4-tap hand clap with wider spacing, softer click, and tap frequency spread |
 | `909_clap_authentic` | 909-accurate timing with tap acceleration and frequency spread |
 | `scattered_clap` | Wide 6-tap clap with heavy acceleration and spread for organic character |
 | `granular_cascade` | Dense 8-tap granular burst with high acceleration and spread |
@@ -3171,8 +3171,10 @@ individually.
 - `bass_compensation: float`
   Ladder only. Restores low-frequency energy lost to resonance feedback. At 0:
   classic Moog behavior (bass loss at high resonance). At 1.0: full bass
-  restoration. Based on Rossum's approach in the Subsequent 37. Default `0.0`.
-  Range `[0, 1]`.
+  restoration. Based on Rossum's approach in the Subsequent 37. Default `0.5`
+  (moderate bass preservation — most modern Moog-style usage wants this; drop
+  to `0.0` for authentic vintage bass-suck, e.g. acid bass patches). Range
+  `[0, 1]`. Only affects the `ladder` topology; ignored elsewhere.
 - `k35_feedback_asymmetry: float`
   K35 only. Controls the even-harmonic bias of the diode feedback path.
   At `0.0`: symmetric diode (cleaner K35). At `0.5`: classic MS-20 snarl.
@@ -4147,6 +4149,7 @@ digital character):
 | `tight_clap` | Short, snappy 3-tap clap |
 | `big_clap` | Wider 6-tap clap with longer body |
 | `finger_snap` | Quick 2-tap snap with narrow bandpass |
+| `hand_clap` | Natural 4-tap hand clap with wider spacing and softer click |
 | `gated_clap` | 909-style clap with gated tail via noise envelope |
 | `909_clap_authentic` | 909-accurate timing with tap acceleration and frequency spread |
 | `scattered_clap` | Wide 6-tap clap with heavy acceleration and spread |
@@ -4159,7 +4162,10 @@ digital character):
 |--------|-----------|
 | `closed_hat` | Tight, bright closed hi-hat |
 | `open_hat` | Longer open hi-hat |
+| `pedal_hat` | Medium pedal hi-hat between closed and open |
 | `ride_bell` | Focused ride bell |
+| `ride_bow` | Washy ride bow with long decay and extra partial |
+| `crash` | Long crash cymbal (1.8 s decay) with high partial density |
 | `cowbell` | Two-partial cowbell with fixed ratios |
 | `clave` | Sharp, short clave click |
 | `harmonic_bell` | Harmonic integer-ratio partials for tuned bell |

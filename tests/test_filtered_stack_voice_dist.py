@@ -236,3 +236,102 @@ def test_chord_imd_pre_sum_vs_post_sum() -> None:
     # Require a meaningful margin so the test isn't noise-sensitive.  In
     # practice post-sum IMD is ~3-10x pre-sum on this chord.
     assert pre_imd < post_imd * 0.7
+
+
+# ---------------------------------------------------------------------------
+# Filter feedback extraction — regression guard for ``feedback_amount`` /
+# ``feedback_saturation`` threading from user kwargs through the engine into
+# ``apply_filter_oversampled``.
+#
+# These params were previously silently dropped at the filtered_stack layer:
+# a user could set them, but the engine never forwarded them to the filter.
+# The per-filter feedback tests in ``test_feedback_path.py`` cover the filter
+# primitive in isolation; these tests cover the engine-level extraction path
+# that wires the params through.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("filter_topology", ["svf", "ladder"])
+def test_filtered_stack_feedback_amount_threads_through(filter_topology: str) -> None:
+    """Setting ``feedback_amount`` at the engine level must change the
+    rendered output.  If the engine silently drops the kwarg, the two
+    renders will be bit-identical and this test fails — the canary for
+    re-broken extraction at lines 86-87 / 300-301 of
+    ``code_musics/engines/filtered_stack.py``.
+    """
+    fb_extras = {"filter_topology": filter_topology}
+    no_fb = _render_note(220.0, fb_extras)
+    with_fb = _render_note(
+        220.0,
+        {
+            "filter_topology": filter_topology,
+            "feedback_amount": 0.6,
+            "feedback_saturation": 0.4,
+        },
+    )
+
+    # Both finite, same shape, non-silent.
+    assert no_fb.shape == with_fb.shape
+    assert np.isfinite(no_fb).all()
+    assert np.isfinite(with_fb).all()
+    no_fb_rms = float(np.sqrt(np.mean(no_fb**2)))
+    with_fb_rms = float(np.sqrt(np.mean(with_fb**2)))
+    assert no_fb_rms > 1e-4
+    assert with_fb_rms > 1e-4
+
+    # The feedback render must differ *meaningfully* from the clean render.
+    # If ``feedback_amount`` is silently dropped, diff_rms collapses to ~0.
+    diff_rms = float(np.sqrt(np.mean((with_fb - no_fb) ** 2)))
+    assert diff_rms / no_fb_rms > 0.05, (
+        f"feedback_amount appears to have no effect on {filter_topology} "
+        f"output — diff_rms={diff_rms:.3e} vs no_fb_rms={no_fb_rms:.3e}. "
+        "This suggests the engine-level extraction was silently dropped."
+    )
+
+
+@pytest.mark.parametrize("filter_topology", ["svf", "ladder"])
+def test_filtered_stack_feedback_reshapes_spectrum(filter_topology: str) -> None:
+    """Feedback must actually *reshape* the spectrum, not merely scale it.
+
+    The threading test above proves ``feedback_amount`` reaches the filter
+    by asserting the waveforms differ in time-domain RMS.  A naive placebo
+    wiring (e.g. a parallel gain path triggered by the same kwarg) could
+    also change the waveform without engaging the feedback nonlinearity.
+    This test guards against that by comparing *normalized* spectra
+    (energy-normalized to 1.0) — an affine or broadband gain change would
+    leave the normalized spectrum nearly unchanged, while a real filter
+    feedback loop resonantly reshapes it.
+
+    Uses an L1 distance on the normalized power spectra, which is
+    invariant to both ``filtered_stack``'s post-filter peak-normalization
+    and any gain-only perturbation.
+    """
+    no_fb = _render_note(220.0, {"filter_topology": filter_topology})
+    with_fb = _render_note(
+        220.0,
+        {
+            "filter_topology": filter_topology,
+            "feedback_amount": 0.6,
+            "feedback_saturation": 0.4,
+        },
+    )
+
+    def normalized_power_spectrum(signal: np.ndarray) -> np.ndarray:
+        power = np.abs(np.fft.rfft(signal)) ** 2
+        total = float(np.sum(power))
+        assert total > 0.0
+        return power / total
+
+    s0 = normalized_power_spectrum(no_fb)
+    s1 = normalized_power_spectrum(with_fb)
+    # L1 distance between two probability distributions ranges in [0, 2].
+    # A pure gain change gives ~0; a reshaped spectrum gives a clearly
+    # non-trivial value.  Threshold of 0.1 is comfortably above numerical
+    # noise but well below the observed reshaping (~0.3-0.6 empirically).
+    l1_dist = float(np.sum(np.abs(s0 - s1)))
+    assert l1_dist > 0.1, (
+        f"feedback on {filter_topology} did not reshape the spectrum "
+        f"(L1 distance on normalized power = {l1_dist:.4f}).  "
+        "Expected the feedback loop to resonantly reshape, not just "
+        "re-scale, the output."
+    )

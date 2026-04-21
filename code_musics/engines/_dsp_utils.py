@@ -1286,7 +1286,7 @@ def apply_filter_oversampled(
     filter_drive: float = 0.0,
     filter_even_harmonics: float = 0.0,
     filter_topology: str = "svf",
-    bass_compensation: float = 0.0,
+    bass_compensation: float = 0.5,
     filter_morph: float = 0.0,
     hpf_cutoff_hz: float = 0.0,
     hpf_resonance_q: float = 0.707,

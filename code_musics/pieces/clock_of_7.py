@@ -60,6 +60,7 @@ S6_START = S6_BAR * BAR
 TOTAL_DUR = TOTAL_BARS * BAR
 
 F0_HZ = 185.0  # F#3 — shared with newton_bloom + diva_study
+KICK_PARTIAL = 0.25  # F#1 (46.25 Hz) — on-root sub-kick, two octaves below F0
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +163,7 @@ def _add_kick(score: Score) -> None:
                 "kick",
                 start=bar * BAR + beat * BEAT,
                 duration=0.25,
-                partial=1.0,
+                partial=KICK_PARTIAL,
                 amp_db=-3.0 if beat == 0 else -4.5,
                 velocity=1.0,
             )
@@ -174,7 +175,7 @@ def _add_kick(score: Score) -> None:
                 "kick",
                 start=bar * BAR,
                 duration=0.25,
-                partial=1.0,
+                partial=KICK_PARTIAL,
                 amp_db=-6.0,
                 velocity=0.95,
             )
@@ -185,7 +186,7 @@ def _add_kick(score: Score) -> None:
                 "kick",
                 start=bar * BAR + beat * BEAT,
                 duration=0.25,
-                partial=1.0,
+                partial=KICK_PARTIAL,
                 amp_db=-3.0 if beat == 0 else -4.5,
                 velocity=1.0,
             )
@@ -195,7 +196,7 @@ def _add_kick(score: Score) -> None:
             "kick",
             start=bar * BAR,
             duration=0.25,
-            partial=1.0,
+            partial=KICK_PARTIAL,
             amp_db=-5.0,
             velocity=0.9,
         )

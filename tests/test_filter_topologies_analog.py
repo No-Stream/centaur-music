@@ -291,7 +291,9 @@ class TestSemBasic:
 
     def test_sem_slope_is_12db_per_oct(self) -> None:
         """SEM is 12 dB/oct — should have more HF passthrough than 24 dB/oct
-        filters and less than unfiltered."""
+        filters and less than unfiltered. ``bass_compensation=0.0`` on the
+        ladder isolates the topology slope from the default compensation term.
+        """
         sig = _test_signal()
         cutoff = np.full(len(sig), 1000.0)
         sem_out = apply_filter(
@@ -305,6 +307,7 @@ class TestSemBasic:
             cutoff_profile=cutoff,
             sample_rate=SR,
             filter_topology="ladder",
+            bass_compensation=0.0,
         )
         sem_hf = _band_energy(sem_out, 3500, 6000)
         lad_hf = _band_energy(lad, 3500, 6000)
@@ -623,7 +626,8 @@ class TestDiodeBasic:
     def test_diode_slope_between_sk_and_ladder(self) -> None:
         """Diode is 18 dB/oct — HF energy should sit between
         Sallen-Key (12 dB/oct, more HF) and the Moog ladder (24 dB/oct,
-        less HF) at matched cutoff."""
+        less HF) at matched cutoff. ``bass_compensation=0.0`` on the ladder
+        isolates the topology slope from the default compensation term."""
         sig = _test_signal()
         cutoff = np.full(len(sig), 1000.0)
         dio = apply_filter(
@@ -643,6 +647,7 @@ class TestDiodeBasic:
             cutoff_profile=cutoff,
             sample_rate=SR,
             filter_topology="ladder",
+            bass_compensation=0.0,
         )
         dio_hf = _band_energy(dio, 3500, 6000)
         sk_hf = _band_energy(sk, 3500, 6000)
