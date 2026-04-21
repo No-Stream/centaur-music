@@ -566,6 +566,35 @@ def _add_clap(score: Score) -> None:
         )
 
 
+def _add_crash(score: Score) -> None:
+    """Section-entry crashes on C, E, and a long tail hit near G.
+
+    Crashes mark form boundaries — C (counter enters), E (peak), and a
+    final decay hit at the start of G that rings through the fade.
+    """
+    # Bar, velocity, amp_db — pre-entry hits placed on the "and" of beat 4
+    # of the last bar of the preceding section for the most typical
+    # drum-machine swell feel.
+    hits: tuple[tuple[float, float, float], ...] = (
+        (S_C - 1 + 3.5 / 4, 1.0, -10.0),  # pickup into C
+        (S_E - 1 + 3.5 / 4, 1.05, -7.0),  # pickup into E (big one)
+        (S_E + 8, 0.85, -14.0),  # mid-E accent
+        (S_E + 16, 0.85, -14.0),
+        (S_G, 0.7, -16.0),  # long ring at tail start
+    )
+    for bar_pos, vel, amp_db in hits:
+        if bar_pos >= TOTAL_BARS:
+            continue
+        score.add_note(
+            "crash",
+            start=bar_pos * BAR,
+            duration=3.0 * BAR,  # long, natural decay; voice-level peak norm tames
+            partial=1.0,
+            amp_db=amp_db,
+            velocity=vel,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Polymeter layer writers — closed_hat (11-beat), glitch_perc (9-beat), ticks
 # ---------------------------------------------------------------------------
@@ -937,6 +966,39 @@ def _bass_cutoff_automation() -> AutomationSpec:
 # ---------------------------------------------------------------------------
 
 
+def _bell_hall_send_automation() -> AutomationSpec:
+    """Bell hall-send rides wetter through the break, snaps back for E.
+
+    During D (break) the arrangement thins out; pushing the bell hall send
+    from -10 dB up to -3 dB turns it into a spacious featured element.
+    Snap back to -10 dB for E where the dense arrangement wants the bell
+    dry and present.
+    """
+    pre_d = T_D - BAR
+    pre_e = T_E - BAR
+    return AutomationSpec(
+        target=AutomationTarget(kind="control", name="send_db"),
+        segments=(
+            AutomationSegment(start=0.0, end=pre_d, shape="hold", value=-10.0),
+            AutomationSegment(
+                start=pre_d, end=T_D, shape="linear", start_value=-10.0, end_value=-3.0
+            ),
+            AutomationSegment(start=T_D, end=pre_e, shape="hold", value=-3.0),
+            AutomationSegment(
+                start=pre_e, end=T_E, shape="linear", start_value=-3.0, end_value=-10.0
+            ),
+            AutomationSegment(start=T_E, end=T_F, shape="hold", value=-10.0),
+            AutomationSegment(
+                start=T_F,
+                end=TOTAL_DUR,
+                shape="linear",
+                start_value=-10.0,
+                end_value=-6.0,
+            ),
+        ),
+    )
+
+
 def _master_effects() -> list[EffectSpec]:
     """Override DEFAULT_MASTER_EFFECTS to add tape + tone shaping.
 
@@ -1082,12 +1144,32 @@ def build_score() -> Score:
         preset="909_tight",
         drum_bus=drum_bus,
         send_db=-5.0,
+        synth_overrides={
+            # More pitched body, longer body tail — this is the thwack.
+            # Wire is slightly tamed so body carries the weight.
+            "tone_level": 1.1,
+            "tone_decay_s": 0.09,
+            "noise_level": 0.8,
+            "exciter_level": 0.9,
+        },
         effects=[
-            EffectSpec("compressor", {"preset": "snare_punch"}),
-            # No saturation — 909_tight is already hashy; extra bite amplifies
-            # the wire-rattle on ghost notes into a shaker-ish texture.
+            # Faster snare_punch attack for a sharper transient slap.
+            EffectSpec(
+                "compressor",
+                {"preset": "snare_punch", "attack_ms": 3.0, "ratio": 3.5},
+            ),
+            # Low-mid push for body; tiny 6 kHz cut so ghosts don't get crispy.
+            EffectSpec(
+                "eq",
+                {
+                    "bands": [
+                        {"kind": "bell", "freq_hz": 220.0, "gain_db": 2.0, "q": 1.1},
+                        {"kind": "high_shelf", "freq_hz": 6000.0, "gain_db": -1.0},
+                    ]
+                },
+            ),
         ],
-        mix_db=-5.0,
+        mix_db=-8.0,  # -3 dB from previous -5.0
     )
     add_drum_voice(
         score,
@@ -1101,6 +1183,34 @@ def build_score() -> Score:
         pan=0.15,
     )
     score.voices["clap"].sends.append(VoiceSend(target="hall", send_db=-10.0))
+
+    # Crash — for section-entry swells (C, E) and a final decay tail.
+    add_drum_voice(
+        score,
+        "crash",
+        engine="drum_voice",
+        preset="crash",
+        drum_bus=drum_bus,
+        send_db=-6.0,
+        effects=[
+            EffectSpec(
+                "eq",
+                {
+                    "bands": [
+                        {
+                            "kind": "highpass",
+                            "cutoff_hz": 200.0,
+                            "slope_db_per_oct": 12,
+                        },
+                        {"kind": "high_shelf", "freq_hz": 8000.0, "gain_db": -2.0},
+                    ]
+                },
+            ),
+        ],
+        mix_db=-10.0,
+        pan=0.05,
+    )
+    score.voices["crash"].sends.append(VoiceSend(target="hall", send_db=-4.0))
 
     add_drum_voice(
         score,
@@ -1210,7 +1320,11 @@ def build_score() -> Score:
         pan=0.1,
         velocity_humanize=None,
         sends=[
-            VoiceSend(target="hall", send_db=-10.0),
+            VoiceSend(
+                target="hall",
+                send_db=-10.0,
+                automation=[_bell_hall_send_automation()],
+            ),
             VoiceSend(target="delay", send_db=-14.0),
         ],
     )
@@ -1290,6 +1404,7 @@ def build_score() -> Score:
     _add_kick(score)
     _add_snare(score)
     _add_clap(score)
+    _add_crash(score)
     _add_closed_hat(score)
     _add_glitch_perc(score)
     _add_ticks(score)
