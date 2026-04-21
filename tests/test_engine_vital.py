@@ -137,7 +137,7 @@ class TestScoreIntegration:
     def test_score_renders_vital_voice(self) -> None:
         from code_musics.score import Score
 
-        score = Score(f0=220.0)
+        score = Score(f0_hz=220.0)
         score.add_voice(
             "vital_pad",
             synth_defaults={"engine": "vital", "tail_seconds": 0.5},
@@ -326,9 +326,11 @@ class TestChannelPitchIsolation:
         spectrum = np.abs(np.fft.rfft(windowed))
         freqs = np.fft.rfftfreq(len(windowed), d=1.0 / sr)
 
-        # Find the two strongest peaks (should be near freq_low and freq_high)
-        min_bin = max(1, int(100.0 / (sr / len(windowed))))
-        max_bin = int(600.0 / (sr / len(windowed)))
+        # Search near the expected low note only (exclude the high note region)
+        freq_resolution = sr / len(windowed)
+        min_bin = max(1, int(100.0 / freq_resolution))
+        midpoint_hz = (freq_low + freq_high) / 2.0
+        max_bin = int(midpoint_hz / freq_resolution)
         low_peak_bin = min_bin + int(np.argmax(spectrum[min_bin:max_bin]))
         detected_low_overlap = float(freqs[low_peak_bin])
 

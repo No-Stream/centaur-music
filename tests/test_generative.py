@@ -6,16 +6,22 @@ import pytest
 
 from code_musics.composition import HarmonicContext, RhythmCell, line
 from code_musics.generative import (
+    AksakPattern,
     LatticeWalker,
     RatioMarkov,
     TonePool,
     TuringMachine,
+    ca_rhythm,
+    ca_rhythm_layers,
     euclidean_line,
     euclidean_pattern,
     euclidean_rhythm,
+    mutate_rhythm,
     prob_gate,
+    prob_rhythm,
     stochastic_cloud,
 )
+from code_musics.meter import Timeline
 from code_musics.score import Phrase, Score
 
 # --- TonePool ---
@@ -135,8 +141,9 @@ def test_euclidean_rhythm_produces_correct_span_count() -> None:
     assert sum(rhythm.spans) == pytest.approx(8 * 0.25)
 
 
-def test_euclidean_rhythm_returns_none_for_zero_hits() -> None:
-    assert euclidean_rhythm(0, 8) is None
+def test_euclidean_rhythm_raises_for_zero_hits() -> None:
+    with pytest.raises(ValueError, match="hits must be positive"):
+        euclidean_rhythm(0, 8)
 
 
 def test_euclidean_line_produces_phrase_with_correct_event_count() -> None:
@@ -446,7 +453,7 @@ def test_stochastic_cloud_rejects_bad_amp_range() -> None:
 
 
 def test_euclidean_line_integrates_with_score() -> None:
-    score = Score(f0=220.0)
+    score = Score(f0_hz=220.0)
     score.add_voice("rhythm", synth_defaults={"engine": "additive"})
     phrase = euclidean_line([4.0, 5.0, 6.0], hits=3, steps=8, span=0.25)
     score.add_phrase("rhythm", phrase, start=0.0)
@@ -458,7 +465,7 @@ def test_generator_chain_tone_pool_turing_prob_gate_to_score() -> None:
     tm = TuringMachine(length=6, flip_probability=0.1, tones=pool, seed=42)
     phrase = tm.to_phrase(8, rhythm=RhythmCell(spans=(0.25,)))
     gated = prob_gate(phrase, density=0.7, seed=0)
-    score = Score(f0=110.0)
+    score = Score(f0_hz=110.0)
     score.add_voice("seq", synth_defaults={"engine": "additive"})
     score.add_phrase("seq", gated, start=0.0)
     assert len(score.voices["seq"].notes) == len(gated.events)
@@ -471,7 +478,256 @@ def test_stochastic_cloud_integrates_with_score() -> None:
         density=3.0,
         seed=0,
     )
-    score = Score(f0=220.0)
+    score = Score(f0_hz=220.0)
     score.add_voice("cloud", synth_defaults={"engine": "additive"})
     score.add_phrase("cloud", phrase, start=0.0)
     assert len(score.voices["cloud"].notes) == len(phrase.events)
+
+
+# --- prob_rhythm ---
+
+
+def test_prob_rhythm_uniform_density() -> None:
+    cell = prob_rhythm(16, onset_weights=0.5, seed=42)
+    assert 1 <= len(cell.spans) <= 16
+    assert sum(cell.spans) == pytest.approx(16 * 0.25)
+
+
+def test_prob_rhythm_cycling_onset_weights() -> None:
+    cell = prob_rhythm(16, onset_weights=[1.0, 0.3, 0.5, 0.3], seed=7)
+    assert 1 <= len(cell.spans) <= 16
+    assert sum(cell.spans) == pytest.approx(16 * 0.25)
+
+
+def test_prob_rhythm_zero_density_forces_one_onset() -> None:
+    cell = prob_rhythm(8, onset_weights=0.0, seed=0)
+    assert len(cell.spans) == 1
+    assert sum(cell.spans) == pytest.approx(8 * 0.25)
+
+
+def test_prob_rhythm_spans_sum_to_total() -> None:
+    cell = prob_rhythm(12, onset_weights=0.6, span=0.5, seed=99)
+    assert sum(cell.spans) == pytest.approx(12 * 0.5)
+
+
+def test_prob_rhythm_rejects_negative_weights() -> None:
+    with pytest.raises(ValueError, match="non-negative"):
+        prob_rhythm(8, onset_weights=-0.1, seed=0)
+    with pytest.raises(ValueError, match="non-negative"):
+        prob_rhythm(8, onset_weights=[0.5, -0.1], seed=0)
+
+
+def test_prob_rhythm_rejects_non_positive_steps() -> None:
+    with pytest.raises(ValueError, match="steps must be positive"):
+        prob_rhythm(0, seed=0)
+    with pytest.raises(ValueError, match="steps must be positive"):
+        prob_rhythm(-1, seed=0)
+
+
+# --- AksakPattern ---
+
+
+def test_aksak_balkan_7_rhythm() -> None:
+    pat = AksakPattern.balkan_7(pulse=0.125)
+    assert pat.grouping == (2, 2, 3)
+    rhythm = pat.to_rhythm()
+    assert len(rhythm.spans) == 3
+    assert sum(rhythm.spans) == pytest.approx(7 * 0.125)
+
+
+def test_aksak_turkish_9_meter() -> None:
+    pat = AksakPattern.turkish_9(pulse=0.1)
+    assert pat.to_meter() == (9, 8)
+
+
+def test_aksak_from_timeline() -> None:
+    tl = Timeline(bpm=120.0)
+    pat = AksakPattern.from_timeline((2, 2, 3), tl)
+    assert pat.grouping == (2, 2, 3)
+    assert pat.pulse == pytest.approx(tl.duration(0.25))
+
+
+def test_aksak_to_pulses() -> None:
+    pat = AksakPattern(grouping=(3, 2), pulse=0.2)
+    pulses = pat.to_pulses()
+    assert len(pulses.spans) == 5
+    assert all(s == pytest.approx(0.2) for s in pulses.spans)
+
+
+def test_aksak_rejects_empty_grouping() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        AksakPattern(grouping=(), pulse=0.1)
+
+
+def test_aksak_rejects_non_positive_groups() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        AksakPattern(grouping=(2, 0, 3), pulse=0.1)
+
+
+def test_aksak_rejects_non_positive_pulse() -> None:
+    with pytest.raises(ValueError, match="positive and finite"):
+        AksakPattern(grouping=(2, 3), pulse=0.0)
+    with pytest.raises(ValueError, match="positive and finite"):
+        AksakPattern(grouping=(2, 3), pulse=-0.1)
+
+
+def test_aksak_total_pulses_and_duration() -> None:
+    pat = AksakPattern(grouping=(3, 3, 2), pulse=0.125)
+    assert pat.total_pulses == 8
+    assert pat.total_duration == pytest.approx(1.0)
+
+
+def test_aksak_to_pulses_accent_first_produces_group_accents() -> None:
+    pat = AksakPattern(grouping=(2, 3), pulse=0.2)
+    accented = pat.to_pulses(accent_first=True)
+    unaccented = pat.to_pulses(accent_first=False)
+    # Both have 5 spans of equal duration
+    assert len(accented.spans) == 5
+    assert len(unaccented.spans) == 5
+    assert accented.spans == unaccented.spans
+    # Unaccented: uniform gates (scalar 1.0)
+    assert unaccented.gates == 1.0
+    # Accented: first pulse of each group gets 1.0, rest get 0.7
+    # Group (2): pulse 0 = 1.0, pulse 1 = 0.7
+    # Group (3): pulse 2 = 1.0, pulse 3 = 0.7, pulse 4 = 0.7
+    assert accented.gates == pytest.approx((1.0, 0.7, 1.0, 0.7, 0.7))
+
+
+# --- ca_rhythm ---
+
+
+def test_ca_rule_30_produces_nontrivial_pattern() -> None:
+    cell = ca_rhythm(30, 16)
+    assert len(cell.spans) > 1
+    assert sum(cell.spans) == pytest.approx(16 * 0.25)
+
+
+def test_ca_rule_0_all_zero_fallback() -> None:
+    cell = ca_rhythm(0, 8)
+    assert len(cell.spans) == 1
+    assert sum(cell.spans) == pytest.approx(8 * 0.25)
+
+
+def test_ca_custom_init_state() -> None:
+    cell_default = ca_rhythm(30, 8, seed=0)
+    cell_custom = ca_rhythm(30, 8, init=0b11001100, seed=0)
+    assert cell_default.spans != cell_custom.spans
+
+
+def test_ca_different_rows_differ() -> None:
+    cell_a = ca_rhythm(30, 16, row=-1)
+    cell_b = ca_rhythm(30, 16, row=3)
+    # Both produce valid rhythms; different rows usually differ for rule 30
+    assert sum(cell_a.spans) == pytest.approx(16 * 0.25)
+    assert sum(cell_b.spans) == pytest.approx(16 * 0.25)
+
+
+def test_ca_rhythm_layers_count() -> None:
+    layers = ca_rhythm_layers(30, 16, layers=4)
+    assert len(layers) == 4
+    for layer in layers:
+        assert sum(layer.spans) == pytest.approx(16 * 0.25)
+
+
+def test_ca_rejects_invalid_rule() -> None:
+    with pytest.raises(ValueError, match="rule must be in 0-255"):
+        ca_rhythm(-1, 8)
+    with pytest.raises(ValueError, match="rule must be in 0-255"):
+        ca_rhythm(256, 8)
+
+
+def test_ca_seed_reproducibility() -> None:
+    """Same seed produces identical output."""
+    a = ca_rhythm(30, 16, seed=42)
+    b = ca_rhythm(30, 16, seed=42)
+    assert a.spans == b.spans
+
+
+def test_ca_different_seeds_differ() -> None:
+    """Different seeds produce different initial states and thus different rhythms."""
+    a = ca_rhythm(30, 16, seed=0)
+    b = ca_rhythm(30, 16, seed=99)
+    assert a.spans != b.spans
+
+
+def test_ca_layers_seed_reproducibility() -> None:
+    """Same seed produces identical layers output."""
+    a = ca_rhythm_layers(30, 16, layers=3, seed=7)
+    b = ca_rhythm_layers(30, 16, layers=3, seed=7)
+    assert [layer.spans for layer in a] == [layer.spans for layer in b]
+
+
+def test_ca_layers_different_seeds_differ() -> None:
+    """Different seeds produce different layers."""
+    a = ca_rhythm_layers(30, 16, layers=3, seed=0)
+    b = ca_rhythm_layers(30, 16, layers=3, seed=99)
+    assert [layer.spans for layer in a] != [layer.spans for layer in b]
+
+
+# --- mutate_rhythm ---
+
+
+def test_mutate_identity() -> None:
+    source = line(tones=[4.0, 5.0, 6.0, 7.0], rhythm=(0.25, 0.25, 0.25, 0.25), amp=0.3)
+    result = mutate_rhythm(source, seed=0)
+    assert len(result.events) == len(source.events)
+    assert [e.start for e in result.events] == [e.start for e in source.events]
+    assert [e.velocity for e in result.events] == [e.velocity for e in source.events]
+
+
+def test_mutate_drop_removes_events() -> None:
+    source = line(tones=[4.0, 5.0, 6.0, 7.0, 8.0] * 4, rhythm=(0.25,) * 20, amp=0.3)
+    result = mutate_rhythm(source, drop_prob=0.5, seed=42)
+    assert len(result.events) < len(source.events)
+    assert len(result.events) >= 1
+
+
+def test_mutate_subdivide_increases_count() -> None:
+    source = line(tones=[4.0, 5.0, 6.0, 7.0], rhythm=(0.5, 0.5, 0.5, 0.5), amp=0.3)
+    result = mutate_rhythm(source, subdivide_prob=1.0, seed=0)
+    assert len(result.events) == len(source.events) * 2
+
+
+def test_mutate_merge_decreases_count() -> None:
+    source = line(tones=[4.0, 5.0, 6.0, 7.0], rhythm=(0.25, 0.25, 0.25, 0.25), amp=0.3)
+    result = mutate_rhythm(source, merge_prob=1.0, seed=0)
+    assert len(result.events) < len(source.events)
+
+
+def test_mutate_shift_changes_starts() -> None:
+    source = line(tones=[4.0, 5.0, 6.0, 7.0], rhythm=(0.5, 0.5, 0.5, 0.5), amp=0.3)
+    result = mutate_rhythm(source, shift_amount=0.1, seed=42)
+    original_starts = [e.start for e in source.events]
+    mutated_starts = [e.start for e in result.events]
+    assert original_starts != mutated_starts
+
+
+def test_mutate_accent_drift_changes_velocities() -> None:
+    source = line(tones=[4.0, 5.0, 6.0, 7.0], rhythm=(0.25, 0.25, 0.25, 0.25), amp=0.3)
+    result = mutate_rhythm(source, accent_drift=0.3, seed=42)
+    original_vels = [e.velocity for e in source.events]
+    mutated_vels = [e.velocity for e in result.events]
+    assert original_vels != mutated_vels
+
+
+def test_mutate_deterministic_with_same_seed() -> None:
+    source = line(tones=[4.0, 5.0, 6.0], rhythm=(0.25, 0.25, 0.25), amp=0.3)
+    a = mutate_rhythm(source, drop_prob=0.3, shift_amount=0.05, seed=99)
+    b = mutate_rhythm(source, drop_prob=0.3, shift_amount=0.05, seed=99)
+    assert [e.start for e in a.events] == [e.start for e in b.events]
+    assert [e.velocity for e in a.events] == [e.velocity for e in b.events]
+
+
+def test_mutate_different_seeds_differ() -> None:
+    source = line(tones=[4.0, 5.0, 6.0, 7.0] * 3, rhythm=(0.25,) * 12, amp=0.3)
+    a = mutate_rhythm(source, drop_prob=0.3, accent_drift=0.2, seed=1)
+    b = mutate_rhythm(source, drop_prob=0.3, accent_drift=0.2, seed=2)
+    a_vels = [e.velocity for e in a.events]
+    b_vels = [e.velocity for e in b.events]
+    assert a_vels != b_vels
+
+
+def test_mutate_empty_phrase_returns_empty() -> None:
+    empty = Phrase(events=())
+    result = mutate_rhythm(empty, drop_prob=0.5, seed=0)
+    assert len(result.events) == 0

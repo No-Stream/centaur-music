@@ -23,6 +23,7 @@ from scipy.signal import butter, lfilter, resample_poly, sosfilt, tf2sos
 
 from code_musics.automation import apply_control_automation
 from code_musics.engines._dsp_utils import classify_thd, compute_signal_thd
+from code_musics.modulation import combine_connections_on_curve
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -1143,11 +1144,46 @@ def adsr(
     release: float = 0.3,
     sample_rate: int = SAMPLE_RATE,
     hold_duration: float | None = None,
+    vca_nonlinearity: float = 0.0,
+    attack_power: float = 1.0,
+    decay_power: float = 1.0,
+    release_power: float = 1.0,
+    attack_target: float = 1.0,
 ) -> np.ndarray:
-    """Apply ADSR amplitude envelope."""
+    """Apply ADSR amplitude envelope with optional per-stage curve shaping.
+
+    Each stage transitions from start to end with a shaped position
+    ``s = p**power`` where ``p`` is the linear ramp ``[0, 1)`` across the
+    stage. ``power == 1.0`` yields the linear behavior of the classic ADSR.
+    Values below 1.0 give concave (fast-start) curves; values above 1.0 give
+    convex (slow-start) curves. Per-stage powers are clamped to ``[0.1, 8.0]``.
+
+    ``attack_target`` is a VCV Fundamental-style trick (``ATT_TARGET``):
+    the attack stage shapes a ramp toward ``attack_target`` and then clips at
+    ``1.0``. With ``attack_target == 1.0`` and ``attack_power == 1.0`` the
+    output is identical to the original linear envelope. With
+    ``attack_target > 1.0`` (typical: 1.2) the attack reaches 1.0 with more
+    slope at the top — a "pokey" analog-feeling attack instead of an
+    asymptotic approach. ``attack_target`` is clamped to ``[1.0, 1.5]``.
+
+    The per-stage exponent math (``y = p**power``) is public-domain. The
+    overshoot-target idiom comes from Vital DAHDSR, OB-Xd's exponential ADSR,
+    and VCV Fundamental ``ADSR.cpp``; this is a clean re-implementation from
+    the algorithmic description.
+    """
     _MIN_ATTACK_S = 0.003  # 3 ms floor — prevents onset clicks
+    _POWER_MIN = 0.1
+    _POWER_MAX = 8.0
+    _ATTACK_TARGET_MIN = 1.0
+    _ATTACK_TARGET_MAX = 1.5
     attack = max(attack, _MIN_ATTACK_S)
     release = max(release, _MIN_ATTACK_S)
+    attack_power = float(np.clip(attack_power, _POWER_MIN, _POWER_MAX))
+    decay_power = float(np.clip(decay_power, _POWER_MIN, _POWER_MAX))
+    release_power = float(np.clip(release_power, _POWER_MIN, _POWER_MAX))
+    attack_target = float(
+        np.clip(attack_target, _ATTACK_TARGET_MIN, _ATTACK_TARGET_MAX)
+    )
     n = len(signal)
     n_attack = int(attack * sample_rate)
     n_decay = int(decay * sample_rate)
@@ -1165,18 +1201,21 @@ def adsr(
 
     attack_samples = min(n_attack, hold_samples)
     if attack_samples > 0:
-        envelope[cursor : cursor + attack_samples] = np.linspace(
-            0.0, 1.0, attack_samples, endpoint=False
-        )
+        p = np.linspace(0.0, 1.0, attack_samples, endpoint=False)
+        shaped_position = p if attack_power == 1.0 else p**attack_power
+        # Ramp toward attack_target then clamp at 1.0 (VCV ATT_TARGET idiom).
+        attack_ramp = shaped_position * attack_target
+        if attack_target > 1.0:
+            np.minimum(attack_ramp, 1.0, out=attack_ramp)
+        envelope[cursor : cursor + attack_samples] = attack_ramp
         cursor += attack_samples
 
     decay_samples = min(n_decay, hold_samples - cursor)
     if decay_samples > 0:
-        envelope[cursor : cursor + decay_samples] = np.linspace(
-            1.0,
-            sustain_level,
-            decay_samples,
-            endpoint=False,
+        p = np.linspace(0.0, 1.0, decay_samples, endpoint=False)
+        shaped_position = p if decay_power == 1.0 else p**decay_power
+        envelope[cursor : cursor + decay_samples] = (
+            1.0 + (sustain_level - 1.0) * shaped_position
         )
         cursor += decay_samples
 
@@ -1188,15 +1227,30 @@ def adsr(
     release_start_level = float(envelope[cursor - 1]) if cursor > 0 else 0.0
 
     if release_samples > 0:
-        envelope[cursor : cursor + release_samples] = np.linspace(
-            release_start_level,
-            0.0,
-            release_samples,
-            endpoint=True,
-        )
+        if release_power == 1.0:
+            envelope[cursor : cursor + release_samples] = np.linspace(
+                release_start_level,
+                0.0,
+                release_samples,
+                endpoint=True,
+            )
+        else:
+            p = np.linspace(0.0, 1.0, release_samples, endpoint=True)
+            shaped_position = p**release_power
+            envelope[cursor : cursor + release_samples] = release_start_level * (
+                1.0 - shaped_position
+            )
         cursor += release_samples
 
-    return signal * envelope
+    shaped = signal * envelope
+    if vca_nonlinearity > 0.0:
+        drive = 1.0 + vca_nonlinearity * 3.0 * envelope
+        shaped = np.where(
+            drive > 1e-6,
+            np.tanh(drive * shaped) / np.tanh(drive),
+            shaped,
+        )
+    return shaped
 
 
 def stack(*signals: np.ndarray) -> np.ndarray:
@@ -3968,6 +4022,19 @@ _SATURATION_PRESETS: dict[str, dict[str, Any]] = {
         "preserve_highs_hz": 5_000.0,
         "compensation_mode": "rms",
     },
+    "snare_bite": {
+        "algorithm": "modern",
+        "mode": "triode",
+        "drive": 1.8,
+        "mix": 0.35,
+        "tone": 0.06,
+        "fidelity": 0.45,
+        "oversample_factor": 4,
+        "highpass_hz": 30.0,
+        "preserve_lows_hz": 150.0,
+        "preserve_highs_hz": 5_000.0,
+        "compensation_mode": "rms",
+    },
 }
 
 _AIRWINDOWS_PRESETS: dict[str, dict[str, Any]] = {
@@ -4125,6 +4192,54 @@ _COMPRESSOR_PRESETS: dict[str, dict[str, float | str | list[dict[str, Any]]]] = 
         "detector_mode": "peak",
         "lookahead_ms": 1.0,
     },
+    "snare_punch": {
+        # Fast-attack transient control — lets the initial crack through then clamps.
+        # ~5 dB GR at peak for a snare at -6 dBFS; detector HP keeps low bleed out.
+        "threshold_db": -12.0,
+        "ratio": 3.0,
+        "attack_ms": 4.0,
+        "release_ms": 120.0,
+        "knee_db": 4.0,
+        "makeup_gain_db": 2.5,
+        "mix": 0.88,
+        "topology": "feedforward",
+        "detector_mode": "peak",
+        "detector_bands": [
+            {"kind": "highpass", "cutoff_hz": 100.0, "slope_db_per_oct": 12}
+        ],
+    },
+    "snare_body": {
+        # Slower attack lets the transient fully through; RMS detection smooths
+        # the body sustain for a fatter, more even tail.
+        "threshold_db": -16.0,
+        "ratio": 2.0,
+        "attack_ms": 18.0,
+        "release_ms": 200.0,
+        "knee_db": 6.0,
+        "makeup_gain_db": 1.5,
+        "mix": 0.75,
+        "topology": "feedback",
+        "detector_mode": "rms",
+        "detector_bands": [
+            {"kind": "highpass", "cutoff_hz": 80.0, "slope_db_per_oct": 12}
+        ],
+    },
+    "hat_control": {
+        # Very fast attack tames hi-hat spikes; short release avoids pumping
+        # on rapid 16th-note patterns.
+        "threshold_db": -16.0,
+        "ratio": 2.5,
+        "attack_ms": 2.0,
+        "release_ms": 60.0,
+        "knee_db": 3.0,
+        "makeup_gain_db": 1.0,
+        "mix": 0.85,
+        "topology": "feedforward",
+        "detector_mode": "peak",
+        "detector_bands": [
+            {"kind": "highpass", "cutoff_hz": 200.0, "slope_db_per_oct": 12}
+        ],
+    },
     "master_glue": {
         "threshold_db": -26.0,
         "ratio": 2.0,
@@ -4153,6 +4268,8 @@ def _resolve_effect_params(
     preset_map: dict[str, dict[str, Any]]
     if effect_kind == "chorus":
         preset_map = _CHORUS_PRESETS
+    elif effect_kind == "bbd_chorus":
+        preset_map = _BBD_CHORUS_PRESETS
     elif effect_kind == "saturation":
         preset_map = _SATURATION_PRESETS
     elif effect_kind == "compressor":
@@ -4239,6 +4356,356 @@ def apply_chorus(
         wet_signal = wet_signal + wet_saturation * np.tanh(1.6 * wet_signal)
 
     blended = ((1.0 - mix) * dry_signal) + (mix * wet_signal)
+    return blended.astype(np.float64)
+
+
+# ---------------------------------------------------------------------------
+# BBD chorus (native, Juno/Dimension-D inspired)
+# ---------------------------------------------------------------------------
+
+# Preset parameters are grounded in Juno-106 service-manual BBD clocks and the
+# published Dimension-D topology rather than copying proprietary presets. The
+# DSP (quadrature LFOs, BBD-style pre/post bandlimiting, gentle compander,
+# cross-feedback) is standard textbook technique.
+
+_BBD_CHORUS_PRESETS: dict[str, dict[str, float]] = {
+    "juno_i": {
+        "mix": 0.30,
+        "rate_hz": 0.51,
+        "depth_ms": 1.5,
+        "center_delay_ms": 3.2,
+        "cross_feedback": 0.08,
+        "compander_amount": 0.20,
+        "pre_lowpass_hz": 6_500.0,
+        "wet_lowpass_hz": 6_000.0,
+        "wet_highpass_hz": 120.0,
+        "stack_count": 1.0,
+    },
+    "juno_ii": {
+        "mix": 0.35,
+        "rate_hz": 0.83,
+        "depth_ms": 2.8,
+        "center_delay_ms": 4.4,
+        "cross_feedback": 0.20,
+        "compander_amount": 0.25,
+        "pre_lowpass_hz": 6_500.0,
+        "wet_lowpass_hz": 6_000.0,
+        "wet_highpass_hz": 120.0,
+        "stack_count": 1.0,
+    },
+    "juno_i_plus_ii": {
+        # Both sections stacked, staggered LFO phases for denser motion.
+        "mix": 0.40,
+        "rate_hz": 0.67,
+        "depth_ms": 2.2,
+        "center_delay_ms": 3.8,
+        "cross_feedback": 0.15,
+        "compander_amount": 0.24,
+        "pre_lowpass_hz": 6_500.0,
+        "wet_lowpass_hz": 6_000.0,
+        "wet_highpass_hz": 120.0,
+        "stack_count": 2.0,
+    },
+    "dimension_wide": {
+        # Dimension-D territory: longer delays, deeper modulation, slower rate.
+        "mix": 0.45,
+        "rate_hz": 0.3,
+        "depth_ms": 5.0,
+        "center_delay_ms": 10.0,
+        "cross_feedback": 0.22,
+        "compander_amount": 0.18,
+        "pre_lowpass_hz": 5_800.0,
+        "wet_lowpass_hz": 5_500.0,
+        "wet_highpass_hz": 110.0,
+        "stack_count": 1.0,
+    },
+}
+
+
+@numba.njit(cache=True)
+def _bbd_chorus_stereo_loop(
+    input_left: np.ndarray,
+    input_right: np.ndarray,
+    buffer_size: int,
+    delay_base_samples: float,
+    mod_depth_samples: float,
+    lfo_omega_per_sample: float,
+    stage_phases_left: np.ndarray,
+    stage_phases_right: np.ndarray,
+    cross_feedback: float,
+    compander_k: float,
+    stage_scale: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Stereo BBD delay with quadrature LFOs, cross-feedback, and compander.
+
+    Walks the delay lines sample-by-sample so cross-feedback stays causal.
+    Uses 3-point Lagrange interpolation for the fractional read, which is
+    cheap and clean enough to avoid the "digital zipper" artifacts linear
+    interpolation creates when the read position is continuously moving.
+
+    Supports an arbitrary number of stacked stages in a single pass: each
+    stage has its own pair of LFO phases (``stage_phases_left`` /
+    ``stage_phases_right``) and its own pair of delay-line buffers. This
+    avoids paying the numba dispatch + buffer-allocation cost once per
+    stage when using Juno I+II-style stacked presets.
+    """
+    n_samples = input_left.shape[0]
+    n_stages = stage_phases_left.shape[0]
+    out_left = np.zeros(n_samples, dtype=np.float64)
+    out_right = np.zeros(n_samples, dtype=np.float64)
+    # One pair of delay-line buffers per stage. 2D layout keeps things
+    # numba-friendly (no nested Python lists inside the JIT loop).
+    buffers_left = np.zeros((n_stages, buffer_size), dtype=np.float64)
+    buffers_right = np.zeros((n_stages, buffer_size), dtype=np.float64)
+    prev_out_left = np.zeros(n_stages, dtype=np.float64)
+    prev_out_right = np.zeros(n_stages, dtype=np.float64)
+    write_pos = 0
+
+    # Guardrails on the delay read position: never less than 1 sample,
+    # and leave a 2-sample margin before the far edge so Lagrange has
+    # neighbors to interpolate from.
+    min_delay = 1.0
+    max_delay = float(buffer_size - 3)
+
+    for i in range(n_samples):
+        dry_sample_left = input_left[i]
+        dry_sample_right = input_right[i]
+        sample_omega = lfo_omega_per_sample * i
+        for s in range(n_stages):
+            # Quadrature LFOs (bipolar sine, phase-offset per channel).
+            phase_left = sample_omega + stage_phases_left[s]
+            phase_right = sample_omega + stage_phases_right[s]
+            delay_left = delay_base_samples + mod_depth_samples * math.sin(phase_left)
+            delay_right = delay_base_samples + mod_depth_samples * math.sin(phase_right)
+            if delay_left < min_delay:
+                delay_left = min_delay
+            elif delay_left > max_delay:
+                delay_left = max_delay
+            if delay_right < min_delay:
+                delay_right = min_delay
+            elif delay_right > max_delay:
+                delay_right = max_delay
+
+            # 3-point Lagrange read for left channel.
+            read_pos_l = write_pos - delay_left
+            if read_pos_l < 0.0:
+                read_pos_l += buffer_size
+            base_l = int(read_pos_l)
+            frac_l = read_pos_l - base_l
+            il_minus = (base_l - 1) % buffer_size
+            il_zero = base_l % buffer_size
+            il_plus = (base_l + 1) % buffer_size
+            wl_minus = 0.5 * frac_l * (frac_l - 1.0)
+            wl_zero = (1.0 - frac_l) * (1.0 + frac_l)
+            wl_plus = 0.5 * frac_l * (frac_l + 1.0)
+            delayed_l = (
+                wl_minus * buffers_left[s, il_minus]
+                + wl_zero * buffers_left[s, il_zero]
+                + wl_plus * buffers_left[s, il_plus]
+            )
+
+            # 3-point Lagrange read for right channel.
+            read_pos_r = write_pos - delay_right
+            if read_pos_r < 0.0:
+                read_pos_r += buffer_size
+            base_r = int(read_pos_r)
+            frac_r = read_pos_r - base_r
+            ir_minus = (base_r - 1) % buffer_size
+            ir_zero = base_r % buffer_size
+            ir_plus = (base_r + 1) % buffer_size
+            wr_minus = 0.5 * frac_r * (frac_r - 1.0)
+            wr_zero = (1.0 - frac_r) * (1.0 + frac_r)
+            wr_plus = 0.5 * frac_r * (frac_r + 1.0)
+            delayed_r = (
+                wr_minus * buffers_right[s, ir_minus]
+                + wr_zero * buffers_right[s, ir_zero]
+                + wr_plus * buffers_right[s, ir_plus]
+            )
+
+            # Optional compander: tanh(k*x)/k gives gentle soft-limiting that
+            # mimics BBD input/output companding without a full expander pair.
+            # compander_k=0 is pure bypass (identity).
+            if compander_k > 0.0:
+                delayed_l = math.tanh(compander_k * delayed_l) / compander_k
+                delayed_r = math.tanh(compander_k * delayed_r) / compander_k
+
+            # Accumulate this stage's wet contribution (pre-scaled so the
+            # summed multi-stage output keeps its energy comparable to a
+            # single-stage pass).
+            out_left[i] += stage_scale * delayed_l
+            out_right[i] += stage_scale * delayed_r
+
+            # Write into buffers AFTER reading. Cross-feedback comes from
+            # the previous sample of the opposite channel on THIS stage,
+            # guaranteeing stability and keeping stages independent.
+            buffers_left[s, write_pos] = (
+                dry_sample_left + cross_feedback * prev_out_right[s]
+            )
+            buffers_right[s, write_pos] = (
+                dry_sample_right + cross_feedback * prev_out_left[s]
+            )
+            prev_out_left[s] = delayed_l
+            prev_out_right[s] = delayed_r
+
+        write_pos = (write_pos + 1) % buffer_size
+
+    return out_left, out_right
+
+
+def apply_bbd_chorus(
+    signal: np.ndarray,
+    mix: float = 0.3,
+    rate_hz: float = 0.51,
+    depth_ms: float = 1.5,
+    center_delay_ms: float = 3.2,
+    cross_feedback: float = 0.08,
+    compander_amount: float = 0.2,
+    pre_lowpass_hz: float = 6_500.0,
+    wet_lowpass_hz: float = 6_000.0,
+    wet_highpass_hz: float = 120.0,
+    stack_count: int = 1,
+    preset: str | None = None,
+) -> np.ndarray:
+    """Native Juno-faithful BBD-style stereo chorus.
+
+    Bucket-brigade flavor via pre/post bandlimiting, quadrature LFOs for true
+    stereo decorrelation, cross-feedback to keep the wet field airy rather
+    than metallic, and an optional gentle compander. The wet image is summed
+    with the dry signal (not crossfaded) — ``mix`` scales the wet contribution,
+    preserving the dry signal's presence.
+
+    Parameters
+    ----------
+    mix:              Wet level added to dry (0 = dry only; 1 = full wet add).
+    rate_hz:          LFO rate in Hz (typical 0.3 - 1.0).
+    depth_ms:         Peak modulation depth around the center delay.
+    center_delay_ms:  Base delay time. Juno I is ~3 ms; Dimension-D is ~10 ms.
+    cross_feedback:   L->R and R->L recirculation 0..0.5. Higher values lock
+                      the stereo field into a tight ensemble; very high values
+                      get resonant. Self-feedback is deliberately avoided.
+    compander_amount: 0..1 gentle soft-limiting on the wet path (tanh).
+    pre_lowpass_hz:   Pre-delay input bandlimit (BBD input filter).
+    wet_lowpass_hz:   Post-delay wet lowpass (BBD output filter).
+    wet_highpass_hz:  Post-delay wet highpass (removes low-end smear).
+    stack_count:      1 or 2. Two = Juno I+II-style stacked sections with
+                      staggered LFO phases for denser motion.
+    preset:           One of the named presets in ``_BBD_CHORUS_PRESETS``.
+
+    References
+    ----------
+    Algorithm drawn from the published Juno-106 service manual (BBD clock
+    rates, chorus I/II parameters) and standard BBD chorus topology
+    (pre/post bandlimiting, quadrature LFOs, dry+wet summing). No proprietary
+    code was copied; this is a from-concept implementation.
+    """
+    if preset is not None:
+        # Route through the shared resolver so the preset handling matches the
+        # rest of the effect surface. Preset values win over the kwargs to
+        # preserve the historical behavior of this function.
+        preset_vals = _resolve_effect_params("bbd_chorus", {"preset": preset})
+        mix = float(preset_vals.get("mix", mix))
+        rate_hz = float(preset_vals.get("rate_hz", rate_hz))
+        depth_ms = float(preset_vals.get("depth_ms", depth_ms))
+        center_delay_ms = float(preset_vals.get("center_delay_ms", center_delay_ms))
+        cross_feedback = float(preset_vals.get("cross_feedback", cross_feedback))
+        compander_amount = float(preset_vals.get("compander_amount", compander_amount))
+        pre_lowpass_hz = float(preset_vals.get("pre_lowpass_hz", pre_lowpass_hz))
+        wet_lowpass_hz = float(preset_vals.get("wet_lowpass_hz", wet_lowpass_hz))
+        wet_highpass_hz = float(preset_vals.get("wet_highpass_hz", wet_highpass_hz))
+        stack_count = int(preset_vals.get("stack_count", stack_count))
+
+    if not 0.0 <= mix <= 1.0:
+        raise ValueError("mix must be between 0 and 1")
+    if rate_hz <= 0:
+        raise ValueError("rate_hz must be positive")
+    if depth_ms < 0 or center_delay_ms <= 0:
+        raise ValueError("depth_ms must be non-negative and center_delay_ms positive")
+    if not 0.0 <= cross_feedback <= 0.5:
+        raise ValueError("cross_feedback must be between 0 and 0.5")
+    if not 0.0 <= compander_amount <= 1.0:
+        raise ValueError("compander_amount must be between 0 and 1")
+    if stack_count not in (1, 2):
+        raise ValueError("stack_count must be 1 or 2")
+    # center - depth must leave at least 0.5 ms of positive delay so the LFO
+    # never flips negative at its trough.
+    if depth_ms >= center_delay_ms:
+        raise ValueError(
+            "depth_ms must be less than center_delay_ms so delay stays positive"
+        )
+
+    dry_signal = _ensure_stereo(signal)
+    if mix == 0.0:
+        return dry_signal
+
+    # Pre-emphasis bandlimit (BBD input filter) applied per-channel.
+    pre_filtered = _apply_per_channel(
+        dry_signal,
+        lambda channel: lowpass(
+            channel, cutoff_hz=pre_lowpass_hz, sample_rate=SAMPLE_RATE, order=2
+        ),
+    )
+
+    # Compander knob maps 0..1 -> effective k in tanh(k*x)/k.
+    # At k=0 the path is identity; larger k -> more aggressive soft-limit.
+    # k up to ~3 keeps things musical; beyond that starts to dominate.
+    compander_k = 3.0 * compander_amount
+
+    # Time-base parameters.
+    delay_base_samples = center_delay_ms * SAMPLE_RATE / 1000.0
+    mod_depth_samples = depth_ms * SAMPLE_RATE / 1000.0
+    # Safety margin: buffer must hold max delay + a few samples for interp.
+    max_delay_samples = delay_base_samples + mod_depth_samples + 4.0
+    buffer_size = int(max_delay_samples) + 4
+    lfo_omega = 2.0 * np.pi * rate_hz / SAMPLE_RATE
+
+    # Stage LFO phase pairs per stack. First stage: L=0, R=pi/2 (true quadrature).
+    # Second stage: staggered by pi/3 to keep it decorrelated from stage 1.
+    if stack_count == 2:
+        stage_phases_left = np.array([0.0, np.pi / 3.0], dtype=np.float64)
+        stage_phases_right = np.array(
+            [0.5 * np.pi, np.pi / 3.0 + 0.5 * np.pi], dtype=np.float64
+        )
+    else:
+        stage_phases_left = np.array([0.0], dtype=np.float64)
+        stage_phases_right = np.array([0.5 * np.pi], dtype=np.float64)
+
+    channel_left = np.asarray(pre_filtered[0], dtype=np.float64)
+    channel_right = np.asarray(pre_filtered[1], dtype=np.float64)
+
+    # Pre-scale stages so a multi-stage sum keeps energy comparable to a
+    # single-stage pass (historical 1/sqrt(N) stage weighting).
+    stage_scale = 1.0 / math.sqrt(stage_phases_left.shape[0])
+    wet_left, wet_right = _bbd_chorus_stereo_loop(
+        channel_left,
+        channel_right,
+        buffer_size,
+        delay_base_samples,
+        mod_depth_samples,
+        lfo_omega,
+        stage_phases_left,
+        stage_phases_right,
+        cross_feedback,
+        compander_k,
+        stage_scale,
+    )
+
+    wet_signal = np.stack([wet_left, wet_right])
+    # Post-delay bandlimit (BBD output filter) + low-end cleanup.
+    wet_signal = _apply_per_channel(
+        wet_signal,
+        lambda channel: lowpass(
+            channel, cutoff_hz=wet_lowpass_hz, sample_rate=SAMPLE_RATE, order=2
+        ),
+    )
+    wet_signal = _apply_per_channel(
+        wet_signal,
+        lambda channel: highpass(
+            channel, cutoff_hz=wet_highpass_hz, sample_rate=SAMPLE_RATE, order=2
+        ),
+    )
+
+    # Sum, don't crossfade: wet widens the dry image rather than replacing it.
+    blended = dry_signal + (mix * wet_signal)
     return blended.astype(np.float64)
 
 
@@ -5494,6 +5961,31 @@ def apply_preamp(
     return processed_signal, analysis
 
 
+def apply_stereo_width(
+    signal: np.ndarray,
+    width: float = 1.0,
+    *,
+    sample_rate: int = SAMPLE_RATE,
+) -> np.ndarray:
+    """Mid/side stereo width control.
+
+    Parameters
+    ----------
+    signal:
+        Stereo input (2, N).  Mono (1-D) passes through unchanged.
+    width:
+        0.0 = mono, 1.0 = unchanged, 2.0 = exaggerated stereo.
+        Values > 1.0 boost the side signal; values < 1.0 narrow toward mono.
+    """
+    if signal.ndim == 1:
+        return signal  # mono passthrough, nothing to widen
+
+    mid = (signal[0] + signal[1]) * 0.5
+    side = (signal[0] - signal[1]) * 0.5
+    side = side * width
+    return np.array([mid + side, mid - side])
+
+
 _SUPPORTED_EFFECT_AMOUNT_AUTOMATION_TARGETS = {"mix", "wet", "wet_level"}
 
 
@@ -5537,6 +6029,8 @@ def _resolve_effect_amount_automation(
     params: dict[str, Any],
     signal_length: int,
     start_time_seconds: float,
+    matrix_connections: list[Any] | None = None,
+    source_sampling_context: Any | None = None,
 ) -> tuple[str, np.ndarray] | None:
     automation_specs = list(getattr(effect, "automation", []))
     targeted_specs = [
@@ -5545,10 +6039,17 @@ def _resolve_effect_amount_automation(
         if spec.target.kind == "control"
         and spec.target.name in _SUPPORTED_EFFECT_AMOUNT_AUTOMATION_TARGETS
     ]
-    if not targeted_specs:
+    matrix_conns = [
+        connection
+        for connection in (matrix_connections or [])
+        if connection.target.kind == "control"
+        and connection.target.name in _SUPPORTED_EFFECT_AMOUNT_AUTOMATION_TARGETS
+    ]
+    if not targeted_specs and not matrix_conns:
         return None
 
     target_names = {spec.target.name for spec in targeted_specs}
+    target_names.update(connection.target.name for connection in matrix_conns)
     if len(target_names) != 1:
         raise ValueError(
             "effect automation must target exactly one of mix, wet, wet_level"
@@ -5569,6 +6070,17 @@ def _resolve_effect_amount_automation(
         target_name=target_name,
         times=signal_times,
     )
+    if matrix_conns:
+        if source_sampling_context is None:
+            raise ValueError(
+                "matrix connections on effect wet require source_sampling_context"
+            )
+        amount_curve = combine_connections_on_curve(
+            base=amount_curve,
+            connections=matrix_conns,
+            times=signal_times,
+            context=source_sampling_context,
+        )
     if np.any((amount_curve < 0.0) | (amount_curve > 1.0)):
         raise ValueError(
             f"effect automation target {target_name!r} must stay within [0, 1]"
@@ -5625,6 +6137,7 @@ _SIMPLE_EFFECT_DISPATCH: dict[str, Callable[..., np.ndarray]] = {
     "chow_tape": apply_chow_tape,
     "bricasti": apply_bricasti,
     "chorus": apply_chorus,
+    "bbd_chorus": apply_bbd_chorus,
     "mod_delay": apply_mod_delay,
     "phaser": apply_phaser,
     "tal_chorus_lx": apply_tal_chorus_lx,
@@ -5651,6 +6164,7 @@ _SIMPLE_EFFECT_DISPATCH: dict[str, Callable[..., np.ndarray]] = {
     "prebox": apply_prebox,
     "rare_se": apply_rare_se,
     "tuba": apply_tuba,
+    "stereo_width": apply_stereo_width,
 }
 
 
@@ -5679,6 +6193,8 @@ def apply_effect_chain(
     sidechain_signals: Mapping[str, np.ndarray] | None = ...,
     signal_name: str | None = ...,
     start_time_seconds: float = ...,
+    matrix_connections: list[Any] | None = ...,
+    source_sampling_context: Any | None = ...,
     return_analysis: Literal[False] = ...,
 ) -> np.ndarray: ...
 
@@ -5691,6 +6207,8 @@ def apply_effect_chain(
     sidechain_signals: Mapping[str, np.ndarray] | None = ...,
     signal_name: str | None = ...,
     start_time_seconds: float = ...,
+    matrix_connections: list[Any] | None = ...,
+    source_sampling_context: Any | None = ...,
     return_analysis: Literal[True],
 ) -> tuple[np.ndarray, list[EffectAnalysisEntry]]: ...
 
@@ -5702,6 +6220,8 @@ def apply_effect_chain(
     sidechain_signals: Mapping[str, np.ndarray] | None = None,
     signal_name: str | None = None,
     start_time_seconds: float = 0.0,
+    matrix_connections: list[Any] | None = None,
+    source_sampling_context: Any | None = None,
     return_analysis: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, list[EffectAnalysisEntry]]:
     """Apply a declarative effect chain to mono or stereo audio."""
@@ -5712,6 +6232,7 @@ def apply_effect_chain(
         params = dict(effect.params)
         if effect.kind in {
             "chorus",
+            "bbd_chorus",
             "compressor",
             "mod_delay",
             "phaser",
@@ -5727,6 +6248,8 @@ def apply_effect_chain(
             params=params,
             signal_length=effect_input.shape[-1],
             start_time_seconds=start_time_seconds,
+            matrix_connections=matrix_connections,
+            source_sampling_context=source_sampling_context,
         )
         native_metrics: dict[str, float | int | str] | None = None
         # Guard: skip plugin-backed effects when the plugin isn't installed,
@@ -5947,6 +6470,7 @@ def write_wav(
     signal: np.ndarray,
     *,
     bit_depth: int = 24,
+    warn_low_peak: bool = True,
 ) -> None:
     """Write mono (1D) or stereo (2, samples) signal to a WAV file.
 
@@ -5986,8 +6510,10 @@ def write_wav(
         level_diagnostics.true_peak_dbfs,
         level_diagnostics.integrated_lufs,
     )
-    if np.isfinite(level_diagnostics.peak_dbfs) and (
-        level_diagnostics.peak_dbfs <= _LOW_EXPORT_PEAK_WARNING_DBFS
+    if (
+        warn_low_peak
+        and np.isfinite(level_diagnostics.peak_dbfs)
+        and (level_diagnostics.peak_dbfs <= _LOW_EXPORT_PEAK_WARNING_DBFS)
     ):
         logger.warning(
             "Export peak is unexpectedly low at %.2f dBFS for %s; "

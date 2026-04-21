@@ -54,7 +54,7 @@ def build_ji_spiral_steps_score() -> Score:
     total_dur = laps * n_steps * chord_dur + reverb_tail
 
     score = Score(
-        f0=110.0,
+        f0_hz=110.0,
         master_effects=[
             EffectSpec(
                 "reverb", {"room_size": 0.60, "damping": 0.50, "wet_level": 0.25}
@@ -200,7 +200,7 @@ def build_septimal_changes_score() -> Score:
     total_dur = n_cycles * 2 * chord_dur + reverb_tail
 
     score = Score(
-        f0=110.0,
+        f0_hz=110.0,
         timing_humanize=TimingHumanizeSpec(preset="chamber"),
         master_effects=[
             EffectSpec(
@@ -373,7 +373,7 @@ def build_giant_steps_15edo_score() -> Score:
     n_steps = 3
 
     score = Score(
-        f0=110.0,
+        f0_hz=110.0,
         master_effects=[
             EffectSpec(
                 "reverb", {"room_size": 0.55, "damping": 0.52, "wet_level": 0.24}

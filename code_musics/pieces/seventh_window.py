@@ -436,7 +436,7 @@ def _build_fade(score: Score) -> None:
 def build_score() -> Score:
     """Build the complete Seventh Window score."""
     score = Score(
-        f0=F0,
+        f0_hz=F0,
         sample_rate=44100,
         master_effects=[
             EffectSpec(

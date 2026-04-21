@@ -9,7 +9,7 @@ from code_musics.score import Score
 
 def build_arpeggios_sketch() -> Score:
     """Sparse high-partial melody drifting downward — simple and tender."""
-    score = Score(f0=55.0, master_effects=[SOFT_REVERB_EFFECT])
+    score = Score(f0_hz=55.0, master_effects=[SOFT_REVERB_EFFECT])
     score.add_voice(
         "drone",
         synth_defaults={
@@ -66,7 +66,7 @@ def build_arpeggios_sketch() -> Score:
 
 def build_arpeggios_cross_sketch() -> Score:
     """Two voices in contrary motion: one descends, one ascends, weaving JI chords."""
-    score = Score(f0=55.0, master_effects=[SOFT_REVERB_EFFECT])
+    score = Score(f0_hz=55.0, master_effects=[SOFT_REVERB_EFFECT])
     shared_synth: dict = {
         "harmonic_rolloff": 0.18,
         "n_harmonics": 4,

@@ -130,7 +130,7 @@ def _7limit_bars(t: float) -> list[list[float]]:
 def build_wtc_ji_5limit_score() -> Score:
     """WTC-style broken-chord study in 5-limit just intonation (A major)."""
     tonic = 220.0
-    score = Score(f0=tonic, master_effects=[SOFT_REVERB_EFFECT])
+    score = Score(f0_hz=tonic, master_effects=[SOFT_REVERB_EFFECT])
     score.add_voice(
         "arp",
         synth_defaults=_keyboard_synth(),
@@ -164,7 +164,7 @@ def build_wtc_ji_7limit_score() -> Score:
     - Bar 7: 7-limit dominant 7th (the D is ~26¢ flatter, more 'in tune' but alien)
     """
     tonic = 220.0
-    score = Score(f0=tonic, master_effects=[SOFT_REVERB_EFFECT])
+    score = Score(f0_hz=tonic, master_effects=[SOFT_REVERB_EFFECT])
     score.add_voice(
         "arp",
         synth_defaults=_keyboard_synth(),
@@ -209,7 +209,7 @@ def build_wtc_comma_pump_score() -> Score:
     tonic = 220.0
     n_cycles = 6
     score = Score(
-        f0=tonic,
+        f0_hz=tonic,
         master_effects=[
             EffectSpec(
                 "reverb", {"room_size": 0.62, "damping": 0.42, "wet_level": 0.22}
@@ -277,7 +277,7 @@ def build_wtc_harmonic_score() -> Score:
     total_dur = total_bars * _BAR_DUR + 6.0  # + 6 s for final chord
 
     score = Score(
-        f0=base,
+        f0_hz=base,
         master_effects=[
             EffectSpec(
                 "reverb", {"room_size": 0.70, "damping": 0.48, "wet_level": 0.28}

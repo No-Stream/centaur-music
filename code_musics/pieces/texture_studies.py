@@ -14,7 +14,7 @@ from code_musics.score import Score
 
 def build_spiral_sketch() -> Score:
     """Same melodic arch at four fundamentals rising by JI fifths (3/2)."""
-    score = Score(f0=55.0, master_effects=[DELAY_EFFECT, REVERB_EFFECT])
+    score = Score(f0_hz=55.0, master_effects=[DELAY_EFFECT, REVERB_EFFECT])
     score.add_voice(
         "melody",
         synth_defaults={
@@ -73,7 +73,7 @@ def build_interference_sketch() -> Score:
     f0_a = 110.0
     f0_b = 110.5
 
-    score = Score(f0=f0_a, master_effects=[SOFT_REVERB_EFFECT])
+    score = Score(f0_hz=f0_a, master_effects=[SOFT_REVERB_EFFECT])
     score.add_voice(
         "series_a",
         synth_defaults={
@@ -142,7 +142,7 @@ def build_interference_sketch() -> Score:
 
 def build_spiral_arch_sketch() -> Score:
     """Spiral up 3 JI fifths then back down — arch shape inverts on the return."""
-    score = Score(f0=55.0, master_effects=[DELAY_EFFECT, REVERB_EFFECT])
+    score = Score(f0_hz=55.0, master_effects=[DELAY_EFFECT, REVERB_EFFECT])
     score.add_voice(
         "melody",
         synth_defaults={
@@ -234,7 +234,7 @@ def build_interference_v2_sketch() -> Score:
     f0_b_slow = 110.5
     f0_b_fast = 113.0
 
-    score = Score(f0=f0_a, master_effects=[SOFT_REVERB_EFFECT])
+    score = Score(f0_hz=f0_a, master_effects=[SOFT_REVERB_EFFECT])
     score.add_voice(
         "series_a",
         synth_defaults={
@@ -321,7 +321,7 @@ def build_interference_ji_sketch() -> Score:
     f0_c = 110.0 * 7 / 4
 
     score = Score(
-        f0=f0_a,
+        f0_hz=f0_a,
         master_effects=[WARM_SATURATION_EFFECT, SOFT_REVERB_EFFECT],
     )
     score.add_voice(

@@ -13,13 +13,9 @@ from scipy.signal import butter, sosfiltfilt
 from code_musics.automation import AutomationSegment, AutomationSpec, AutomationTarget
 from code_musics.pitch_motion import PitchMotionSpec
 from code_musics.score import NoteEvent, Phrase, Score
+from code_musics.tuning import cents_to_ratio
 
 _PITCH_RATIO_TARGET = AutomationTarget(kind="pitch_ratio", name="pitch_ratio")
-
-
-def _cents_to_ratio(cents: float) -> float:
-    """Convert a cent offset to a frequency ratio."""
-    return float(2.0 ** (cents / 1200.0))
 
 
 def _note_sort_key(event: NoteEvent) -> float:
@@ -152,7 +148,7 @@ def thicken(
         fraction = 0.5 if n == 1 else copy_index / (n - 1)
 
         detune_offset_cents = -detune_cents / 2.0 + fraction * detune_cents
-        freq_scale = _cents_to_ratio(detune_offset_cents)
+        freq_scale = cents_to_ratio(detune_offset_cents)
 
         time_offset = rng.uniform(-spread_seconds / 2.0, spread_seconds / 2.0)
 
@@ -243,7 +239,7 @@ def pitch_wobble(
         depth_envelope = _interpolate_depth_curve(times, depth_curve, depth_cents)
         values_cents = values_cents * depth_envelope
 
-    ratios = np.array([_cents_to_ratio(c) for c in values_cents])
+    ratios = np.array([cents_to_ratio(c) for c in values_cents])
 
     segments = _build_linear_segments(times + start_time, ratios)
 
@@ -355,7 +351,7 @@ def smear_progression(
 
     Each chord is a list of partial ratios. Returns one Phrase per voice index
     (i.e., per chord tone position across all chords). Notes use `partial` values
-    so they are relative to Score.f0.
+    so they are relative to Score.f0_hz.
 
     The ratio_glide spans the full note duration. The overlap parameter controls
     how much notes extend into the next chord's time, which determines the glide

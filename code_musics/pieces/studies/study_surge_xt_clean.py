@@ -41,7 +41,7 @@ _CLEAN_SURGE_PARAMS: dict[str, float] = {
 
 def build_score() -> Score:
     score = Score(
-        f0=F0_HZ,
+        f0_hz=F0_HZ,
         master_effects=[SOFT_REVERB_EFFECT],
     )
 

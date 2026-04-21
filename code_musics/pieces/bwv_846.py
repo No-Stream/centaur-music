@@ -153,7 +153,7 @@ def build_bwv_846_score() -> Score:
     total_dur = max(n.start + n.duration for n in prelude_notes)
 
     score = Score(
-        f0=_F0,
+        f0_hz=_F0,
         master_effects=[REVERB_EFFECT],
     )
 
@@ -288,7 +288,7 @@ def build_bwv_846_piano_score() -> Score:
     )
 
     score = Score(
-        f0=_F0,
+        f0_hz=_F0,
         master_effects=[piano_reverb],
         timing_humanize=TimingHumanizeSpec(
             preset="chamber",

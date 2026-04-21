@@ -1,0 +1,112 @@
+{
+  "schema_version": 2,
+  "evaluated_at_utc": "2026-04-13T18:08:55Z",
+  "piece_name": "slow_glass_v2",
+  "render_ref": {
+    "render_json_path": "output/slow_glass_v2/slow_glass_v2.render.json",
+    "git_commit": "83a26fe00d8ccc60ddaf200b048ac7b29952ae65",
+    "rendered_at_utc": "20260413-180222"
+  },
+  "judges": [
+    {
+      "model": "sonnet",
+      "backend": "headless",
+      "dimensions": {
+        "musical_substance": {
+          "score": 65,
+          "notes": "The piece uses genuine harmonic-series JI materials throughout \u2014 melody partials at 2, 2.375, 2.667, 3, 3.5, 4 of f0=110Hz, and sustained harmony chords built from partials 1.0, 1.333, 1.5, 1.75, 2.0. The motifs are recognizable and recur across the sections, and the ghost voice echoes melodic fragments at slight harmonic displacement. The pitch vocabulary is honest and intentional, but remains largely static on one harmonic root throughout, limiting the sense of harmonic journey or surprise."
+        },
+        "structure_form": {
+          "score": 72,
+          "notes": "A clearly composed A\u2013B\u2013C\u2013B'\u2013A' arch is explicitly labeled in the score (motifs \u2192 entering \u2192 climax \u2192 thinning \u2192 coda), and the density plot confirms it: the piece builds from 1\u20132 active notes to a peak of 8\u201310 around t=65\u201384s then thins back to the solo melody. The automated master reverb wet, melody delay mix, and harmony chorus mix all track this arc in parallel, which is polished. The arch is somewhat predictable in its symmetry \u2014 entry and exit feel planned rather than discovered \u2014 but the structural execution is competent and you can absolutely locate yourself mid-piece."
+        },
+        "texture_expression": {
+          "score": 67,
+          "notes": "Five voices occupy distinct spectral niches: sub-bass pedal, slow sustained harmony chords, arching melody, brief high-partial texture sparks, and a ghosting voice that echoes melodic contours. The chorus automation on the harmony swell and the receding delay on the melody as the piece winds down show deliberate shaping. The texture voice feels more like ornamentation than an equal participant \u2014 its short staccato partials glint but don't dialogue. The band energy profile is warm and low-mid heavy (high/air bands at \u221250 and \u221265 dB), which suits the slow-glass aesthetic but slightly flattens dimensionality."
+        },
+        "completeness": {
+          "score": 74,
+          "notes": "This is a finished piece, not a sketch: it has a true exposition (solo melody, 0\u201332s), development (stacking layers to climax), and an A\u2032 coda that returns to the opening material for a circular close. The 132-second duration is appropriate and doesn't overstay. The ending \u2014 long harmony sustains fading under a last melody phrase \u2014 lands conclusively rather than just stopping."
+        },
+        "open_subjective": {
+          "score": 66,
+          "notes": "slow_glass_v2 earns its name: it is genuinely slow, spacious, and harmonically rich in a way that only works in JI. The sound world is coherent and pleasant without being saccharine, and the layered additive voices create an impressively luminous wash at the climax. What keeps it from the next tier is a certain stasis in harmonic color \u2014 the entire piece orbits one bass note without modulation, tonal surprise, or rhythmic disruption, so its emotional range is narrow. It is a good piece of ambient JI writing but does not yet have the inner restlessness that makes you want to return."
+        }
+      },
+      "overall_notes": "slow_glass_v2 is a well-crafted ambient JI work with a convincing arch form and genuinely harmonic-series-based pitch language; it sits comfortably in the 'genuinely good' tier. Its main limitation is harmonic stasis \u2014 no movement away from the A2 root across 132 seconds means the piece achieves mood rather than drama."
+    },
+    {
+      "model": "haiku",
+      "backend": "headless",
+      "dimensions": {
+        "musical_substance": {
+          "score": 68,
+          "notes": "The melody presents a clear and singable motivic idea built from harmonic-series partials \u2014 an ascending push from partial 2 through 3.5 and back \u2014 that recurs with variation across sections, giving the piece genuine thematic identity. The JI/harmonic-series tuning choices are systematic and internally coherent; the septimal flat seventh (7/4), natural third, and upper overtone texture notes all feel intentional rather than arbitrary. The main limitation is harmonic stasis: the piece orbits A throughout without any chord-root motion, so while the voicings shift (adding 1.633, 1.1, different chord densities), the lack of harmonic departure limits the expressive range available to the melody."
+        },
+        "structure_form": {
+          "score": 73,
+          "notes": "The ABCB'A' arch form is clearly composed and well-executed: a solo melody introduction, layered entry of bass and harmony, full-texture climax around seconds 66\u201396, gradual thinning, and a coda that restates the melodic motif over sustained harmony. The score-density plot confirms the arc visually, and the automated reverb wet-level tracks the same arc (0.22 \u2192 0.34 at peak \u2192 0.30 at close), showing that structure and mix are co-designed rather than incidental. Dropped into the middle you would know your position from texture density, but sections within the climax plateau (C, roughly 30 seconds of full texture) are somewhat undifferentiated and could use a stronger interior articulation."
+        },
+        "texture_expression": {
+          "score": 63,
+          "notes": "Voice roles are clearly differentiated: slow additive pads for harmony, a spiky overtone voice for texture sparkle, a ghost voice that echoes the melody with slight offset for depth, and a sub bass anchoring the low end. The threaded automation across delay-mix, chorus-mix, and master reverb is thorough and musically purposeful, following the structural arc rather than arbitrary sweeping. The stereo field is nearly mono (all voices center except ghost at 0.22), and the mix-band energy shows extreme concentration in bass/low-mid with negligible high or air content, giving the piece a warm but somewhat opaque, undifferentiated upper register that limits timbral contrast at the climax."
+        },
+        "completeness": {
+          "score": 74,
+          "notes": "The piece has a genuine beginning (solo motif introduction), a built development, a climax, a recession, and a coda that returns the main melody over sustained harmony before a long terminal note \u2014 structurally complete by any standard. At 2:12 it is an appropriate length for this tempo and density; it does not outstay its welcome or feel truncated. The main coda (A') reintroduces harmonic support under the melody's return in a way that rewards the earlier solo statement, giving a satisfying sense of recapitulation and closure."
+        },
+        "open_subjective": {
+          "score": 66,
+          "notes": "This is a genuinely musical piece, not a technical demonstration: the motif is memorable, the harmonic-series voicings are exotic without being hostile, and the arch form creates a real emotional shape \u2014 a pleasant sense of opening up and returning. The ghost voice echoing the melody at a slight distance is the most evocative touch, giving the texture an inner-echo quality that suits the title. What holds it back from being truly memorable is the harmonic monotony \u2014 132 seconds over a single tonal center, with no harmonic departure to heighten the climax or give the return any sense of earned relief; the piece achieves stillness but not quite tension or longing."
+        }
+      },
+      "overall_notes": "A carefully crafted harmonic-series piece with a real arch form, genuine motivic identity, and thorough automation work that collectively lift it well above sketch status into something listenable and intentional. Its ceiling is set by harmonic stasis \u2014 a single A-centered tonal world for the full duration \u2014 which gives it meditative coherence but limits the emotional range available, particularly the impact of the climactic section."
+    },
+    {
+      "model": "opus",
+      "backend": "headless",
+      "dimensions": {
+        "musical_substance": {
+          "score": 59,
+          "notes": "The melody has genuine motivic content\u2014a rising gesture through partials 2\u21923\u21923.5 that descends through septimal and undecimal intervals (2.375, 2.2), stated twice with the second reaching higher to 4.0. The harmony voice moves through real JI progressions (otonal triads with 7/4 septimal sevenths), and the ghost voice echoing melodic fragments is a nice compositional device. However, the harmonic rhythm is glacially slow (10-18 second chord durations), the melodic ideas are restated more than developed, and the texture voice contributes only sporadic punctuation rather than a real contrapuntal line."
+        },
+        "structure_form": {
+          "score": 67,
+          "notes": "The five-section arch (A: motifs \u2192 B: entering \u2192 C: climax \u2192 B': thinning \u2192 A': coda) is well-proportioned and genuinely composed. The density plot confirms a convincing build and recession, and the section boundaries at 32, 66, 84, and 116 seconds are musically justified transitions. The multi-parameter automation contours\u2014master reverb wet, melody delay mix, harmony chorus mix, ghost pan\u2014all track the formal arc intelligently. You would know where you are if dropped into the middle, which is the mark of real form."
+        },
+        "texture_expression": {
+          "score": 53,
+          "notes": "The automation layers are thoughtfully designed, and the chamber-preset timing humanization with ensemble drift gives the piece a living quality rather than rigid quantization. But the timbral palette is quite narrow\u2014four additive voices plus one polyblep sub bass creates a homogeneous wash rather than distinct orchestral colors. The mix is very bottom-heavy (bass and low_mid dominate, with the high and air bands 60+ dB below), and while that suits the contemplative mood, it limits the sense of space and brightness. Voices mostly layer rather than interweave."
+        },
+        "completeness": {
+          "score": 63,
+          "notes": "This reads as a finished miniature: it has a beginning, a patient build, a genuine climax around the 66-84 second mark with peak polyphony of 10, and a coda that fades to closure. At 2:12 with 115 notes, it's brief but self-contained. The automation arcs provide formal closure. It could stand as a short piece rather than a sketch, though its brevity and harmonic stasis keep it from feeling like a substantial work."
+        },
+        "open_subjective": {
+          "score": 57,
+          "notes": "This piece successfully makes xenharmonic JI harmony feel warm and approachable\u2014the septimal seventh intervals (7/4) give it a bittersweet, slightly alien tenderness that's genuinely appealing. The slow-glass metaphor works: it feels like watching something through thick, distorting glass, memories arriving delayed and softened. What holds it back is a certain predictability in the pacing and a sameness of texture throughout\u2014the climax builds in density but not really in character, and the long sustained pads risk tipping from meditative into static."
+        }
+      },
+      "overall_notes": "A thoughtful xenharmonic miniature with real compositional intent and effective use of septimal JI harmony, but its narrow timbral palette and glacial harmonic rhythm keep it feeling more like a beautifully realized sketch than a fully compelling piece."
+    }
+  ],
+  "aggregate": {
+    "overall_score": 67.3,
+    "dimension_medians": {
+      "musical_substance": 65,
+      "structure_form": 72,
+      "texture_expression": 63,
+      "completeness": 74,
+      "open_subjective": 66
+    },
+    "dimension_spreads": {
+      "musical_substance": 9,
+      "structure_form": 6,
+      "texture_expression": 14,
+      "completeness": 11,
+      "open_subjective": 9
+    },
+    "confidence": "high",
+    "synthesized_feedback": "Delta vs previous: Improved: Musical Substance (+3), Structure & Form (+5), Texture & Expression (+6), Completeness (+8), Open Subjective (+7).  slow_glass_v2 is a well-crafted ambient JI work with a convincing arch form and genuinely harmonic-series-based pitch language; it sits comfortably in the 'genuinely good' tier. Its main limitation is harmonic stasis \u2014 no movement away from the A2 root across 132 seconds means the piece achieves mood rather than drama.  A carefully crafted harmonic-series piece with a real arch form, genuine motivic identity, and thorough automation work that collectively lift it well above sketch status into something listenable and intentional. Its ceiling is set by harmonic stasis \u2014 a single A-centered tonal world for the full duration \u2014 which gives it meditative coherence but limits the emotional range available, particularly the impact of the climactic section.  A thoughtful xenharmonic miniature with real compositional intent and effective use of septimal JI harmony, but its narrow timbral palette and glacial harmonic rhythm keep it feeling more like a beautifully realized sketch than a fully compelling piece."
+  }
+}

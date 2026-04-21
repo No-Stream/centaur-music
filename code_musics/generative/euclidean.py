@@ -59,19 +59,17 @@ def euclidean_rhythm(
     *,
     span: float = 0.25,
     rotation: int = 0,
-) -> RhythmCell | None:
+) -> RhythmCell:
     """Convert a euclidean pattern into a RhythmCell.
 
     Silent steps are absorbed into the preceding sounding step's span.
-    Returns None when hits is 0 (no sounding positions).
     """
+    if hits <= 0:
+        raise ValueError("hits must be positive")
     if span <= 0:
         raise ValueError("span must be positive")
 
     pattern = euclidean_pattern(hits, steps, rotation=rotation)
-
-    if hits == 0:
-        return None
 
     sounding_spans: list[float] = []
     current_span = 0.0
@@ -121,9 +119,6 @@ def euclidean_line(
         raise ValueError("tones must not be empty")
 
     rhythm = euclidean_rhythm(hits, steps, span=span, rotation=rotation)
-    if rhythm is None:
-        raise ValueError("euclidean_line requires at least one hit")
-
     sounding_count = len(rhythm.spans)
     cycled_tones = list(islice(cycle(tones), sounding_count))
 

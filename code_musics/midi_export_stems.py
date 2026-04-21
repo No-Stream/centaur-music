@@ -89,9 +89,7 @@ def _validate_note_is_exportable(
         raise ValueError(
             f"voice {voice_name!r} note {note_index} uses pitch_motion, which MIDI export does not support yet"
         )
-    if note.automation is not None and any(
-        _has_pitch_ratio_automation(spec) for spec in note.automation
-    ):
+    if any(_has_pitch_ratio_automation(spec) for spec in note.automation):
         raise ValueError(
             f"voice {voice_name!r} note {note_index} uses pitch_ratio automation, which MIDI export does not support yet"
         )

@@ -8,6 +8,15 @@ from typing import Any
 import numba
 import numpy as np
 
+from code_musics.engines._dsp_utils import (
+    apply_analog_post_processing,
+    apply_note_jitter,
+    apply_voice_card,
+    build_drift,
+    extract_analog_params,
+    rng_for_note,
+)
+
 
 @numba.njit(cache=True)
 def _fm_sample_loop(
@@ -70,6 +79,11 @@ def render(
     feedback = float(params.get("feedback", 0.0))
     index_decay = float(params.get("index_decay", 0.0))
     index_sustain = float(params.get("index_sustain", 0.5))
+    analog = extract_analog_params(params)
+    pitch_drift = analog["pitch_drift"]
+    analog_jitter = analog["analog_jitter"]
+    noise_floor_level = analog["noise_floor"]
+    drift_rate_hz = analog["drift_rate_hz"]
 
     if carrier_ratio <= 0:
         raise ValueError("carrier_ratio must be positive")
@@ -84,25 +98,60 @@ def render(
     if n_samples == 0:
         return np.zeros(0)
 
+    # --- Analog character: RNG, jitter, drift ---
+    rng = rng_for_note(
+        freq=freq,
+        duration=duration,
+        amp=amp,
+        sample_rate=sample_rate,
+    )
+    jittered = apply_note_jitter(params, rng, analog_jitter)
+    amp_jitter_db = float(jittered.get("_amp_jitter_db", 0.0))
+
+    # Build base frequency profile
     if freq_trajectory is None:
-        carrier_phase_increment = np.full(
-            n_samples,
-            2.0 * np.pi * freq * carrier_ratio / sample_rate,
-            dtype=np.float64,
-        )
-        mod_phase_increment = np.full(
-            n_samples, 2.0 * np.pi * freq * mod_ratio / sample_rate, dtype=np.float64
-        )
+        freq_profile = np.full(n_samples, freq, dtype=np.float64)
     else:
         freq_trajectory = np.asarray(freq_trajectory, dtype=np.float64)
         if freq_trajectory.ndim != 1:
             raise ValueError("freq_trajectory must be one-dimensional")
         if freq_trajectory.size != n_samples:
             raise ValueError("freq_trajectory length must match note duration")
-        carrier_phase_increment = (
-            2.0 * np.pi * freq_trajectory * carrier_ratio / sample_rate
+        freq_profile = freq_trajectory
+
+    # Voice card calibration — persistent per-voice character (no filter in FM)
+    freq_profile, amp, _, vc_offsets = apply_voice_card(
+        params,
+        voice_card_spread=analog["voice_card_spread"],
+        pitch_spread=analog["voice_card_pitch_spread"],
+        filter_spread=analog["voice_card_filter_spread"],
+        envelope_spread=analog["voice_card_envelope_spread"],
+        osc_spread=analog["voice_card_osc_spread"],
+        level_spread=analog["voice_card_level_spread"],
+        freq_profile=freq_profile,
+        amp=amp,
+    )
+
+    attack = float(params.get("attack", 0.04)) * vc_offsets["attack_scale"]
+    release = float(params.get("release", 0.1)) * vc_offsets["release_scale"]
+    _ = attack, release  # available for ADSR when wired
+    drift_rate_hz *= 1.0 + vc_offsets["drift_rate_offset_pct"] / 100.0
+
+    # Apply pitch drift to both carrier and modulator
+    if pitch_drift > 0:
+        start_phase = float(jittered.get("_phase_offset", 0.0))
+        drift_multiplier = build_drift(
+            n_samples=n_samples,
+            drift_amount=pitch_drift,
+            drift_rate_hz=drift_rate_hz,
+            duration=duration,
+            phase_offset=start_phase,
+            rng=rng,
         )
-        mod_phase_increment = 2.0 * np.pi * freq_trajectory * mod_ratio / sample_rate
+        freq_profile = freq_profile * drift_multiplier
+
+    carrier_phase_increment = 2.0 * np.pi * freq_profile * carrier_ratio / sample_rate
+    mod_phase_increment = 2.0 * np.pi * freq_profile * mod_ratio / sample_rate
 
     signal = np.empty(n_samples, dtype=np.float64)
 
@@ -119,6 +168,15 @@ def render(
         index_decay_samples,
         sustain_scale,
         n_samples,
+    )
+
+    signal = apply_analog_post_processing(
+        signal,
+        rng=rng,
+        amp_jitter_db=amp_jitter_db,
+        noise_floor_level=noise_floor_level,
+        sample_rate=sample_rate,
+        n_samples=n_samples,
     )
 
     peak = np.max(np.abs(signal))

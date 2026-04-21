@@ -58,7 +58,7 @@ _BASS_VOICE: dict = {
 
 COMMA = 81 / 80  # syntonic comma ~ 21.5 cents
 
-# 4:5:6:7 otonal tetrad as partials of f0=110
+# 4:5:6:7 otonal tetrad as partials of f0_hz=110
 # partial 1.0 = 110 Hz  root
 # partial 5/4 = 137.5 Hz  major third
 # partial 3/2 = 165 Hz  fifth
@@ -69,7 +69,7 @@ CHORD_PARTIALS = (1.0, 5 / 4, 3 / 2, 7 / 4)
 def build_score() -> Score:
     """Build the comma pump score."""
     score = Score(
-        f0=110.0,
+        f0_hz=110.0,
         master_effects=[
             EffectSpec("reverb", {"room_size": 0.7, "damping": 0.5, "wet_level": 0.25}),
             EffectSpec(
@@ -201,7 +201,7 @@ def _place_melody_cycle(score: Score, t0: float, cycle_index: int) -> None:
 
     Each cycle's melody is a variation — same harmonic materials, different
     shape and emphasis. The melody uses the 4:5:6:7 partials in the upper
-    octave (partials 2-4 of f0=110, i.e. 220-440 Hz range).
+    octave (partials 2-4 of f0_hz=110, i.e. 220-440 Hz range).
     """
     # Partial shorthands (original, un-drifted)
     A3 = 2.0  # noqa: N806  — 220 Hz

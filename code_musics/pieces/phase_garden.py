@@ -206,7 +206,7 @@ def _write_strummed_entries(
 
 def build_score() -> Score:
     score = Score(
-        f0=F0_HZ,
+        f0_hz=F0_HZ,
         timing_humanize=TimingHumanizeSpec(preset="loose_late_night"),
         send_buses=[
             SendBusSpec(

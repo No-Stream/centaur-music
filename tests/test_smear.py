@@ -211,7 +211,7 @@ class TestSmearProgression:
 
 class TestBloom:
     def test_bloom_staggers_entries(self) -> None:
-        score = Score(f0=100.0)
+        score = Score(f0_hz=100.0)
         phrase_a = _chord_phrase([4.0], duration=2.0)
         phrase_b = _chord_phrase([5.0], duration=2.0)
         phrase_c = _chord_phrase([6.0], duration=2.0)
@@ -245,7 +245,7 @@ class TestBloom:
         assert starts[0] < starts[-1]
 
     def test_bloom_all_voices_present_during_peak(self) -> None:
-        score = Score(f0=100.0)
+        score = Score(f0_hz=100.0)
         phrase_a = _chord_phrase([4.0], duration=2.0)
         phrase_b = _chord_phrase([5.0], duration=2.0)
 

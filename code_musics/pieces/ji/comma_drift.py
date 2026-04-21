@@ -196,7 +196,7 @@ def build_ji_comma_drift_score() -> Score:
     )
 
     score = Score(
-        f0=drone_freq,
+        f0_hz=drone_freq,
         master_effects=[
             EffectSpec("delay", {"delay_seconds": 0.26, "feedback": 0.14, "mix": 0.09}),
             EffectSpec(

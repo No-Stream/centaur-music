@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from itertools import cycle, islice
@@ -65,6 +66,15 @@ __all__ = [
     "with_gate",
     "with_synth_ramp",
     "with_tail_breath",
+    "augment",
+    "diminish",
+    "rhythmic_retrograde",
+    "displace",
+    "rotate",
+    "polyrhythm",
+    "cross_rhythm",
+    "polymeter_layer",
+    "polymeter_alignment",
 ]
 
 
@@ -190,6 +200,7 @@ def line(
     pitch_kind: PitchKind = "partial",
     amp: float | None = None,
     amp_db: float | None = None,
+    velocity: float | Sequence[float] | None = None,
     synth_defaults: dict[str, Any] | None = None,
     articulation: ArticulationSpec | None = None,
     pitch_motion: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
@@ -223,6 +234,15 @@ def line(
 
     note_motions = _expand_motions(pitch_motion, len(tones))
 
+    if velocity is None:
+        note_velocities: tuple[float, ...] = (1.0,) * len(tones)
+    elif isinstance(velocity, (int, float)):
+        note_velocities = (float(velocity),) * len(tones)
+    else:
+        note_velocities = tuple(float(v) for v in velocity)
+        if len(note_velocities) != len(tones):
+            raise ValueError("velocity sequence must have the same length as tones")
+
     articulation = articulation or ArticulationSpec()
     articulation_gates = _expand_positive_values(articulation.gate, len(tones), "gate")
     accents = _expand_non_negative_values(
@@ -239,6 +259,7 @@ def line(
         accent,
         motion,
         label,
+        vel,
     ) in enumerate(
         zip(
             tones,
@@ -248,6 +269,7 @@ def line(
             accents,
             note_motions,
             note_labels,
+            note_velocities,
             strict=True,
         )
     ):
@@ -266,6 +288,7 @@ def line(
             "start": cursor,
             "duration": duration,
             "amp": base_amp * accent,
+            "velocity": vel,
             "synth": dict(note_synth) if note_synth is not None else None,
             "pitch_motion": motion,
             "label": label,
@@ -289,6 +312,7 @@ def grid_line(
     pitch_kind: PitchKind = "partial",
     amp: float | None = None,
     amp_db: float | None = None,
+    velocity: float | Sequence[float] | None = None,
     synth_defaults: dict[str, Any] | None = None,
     articulation: ArticulationSpec | None = None,
     pitch_motion: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
@@ -302,13 +326,15 @@ def grid_line(
         pitch_kind=pitch_kind,
         amp=amp,
         amp_db=amp_db,
+        velocity=velocity,
         synth_defaults=synth_defaults,
         articulation=articulation,
         pitch_motion=pitch_motion,
         labels=labels,
     )
+    events = _apply_groove_velocity_weights(phrase.events, beat_durations, timeline)
     return Phrase(
-        events=phrase.events,
+        events=events,
         beat_timings=_build_beat_timings(beat_durations),
     )
 
@@ -391,6 +417,7 @@ def ratio_line(
     context: HarmonicContext,
     amp: float | None = None,
     amp_db: float | None = None,
+    velocity: float | Sequence[float] | None = None,
     synth_defaults: dict[str, Any] | None = None,
     articulation: ArticulationSpec | None = None,
     pitch_motion: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
@@ -403,6 +430,7 @@ def ratio_line(
         pitch_kind="freq",
         amp=amp,
         amp_db=amp_db,
+        velocity=velocity,
         synth_defaults=synth_defaults,
         articulation=articulation,
         pitch_motion=pitch_motion,
@@ -418,6 +446,7 @@ def grid_ratio_line(
     timeline: Timeline,
     amp: float | None = None,
     amp_db: float | None = None,
+    velocity: float | Sequence[float] | None = None,
     synth_defaults: dict[str, Any] | None = None,
     articulation: ArticulationSpec | None = None,
     pitch_motion: PitchMotionSpec | Sequence[PitchMotionSpec | None] | None = None,
@@ -431,13 +460,15 @@ def grid_ratio_line(
         context=context,
         amp=amp,
         amp_db=amp_db,
+        velocity=velocity,
         synth_defaults=synth_defaults,
         articulation=articulation,
         pitch_motion=pitch_motion,
         labels=labels,
     )
+    events = _apply_groove_velocity_weights(phrase.events, beat_durations, timeline)
     return Phrase(
-        events=phrase.events,
+        events=events,
         beat_timings=_build_beat_timings(beat_durations),
     )
 
@@ -484,6 +515,8 @@ def place_ratio_chord(
     offset: float = 0.0,
     gap: float = 0.0,
     amp: float | Sequence[float] = 1.0,
+    amp_db: float | None = None,
+    velocity: float = 1.0,
     synth: dict[str, Any] | None = None,
     labels: Sequence[str] | None = None,
 ) -> list[NoteEvent]:
@@ -501,6 +534,8 @@ def place_ratio_chord(
     if len(note_labels) != len(resolved_freqs):
         raise ValueError("labels must have the same length as ratios")
 
+    use_amp_db = amp_db is not None
+
     notes: list[NoteEvent] = []
     for index, (freq, amp_value, label) in enumerate(
         zip(resolved_freqs, amps, note_labels, strict=True)
@@ -511,7 +546,9 @@ def place_ratio_chord(
                 start=section.start + offset + (index * gap),
                 duration=duration,
                 freq=freq,
-                amp=amp_value,
+                amp=None if use_amp_db else amp_value,
+                amp_db=amp_db if use_amp_db else None,
+                velocity=velocity,
                 synth=dict(synth) if synth is not None else None,
                 label=label,
             )
@@ -582,15 +619,15 @@ def with_tail_breath(phrase: Phrase, tail_breath: float) -> Phrase:
 def with_synth_ramp(
     phrase: Phrase,
     *,
-    start: dict[str, float],
-    end: dict[str, float],
+    start_params: dict[str, float],
+    end_params: dict[str, float],
 ) -> Phrase:
     """Interpolate synth parameters across successive phrase events."""
     if not phrase.events:
         return phrase
-    if not start or not end:
+    if not start_params or not end_params:
         raise ValueError("start and end synth ramps must not be empty")
-    if set(start) != set(end):
+    if set(start_params) != set(end_params):
         raise ValueError("start and end synth ramps must use the same parameter keys")
 
     if len(phrase.events) == 1:
@@ -603,9 +640,9 @@ def with_synth_ramp(
     events: list[NoteEvent] = []
     for event, fraction in zip(phrase.events, fractions, strict=True):
         note_synth = dict(event.synth or {})
-        for key in start:
-            start_value = float(start[key])
-            end_value = float(end[key])
+        for key in start_params:
+            start_value = float(start_params[key])
+            end_value = float(end_params[key])
             note_synth[key] = start_value + ((end_value - start_value) * fraction)
         events.append(replace(event, synth=note_synth))
     return Phrase(events=tuple(events))
@@ -674,6 +711,368 @@ def staccato(phrase: Phrase, gate: float = 0.45) -> Phrase:
 def legato(phrase: Phrase, gate: float = 1.1) -> Phrase:
     """Convenience wrapper for overlapping phrasing."""
     return with_gate(phrase, gate)
+
+
+def augment(phrase: Phrase, factor: float) -> Phrase:
+    """Stretch all durations and inter-onset times by *factor*.
+
+    Classical augmentation: ``augment(p, 2.0)`` doubles all note lengths.
+    """
+    if factor <= 0:
+        raise ValueError("factor must be positive")
+    if not phrase.events:
+        return phrase
+    events = tuple(
+        replace(
+            event,
+            start=event.start * factor,
+            duration=event.duration * factor,
+            synth=dict(event.synth) if event.synth is not None else None,
+        )
+        for event in phrase.events
+    )
+    beat_timings = None
+    if phrase.beat_timings is not None:
+        beat_timings = tuple(
+            BeatTiming(
+                start_beats=bt.start_beats * factor,
+                duration_beats=bt.duration_beats * factor,
+            )
+            for bt in phrase.beat_timings
+        )
+    return Phrase(events=events, beat_timings=beat_timings)
+
+
+def diminish(phrase: Phrase, factor: float) -> Phrase:
+    """Compress all durations by *factor*.  ``diminish(p, 2.0)`` = ``augment(p, 0.5)``."""
+    if factor <= 0:
+        raise ValueError("factor must be positive")
+    return augment(phrase, 1.0 / factor)
+
+
+def rhythmic_retrograde(phrase: Phrase) -> Phrase:
+    """Reverse the duration/timing order while preserving pitch order.
+
+    If the original is ``[Q, E, E, H]`` with pitches ``[A, B, C, D]``,
+    the result is ``[H, E, E, Q]`` with pitches ``[A, B, C, D]``.
+    Different from ``reverse=True`` which reverses both pitch and timing.
+    """
+    if len(phrase.events) <= 1:
+        return phrase
+
+    events_list = list(phrase.events)
+    # Reverse durations and IOIs independently, then rebuild starts
+    reversed_durations = [e.duration for e in reversed(events_list)]
+    original_iois = _inter_onset_intervals(events_list)
+    reversed_iois = list(reversed(original_iois))
+
+    cursor = events_list[0].start
+    new_events: list[NoteEvent] = []
+    for i, event in enumerate(events_list):
+        new_events.append(
+            replace(
+                event,
+                start=cursor,
+                duration=reversed_durations[i],
+                synth=dict(event.synth) if event.synth is not None else None,
+            )
+        )
+        if i < len(events_list) - 1:
+            cursor += reversed_iois[i]
+
+    beat_timings = None
+    if phrase.beat_timings is not None:
+        bt_list = list(phrase.beat_timings)
+        reversed_bt_durations = [bt.duration_beats for bt in reversed(bt_list)]
+        original_bt_iois = _beat_timing_iois(bt_list)
+        reversed_bt_iois = list(reversed(original_bt_iois))
+        cursor_beats = bt_list[0].start_beats
+        new_bt: list[BeatTiming] = []
+        for i, _bt in enumerate(bt_list):
+            new_bt.append(
+                BeatTiming(
+                    start_beats=cursor_beats,
+                    duration_beats=reversed_bt_durations[i],
+                )
+            )
+            if i < len(bt_list) - 1:
+                cursor_beats += reversed_bt_iois[i]
+        beat_timings = tuple(new_bt)
+
+    return Phrase(events=tuple(new_events), beat_timings=beat_timings)
+
+
+def displace(phrase: Phrase, offset: float) -> Phrase:
+    """Shift all note onsets by *offset* (seconds).  Positive = later.
+
+    Use for creating syncopation or off-beat placements.
+    """
+    if not phrase.events:
+        return phrase
+    events = tuple(
+        replace(
+            event,
+            start=event.start + offset,
+            synth=dict(event.synth) if event.synth is not None else None,
+        )
+        for event in phrase.events
+    )
+    return Phrase(events=events, beat_timings=phrase.beat_timings)
+
+
+def rotate(phrase: Phrase, steps: int = 1) -> Phrase:
+    """Rotate events cyclically.
+
+    ``rotate(p, 1)`` moves the first event to the end, shifting all others
+    earlier.  Preserves total span (last event end minus first event start).
+    """
+    n = len(phrase.events)
+    if n <= 1 or steps == 0:
+        return phrase
+    steps = steps % n
+    if steps == 0:
+        return phrase
+
+    events_list = list(phrase.events)
+
+    # Compute inter-onset intervals (including wrap-around)
+    iois = _inter_onset_intervals(events_list)
+    total_span = max(e.start + e.duration for e in events_list) - events_list[0].start
+    wrap_ioi = total_span - events_list[-1].start + events_list[0].start
+    all_iois = iois + [wrap_ioi]
+
+    # Rotate both events and IOIs
+    rotated_events = events_list[steps:] + events_list[:steps]
+    rotated_iois = all_iois[steps:] + all_iois[:steps]
+
+    # Rebuild starts from rotated IOIs, keeping original start offset
+    cursor = events_list[0].start
+    new_events: list[NoteEvent] = []
+    for i, event in enumerate(rotated_events):
+        new_events.append(
+            replace(
+                event,
+                start=cursor,
+                synth=dict(event.synth) if event.synth is not None else None,
+            )
+        )
+        if i < n - 1:
+            cursor += rotated_iois[i]
+
+    beat_timings = None
+    if phrase.beat_timings is not None:
+        bt_list = list(phrase.beat_timings)
+        bt_iois = _beat_timing_iois(bt_list)
+        bt_total = (
+            max(b.start_beats + b.duration_beats for b in bt_list)
+            - bt_list[0].start_beats
+        )
+        bt_wrap = bt_total - bt_list[-1].start_beats + bt_list[0].start_beats
+        all_bt_iois = bt_iois + [bt_wrap]
+        rotated_bt = bt_list[steps:] + bt_list[:steps]
+        rotated_bt_iois = all_bt_iois[steps:] + all_bt_iois[:steps]
+        cursor_beats = bt_list[0].start_beats
+        new_bt: list[BeatTiming] = []
+        for i, bt in enumerate(rotated_bt):
+            new_bt.append(
+                BeatTiming(start_beats=cursor_beats, duration_beats=bt.duration_beats)
+            )
+            if i < n - 1:
+                cursor_beats += rotated_bt_iois[i]
+        beat_timings = tuple(new_bt)
+
+    return Phrase(events=tuple(new_events), beat_timings=beat_timings)
+
+
+def polyrhythm(a: int, b: int, span: float) -> tuple[RhythmCell, RhythmCell]:
+    """Two interlocking rhythms over the same timespan.
+
+    ``r3, r4 = polyrhythm(3, 4, span=2.0)`` produces cells with 3 and 4
+    equal divisions of 2.0 s.
+    """
+    if a <= 0 or b <= 0:
+        raise ValueError("division counts must be positive")
+    if span <= 0:
+        raise ValueError("span must be positive")
+    return (
+        RhythmCell(spans=tuple(span / a for _ in range(a))),
+        RhythmCell(spans=tuple(span / b for _ in range(b))),
+    )
+
+
+def cross_rhythm(
+    layers: Sequence[tuple[int, Sequence[float]]],
+    span: float,
+    *,
+    pitch_kind: PitchKind = "partial",
+    amp: float | None = None,
+    amp_db: float | None = None,
+    velocity: float | None = None,
+    synth_defaults: dict[str, Any] | None = None,
+) -> list[Phrase]:
+    """Build aligned phrases from multiple division layers.
+
+    Each layer is ``(divisions, tones)`` — the rhythm divides *span*
+    equally into *divisions* onsets, and ``line()`` cycles *tones* across
+    those onsets.
+
+    Example::
+
+        phrases = cross_rhythm(
+            layers=[(3, [1.0, 5/4, 3/2]), (4, [2.0, 7/4, 3/2, 5/3])],
+            span=2.0,
+        )
+    """
+    if not layers:
+        raise ValueError("layers must not be empty")
+    if span <= 0:
+        raise ValueError("span must be positive")
+
+    phrases: list[Phrase] = []
+    for divisions, tones in layers:
+        if divisions <= 0:
+            raise ValueError("division counts must be positive")
+        rhythm = RhythmCell(spans=tuple(span / divisions for _ in range(divisions)))
+        phrases.append(
+            line(
+                tones=tones,
+                rhythm=rhythm,
+                pitch_kind=pitch_kind,
+                amp=amp,
+                amp_db=amp_db,
+                velocity=velocity,
+                synth_defaults=synth_defaults,
+            )
+        )
+    return phrases
+
+
+def polymeter_layer(
+    phrase: Phrase,
+    *,
+    cycle: float,
+    total: float,
+    start: float = 0.0,
+) -> Phrase:
+    """Tile ``phrase`` end-to-end at its own cycle length over ``total`` time.
+
+    ``polyrhythm`` and ``cross_rhythm`` divide the *same* span into different
+    numbers of onsets. ``polymeter_layer`` is the complementary tool: it
+    layers a phrase at its *own* cycle length against an ambient bar
+    structure, so a 7-beat phrase will phase against a 16-beat drum grid.
+
+    Parameters
+    ----------
+    phrase:
+        Source material. Note starts inside one cycle (``0 <= event.start
+        < cycle``); notes whose start falls outside the cycle are an error
+        because the behaviour would be ambiguous. Note durations may extend
+        past ``cycle`` — the caller decides how much overlap is musical.
+    cycle:
+        One repetition length, in the same units as ``start`` / ``total``
+        (seconds by default, or beats if the caller is authoring in beats
+        and resolves later). For clean LCMs use beats.
+    total:
+        Total time to tile over, including ``start``. Notes whose start
+        falls at or after ``total`` are dropped. Partial final cycles are
+        included up to the boundary; note durations are not truncated —
+        the caller picks a ``total`` that lands on a cycle boundary when
+        exact endings matter.
+    start:
+        Absolute time at which the first cycle begins. Defaults to 0.
+
+    Returns
+    -------
+    Phrase
+        A new phrase whose events are absolute-time copies of the input,
+        tiled. ``beat_timings`` are dropped — they are bar-relative and
+        no longer meaningful after tiling. Events are sorted by start.
+    """
+    if cycle <= 0:
+        raise ValueError("cycle must be positive")
+    if total <= 0:
+        raise ValueError("total must be positive")
+    if start < 0:
+        raise ValueError("start must be non-negative")
+    if not phrase.events:
+        return Phrase(events=())
+    for event in phrase.events:
+        if event.start < 0 or event.start >= cycle:
+            raise ValueError(
+                f"phrase event start {event.start} falls outside one cycle "
+                f"[0, {cycle}); polymeter_layer expects a single-cycle source"
+            )
+
+    tiled: list[NoteEvent] = []
+    cursor = start
+    while cursor < total:
+        for event in phrase.events:
+            absolute_start = cursor + event.start
+            if absolute_start >= total:
+                continue
+            # NoteEvent.__post_init__ resolves amp_db into amp but keeps both
+            # fields set. Dataclass ``replace`` carries both forward and
+            # re-triggers the "amp or amp_db, not both" validation, so we
+            # explicitly pass the already-resolved amp and clear amp_db.
+            resolved_amp = _require_resolved_amp(event)
+            tiled.append(
+                replace(
+                    event,
+                    start=absolute_start,
+                    amp=resolved_amp,
+                    amp_db=None,
+                    synth=dict(event.synth) if event.synth is not None else None,
+                )
+            )
+        cursor += cycle
+    tiled.sort(key=lambda event: event.start)
+    return Phrase(events=tuple(tiled))
+
+
+def polymeter_alignment(cycles: Sequence[float], *, tolerance: float = 1e-6) -> float:
+    """Return the time at which all given cycles realign (LCM of cycles).
+
+    For integer beat lengths this is just the least common multiple.
+    ``polymeter_alignment([7, 16])`` returns 112. ``polymeter_alignment(
+    [16, 11, 9, 7])`` returns 11088 — they never realign within a
+    sensible section length, which is usually the point.
+
+    Floats are rounded to integer beats if they are within ``tolerance``
+    of an integer; otherwise a ``ValueError`` is raised, since LCM on
+    genuine floats is ill-defined.
+    """
+    if not cycles:
+        raise ValueError("cycles must not be empty")
+
+    integer_cycles: list[int] = []
+    for value in cycles:
+        if value <= 0:
+            raise ValueError(f"cycle values must be positive, got {value}")
+        rounded = round(value)
+        if abs(value - rounded) > tolerance or rounded <= 0:
+            raise ValueError(
+                f"cycle {value} is not close to a positive integer; "
+                f"pass beat counts rather than seconds for a meaningful LCM"
+            )
+        integer_cycles.append(rounded)
+
+    result = integer_cycles[0]
+    for value in integer_cycles[1:]:
+        result = result * value // math.gcd(result, value)
+    return float(result)
+
+
+def _inter_onset_intervals(events: list[NoteEvent]) -> list[float]:
+    """Return inter-onset intervals between consecutive events."""
+    return [events[i + 1].start - events[i].start for i in range(len(events) - 1)]
+
+
+def _beat_timing_iois(bt_list: list[BeatTiming]) -> list[float]:
+    """Return inter-onset intervals between consecutive beat timings."""
+    return [
+        bt_list[i + 1].start_beats - bt_list[i].start_beats
+        for i in range(len(bt_list) - 1)
+    ]
 
 
 def echo(
@@ -1548,6 +1947,33 @@ def _build_beat_timings(beat_durations: Sequence[float]) -> tuple[BeatTiming, ..
     return tuple(timings)
 
 
+def _apply_groove_velocity_weights(
+    events: tuple[NoteEvent, ...],
+    beat_durations: Sequence[float],
+    timeline: Timeline,
+) -> tuple[NoteEvent, ...]:
+    """Scale event velocities by the groove velocity weight at each beat position."""
+    if timeline.groove is None:
+        return events
+    groove = timeline.groove
+    step_size = groove.step_size_beats
+    cursor_beats = 0.0
+    weighted: list[NoteEvent] = []
+    for event, dur_beats in zip(events, beat_durations, strict=True):
+        step_index = math.floor(cursor_beats / step_size)
+        weight = groove.velocity_weight_at(step_index)
+        vel = event.velocity
+        weighted.append(
+            replace(
+                event,
+                velocity=vel * weight,
+                synth=dict(event.synth) if event.synth is not None else None,
+            )
+        )
+        cursor_beats += dur_beats
+    return tuple(weighted)
+
+
 def _coerce_duration_beats_value(value: DurationLike) -> float:
     beats = value.beats if isinstance(value, (BeatSpan, BeatValue)) else float(value)
     if beats <= 0:
@@ -1647,6 +2073,12 @@ def _place_grid_sequence_entries(
                 section=section,
                 source_tonic=source_tonic,
             )
+            note_velocity = placed_event.velocity
+            if timeline.groove is not None:
+                step_size = timeline.groove.step_size_beats
+                step_idx = math.floor(absolute_start_beats / step_size)
+                weight = timeline.groove.velocity_weight_at(step_idx)
+                note_velocity = note_velocity * weight
             placed_notes.append(
                 score.add_note(
                     voice_name,
@@ -1656,15 +2088,13 @@ def _place_grid_sequence_entries(
                     partial=placed_event.partial,
                     freq=placed_event.freq,
                     amp=placed_event.amp,
-                    velocity=placed_event.velocity,
+                    velocity=note_velocity,
                     pitch_motion=placed_event.pitch_motion,
                     synth=dict(placed_event.synth)
                     if placed_event.synth is not None
                     else None,
                     label=placed_event.label,
-                    automation=list(placed_event.automation)
-                    if placed_event.automation is not None
-                    else None,
+                    automation=list(placed_event.automation),
                 )
             )
         placed_entries.append(placed_notes)

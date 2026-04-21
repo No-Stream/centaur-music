@@ -29,7 +29,7 @@ from code_musics.score import EffectSpec, Score
 
 def build_articulation_study_sketch() -> Score:
     """Short study contrasting clipped JI rhythm with ratio glides."""
-    score = Score(f0=110.0, master_effects=[SOFT_REVERB_EFFECT])
+    score = Score(f0_hz=110.0, master_effects=[SOFT_REVERB_EFFECT])
     score.add_voice(
         "drone",
         synth_defaults={
@@ -79,7 +79,7 @@ def build_articulation_study_sketch() -> Score:
 def build_composition_tools_showcase_score() -> Score:
     """Short piece built primarily from the composition-helper layer."""
     score = Score(
-        f0=55.0,
+        f0_hz=55.0,
         master_effects=[WARM_SATURATION_EFFECT, SOFT_REVERB_EFFECT],
     )
     score.add_voice(
@@ -217,7 +217,7 @@ def build_composition_tools_showcase_score() -> Score:
 
 def build_composition_tools_consonant_score() -> Score:
     """Sparse consonant demonstration piece that exercises all composition helpers."""
-    score = Score(f0=55.0, master_effects=[SOFT_REVERB_EFFECT])
+    score = Score(f0_hz=55.0, master_effects=[SOFT_REVERB_EFFECT])
     score.add_voice(
         "bass",
         synth_defaults={
@@ -384,7 +384,7 @@ def build_septimal_imitation_score() -> Score:
     base_tonic = 146.67  # D3 (≈ 4/3 × 110 Hz)
 
     score = Score(
-        f0=base_tonic,
+        f0_hz=base_tonic,
         timing_humanize=TimingHumanizeSpec(preset="chamber", chord_spread_ms=12.0),
         master_effects=[SOFT_REVERB_EFFECT],
     )
@@ -497,8 +497,8 @@ def build_septimal_imitation_score() -> Score:
     # a sense of thinning out as it moves further from the tonic.
     soprano_thinning = with_synth_ramp(
         subject,
-        start={"mod_index": 3.0},
-        end={"mod_index": 1.2},
+        start_params={"mod_index": 3.0},
+        end_params={"mod_index": 1.2},
     )
     sequence(
         score,
@@ -525,8 +525,8 @@ def build_septimal_imitation_score() -> Score:
     # Alto: additive harmonics ramp from bright to dark across IV and return.
     alto_darkening = with_synth_ramp(
         subject,
-        start={"harmonic_rolloff": 0.45, "brightness_tilt": 0.05},
-        end={"harmonic_rolloff": 0.72, "brightness_tilt": -0.25},
+        start_params={"harmonic_rolloff": 0.45, "brightness_tilt": 0.05},
+        end_params={"harmonic_rolloff": 0.72, "brightness_tilt": -0.25},
     )
     sequence(
         score,

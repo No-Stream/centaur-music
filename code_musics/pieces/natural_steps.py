@@ -98,7 +98,7 @@ def _pulse_drone(
             pm = PitchMotionSpec.vibrato(
                 depth_ratio=vibrato_depth,
                 rate_hz=vibrato_rate_hz,
-                phase=i * 0.7,  # irrational-ish step avoids synchronisation
+                phase_rad=i * 0.7,  # irrational-ish step avoids synchronisation
             )
         score.add_note(
             "drone",
@@ -172,7 +172,7 @@ def build_natural_steps_score() -> Score:
     base = 55.0  # A1 — all partials are integer multiples of this
 
     score = Score(
-        f0=base,
+        f0_hz=base,
         master_effects=[
             EffectSpec(
                 "reverb", {"room_size": 0.72, "damping": 0.44, "wet_level": 0.28}

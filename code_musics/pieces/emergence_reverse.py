@@ -105,7 +105,7 @@ def _send_fade(
 def build_score() -> Score:
     """Build the Emergence reverse-bloom score."""
     score = Score(
-        f0=F0,
+        f0_hz=F0,
         master_effects=[
             # Master saturation — warm glue that thins over time
             EffectSpec(

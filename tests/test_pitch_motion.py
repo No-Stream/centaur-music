@@ -16,7 +16,7 @@ def test_linear_bend_trajectory_hits_requested_target() -> None:
         duration=0.01,
         sample_rate=1000,
         motion=motion,
-        score_f0=110.0,
+        score_f0_hz=110.0,
     )
 
     assert len(trajectory) == 10
@@ -33,7 +33,7 @@ def test_ratio_glide_trajectory_is_geometric_and_positive() -> None:
         duration=0.01,
         sample_rate=1000,
         motion=motion,
-        score_f0=110.0,
+        score_f0_hz=110.0,
     )
 
     log_steps = np.diff(np.log(trajectory))
@@ -45,14 +45,14 @@ def test_ratio_glide_trajectory_is_geometric_and_positive() -> None:
 
 
 def test_vibrato_trajectory_stays_positive_and_deterministic() -> None:
-    motion = PitchMotionSpec.vibrato(depth_ratio=0.02, rate_hz=5.0, phase=0.25)
+    motion = PitchMotionSpec.vibrato(depth_ratio=0.02, rate_hz=5.0, phase_rad=0.25)
 
     trajectory = build_frequency_trajectory(
         base_freq=220.0,
         duration=0.02,
         sample_rate=1000,
         motion=motion,
-        score_f0=110.0,
+        score_f0_hz=110.0,
     )
 
     assert np.all(np.isfinite(trajectory))

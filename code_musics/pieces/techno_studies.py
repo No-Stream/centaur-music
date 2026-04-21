@@ -79,7 +79,7 @@ def build_spectral_kick() -> Score:
     Kick: 909-style, 4-on-the-floor.
     """
     score = Score(
-        f0=F0,
+        f0_hz=F0,
         master_effects=[
             EffectSpec(
                 "compressor",
@@ -115,7 +115,7 @@ def build_spectral_kick() -> Score:
     # ------------------------------------------------------------------
     score.add_voice(
         "kick",
-        synth_defaults={"engine": "kick_tom", "preset": "909_techno"},
+        synth_defaults={"engine": "drum_voice", "preset": "909_techno"},
         effects=[EffectSpec("compressor", {"preset": "kick_punch"})],
         normalize_peak_db=-6.0,
         mix_db=-4.0,
@@ -525,7 +525,7 @@ def build_spectral_kick() -> Score:
     # ------------------------------------------------------------------
     score.add_voice(
         "hat",
-        synth_defaults={"engine": "noise_perc", "preset": "chh"},
+        synth_defaults={"engine": "drum_voice", "preset": "chh"},
         mix_db=-11.0,
         velocity_humanize=None,
         effects=[
@@ -587,7 +587,7 @@ def build_spectral_kick() -> Score:
     # ------------------------------------------------------------------
     score.add_voice(
         "clap",
-        synth_defaults={"engine": "noise_perc", "preset": "clap"},
+        synth_defaults={"engine": "drum_voice", "preset": "clap_noise"},
         mix_db=-6.5,
         normalize_peak_db=-6.0,  # percussive — LUFS normalization is unreliable here
         velocity_humanize=None,

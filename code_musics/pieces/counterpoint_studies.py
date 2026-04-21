@@ -10,7 +10,7 @@ from code_musics.tuning import utonal
 
 def build_passacaglia_sketch() -> Score:
     """Descending bass ostinato (8-7-6-5-4) with five accumulating variations."""
-    score = Score(f0=55.0, master_effects=[DELAY_EFFECT, REVERB_EFFECT])
+    score = Score(f0_hz=55.0, master_effects=[DELAY_EFFECT, REVERB_EFFECT])
     score.add_voice(
         "bass",
         synth_defaults={
@@ -54,8 +54,8 @@ def build_passacaglia_sketch() -> Score:
 
     ground = Phrase.from_partials(
         [8, 7, 6, 5, 4],
-        note_dur=2.2,
-        step=2.0,
+        duration=2.2,
+        onset_interval=2.0,
         amp=0.44,
         synth_defaults={
             "harmonic_rolloff": 0.52,
@@ -72,8 +72,8 @@ def build_passacaglia_sketch() -> Score:
 
     upper_phrase = Phrase.from_partials(
         [12, 14, 13, 12, 11, 12],
-        note_dur=1.6,
-        step=1.45,
+        duration=1.6,
+        onset_interval=1.45,
         amp=0.28,
         synth_defaults={
             "harmonic_rolloff": 0.26,
@@ -97,8 +97,8 @@ def build_passacaglia_sketch() -> Score:
 
     alto_phrase = Phrase.from_partials(
         [9, 10, 9, 8, 10, 9],
-        note_dur=1.4,
-        step=1.2,
+        duration=1.4,
+        onset_interval=1.2,
         amp=0.32,
         synth_defaults={
             "harmonic_rolloff": 0.34,
@@ -139,7 +139,7 @@ def build_passacaglia_sketch() -> Score:
 
 def build_invention_sketch() -> Score:
     """Two-voice imitative counterpoint on a six-note JI subject."""
-    score = Score(f0=110.0, master_effects=[DELAY_EFFECT, REVERB_EFFECT])
+    score = Score(f0_hz=110.0, master_effects=[DELAY_EFFECT, REVERB_EFFECT])
     score.add_voice(
         "voice_a",
         synth_defaults={
@@ -173,8 +173,8 @@ def build_invention_sketch() -> Score:
 
     subject = Phrase.from_partials(
         [6, 7, 8, 9, 8, 7],
-        note_dur=1.3,
-        step=1.0,
+        duration=1.3,
+        onset_interval=1.0,
         amp=0.38,
         synth_defaults={
             "harmonic_rolloff": 0.34,
@@ -192,8 +192,8 @@ def build_invention_sketch() -> Score:
 
     head = Phrase.from_partials(
         [6, 7, 8, 9],
-        note_dur=1.1,
-        step=0.85,
+        duration=1.1,
+        onset_interval=0.85,
         amp=0.35,
         synth_defaults={
             "harmonic_rolloff": 0.34,
@@ -205,8 +205,8 @@ def build_invention_sketch() -> Score:
     )
     tail = Phrase.from_partials(
         [9, 8, 7, 6],
-        note_dur=1.1,
-        step=0.85,
+        duration=1.1,
+        onset_interval=0.85,
         amp=0.33,
         synth_defaults={
             "harmonic_rolloff": 0.34,
@@ -258,7 +258,7 @@ def build_invention_sketch() -> Score:
 def build_variations_sketch() -> Score:
     """One JI theme heard through five transform lenses."""
     f0 = 110.0
-    score = Score(f0=f0, master_effects=[DELAY_EFFECT, REVERB_EFFECT])
+    score = Score(f0_hz=f0, master_effects=[DELAY_EFFECT, REVERB_EFFECT])
     score.add_voice(
         "melody",
         synth_defaults={
@@ -282,8 +282,8 @@ def build_variations_sketch() -> Score:
 
     theme = Phrase.from_partials(
         [4, 5, 6, 7, 8, 7, 6],
-        note_dur=1.1,
-        step=0.9,
+        duration=1.1,
+        onset_interval=0.9,
         amp=0.38,
         synth_defaults={
             "harmonic_rolloff": 0.32,

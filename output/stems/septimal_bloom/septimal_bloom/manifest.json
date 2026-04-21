@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "piece_name": "septimal_bloom",
+  "output_name": "septimal_bloom",
+  "sample_rate": 44100,
+  "bit_depth": 24,
+  "dry": false,
+  "total_duration_seconds": 138.4166,
+  "total_samples": 6104174,
+  "voice_stems": [
+    {
+      "name": "drone",
+      "kind": "voice",
+      "path": "voices/drone.wav",
+      "channels": 2,
+      "sample_count": 6104174,
+      "peak_dbfs": -31.24
+    },
+    {
+      "name": "melody",
+      "kind": "voice",
+      "path": "voices/melody.wav",
+      "channels": 2,
+      "sample_count": 6104174,
+      "peak_dbfs": -14.57
+    },
+    {
+      "name": "pad",
+      "kind": "voice",
+      "path": "voices/pad.wav",
+      "channels": 2,
+      "sample_count": 6104174,
+      "peak_dbfs": -4.47
+    },
+    {
+      "name": "pad2",
+      "kind": "voice",
+      "path": "voices/pad2.wav",
+      "channels": 2,
+      "sample_count": 6104174,
+      "peak_dbfs": -15.28
+    }
+  ],
+  "send_stems": [
+    {
+      "name": "hall",
+      "kind": "send",
+      "path": "sends/hall.wav",
+      "channels": 2,
+      "sample_count": 6104174,
+      "peak_dbfs": -14.07
+    }
+  ],
+  "mix_path": "mix.wav",
+  "processing_notes": "Voice stems include: normalization, pre_fx_gain, pan, voice effects, mix_db fader. Send stems include: bus summing, bus effects, return_db, bus pan. Stems sum to the pre-master mix (before auto gain staging and master effects). The reference mix includes full mastering.",
+  "warnings": []
+}

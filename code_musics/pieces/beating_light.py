@@ -11,15 +11,9 @@ A very quiet melody traces through the beating texture in the upper harmonics.
 
 from __future__ import annotations
 
-import math
-
 from code_musics.pieces.registry import PieceDefinition, PieceSection
 from code_musics.score import EffectSpec, Score
-
-
-def _cents_to_ratio(cents: float) -> float:
-    """Convert a cents offset to a frequency ratio multiplier."""
-    return math.pow(2.0, cents / 1200.0)
+from code_musics.tuning import cents_to_ratio
 
 
 def build_beating_light() -> Score:
@@ -31,7 +25,7 @@ def build_beating_light() -> Score:
     chord_partials = [1.0, 5 / 4, 3 / 2, 7 / 4]
 
     # Voice B cent offsets per chord tone — chosen so beat rates form an
-    # interesting polyrhythm.  At f0=110 Hz, a 2-cent offset on the root
+    # interesting polyrhythm.  At f0_hz=110 Hz, a 2-cent offset on the root
     # gives ~0.127 Hz beating (~7.9s period).  Higher partials beat faster
     # because the absolute Hz offset scales with frequency.
     #
@@ -44,7 +38,7 @@ def build_beating_light() -> Score:
     # attack/release overlap.
 
     score = Score(
-        f0=f0,
+        f0_hz=f0,
         master_effects=[
             EffectSpec("delay", {"delay_seconds": 0.75, "feedback": 0.18, "mix": 0.12}),
             EffectSpec(
@@ -105,7 +99,7 @@ def build_beating_light() -> Score:
                 amp_db=-6.0,
             )
             # Voice B: detuned partial
-            detuned_partial = partial * _cents_to_ratio(cents)
+            detuned_partial = partial * cents_to_ratio(cents)
             score.add_note(
                 "pad_detuned",
                 start=phase_start,

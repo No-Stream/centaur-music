@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import numba
 import numpy as np
 
-DriftStyle = Literal["random_walk", "smooth_noise", "lfo", "sample_hold"]
+DriftStyle = Literal[
+    "random_walk", "smooth_noise", "lfo", "sample_hold", "smoothed_random"
+]
 
 _SUPPORTED_DRIFT_STYLES: set[DriftStyle] = {
     "random_walk",
     "smooth_noise",
     "lfo",
     "sample_hold",
+    "smoothed_random",
 }
 
 _TIMING_PRESETS: dict[str, dict[str, Any]] = {
@@ -63,24 +68,24 @@ _TIMING_PRESETS: dict[str, dict[str, Any]] = {
 _ENVELOPE_PRESETS: dict[str, dict[str, Any]] = {
     "subtle_analog": {
         "drift": {"style": "smooth_noise", "rate_hz": 0.09, "smoothness": 0.75},
-        "attack_amount_pct": 0.08,
-        "decay_amount_pct": 0.06,
-        "sustain_amount_pct": 0.04,
-        "release_amount_pct": 0.08,
+        "attack_amount_frac": 0.08,
+        "decay_amount_frac": 0.06,
+        "sustain_amount_frac": 0.04,
+        "release_amount_frac": 0.08,
     },
     "breathing_pad": {
         "drift": {"style": "smooth_noise", "rate_hz": 0.06, "smoothness": 0.85},
-        "attack_amount_pct": 0.16,
-        "decay_amount_pct": 0.12,
-        "sustain_amount_pct": 0.06,
-        "release_amount_pct": 0.18,
+        "attack_amount_frac": 0.16,
+        "decay_amount_frac": 0.12,
+        "sustain_amount_frac": 0.06,
+        "release_amount_frac": 0.18,
     },
     "loose_pluck": {
         "drift": {"style": "smooth_noise", "rate_hz": 0.12, "smoothness": 0.62},
-        "attack_amount_pct": 0.12,
-        "decay_amount_pct": 0.14,
-        "sustain_amount_pct": 0.05,
-        "release_amount_pct": 0.12,
+        "attack_amount_frac": 0.12,
+        "decay_amount_frac": 0.14,
+        "sustain_amount_frac": 0.05,
+        "release_amount_frac": 0.12,
     },
 }
 
@@ -124,6 +129,127 @@ class DriftSpec:
             raise ValueError("rate_hz must be positive")
         if not 0.0 <= self.smoothness <= 1.0:
             raise ValueError("smoothness must be between 0 and 1")
+
+
+@dataclass(frozen=True)
+class DriftBusSpec:
+    """Score-level shared drift bus definition.
+
+    Voices that subscribe to the bus (via ``Voice.drift_bus``) receive a
+    correlated slow pitch-drift signal on top of whatever independent drift
+    their engine generates.  The correlation knob (``Voice.drift_bus_correlation``)
+    blends between fully independent (0.0) and fully shared (1.0) per-voice.
+
+    Musically useful range: ``rate_hz`` 0.05-0.5 Hz, ``depth_cents`` 2-12 cents.
+    """
+
+    name: str
+    rate_hz: float = 0.2
+    depth_cents: float = 5.0
+    seed: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("DriftBusSpec.name must be non-empty")
+        if self.rate_hz <= 0:
+            raise ValueError("DriftBusSpec.rate_hz must be positive")
+        if self.depth_cents < 0:
+            raise ValueError("DriftBusSpec.depth_cents must be non-negative")
+
+
+# --- Shared drift bus DSP ----------------------------------------------------
+# Re-implemented from the public description of Surge XT's ``DriftLFO``
+# (``sst::basic_blocks::dsp::DriftLFO``): single-pole filtered uniform noise
+# with RMS-preserving gain.  Not a line-for-line port.
+_DRIFT_BUS_FILTER_COEFF: float = 1.0e-5
+_DRIFT_BUS_DOWNSAMPLE_HZ: float = 1000.0
+
+
+@numba.njit(cache=True)
+def _drift_bus_filter(
+    noise: np.ndarray, alpha: float, gain: float
+) -> tuple[np.ndarray, float]:
+    """Single-pole lowpass with RMS-preserving gain and sum-of-squares accumulator.
+
+    Returns ``(walk, sum_sq)`` where ``sum_sq`` is the accumulator for
+    RMS = sqrt(sum_sq / len(walk)).  Folding the accumulator into the filter
+    loop avoids a second O(n) pass over the walk.
+    """
+    n = noise.shape[0]
+    walk = np.empty(n, dtype=np.float64)
+    one_minus_alpha = 1.0 - alpha
+    state = 0.0
+    sum_sq = 0.0
+    walk[0] = 0.0
+    for i in range(1, n):
+        state = state * one_minus_alpha + noise[i] * alpha
+        value = state * gain
+        walk[i] = value
+        sum_sq += value * value
+    return walk, sum_sq
+
+
+def build_drift_bus(
+    *,
+    times: np.ndarray,
+    rate_hz: float,
+    depth_cents: float,
+    sample_rate: int,
+    seed: int | None = None,
+) -> np.ndarray:
+    """Generate a shared, slow, Surge-style drift bus trajectory.
+
+    Returns a multiplicative ratio array (around 1.0) via ``2 ** (cents / 1200)``,
+    safe to multiply directly into a frequency trajectory.  The bus is
+    deterministic from ``(seed, rate_hz)`` and always normalized against its
+    own internal window, so repeated calls with different ``times`` windows
+    remain mutually consistent under resampling.
+
+    Args:
+        times: Sample times in seconds (non-negative, finite).
+        rate_hz: Characteristic rate of the drift (0.05-0.5 Hz musically).
+        depth_cents: RMS excursion in cents.  ``0.0`` returns all-ones.
+        sample_rate: Audio sample rate (validated only).
+        seed: Optional deterministic seed.
+    """
+    if depth_cents < 0.0:
+        raise ValueError("depth_cents must be non-negative")
+    if rate_hz <= 0.0:
+        raise ValueError("rate_hz must be positive")
+    if sample_rate <= 0:
+        raise ValueError("sample_rate must be positive")
+
+    times = np.asarray(times, dtype=np.float64)
+    if times.size == 0:
+        return np.zeros(0, dtype=np.float64)
+    if depth_cents == 0.0:
+        return np.ones(times.shape[0], dtype=np.float64)
+
+    total_duration = max(float(np.max(times)), 0.0)
+    pad_seconds = 1.0 + 2.0 / _DRIFT_BUS_DOWNSAMPLE_HZ
+    internal_rate = _DRIFT_BUS_DOWNSAMPLE_HZ
+    n_internal = int(math.ceil((total_duration + pad_seconds) * internal_rate)) + 2
+
+    rng = np.random.default_rng(stable_seed("drift_bus", seed or 0, round(rate_hz, 6)))
+    noise = rng.uniform(-1.0, 1.0, size=n_internal).astype(np.float64)
+
+    # Preserve Surge's effective cutoff at our downsampled rate, scaling with
+    # rate_hz (musical center = 0.2 Hz).
+    cutoff_hz = max(_DRIFT_BUS_FILTER_COEFF * 48000.0 / (2.0 * math.pi), 1e-6)
+    cutoff_hz *= rate_hz / 0.2
+    alpha = 1.0 - math.exp(-2.0 * math.pi * cutoff_hz / internal_rate)
+    alpha = float(np.clip(alpha, 1e-9, 1.0))
+    gain = math.sqrt(1.0 / max(alpha, 1e-12))
+
+    walk, sum_sq = _drift_bus_filter(noise, alpha, gain)
+    walk_rms = math.sqrt(sum_sq / n_internal) if n_internal > 0 else 0.0
+    if walk_rms > 1e-12:
+        walk = walk / walk_rms
+    cents = walk * depth_cents
+
+    internal_times = np.arange(n_internal, dtype=np.float64) / internal_rate
+    sampled_cents = np.interp(times, internal_times, cents)
+    return np.power(2.0, sampled_cents / 1200.0)
 
 
 @dataclass(frozen=True)
@@ -217,10 +343,10 @@ class EnvelopeHumanizeSpec:
 
     preset: str | None = None
     drift: DriftSpec | None = None
-    attack_amount_pct: float | None = None
-    decay_amount_pct: float | None = None
-    sustain_amount_pct: float | None = None
-    release_amount_pct: float | None = None
+    attack_amount_frac: float | None = None
+    decay_amount_frac: float | None = None
+    sustain_amount_frac: float | None = None
+    release_amount_frac: float | None = None
     seed: int | None = None
 
     def __post_init__(self) -> None:
@@ -230,42 +356,42 @@ class EnvelopeHumanizeSpec:
         preset = _ENVELOPE_PRESETS[preset_name]
 
         drift_value = self.drift or DriftSpec(**preset["drift"])
-        attack_amount_pct = float(
-            preset["attack_amount_pct"]
-            if self.attack_amount_pct is None
-            else self.attack_amount_pct
+        attack_amount_frac = float(
+            preset["attack_amount_frac"]
+            if self.attack_amount_frac is None
+            else self.attack_amount_frac
         )
-        decay_amount_pct = float(
-            preset["decay_amount_pct"]
-            if self.decay_amount_pct is None
-            else self.decay_amount_pct
+        decay_amount_frac = float(
+            preset["decay_amount_frac"]
+            if self.decay_amount_frac is None
+            else self.decay_amount_frac
         )
-        sustain_amount_pct = float(
-            preset["sustain_amount_pct"]
-            if self.sustain_amount_pct is None
-            else self.sustain_amount_pct
+        sustain_amount_frac = float(
+            preset["sustain_amount_frac"]
+            if self.sustain_amount_frac is None
+            else self.sustain_amount_frac
         )
-        release_amount_pct = float(
-            preset["release_amount_pct"]
-            if self.release_amount_pct is None
-            else self.release_amount_pct
+        release_amount_frac = float(
+            preset["release_amount_frac"]
+            if self.release_amount_frac is None
+            else self.release_amount_frac
         )
 
         object.__setattr__(self, "preset", preset_name)
         object.__setattr__(self, "drift", drift_value)
-        object.__setattr__(self, "attack_amount_pct", attack_amount_pct)
-        object.__setattr__(self, "decay_amount_pct", decay_amount_pct)
-        object.__setattr__(self, "sustain_amount_pct", sustain_amount_pct)
-        object.__setattr__(self, "release_amount_pct", release_amount_pct)
+        object.__setattr__(self, "attack_amount_frac", attack_amount_frac)
+        object.__setattr__(self, "decay_amount_frac", decay_amount_frac)
+        object.__setattr__(self, "sustain_amount_frac", sustain_amount_frac)
+        object.__setattr__(self, "release_amount_frac", release_amount_frac)
 
-        if attack_amount_pct < 0:
-            raise ValueError("attack_amount_pct must be non-negative")
-        if decay_amount_pct < 0:
-            raise ValueError("decay_amount_pct must be non-negative")
-        if sustain_amount_pct < 0:
-            raise ValueError("sustain_amount_pct must be non-negative")
-        if release_amount_pct < 0:
-            raise ValueError("release_amount_pct must be non-negative")
+        if attack_amount_frac < 0:
+            raise ValueError("attack_amount_frac must be non-negative")
+        if decay_amount_frac < 0:
+            raise ValueError("decay_amount_frac must be non-negative")
+        if sustain_amount_frac < 0:
+            raise ValueError("sustain_amount_frac must be non-negative")
+        if release_amount_frac < 0:
+            raise ValueError("release_amount_frac must be non-negative")
 
 
 @dataclass(frozen=True)
@@ -356,7 +482,7 @@ def build_timing_offsets(
     if humanize is None or not targets:
         return {}
 
-    global_seed = _seed_or_default(humanize.seed, "timing", humanize.preset)
+    global_seed = seed_or_default(humanize.seed, "timing", humanize.preset)
     ensemble_drift = humanize.ensemble_drift
     if ensemble_drift is None:
         raise ValueError("ensemble_drift must be resolved")
@@ -388,7 +514,7 @@ def build_timing_offsets(
     per_voice_static_ms: dict[str, float] = {}
     per_voice_dynamic: dict[str, np.ndarray] = {}
     for voice_name in {target.voice_name for target in targets}:
-        voice_seed = _stable_seed(global_seed, "voice", voice_name)
+        voice_seed = stable_seed(global_seed, "voice", voice_name)
         voice_rng = np.random.default_rng(voice_seed)
         per_voice_static_ms[voice_name] = float(
             voice_rng.uniform(-voice_spread_ms, voice_spread_ms)
@@ -406,7 +532,7 @@ def build_timing_offsets(
                     ),
                     times=start_times,
                     total_dur=total_dur,
-                    seed=_stable_seed(voice_seed, "dynamic"),
+                    seed=stable_seed(voice_seed, "dynamic"),
                 )
             )
         )
@@ -414,12 +540,12 @@ def build_timing_offsets(
     chord_offsets_ms = _build_chord_spread_offsets(
         targets=targets,
         chord_spread_ms=chord_spread_ms,
-        seed=_stable_seed(global_seed, "chords"),
+        seed=stable_seed(global_seed, "chords"),
     )
 
     offsets: dict[tuple[str, int], float] = {}
     for index, target in enumerate(targets):
-        note_seed = _stable_seed(global_seed, "note", target.voice_name, target.key[1])
+        note_seed = stable_seed(global_seed, "note", target.voice_name, target.key[1])
         note_rng = np.random.default_rng(note_seed)
         note_jitter_ms = 0.0
         if micro_jitter_limit_ms > 0:
@@ -461,20 +587,20 @@ def resolve_envelope_params(
     drift = humanize.drift
     if drift is None:
         raise ValueError("drift must be resolved")
-    attack_amount_pct = humanize.attack_amount_pct
-    if attack_amount_pct is None:
-        raise ValueError("attack_amount_pct must be resolved")
-    decay_amount_pct = humanize.decay_amount_pct
-    if decay_amount_pct is None:
-        raise ValueError("decay_amount_pct must be resolved")
-    sustain_amount_pct = humanize.sustain_amount_pct
-    if sustain_amount_pct is None:
-        raise ValueError("sustain_amount_pct must be resolved")
-    release_amount_pct = humanize.release_amount_pct
-    if release_amount_pct is None:
-        raise ValueError("release_amount_pct must be resolved")
+    attack_amount_frac = humanize.attack_amount_frac
+    if attack_amount_frac is None:
+        raise ValueError("attack_amount_frac must be resolved")
+    decay_amount_frac = humanize.decay_amount_frac
+    if decay_amount_frac is None:
+        raise ValueError("decay_amount_frac must be resolved")
+    sustain_amount_frac = humanize.sustain_amount_frac
+    if sustain_amount_frac is None:
+        raise ValueError("sustain_amount_frac must be resolved")
+    release_amount_frac = humanize.release_amount_frac
+    if release_amount_frac is None:
+        raise ValueError("release_amount_frac must be resolved")
 
-    shared_seed = _seed_or_default(
+    shared_seed = seed_or_default(
         humanize.seed, "envelope", humanize.preset, voice_name
     )
     shared_curve = _sample_drift_curve(
@@ -489,29 +615,29 @@ def resolve_envelope_params(
             drift,
             times=np.asarray([note_start], dtype=np.float64),
             total_dur=total_dur,
-            seed=_stable_seed(shared_seed, parameter_name),
+            seed=stable_seed(shared_seed, parameter_name),
         )[0]
         return float((0.6 * shared_curve) + (0.4 * local_curve))
 
     attack = max(
         0.0,
-        base_attack * (1.0 + (attack_amount_pct * _parameter_curve("attack"))),
+        base_attack * (1.0 + (attack_amount_frac * _parameter_curve("attack"))),
     )
     decay = max(
         0.0,
-        base_decay * (1.0 + (decay_amount_pct * _parameter_curve("decay"))),
+        base_decay * (1.0 + (decay_amount_frac * _parameter_curve("decay"))),
     )
     sustain_level = float(
         np.clip(
             base_sustain_level
-            * (1.0 + (sustain_amount_pct * _parameter_curve("sustain"))),
+            * (1.0 + (sustain_amount_frac * _parameter_curve("sustain"))),
             0.0,
             1.0,
         )
     )
     release = max(
         0.0,
-        base_release * (1.0 + (release_amount_pct * _parameter_curve("release"))),
+        base_release * (1.0 + (release_amount_frac * _parameter_curve("release"))),
     )
     return attack, decay, sustain_level, release
 
@@ -553,7 +679,7 @@ def build_velocity_multipliers(
     if max_multiplier is None:
         raise ValueError("max_multiplier must be resolved")
 
-    velocity_seed = _seed_or_default(humanize.seed, "velocity", humanize.preset)
+    velocity_seed = seed_or_default(humanize.seed, "velocity", humanize.preset)
     grouped_targets: dict[str, list[VelocityTarget]] = {}
     for target in targets:
         grouped_targets.setdefault(target.group_name, []).append(target)
@@ -563,7 +689,7 @@ def build_velocity_multipliers(
         group_times = np.asarray(
             [target.start for target in group_targets], dtype=np.float64
         )
-        group_seed = _stable_seed(velocity_seed, "group", group_name)
+        group_seed = stable_seed(velocity_seed, "group", group_name)
         shared_curve = _sample_drift_curve(
             drift,
             times=group_times,
@@ -574,7 +700,7 @@ def build_velocity_multipliers(
         voice_static_offsets: dict[str, float] = {}
         voice_dynamic_curves: dict[str, np.ndarray] = {}
         for voice_name in {target.voice_name for target in group_targets}:
-            voice_seed = _stable_seed(group_seed, "voice", voice_name)
+            voice_seed = stable_seed(group_seed, "voice", voice_name)
             voice_rng = np.random.default_rng(voice_seed)
             voice_static_offsets[voice_name] = float(
                 voice_rng.uniform(-voice_spread, voice_spread)
@@ -590,17 +716,17 @@ def build_velocity_multipliers(
                     ),
                     times=group_times,
                     total_dur=total_dur,
-                    seed=_stable_seed(voice_seed, "dynamic"),
+                    seed=stable_seed(voice_seed, "dynamic"),
                 )
             )
 
         chord_offsets = _build_velocity_chord_offsets(
             targets=group_targets,
             chord_spread=chord_spread,
-            seed=_stable_seed(group_seed, "chords"),
+            seed=stable_seed(group_seed, "chords"),
         )
         for index, target in enumerate(group_targets):
-            note_seed = _stable_seed(
+            note_seed = stable_seed(
                 group_seed, "note", target.voice_name, target.key[1]
             )
             note_rng = np.random.default_rng(note_seed)
@@ -653,7 +779,7 @@ def _build_chord_spread_offsets(
         )
         ordering = sorted(
             group,
-            key=lambda target: _stable_seed(
+            key=lambda target: stable_seed(
                 seed, "group", start_time, target.voice_name, target.key[1]
             ),
         )
@@ -685,7 +811,7 @@ def _build_velocity_chord_offsets(
         spread_values = np.linspace(-chord_spread / 2.0, chord_spread / 2.0, len(group))
         ordering = sorted(
             group,
-            key=lambda target: _stable_seed(
+            key=lambda target: stable_seed(
                 seed, "group", group_key, target.voice_name, target.key[1]
             ),
         )
@@ -709,7 +835,7 @@ def _sample_drift_curve(
 
     bounded_times = np.clip(np.asarray(times, dtype=np.float64), 0.0, total_dur)
     rng = np.random.default_rng(
-        _stable_seed(seed, spec.seed if spec.seed is not None else 0)
+        stable_seed(seed, spec.seed if spec.seed is not None else 0)
     )
 
     if spec.style == "lfo":
@@ -737,8 +863,47 @@ def _sample_drift_curve(
         indices = np.clip(indices, 0, anchor_times.size - 1)
         return _normalize_curve(anchor_values[indices])
 
+    if spec.style == "smoothed_random":
+        return _normalize_curve(
+            _smoothed_random_curve(bounded_times, anchor_times, anchor_values)
+        )
+
     curve = np.interp(bounded_times, anchor_times, anchor_values)
     return _normalize_curve(curve)
+
+
+def hann_crossfade_anchors(
+    times: np.ndarray,
+    anchor_times: np.ndarray,
+    anchor_values: np.ndarray,
+) -> np.ndarray:
+    """Hann-crossfade between evenly spaced anchor values at given times."""
+    indices = np.searchsorted(anchor_times, times, side="right") - 1
+    indices = np.clip(indices, 0, anchor_times.size - 1)
+    next_indices = np.clip(indices + 1, 0, anchor_times.size - 1)
+    anchor_left = anchor_times[indices]
+    anchor_right = anchor_times[next_indices]
+    segment = anchor_right - anchor_left
+    # Avoid division by zero at the final segment (where indices saturate).
+    safe_segment = np.where(segment > 0.0, segment, 1.0)
+    frac = np.clip((times - anchor_left) / safe_segment, 0.0, 1.0)
+    weight = 0.5 - 0.5 * np.cos(np.pi * frac)
+    return (1.0 - weight) * anchor_values[indices] + weight * anchor_values[
+        next_indices
+    ]
+
+
+def _smoothed_random_curve(
+    bounded_times: np.ndarray,
+    anchor_times: np.ndarray,
+    anchor_values: np.ndarray,
+) -> np.ndarray:
+    """Helm-style smoothed-random drift using Hann-crossfaded random anchors.
+
+    Distinct from ``sample_hold`` (steppy) and ``smooth_noise``
+    (linear-interp of smoothed anchors).
+    """
+    return hann_crossfade_anchors(bounded_times, anchor_times, anchor_values)
 
 
 def _smooth_anchor_values(values: np.ndarray, smoothness: float) -> np.ndarray:
@@ -756,13 +921,13 @@ def _normalize_curve(curve: np.ndarray) -> np.ndarray:
     return np.asarray(curve / max_abs, dtype=np.float64)
 
 
-def _seed_or_default(seed: int | None, *parts: object) -> int:
+def seed_or_default(seed: int | None, *parts: object) -> int:
     if seed is not None:
         return int(seed)
-    return _stable_seed(*parts)
+    return stable_seed(*parts)
 
 
-def _stable_seed(*parts: object) -> int:
+def stable_seed(*parts: object) -> int:
     material = "|".join(str(part) for part in parts).encode("utf-8")
     digest = hashlib.sha256(material).digest()
     return int.from_bytes(digest[:8], byteorder="big", signed=False)

@@ -39,7 +39,7 @@ CROSSFADE_OVERLAP = 2.0
 
 def build_study_lattice_score() -> Score:
     score = Score(
-        f0=F0_HZ,
+        f0_hz=F0_HZ,
         timing_humanize=TimingHumanizeSpec(preset="chamber"),
     )
 

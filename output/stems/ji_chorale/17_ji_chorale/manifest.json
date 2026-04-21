@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "piece_name": "ji_chorale",
+  "output_name": "17_ji_chorale",
+  "sample_rate": 44100,
+  "bit_depth": 24,
+  "dry": false,
+  "total_duration_seconds": 150.4274,
+  "total_samples": 6633848,
+  "voice_stems": [
+    {
+      "name": "alto",
+      "kind": "voice",
+      "path": "voices/alto.wav",
+      "channels": 2,
+      "sample_count": 6633848,
+      "peak_dbfs": -16.98
+    },
+    {
+      "name": "bass",
+      "kind": "voice",
+      "path": "voices/bass.wav",
+      "channels": 2,
+      "sample_count": 6633848,
+      "peak_dbfs": -16.46
+    },
+    {
+      "name": "counter",
+      "kind": "voice",
+      "path": "voices/counter.wav",
+      "channels": 2,
+      "sample_count": 6633848,
+      "peak_dbfs": -19.7
+    },
+    {
+      "name": "lead",
+      "kind": "voice",
+      "path": "voices/lead.wav",
+      "channels": 2,
+      "sample_count": 6633848,
+      "peak_dbfs": -20.16
+    },
+    {
+      "name": "tenor",
+      "kind": "voice",
+      "path": "voices/tenor.wav",
+      "channels": 2,
+      "sample_count": 6633848,
+      "peak_dbfs": -16.0
+    }
+  ],
+  "send_stems": [],
+  "mix_path": "mix.wav",
+  "processing_notes": "Voice stems include: normalization, pre_fx_gain, pan, voice effects, mix_db fader. Send stems include: bus summing, bus effects, return_db, bus pan. Stems sum to the pre-master mix (before auto gain staging and master effects). The reference mix includes full mastering.",
+  "warnings": []
+}

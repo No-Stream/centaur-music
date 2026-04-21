@@ -103,6 +103,11 @@ def test_new_unit_bearing_aliases_override_legacy_flat_names() -> None:
     ("engine_name", "preset_name"),
     [
         ("additive", "organ"),
+        ("additive", "stiff_piano"),
+        ("additive", "dispersed_pad"),
+        ("additive", "smear_drone"),
+        ("additive", "shepard_bells"),
+        ("additive", "chaos_cloud"),
         ("fm", "dx_piano"),
         ("fm", "lately_bass"),
         ("fm", "fm_clav"),
@@ -130,6 +135,25 @@ def test_new_unit_bearing_aliases_override_legacy_flat_names() -> None:
         ("organ", "baroque"),
         ("organ", "septimal"),
         ("organ", "glass_organ"),
+        ("additive", "plucked_ji"),
+        ("additive", "breathy_flute"),
+        ("additive", "ancient_bell"),
+        ("additive", "whispered_chord"),
+        ("additive", "brush_breath"),
+        ("additive", "brush_cymbal"),
+        ("additive", "struck_membrane"),
+        ("additive", "singing_bowl"),
+        ("additive", "marimba_bar"),
+        ("additive", "convolved_bell"),
+        ("additive", "thick_drone"),
+        ("additive", "fractal_fifth"),
+        ("additive", "fractal_septimal"),
+        ("additive", "vowel_a_pad"),
+        ("additive", "singing_glass"),
+        ("additive", "gravity_cloud"),
+        ("additive", "drifting_to_just"),
+        ("additive", "living_drone"),
+        ("additive", "candle_light"),
     ],
 )
 def test_new_presets_resolve_and_render(
@@ -300,7 +324,7 @@ def test_upper_partial_drift_is_deterministic_across_repeated_renders() -> None:
 
 
 def test_score_can_render_explicit_spectral_additive_voice() -> None:
-    score = Score(f0=110.0)
+    score = Score(f0_hz=110.0)
     score.add_voice(
         "pad",
         synth_defaults={
@@ -328,7 +352,7 @@ def test_score_can_render_explicit_spectral_additive_voice() -> None:
 
 
 def test_voice_level_engine_and_note_override_both_render() -> None:
-    score = Score(f0=110.0)
+    score = Score(f0_hz=110.0)
     score.add_voice(
         "lead",
         synth_defaults={
@@ -357,7 +381,7 @@ def test_voice_level_engine_and_note_override_both_render() -> None:
 
 
 def test_structured_synth_spec_merges_voice_defaults_with_note_overrides() -> None:
-    score = Score(f0=110.0)
+    score = Score(f0_hz=110.0)
     score.add_voice(
         "lead",
         synth_defaults={
@@ -387,7 +411,7 @@ def test_structured_synth_spec_merges_voice_defaults_with_note_overrides() -> No
 
 
 def test_score_can_mix_multiple_engine_types() -> None:
-    score = Score(f0=110.0)
+    score = Score(f0_hz=110.0)
     score.add_voice("pad", synth_defaults={"engine": "additive", "preset": "soft_pad"})
     score.add_voice("bell", synth_defaults={"engine": "fm", "preset": "bell"})
     score.add_voice(
@@ -429,28 +453,26 @@ def test_normalize_synth_spec_supports_kick_tom_param_aliases() -> None:
                 "sweep_decay_ms": 66.0,
                 "body_punch": 0.35,
                 "body_tone": 0.2,
-                "drive": 0.28,
             },
         }
     )
 
-    assert normalized["body_decay_ms"] == pytest.approx(420.0)
+    assert normalized["body_decay"] == pytest.approx(0.42)
     assert normalized["pitch_sweep_amount_ratio"] == pytest.approx(1.8)
-    assert normalized["pitch_sweep_decay_ms"] == pytest.approx(66.0)
+    assert normalized["pitch_sweep_decay"] == pytest.approx(0.066)
     assert normalized["body_punch_ratio"] == pytest.approx(0.35)
     assert normalized["body_tone_ratio"] == pytest.approx(0.2)
-    assert normalized["drive_ratio"] == pytest.approx(0.28)
 
 
 def test_score_can_render_kick_tom_with_finished_effect_chain() -> None:
-    score = Score(f0=110.0)
+    score = Score(f0_hz=110.0)
     score.add_voice(
         "kick",
         synth_defaults={"engine": "kick_tom", "preset": "909_techno"},
         velocity_humanize=None,
         velocity_to_params={
             "click_amount": VelocityParamMap(min_value=0.12, max_value=0.28),
-            "drive_ratio": VelocityParamMap(min_value=0.14, max_value=0.32),
+            "body_punch_ratio": VelocityParamMap(min_value=0.14, max_value=0.32),
             "pitch_sweep_amount_ratio": VelocityParamMap(
                 min_value=2.3,
                 max_value=3.1,
@@ -474,13 +496,13 @@ def test_score_can_render_kick_tom_with_finished_effect_chain() -> None:
 
 
 def test_pitch_motion_renders_through_additive_engine() -> None:
-    static_score = Score(f0=110.0)
+    static_score = Score(f0_hz=110.0)
     static_score.add_voice(
         "lead", synth_defaults={"engine": "additive", "preset": "bright_pluck"}
     )
     static_score.add_note("lead", start=0.0, duration=0.4, partial=2.0, amp=0.25)
 
-    motion_score = Score(f0=110.0)
+    motion_score = Score(f0_hz=110.0)
     motion_score.add_voice(
         "lead", synth_defaults={"engine": "additive", "preset": "bright_pluck"}
     )
@@ -502,13 +524,13 @@ def test_pitch_motion_renders_through_additive_engine() -> None:
 
 
 def test_pitch_motion_renders_through_fm_engine() -> None:
-    static_score = Score(f0=110.0)
+    static_score = Score(f0_hz=110.0)
     static_score.add_voice(
         "lead", synth_defaults={"engine": "fm", "preset": "glass_lead"}
     )
     static_score.add_note("lead", start=0.0, duration=0.5, partial=2.0, amp=0.25)
 
-    motion_score = Score(f0=110.0)
+    motion_score = Score(f0_hz=110.0)
     motion_score.add_voice(
         "lead", synth_defaults={"engine": "fm", "preset": "glass_lead"}
     )
@@ -530,13 +552,13 @@ def test_pitch_motion_renders_through_fm_engine() -> None:
 
 
 def test_pitch_motion_renders_through_filtered_stack_engine() -> None:
-    static_score = Score(f0=110.0)
+    static_score = Score(f0_hz=110.0)
     static_score.add_voice(
         "bass", synth_defaults={"engine": "filtered_stack", "preset": "round_bass"}
     )
     static_score.add_note("bass", start=0.0, duration=0.45, partial=1.0, amp=0.25)
 
-    motion_score = Score(f0=110.0)
+    motion_score = Score(f0_hz=110.0)
     motion_score.add_voice(
         "bass", synth_defaults={"engine": "filtered_stack", "preset": "round_bass"}
     )
@@ -558,13 +580,13 @@ def test_pitch_motion_renders_through_filtered_stack_engine() -> None:
 
 
 def test_pitch_motion_renders_through_polyblep_engine() -> None:
-    static_score = Score(f0=110.0)
+    static_score = Score(f0_hz=110.0)
     static_score.add_voice(
         "lead", synth_defaults={"engine": "polyblep", "preset": "warm_lead"}
     )
     static_score.add_note("lead", start=0.0, duration=0.45, partial=2.0, amp=0.25)
 
-    motion_score = Score(f0=110.0)
+    motion_score = Score(f0_hz=110.0)
     motion_score.add_voice(
         "lead", synth_defaults={"engine": "polyblep", "preset": "warm_lead"}
     )
@@ -598,7 +620,7 @@ def test_pitch_motion_is_rejected_for_noise_perc() -> None:
 
 
 def test_voice_automation_changes_note_start_synth_params() -> None:
-    static_score = Score(f0=110.0)
+    static_score = Score(f0_hz=110.0)
     static_score.add_voice(
         "lead",
         synth_defaults={"engine": "filtered_stack", "preset": "round_bass"},
@@ -606,7 +628,7 @@ def test_voice_automation_changes_note_start_synth_params() -> None:
     )
     static_score.add_note("lead", start=0.0, duration=0.5, partial=1.0, amp=0.25)
 
-    automated_score = Score(f0=110.0)
+    automated_score = Score(f0_hz=110.0)
     automated_score.add_voice(
         "lead",
         synth_defaults={"engine": "filtered_stack", "preset": "round_bass"},
@@ -635,7 +657,7 @@ def test_voice_automation_changes_note_start_synth_params() -> None:
 
 
 def test_note_automation_overrides_voice_automation_on_same_target() -> None:
-    score = Score(f0=110.0)
+    score = Score(f0_hz=110.0)
     score.add_voice(
         "lead",
         synth_defaults={"engine": "filtered_stack", "preset": "round_bass"},
@@ -667,7 +689,7 @@ def test_note_automation_overrides_voice_automation_on_same_target() -> None:
 
     overridden_audio = score.render()
 
-    reference = Score(f0=110.0)
+    reference = Score(f0_hz=110.0)
     reference.add_voice(
         "lead",
         synth_defaults={
@@ -685,13 +707,13 @@ def test_note_automation_overrides_voice_automation_on_same_target() -> None:
 
 
 def test_pitch_ratio_automation_renders_per_sample_pitch_motion() -> None:
-    static_score = Score(f0=110.0)
+    static_score = Score(f0_hz=110.0)
     static_score.add_voice(
         "lead", synth_defaults={"engine": "additive", "preset": "bright_pluck"}
     )
     static_score.add_note("lead", start=0.0, duration=0.5, partial=2.0, amp=0.25)
 
-    automated_score = Score(f0=110.0)
+    automated_score = Score(f0_hz=110.0)
     automated_score.add_voice(
         "lead", synth_defaults={"engine": "additive", "preset": "bright_pluck"}
     )
@@ -725,7 +747,7 @@ def test_pitch_ratio_automation_renders_per_sample_pitch_motion() -> None:
 
 
 def test_pitch_ratio_automation_conflicts_with_pitch_motion() -> None:
-    score = Score(f0=110.0)
+    score = Score(f0_hz=110.0)
     score.add_voice(
         "lead", synth_defaults={"engine": "additive", "preset": "bright_pluck"}
     )
@@ -756,7 +778,7 @@ def test_pitch_ratio_automation_conflicts_with_pitch_motion() -> None:
 
 
 def test_attack_and_release_scales_change_rendered_envelope() -> None:
-    neutral = Score(f0=110.0)
+    neutral = Score(f0_hz=110.0)
     neutral.add_voice(
         "lead",
         synth_defaults={
@@ -768,7 +790,7 @@ def test_attack_and_release_scales_change_rendered_envelope() -> None:
     )
     neutral.add_note("lead", start=0.0, duration=0.5, partial=2.0, amp=0.25)
 
-    shaped = Score(f0=110.0)
+    shaped = Score(f0_hz=110.0)
     shaped.add_voice(
         "lead",
         synth_defaults={
@@ -796,8 +818,8 @@ def test_attack_and_release_scales_change_rendered_envelope() -> None:
 
 
 def test_velocity_changes_rendered_loudness_on_db_scale() -> None:
-    soft = Score(f0=110.0, auto_master_gain_stage=False)
-    loud = Score(f0=110.0, auto_master_gain_stage=False)
+    soft = Score(f0_hz=110.0, auto_master_gain_stage=False)
+    loud = Score(f0_hz=110.0, auto_master_gain_stage=False)
     for score in (soft, loud):
         score.add_voice(
             "lead",
@@ -831,8 +853,8 @@ def test_velocity_changes_rendered_loudness_on_db_scale() -> None:
 
 
 def test_velocity_can_modulate_synth_parameters() -> None:
-    dark = Score(f0=110.0)
-    bright = Score(f0=110.0)
+    dark = Score(f0_hz=110.0)
+    bright = Score(f0_hz=110.0)
     for score in (dark, bright):
         score.add_voice(
             "lead",
@@ -867,7 +889,7 @@ def test_velocity_can_modulate_synth_parameters() -> None:
 
 
 def test_velocity_group_humanize_correlates_across_voices() -> None:
-    score = Score(f0=110.0)
+    score = Score(f0_hz=110.0)
     shared_velocity = VelocityHumanizeSpec(
         seed=5,
         group_amount=0.08,
@@ -899,3 +921,677 @@ def test_velocity_group_humanize_correlates_across_voices() -> None:
     alto = np.asarray([multipliers[("alto", index)] for index in range(8)])
 
     assert np.corrcoef(lead, alto)[0, 1] > 0.9
+
+
+# ---------------------------------------------------------------------------
+# Per-partial envelope tests
+# ---------------------------------------------------------------------------
+
+
+class TestPerPartialEnvelope:
+    """Tests for per-partial amplitude envelopes in the additive engine."""
+
+    def test_basic_decay_envelope_reduces_energy_over_time(self) -> None:
+        """A partial with a decay envelope has less energy in the second half."""
+        signal = render_note_signal(
+            freq=220.0,
+            duration=0.8,
+            amp=0.25,
+            sample_rate=44100,
+            params={
+                "engine": "additive",
+                "partials": [
+                    {
+                        "ratio": 1.0,
+                        "amp": 1.0,
+                        "envelope": [
+                            {"time": 0.0, "value": 1.0},
+                            {"time": 1.0, "value": 0.0, "curve": "exponential"},
+                        ],
+                    },
+                ],
+            },
+        )
+
+        midpoint = len(signal) // 2
+        first_half_energy = float(np.sum(signal[:midpoint] ** 2))
+        second_half_energy = float(np.sum(signal[midpoint:] ** 2))
+        assert first_half_energy > second_half_energy * 2.0
+
+    def test_envelope_composes_with_spectral_morph(self) -> None:
+        """Envelope + morph produces a different result than either alone."""
+        morph_only = render_note_signal(
+            freq=220.0,
+            duration=0.6,
+            amp=0.25,
+            sample_rate=44100,
+            params={
+                "engine": "additive",
+                "partials": ratio_spectrum([1.0, 3 / 2], [1.0, 0.5]),
+                "attack_partials": ratio_spectrum(
+                    [1.0, 3 / 2, 11 / 4], [1.0, 0.5, 0.4]
+                ),
+                "spectral_morph_time": 0.15,
+            },
+        )
+        envelope_only = render_note_signal(
+            freq=220.0,
+            duration=0.6,
+            amp=0.25,
+            sample_rate=44100,
+            params={
+                "engine": "additive",
+                "partials": [
+                    {"ratio": 1.0, "amp": 1.0},
+                    {
+                        "ratio": 3 / 2,
+                        "amp": 0.5,
+                        "envelope": [
+                            {"time": 0.0, "value": 1.0},
+                            {"time": 1.0, "value": 0.2, "curve": "exponential"},
+                        ],
+                    },
+                ],
+            },
+        )
+        both = render_note_signal(
+            freq=220.0,
+            duration=0.6,
+            amp=0.25,
+            sample_rate=44100,
+            params={
+                "engine": "additive",
+                "partials": [
+                    {"ratio": 1.0, "amp": 1.0},
+                    {
+                        "ratio": 3 / 2,
+                        "amp": 0.5,
+                        "envelope": [
+                            {"time": 0.0, "value": 1.0},
+                            {"time": 1.0, "value": 0.2, "curve": "exponential"},
+                        ],
+                    },
+                ],
+                "attack_partials": ratio_spectrum(
+                    [1.0, 3 / 2, 11 / 4], [1.0, 0.5, 0.4]
+                ),
+                "spectral_morph_time": 0.15,
+            },
+        )
+
+        assert not np.allclose(both, morph_only)
+        assert not np.allclose(both, envelope_only)
+
+    def test_envelope_composes_with_decay_tilt(self) -> None:
+        """Envelope multiplies with decay_tilt (both reduce upper partial energy)."""
+        tilt_only = render_note_signal(
+            freq=220.0,
+            duration=0.8,
+            amp=0.25,
+            sample_rate=44100,
+            params={
+                "engine": "additive",
+                "partials": [
+                    {"ratio": 1.0, "amp": 1.0},
+                    {"ratio": 3.0, "amp": 0.6},
+                ],
+                "partial_decay_tilt": 0.8,
+            },
+        )
+        both = render_note_signal(
+            freq=220.0,
+            duration=0.8,
+            amp=0.25,
+            sample_rate=44100,
+            params={
+                "engine": "additive",
+                "partials": [
+                    {"ratio": 1.0, "amp": 1.0},
+                    {
+                        "ratio": 3.0,
+                        "amp": 0.6,
+                        "envelope": [
+                            {"time": 0.0, "value": 1.0},
+                            {"time": 1.0, "value": 0.3, "curve": "exponential"},
+                        ],
+                    },
+                ],
+                "partial_decay_tilt": 0.8,
+            },
+        )
+
+        assert not np.allclose(both, tilt_only)
+        # The combined version should have even less upper-partial energy late
+        late_slice_tilt = tilt_only[-int(0.15 * 44100) :]
+        late_slice_both = both[-int(0.15 * 44100) :]
+        assert _band_energy(
+            late_slice_both, sample_rate=44100, min_hz=600.0
+        ) < _band_energy(late_slice_tilt, sample_rate=44100, min_hz=600.0)
+
+    def test_convenience_factories_work_as_envelope_values(self) -> None:
+        """exponential_decay() and attack_decay() from _envelopes work directly."""
+        from code_musics.engines._envelopes import attack_decay, exponential_decay
+
+        for envelope in [exponential_decay(), attack_decay()]:
+            signal = render_note_signal(
+                freq=220.0,
+                duration=0.5,
+                amp=0.25,
+                sample_rate=44100,
+                params={
+                    "engine": "additive",
+                    "partials": [
+                        {"ratio": 1.0, "amp": 1.0, "envelope": envelope},
+                    ],
+                },
+            )
+            assert np.all(np.isfinite(signal))
+            assert np.max(np.abs(signal)) > 0.0
+
+    def test_invalid_envelope_raises_value_error(self) -> None:
+        """Bad envelope data is caught at normalization time."""
+        with pytest.raises((ValueError, TypeError)):
+            render_note_signal(
+                freq=220.0,
+                duration=0.5,
+                amp=0.25,
+                sample_rate=44100,
+                params={
+                    "engine": "additive",
+                    "partials": [
+                        {
+                            "ratio": 1.0,
+                            "amp": 1.0,
+                            "envelope": [{"time": 2.0, "value": 1.0}],
+                        },
+                    ],
+                },
+            )
+
+    def test_no_envelope_produces_unchanged_output(self) -> None:
+        """Rendering without envelopes is bit-identical to the baseline engine."""
+        params = {
+            "engine": "additive",
+            "partials": ratio_spectrum([1.0, 3 / 2, 7 / 4], [1.0, 0.4, 0.2]),
+        }
+
+        first = render_note_signal(
+            freq=220.0,
+            duration=0.5,
+            amp=0.25,
+            sample_rate=44100,
+            params=params,
+        )
+        second = render_note_signal(
+            freq=220.0,
+            duration=0.5,
+            amp=0.25,
+            sample_rate=44100,
+            params=params,
+        )
+
+        assert np.allclose(first, second)
+
+
+# ---------------------------------------------------------------------------
+# Additive engine: noise band tests
+# ---------------------------------------------------------------------------
+
+
+def _spectral_energy_between_partials(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    fundamental_hz: float,
+    partial_ratios: list[float],
+    tolerance_hz: float = 15.0,
+) -> float:
+    """Sum FFT magnitude in bins that are NOT near any partial frequency."""
+    spectrum = np.abs(np.fft.rfft(signal))
+    freqs = np.fft.rfftfreq(signal.size, d=1.0 / sample_rate)
+    mask = np.ones(len(freqs), dtype=bool)
+    for ratio in partial_ratios:
+        center = fundamental_hz * ratio
+        mask &= np.abs(freqs - center) > tolerance_hz
+    return float(np.sum(spectrum[mask]))
+
+
+class TestAdditiveNoiseBands:
+    """Tests for the additive+noise hybrid feature."""
+
+    _PARTIALS = [
+        {"ratio": 1.0, "amp": 1.0},
+        {"ratio": 2.0, "amp": 0.5},
+        {"ratio": 3.0, "amp": 0.25},
+    ]
+    _FREQ = 220.0
+    _SR = 44100
+    _DUR = 0.5
+
+    def test_noise_adds_spectral_energy_between_partials(self) -> None:
+        """With noise_amount=0.5, energy appears between partial frequencies."""
+        clean = render_note_signal(
+            freq=self._FREQ,
+            duration=self._DUR,
+            amp=0.3,
+            sample_rate=self._SR,
+            params={
+                "engine": "additive",
+                "partials": self._PARTIALS,
+                "noise_amount": 0.0,
+            },
+        )
+        noisy = render_note_signal(
+            freq=self._FREQ,
+            duration=self._DUR,
+            amp=0.3,
+            sample_rate=self._SR,
+            params={
+                "engine": "additive",
+                "partials": self._PARTIALS,
+                "noise_amount": 0.5,
+            },
+        )
+
+        ratios = [p["ratio"] for p in self._PARTIALS]
+        clean_between = _spectral_energy_between_partials(
+            clean,
+            sample_rate=self._SR,
+            fundamental_hz=self._FREQ,
+            partial_ratios=ratios,
+        )
+        noisy_between = _spectral_energy_between_partials(
+            noisy,
+            sample_rate=self._SR,
+            fundamental_hz=self._FREQ,
+            partial_ratios=ratios,
+        )
+        assert noisy_between > clean_between * 1.5
+
+    def test_per_partial_noise_override(self) -> None:
+        """Per-partial noise keys override the global noise_amount."""
+        partials_mixed = [
+            {"ratio": 1.0, "amp": 1.0, "noise": 0.8},
+            {"ratio": 3.0, "amp": 0.5, "noise": 0.0},
+        ]
+        signal = render_note_signal(
+            freq=self._FREQ,
+            duration=self._DUR,
+            amp=0.3,
+            sample_rate=self._SR,
+            params={
+                "engine": "additive",
+                "partials": partials_mixed,
+                "noise_amount": 0.4,
+            },
+        )
+        spectrum = np.abs(np.fft.rfft(signal))
+        freqs = np.fft.rfftfreq(signal.size, d=1.0 / self._SR)
+
+        # Energy near the fundamental (where noise=0.8) should have
+        # broader spectral spread than near the 3rd partial (noise=0.0).
+        fund_band = (freqs > self._FREQ - 50) & (freqs < self._FREQ + 50)
+        fund_band_no_peak = fund_band & (np.abs(freqs - self._FREQ) > 10)
+        third_band = (freqs > self._FREQ * 3 - 50) & (freqs < self._FREQ * 3 + 50)
+        third_band_no_peak = third_band & (np.abs(freqs - self._FREQ * 3) > 10)
+
+        energy_near_fund = float(np.sum(spectrum[fund_band_no_peak]))
+        energy_near_third = float(np.sum(spectrum[third_band_no_peak]))
+        assert energy_near_fund > energy_near_third
+
+    def test_zero_noise_unchanged(self) -> None:
+        """noise_amount=0.0 produces identical output to no-noise rendering."""
+        baseline = render_note_signal(
+            freq=self._FREQ,
+            duration=self._DUR,
+            amp=0.3,
+            sample_rate=self._SR,
+            params={"engine": "additive", "partials": self._PARTIALS},
+        )
+        with_zero_noise = render_note_signal(
+            freq=self._FREQ,
+            duration=self._DUR,
+            amp=0.3,
+            sample_rate=self._SR,
+            params={
+                "engine": "additive",
+                "partials": self._PARTIALS,
+                "noise_amount": 0.0,
+            },
+        )
+        np.testing.assert_array_equal(baseline, with_zero_noise)
+
+    def test_deterministic_across_renders(self) -> None:
+        """Two identical renders produce bit-identical output."""
+        params = {
+            "engine": "additive",
+            "partials": self._PARTIALS,
+            "noise_amount": 0.5,
+        }
+        first = render_note_signal(
+            freq=self._FREQ,
+            duration=self._DUR,
+            amp=0.3,
+            sample_rate=self._SR,
+            params=params,
+        )
+        second = render_note_signal(
+            freq=self._FREQ,
+            duration=self._DUR,
+            amp=0.3,
+            sample_rate=self._SR,
+            params=params,
+        )
+        np.testing.assert_array_equal(first, second)
+
+    def test_wider_bandwidth_spreads_energy(self) -> None:
+        """Wider noise_bandwidth_hz spreads spectral energy more broadly."""
+        narrow = render_note_signal(
+            freq=self._FREQ,
+            duration=self._DUR,
+            amp=0.3,
+            sample_rate=self._SR,
+            params={
+                "engine": "additive",
+                "partials": [{"ratio": 1.0, "amp": 1.0}],
+                "noise_amount": 0.6,
+                "noise_bandwidth_hz": 30.0,
+            },
+        )
+        wide = render_note_signal(
+            freq=self._FREQ,
+            duration=self._DUR,
+            amp=0.3,
+            sample_rate=self._SR,
+            params={
+                "engine": "additive",
+                "partials": [{"ratio": 1.0, "amp": 1.0}],
+                "noise_amount": 0.6,
+                "noise_bandwidth_hz": 200.0,
+            },
+        )
+
+        # Measure energy far from the fundamental — wider BW should have more.
+        def far_from_fund(sig: np.ndarray) -> float:
+            return _spectral_energy_between_partials(
+                sig,
+                sample_rate=self._SR,
+                fundamental_hz=self._FREQ,
+                partial_ratios=[1.0],
+                tolerance_hz=80.0,
+            )
+
+        assert far_from_fund(wide) > far_from_fund(narrow)
+
+    def test_invalid_noise_amount_raises(self) -> None:
+        """noise_amount outside 0-1 raises ValueError."""
+        for bad_value in (-0.1, 1.1):
+            with pytest.raises(ValueError, match="noise_amount"):
+                render_note_signal(
+                    freq=self._FREQ,
+                    duration=self._DUR,
+                    amp=0.3,
+                    sample_rate=self._SR,
+                    params={
+                        "engine": "additive",
+                        "partials": self._PARTIALS,
+                        "noise_amount": bad_value,
+                    },
+                )
+
+
+# ---------------------------------------------------------------------------
+# Spectral gravity tests
+# ---------------------------------------------------------------------------
+
+_GRAVITY_PARTIALS = [
+    {"ratio": 1.0, "amp": 1.0},
+    {"ratio": 1.52, "amp": 0.4},
+    {"ratio": 2.78, "amp": 0.2},
+]
+
+
+def test_zero_gravity_produces_no_pitch_change() -> None:
+    base_params = {
+        "engine": "additive",
+        "partials": _GRAVITY_PARTIALS,
+    }
+    without = render_note_signal(
+        freq=220.0, duration=0.5, amp=0.25, sample_rate=44100, params=base_params
+    )
+    with_zero = render_note_signal(
+        freq=220.0,
+        duration=0.5,
+        amp=0.25,
+        sample_rate=44100,
+        params={**base_params, "spectral_gravity": 0.0},
+    )
+    assert np.allclose(without, with_zero)
+
+
+def test_gravity_shifts_spectral_peak_toward_target() -> None:
+    params = {
+        "engine": "additive",
+        "partials": [{"ratio": 1.52, "amp": 1.0}],
+        "spectral_gravity": 0.8,
+        "gravity_rate": 3.0,
+    }
+    signal = render_note_signal(
+        freq=220.0, duration=1.0, amp=0.5, sample_rate=44100, params=params
+    )
+    n = len(signal)
+    late_chunk = signal[3 * n // 4 :]
+    spectrum = np.abs(np.fft.rfft(late_chunk))
+    freqs = np.fft.rfftfreq(len(late_chunk), d=1.0 / 44100)
+    peak_freq = freqs[np.argmax(spectrum)]
+    target_freq = 1.5 * 220.0
+    original_freq = 1.52 * 220.0
+    assert abs(peak_freq - target_freq) < abs(peak_freq - original_freq)
+
+
+def test_simpler_intervals_attract_more_strongly() -> None:
+    from code_musics.engines.additive import _gravity_ratio_trajectory
+
+    offset = 0.04
+    ratio_near_simple = 1.5 + offset
+    ratio_near_complex = 11 / 8 + offset
+
+    traj_simple = _gravity_ratio_trajectory(
+        ratio=ratio_near_simple,
+        n_samples=44100,
+        duration=1.0,
+        gravity_strength=0.7,
+        gravity_rate=2.0,
+        gravity_targets=[3 / 2, 11 / 8],
+    )
+    traj_complex = _gravity_ratio_trajectory(
+        ratio=ratio_near_complex,
+        n_samples=44100,
+        duration=1.0,
+        gravity_strength=0.7,
+        gravity_rate=2.0,
+        gravity_targets=[3 / 2, 11 / 8],
+    )
+    drift_toward_simple = abs(1.0 - traj_simple[-1])
+    drift_toward_complex = abs(1.0 - traj_complex[-1])
+    assert drift_toward_simple > drift_toward_complex
+
+
+def test_gravity_is_deterministic() -> None:
+    params = {
+        "engine": "additive",
+        "partials": _GRAVITY_PARTIALS,
+        "spectral_gravity": 0.6,
+        "gravity_rate": 2.0,
+    }
+    first = render_note_signal(
+        freq=220.0, duration=0.5, amp=0.25, sample_rate=44100, params=params
+    )
+    second = render_note_signal(
+        freq=220.0, duration=0.5, amp=0.25, sample_rate=44100, params=params
+    )
+    assert np.allclose(first, second)
+
+
+def test_gravity_composes_with_upper_partial_drift() -> None:
+    base_partials = [
+        {"ratio": 1.0, "amp": 1.0},
+        {"ratio": 3.05, "amp": 0.3},
+    ]
+    gravity_only = render_note_signal(
+        freq=220.0,
+        duration=0.5,
+        amp=0.25,
+        sample_rate=44100,
+        params={
+            "engine": "additive",
+            "partials": base_partials,
+            "spectral_gravity": 0.5,
+        },
+    )
+    drift_only = render_note_signal(
+        freq=220.0,
+        duration=0.5,
+        amp=0.25,
+        sample_rate=44100,
+        params={
+            "engine": "additive",
+            "partials": base_partials,
+            "upper_partial_drift_cents": 5.0,
+            "upper_partial_drift_min_ratio": 1.5,
+        },
+    )
+    both = render_note_signal(
+        freq=220.0,
+        duration=0.5,
+        amp=0.25,
+        sample_rate=44100,
+        params={
+            "engine": "additive",
+            "partials": base_partials,
+            "spectral_gravity": 0.5,
+            "upper_partial_drift_cents": 5.0,
+            "upper_partial_drift_min_ratio": 1.5,
+        },
+    )
+    assert not np.allclose(both, gravity_only)
+    assert not np.allclose(both, drift_only)
+
+
+# ---------------------------------------------------------------------------
+# Stochastic spectral flickering tests
+# ---------------------------------------------------------------------------
+
+
+def test_zero_flicker_produces_no_change() -> None:
+    base_params = {
+        "engine": "additive",
+        "partials": [{"ratio": 1.0, "amp": 1.0}, {"ratio": 2.0, "amp": 0.5}],
+    }
+    without = render_note_signal(
+        freq=220.0, duration=0.5, amp=0.25, sample_rate=44100, params=base_params
+    )
+    with_zero = render_note_signal(
+        freq=220.0,
+        duration=0.5,
+        amp=0.25,
+        sample_rate=44100,
+        params={**base_params, "spectral_flicker": 0.0},
+    )
+    assert np.allclose(without, with_zero)
+
+
+def test_flicker_modulates_amplitude_over_time() -> None:
+    params = {
+        "engine": "additive",
+        "partials": [{"ratio": 1.0, "amp": 1.0}],
+        "spectral_flicker": 0.7,
+        "flicker_rate_hz": 5.0,
+    }
+    signal = render_note_signal(
+        freq=220.0, duration=1.0, amp=0.5, sample_rate=44100, params=params
+    )
+    n = len(signal)
+    window_size = n // 10
+    rms_values = [
+        float(np.sqrt(np.mean(signal[i * window_size : (i + 1) * window_size] ** 2)))
+        for i in range(10)
+    ]
+    rms_range = max(rms_values) - min(rms_values)
+    assert rms_range > 0.01
+
+
+def test_flicker_full_correlation_synchronizes_partials() -> None:
+    from code_musics.engines.additive import _build_spectral_partials
+
+    partials_input = [
+        {"ratio": 1.0, "amp": 1.0},
+        {"ratio": 2.0, "amp": 0.8},
+        {"ratio": 3.0, "amp": 0.6},
+    ]
+    result = _build_spectral_partials(
+        sustain_partials=partials_input,
+        attack_partials=None,
+        n_samples=44100,
+        duration=1.0,
+        partial_decay_tilt=0.0,
+        spectral_morph_time=0.0,
+        spectral_flicker=0.6,
+        flicker_rate_hz=4.0,
+        flicker_correlation=1.0,
+        sample_rate=44100,
+        freq=220.0,
+        amp=0.5,
+    )
+    traj_0 = result[0]["amp_trajectory"]
+    traj_1 = result[1]["amp_trajectory"]
+    norm_0 = traj_0 / np.mean(traj_0)
+    norm_1 = traj_1 / np.mean(traj_1)
+    correlation = float(np.corrcoef(norm_0, norm_1)[0, 1])
+    assert correlation > 0.95
+
+
+def test_flicker_zero_correlation_decorrelates_partials() -> None:
+    from code_musics.engines.additive import _build_spectral_partials
+
+    partials_input = [
+        {"ratio": 1.0, "amp": 1.0},
+        {"ratio": 2.0, "amp": 0.8},
+    ]
+    result = _build_spectral_partials(
+        sustain_partials=partials_input,
+        attack_partials=None,
+        n_samples=44100,
+        duration=1.0,
+        partial_decay_tilt=0.0,
+        spectral_morph_time=0.0,
+        spectral_flicker=0.6,
+        flicker_rate_hz=4.0,
+        flicker_correlation=0.0,
+        sample_rate=44100,
+        freq=220.0,
+        amp=0.5,
+    )
+    traj_0 = result[0]["amp_trajectory"]
+    traj_1 = result[1]["amp_trajectory"]
+    norm_0 = traj_0 / np.mean(traj_0)
+    norm_1 = traj_1 / np.mean(traj_1)
+    correlation = float(np.corrcoef(norm_0, norm_1)[0, 1])
+    assert correlation < 0.5
+
+
+def test_flicker_is_deterministic() -> None:
+    params = {
+        "engine": "additive",
+        "partials": [{"ratio": 1.0, "amp": 1.0}, {"ratio": 2.0, "amp": 0.5}],
+        "spectral_flicker": 0.5,
+        "flicker_rate_hz": 3.0,
+        "flicker_correlation": 0.4,
+    }
+    first = render_note_signal(
+        freq=220.0, duration=0.5, amp=0.25, sample_rate=44100, params=params
+    )
+    second = render_note_signal(
+        freq=220.0, duration=0.5, amp=0.25, sample_rate=44100, params=params
+    )
+    assert np.allclose(first, second)

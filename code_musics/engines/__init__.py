@@ -1,6 +1,7 @@
 """Synth engine registry exports."""
 
 from code_musics.engines.registry import (
+    engine_supports_param_profile,
     is_instrument_engine,
     normalize_synth_spec,
     register_instrument_engine,
@@ -9,6 +10,7 @@ from code_musics.engines.registry import (
 )
 
 __all__ = [
+    "engine_supports_param_profile",
     "is_instrument_engine",
     "normalize_synth_spec",
     "register_instrument_engine",

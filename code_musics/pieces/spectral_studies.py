@@ -13,7 +13,7 @@ from code_musics.spectra import ratio_spectrum
 def build_spectral_consonance_score() -> Score:
     """Consonant explicit-spectrum additive piece in a 7/11-flavored JI world."""
     score = Score(
-        f0=55.0,
+        f0_hz=55.0,
         master_effects=[WARM_SATURATION_EFFECT, SOFT_REVERB_EFFECT],
     )
 

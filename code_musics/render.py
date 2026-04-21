@@ -8,7 +8,6 @@ import json
 import logging
 import shutil
 import subprocess
-from collections.abc import Iterator
 from dataclasses import dataclass, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,6 +26,8 @@ from code_musics.midi_export import (
 )
 from code_musics.pieces import PIECES
 from code_musics.score import Score
+from code_musics.stem_export import export_stem_bundle
+from code_musics.stem_export_types import StemBundleResult, StemExportSpec
 from code_musics.synth import (
     SAMPLE_RATE,
     db_to_amp,
@@ -53,11 +54,6 @@ class RenderResult:
     version_plot_path: Path | None = None
     version_analysis_manifest_path: Path | None = None
     version_metadata_path: Path | None = None
-
-    def __iter__(self) -> Iterator[Path | None]:
-        """Preserve tuple-style unpacking for legacy callers."""
-        yield self.audio_path
-        yield self.plot_path
 
 
 @dataclass(frozen=True)
@@ -144,6 +140,54 @@ def export_piece_midi(
             render_window.end_seconds if render_window is not None else None
         ),
     )
+
+
+def export_piece_stems(
+    piece_name: str,
+    *,
+    output_dir: str | Path = "output/stems",
+    render_window: RenderWindow | None = None,
+    bit_depth: int = 24,
+    include_mix: bool = True,
+    dry: bool = False,
+) -> StemBundleResult:
+    """Export per-voice audio stem WAVs for a registered score-backed piece."""
+
+    if piece_name not in PIECES:
+        raise ValueError(f"Unknown piece: {piece_name}")
+
+    definition = PIECES[piece_name]
+    if definition.build_score is None:
+        raise ValueError(
+            f"Piece {piece_name} does not support stem export because it uses "
+            "render_audio instead of build_score"
+        )
+
+    score = definition.build_score()
+
+    if render_window is not None:
+        score = score.extract_window(
+            start_seconds=render_window.start_seconds,
+            end_seconds=render_window.end_seconds,
+        )
+
+    bundle_dir = _build_output_path(
+        output_dir=output_dir,
+        output_name=definition.output_name,
+        piece_name=piece_name,
+        study=definition.study,
+        render_window=render_window,
+    ).with_suffix("")
+
+    spec = StemExportSpec(
+        piece_name=piece_name,
+        output_name=bundle_dir.name,
+        bit_depth=bit_depth,
+        include_mix=include_mix,
+        dry=dry,
+    )
+
+    return export_stem_bundle(score, bundle_dir, spec=spec)
 
 
 def render_piece(
@@ -643,7 +687,7 @@ def _build_score_summary(score: Score) -> dict[str, Any]:
             "frequency_range_hz": [min(freqs), max(freqs)] if freqs else None,
         }
     return {
-        "f0_hz": score.f0,
+        "f0_hz": score.f0_hz,
         "sample_rate": score.sample_rate,
         "total_duration_seconds": score.total_dur,
         "voice_count": len(score.voices),
@@ -660,6 +704,7 @@ def _serialize_value(value: Any) -> Any:
         return {
             field_name: _serialize_value(field_value)
             for field_name, field_value in value.__dict__.items()
+            if not field_name.startswith("_")
         }
     if isinstance(value, Path):
         return str(value)
@@ -667,6 +712,8 @@ def _serialize_value(value: Any) -> Any:
         return {str(key): _serialize_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_serialize_value(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
     if isinstance(value, np.generic):
         return value.item()
     return value

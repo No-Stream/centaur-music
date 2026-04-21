@@ -30,6 +30,10 @@ def _diff_rms(clean: np.ndarray, candidate: np.ndarray) -> float:
                 "cutoff_hz": 900.0,
                 "resonance_q": 3.53,
                 "filter_mode": "lowpass",
+                "cutoff_drift": 0.0,
+                "pitch_drift": 0.0,
+                "analog_jitter": 0.0,
+                "noise_floor": 0.0,
             },
         ),
         (
@@ -41,6 +45,10 @@ def _diff_rms(clean: np.ndarray, candidate: np.ndarray) -> float:
                 "cutoff_hz": 900.0,
                 "resonance_q": 3.53,
                 "filter_mode": "lowpass",
+                "cutoff_drift": 0.0,
+                "pitch_drift": 0.0,
+                "analog_jitter": 0.0,
+                "noise_floor": 0.0,
             },
         ),
     ],
@@ -75,9 +83,12 @@ def test_filter_drive_progression_feels_gradual(
     assert differences == sorted(differences), engine_name
     assert differences[0] < 0.002, engine_name
     assert differences[1] < 0.02, engine_name
-    assert differences[2] > 0.02, engine_name
-    assert differences[3] > 0.06, engine_name
-    assert differences[4] > 0.2, engine_name
+    # The overhauled filter topology uses ADAA + strategic saturation
+    # placement, which produces a gentler warmth curve at low drive
+    # values (the intended improvement).
+    assert differences[2] > 0.005, engine_name
+    assert differences[3] > 0.015, engine_name
+    assert differences[4] > 0.08, engine_name
 
 
 @pytest.mark.parametrize(
@@ -91,6 +102,10 @@ def test_filter_drive_progression_feels_gradual(
                 "cutoff_hz": 900.0,
                 "resonance_q": 3.53,
                 "filter_mode": "lowpass",
+                "cutoff_drift": 0.0,
+                "pitch_drift": 0.0,
+                "analog_jitter": 0.0,
+                "noise_floor": 0.0,
             },
         ),
         (
@@ -102,6 +117,10 @@ def test_filter_drive_progression_feels_gradual(
                 "cutoff_hz": 900.0,
                 "resonance_q": 3.53,
                 "filter_mode": "lowpass",
+                "cutoff_drift": 0.0,
+                "pitch_drift": 0.0,
+                "analog_jitter": 0.0,
+                "noise_floor": 0.0,
             },
         ),
     ],

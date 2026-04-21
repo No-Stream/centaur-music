@@ -98,7 +98,7 @@ def _utonal_phrase(
 def build_score() -> Score:
     """Build the Mirror Dialogue score."""
     score = Score(
-        f0=F0,
+        f0_hz=F0,
         master_effects=[
             EffectSpec(
                 "reverb", {"room_size": 0.72, "damping": 0.35, "wet_level": 0.22}

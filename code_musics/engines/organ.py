@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from hashlib import sha256
 from typing import Any
 
 import numpy as np
 
-_NYQUIST_FADE_START = 0.85
+from code_musics.engines._dsp_utils import bandpass_noise as _bandpass_noise
+from code_musics.engines._dsp_utils import nyquist_fade
+from code_musics.engines._dsp_utils import rng_for_note as _rng_for_note
+
 _DEFAULT_DRAWBAR_RATIOS = [0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0]
 _DEFAULT_DRAWBARS = [0, 8, 8, 8, 0, 0, 0, 0, 0]
 _MAX_DRIFT_CENTS = 4.0
@@ -251,7 +253,7 @@ def _render_shaped_tonewheel(
     nyquist_hz: float,
 ) -> np.ndarray:
     n_samples = freq_profile.size
-    anti_alias = _nyquist_fade(freq_profile, nyquist_hz)
+    anti_alias = nyquist_fade(freq_profile, nyquist_hz)
     if np.max(anti_alias) <= 0.0:
         return np.zeros(n_samples, dtype=np.float64)
 
@@ -269,7 +271,7 @@ def _render_shaped_tonewheel(
         max_h = 4 if tonewheel_shape < 0.5 else _TONEWHEEL_SHAPE_MAX_HARMONICS
         for h in range(2, max_h + 1):
             harmonic_freq = freq_profile * h
-            harmonic_aa = _nyquist_fade(harmonic_freq, nyquist_hz)
+            harmonic_aa = nyquist_fade(harmonic_freq, nyquist_hz)
             if np.max(harmonic_aa) <= 0.0:
                 continue
             harmonic_amp = tonewheel_shape * (_TONEWHEEL_SHAPE_ROLLOFF ** (h - 1))
@@ -309,7 +311,7 @@ def _render_leakage(
             neighbor_freq = (
                 base_freq_profile * neighbor_ratio * drift_trajectories[neighbor_idx]
             )
-            neighbor_aa = _nyquist_fade(neighbor_freq, nyquist_hz)
+            neighbor_aa = nyquist_fade(neighbor_freq, nyquist_hz)
             if np.max(neighbor_aa) <= 0.0:
                 continue
 
@@ -355,59 +357,3 @@ def _render_click(
     envelope[:click_len] = np.exp(-t_click / max(1.0, decay_samples))
 
     return click * envelope * noise
-
-
-def _nyquist_fade(freq_profile: np.ndarray, nyquist_hz: float) -> np.ndarray:
-    fade_start_hz = nyquist_hz * _NYQUIST_FADE_START
-    if fade_start_hz >= nyquist_hz:
-        return (freq_profile < nyquist_hz).astype(np.float64)
-    fade_progress = (freq_profile - fade_start_hz) / (nyquist_hz - fade_start_hz)
-    fade = 1.0 - np.clip(fade_progress, 0.0, 1.0)
-    return np.square(fade)
-
-
-def _rng_for_note(
-    *,
-    freq: float,
-    duration: float,
-    amp: float,
-    sample_rate: int,
-    params: dict[str, Any],
-) -> np.random.Generator:
-    seed_material = repr(
-        (
-            round(freq, 6),
-            round(duration, 6),
-            round(amp, 6),
-            sample_rate,
-            tuple(sorted(params.items())),
-        )
-    ).encode("utf-8")
-    seed_bytes = sha256(seed_material).digest()[:8]
-    seed = int.from_bytes(seed_bytes, byteorder="big", signed=False)
-    return np.random.default_rng(seed)
-
-
-def _bandpass_noise(
-    signal: np.ndarray,
-    *,
-    sample_rate: int,
-    center_hz: float,
-    width_ratio: float = 0.75,
-) -> np.ndarray:
-    if signal.size == 0:
-        return signal
-
-    nyquist = sample_rate / 2.0
-    center_hz = float(np.clip(center_hz, 30.0, nyquist * 0.95))
-    width_hz = max(80.0, center_hz * width_ratio)
-    low_hz = max(20.0, center_hz - width_hz / 2.0)
-    high_hz = min(nyquist * 0.98, center_hz + width_hz / 2.0)
-
-    spectrum = np.fft.rfft(signal)
-    freqs = np.fft.rfftfreq(signal.size, d=1.0 / sample_rate)
-    mask = np.exp(-0.5 * ((freqs - center_hz) / max(1.0, width_hz / 2.5)) ** 2)
-    mask *= (freqs >= low_hz).astype(np.float64)
-    mask *= (freqs <= high_hz).astype(np.float64)
-    shaped = np.fft.irfft(spectrum * mask, n=signal.size)
-    return shaped.real

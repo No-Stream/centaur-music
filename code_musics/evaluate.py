@@ -127,20 +127,18 @@ class HeadlessBackend:
             system_prompt,
             "--allowedTools",
             "Read",
-            user_prompt,
         ]
         completed = subprocess.run(
             cmd,
+            input=user_prompt,
             capture_output=True,
             text=True,
             timeout=600,
         )
         if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "")[:500]
             logger.error(
-                "Judge %s failed (rc=%d): %s",
-                model,
-                completed.returncode,
-                completed.stderr[:500],
+                "Judge %s failed (rc=%d): %s", model, completed.returncode, detail
             )
             raise RuntimeError(f"Judge {model} exited with code {completed.returncode}")
         return completed.stdout
@@ -296,7 +294,7 @@ def parse_judge_response(raw_output: str, model: str) -> JudgeResponse:
     for dim in DIMENSIONS:
         dim_data = raw_dims.get(dim.key, {})
         dimensions[dim.key] = DimensionScore(
-            score=int(dim_data.get("score", 5)),
+            score=int(dim_data.get("score", 50)),
             notes=str(dim_data.get("notes", "")),
         )
 
@@ -337,7 +335,10 @@ def _run_single_judge(
 
 
 def aggregate_responses(
-    responses: list[JudgeResponse], piece_name: str, render_ref: dict[str, Any]
+    responses: list[JudgeResponse],
+    piece_name: str,
+    render_ref: dict[str, Any],
+    previous: EvalResult | None = None,
 ) -> EvalResult:
     """Combine multiple judge responses into a single result."""
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -356,14 +357,14 @@ def aggregate_responses(
     )
 
     max_spread = max(dimension_spreads.values())
-    if max_spread <= 2:
+    if max_spread <= 15:
         confidence = "high"
-    elif max_spread > 3:
+    elif max_spread > 25:
         confidence = "low"
     else:
         confidence = "medium"
 
-    feedback = synthesize_feedback(responses)
+    feedback = synthesize_feedback(responses, dimension_medians, previous)
 
     return EvalResult(
         piece_name=piece_name,
@@ -378,23 +379,53 @@ def aggregate_responses(
     )
 
 
-def synthesize_feedback(responses: list[JudgeResponse]) -> str:
+def synthesize_feedback(
+    responses: list[JudgeResponse],
+    current_medians: dict[str, float] | None = None,
+    previous: EvalResult | None = None,
+) -> str:
     """Distill judge notes into brief generator-facing feedback.
 
-    V1 uses simple template-based concatenation of judge overall notes.
-    Future: LLM synthesis pass for more natural prose.
+    When *previous* is provided, prepends a delta summary showing which
+    dimensions improved, regressed, or held steady.  This gives the generator
+    directional awareness without exposing the rubric structure.
     """
-    notes = [r.overall_notes.strip() for r in responses if r.overall_notes.strip()]
-    if not notes:
-        return "No qualitative feedback available."
+    parts: list[str] = []
 
-    # Deduplicate near-identical notes (same model family might echo)
+    # Delta summary (does not reveal dimension names — uses neutral language)
+    if previous is not None and current_medians is not None:
+        improved: list[str] = []
+        regressed: list[str] = []
+        for dim in DIMENSIONS:
+            prev = previous.dimension_medians.get(dim.key)
+            curr = current_medians.get(dim.key)
+            if prev is None or curr is None:
+                continue
+            diff = curr - prev
+            if diff >= 8:
+                improved.append(f"{dim.name} (+{diff:.0f})")
+            elif diff <= -8:
+                regressed.append(f"{dim.name} ({diff:.0f})")
+        if improved or regressed:
+            delta_bits: list[str] = []
+            if improved:
+                delta_bits.append("Improved: " + ", ".join(improved))
+            if regressed:
+                delta_bits.append("Regressed: " + ", ".join(regressed))
+            parts.append("Delta vs previous: " + ". ".join(delta_bits) + ".")
+
+    # Judge notes (deduplicated)
+    notes = [r.overall_notes.strip() for r in responses if r.overall_notes.strip()]
     seen: list[str] = []
     for note in notes:
         if not any(_similar(note, s) for s in seen):
             seen.append(note)
+    if seen:
+        parts.append("  ".join(seen))
+    elif not parts:
+        return "No qualitative feedback available."
 
-    return "  ".join(seen)
+    return "  ".join(parts)
 
 
 def _similar(a: str, b: str) -> bool:
@@ -410,7 +441,7 @@ def _similar(a: str, b: str) -> bool:
 def _eval_to_dict(result: EvalResult) -> dict[str, Any]:
     """Serialize an EvalResult to a JSON-writable dict."""
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "evaluated_at_utc": result.evaluated_at_utc,
         "piece_name": result.piece_name,
         "render_ref": result.render_ref,
@@ -465,22 +496,94 @@ def append_eval_log(result: EvalResult, log_path: Path | None = None) -> None:
         f.write(json.dumps(entry) + "\n")
 
 
-def format_stdout_summary(result: EvalResult) -> str:
+def load_previous_result(piece_name: str) -> EvalResult | None:
+    """Load the most recent saved evaluation for a piece, if one exists."""
+    try:
+        output_dir = _find_piece_output_dir(piece_name)
+    except FileNotFoundError:
+        return None
+
+    from code_musics.pieces import PIECES
+
+    definition = PIECES[piece_name]
+    path = output_dir / f"{definition.output_name}.eval.json"
+    if not path.exists():
+        return None
+
+    data = _read_json(path)
+    if data.get("schema_version", 1) != 2:
+        logger.info("Skipping previous eval (schema version mismatch)")
+        return None
+    agg = data.get("aggregate", {})
+    judges: list[JudgeResponse] = []
+    for j in data.get("judges", []):
+        dims = {
+            key: DimensionScore(score=d["score"], notes=d["notes"])
+            for key, d in j.get("dimensions", {}).items()
+        }
+        judges.append(
+            JudgeResponse(
+                model=j["model"],
+                backend=j.get("backend", "unknown"),
+                dimensions=dims,
+                overall_notes=j.get("overall_notes", ""),
+            )
+        )
+    return EvalResult(
+        piece_name=data["piece_name"],
+        evaluated_at_utc=data["evaluated_at_utc"],
+        render_ref=data.get("render_ref", {}),
+        judges=judges,
+        overall_score=agg["overall_score"],
+        dimension_medians=agg["dimension_medians"],
+        dimension_spreads=agg["dimension_spreads"],
+        confidence=agg["confidence"],
+        synthesized_feedback=agg.get("synthesized_feedback", ""),
+    )
+
+
+def _format_delta(current: float, previous: float) -> str:
+    """Format a score delta with direction arrow."""
+    diff = current - previous
+    if abs(diff) < 0.5:
+        return "~"
+    arrow = "+" if diff > 0 else ""
+    return f"{arrow}{diff:.0f}"
+
+
+def format_stdout_summary(
+    result: EvalResult, previous: EvalResult | None = None
+) -> str:
     """Build a human-readable summary for terminal output."""
     dim_lines: list[str] = []
     for dim in DIMENSIONS:
         median = result.dimension_medians[dim.key]
         spread = result.dimension_spreads[dim.key]
-        flag = "  <- low agreement" if spread > 3 else ""
-        dim_lines.append(f"  {dim.name:<24s} {median:4.1f}  (spread: {spread}){flag}")
+        flag = "  <- low agreement" if spread > 25 else ""
+        if previous and dim.key in previous.dimension_medians:
+            delta = _format_delta(median, previous.dimension_medians[dim.key])
+            dim_lines.append(
+                f"  {dim.name:<24s} {median:5.1f}  (spread: {spread:2d})  [{delta}]{flag}"
+            )
+        else:
+            dim_lines.append(
+                f"  {dim.name:<24s} {median:5.1f}  (spread: {spread:2d}){flag}"
+            )
 
     dim_block = "\n".join(dim_lines)
+
+    overall_delta = ""
+    if previous:
+        overall_delta = (
+            f"  [{_format_delta(result.overall_score, previous.overall_score)}]"
+        )
+
     return f"""\
 
-{"=" * 50}
+{"=" * 56}
  Evaluation: {result.piece_name}
-{"=" * 50}
-Overall: {result.overall_score} / 10  (confidence: {result.confidence})
+{"=" * 56}
+Overall: {result.overall_score:.1f} / 100  (confidence: {result.confidence}){overall_delta}
 
 {dim_block}
 
@@ -545,7 +648,7 @@ def evaluate_piece(
                 model = futures[future]
                 try:
                     responses.append(future.result())
-                except Exception:
+                except (RuntimeError, OSError, json.JSONDecodeError, ValueError):
                     logger.exception("Judge %s failed", model)
                     errors.append(model)
 
@@ -559,12 +662,15 @@ def evaluate_piece(
             ", ".join(errors),
         )
 
-    result = aggregate_responses(responses, packet.piece_name, packet.render_ref)
+    previous = load_previous_result(piece_name)
+    result = aggregate_responses(
+        responses, packet.piece_name, packet.render_ref, previous=previous
+    )
 
     output_dir = _find_piece_output_dir(piece_name)
     save_eval_manifest(result, output_dir)
     append_eval_log(result)
-    print(format_stdout_summary(result))
+    print(format_stdout_summary(result, previous=previous))
 
     return result
 
@@ -597,10 +703,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--models",
         default=None,
-        help=(
-            "Comma-separated model identifiers "
-            "(default: opus,sonnet,claude-opus-4-5-20250301,claude-sonnet-4-5-20241022)"
-        ),
+        help=("Comma-separated model identifiers (default: opus,sonnet,haiku)"),
     )
     args = parser.parse_args(argv)
 

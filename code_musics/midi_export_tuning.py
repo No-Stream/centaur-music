@@ -2,17 +2,26 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from pathlib import Path
 
 from code_musics.midi_export_types import (
+    CHROMATIC_SLOT_CENTS,
+    CHROMATIC_SLOT_NAMES,
     TUNING_WARNING_SUFFIX,
+    ChromaticSlotAssignment,
+    ChromaticTuningResult,
     MidiBundleExportSpec,
     ResolvedTuningMode,
     TuningAnalysisResult,
     TuningMode,
 )
 from code_musics.score import Score
+
+logger: logging.Logger = logging.getLogger(__name__)
+
+_NUM_CHROMATIC_SLOTS = 12
 
 
 def analyze_tuning(
@@ -22,7 +31,9 @@ def analyze_tuning(
     spec: MidiBundleExportSpec,
 ) -> TuningAnalysisResult:
     reference_frequency_hz = (
-        score.f0 if spec.reference_frequency_hz is None else spec.reference_frequency_hz
+        score.f0_hz
+        if spec.reference_frequency_hz is None
+        else spec.reference_frequency_hz
     )
     if reference_frequency_hz <= 0:
         raise ValueError("reference_frequency_hz must be positive")
@@ -203,3 +214,211 @@ def mapped_frequency_for_midi_note(
         * (tuning_analysis.period_ratio**period_index)
         * pitch_class_ratio
     )
+
+
+# ---------------------------------------------------------------------------
+# Chromatic-fill SCL for MTS-ESP / Ableton interactive composition
+# ---------------------------------------------------------------------------
+
+
+def assign_chromatic_slots(
+    pitch_class_cents: tuple[float, ...],
+) -> list[ChromaticSlotAssignment]:
+    """Greedy-by-distance assignment of pitch classes to 12-TET chromatic slots.
+
+    Each pitch class is mapped to the nearest available chromatic slot.
+    Pairs are sorted by absolute cent distance; closest wins first.
+    """
+    available_slots: set[int] = set(range(_NUM_CHROMATIC_SLOTS))
+    remaining_cents: dict[int, float] = {}
+    for index, cents in enumerate(pitch_class_cents):
+        if not math.isclose(cents, 0.0, abs_tol=1e-9):
+            remaining_cents[index] = cents
+        # 0.0 (unison) always maps to slot 0
+
+    assignments: dict[int, ChromaticSlotAssignment] = {}
+
+    # Unison → slot 0
+    assignments[0] = ChromaticSlotAssignment(
+        slot=0,
+        slot_name=CHROMATIC_SLOT_NAMES[0],
+        cents=0.0,
+        source="scale",
+        error_cents=0.0,
+    )
+    available_slots.discard(0)
+
+    # Build candidate pairs: (abs_error, pitch_class_index, slot)
+    candidates: list[tuple[float, int, int]] = []
+    for pc_index, cents in remaining_cents.items():
+        for slot in range(_NUM_CHROMATIC_SLOTS):
+            slot_cents = CHROMATIC_SLOT_CENTS[slot]
+            error = abs(cents - slot_cents)
+            candidates.append((error, pc_index, slot))
+
+    candidates.sort()
+
+    assigned_pcs: set[int] = set()
+    for error, pc_index, slot in candidates:
+        if pc_index in assigned_pcs or slot not in available_slots:
+            continue
+        assignments[slot] = ChromaticSlotAssignment(
+            slot=slot,
+            slot_name=CHROMATIC_SLOT_NAMES[slot],
+            cents=pitch_class_cents[pc_index],
+            source="scale",
+            error_cents=error,
+        )
+        available_slots.discard(slot)
+        assigned_pcs.add(pc_index)
+        if not available_slots or len(assigned_pcs) == len(remaining_cents):
+            break
+
+    return [assignments[slot] for slot in sorted(assignments)]
+
+
+def _nearest_neighbor_fill(
+    assignments: list[ChromaticSlotAssignment],
+) -> list[ChromaticSlotAssignment]:
+    """Fill unoccupied chromatic slots by copying the nearest occupied slot's cents.
+
+    Ties go to the lower slot.
+    """
+    occupied: dict[int, ChromaticSlotAssignment] = {a.slot: a for a in assignments}
+    result: list[ChromaticSlotAssignment] = []
+
+    for slot in range(_NUM_CHROMATIC_SLOTS):
+        if slot in occupied:
+            result.append(occupied[slot])
+            continue
+
+        # Find nearest occupied slot; ties favor lower
+        best_distance = _NUM_CHROMATIC_SLOTS
+        best_slot = -1
+        for occ_slot in occupied:
+            distance = abs(slot - occ_slot)
+            if distance < best_distance or (
+                distance == best_distance and occ_slot < best_slot
+            ):
+                best_distance = distance
+                best_slot = occ_slot
+
+        donor = occupied[best_slot]
+        result.append(
+            ChromaticSlotAssignment(
+                slot=slot,
+                slot_name=CHROMATIC_SLOT_NAMES[slot],
+                cents=donor.cents,
+                source=f"fill_from_{donor.slot_name}",
+                error_cents=0.0,
+            )
+        )
+
+    return result
+
+
+def build_chromatic_tuning(
+    *,
+    tuning_dir: Path,
+    tuning_analysis: TuningAnalysisResult,
+    spec: MidiBundleExportSpec,
+) -> ChromaticTuningResult:
+    """Build a 12-note chromatic-fill SCL for MTS-ESP / Ableton composition."""
+    if not spec.chromatic_scl:
+        return ChromaticTuningResult(
+            slot_assignments=(),
+            warnings=[],
+            skipped_reason="chromatic_scl disabled in export spec",
+        )
+
+    if not math.isclose(tuning_analysis.period_ratio, 2.0, rel_tol=1e-9):
+        reason = (
+            f"non-octave period ratio ({tuning_analysis.period_ratio:.4f}) "
+            "does not map to chromatic layout"
+        )
+        logger.info("Skipping chromatic SCL: %s", reason)
+        return ChromaticTuningResult(
+            slot_assignments=(),
+            warnings=[],
+            skipped_reason=reason,
+        )
+
+    n_pitch_classes = len(tuning_analysis.pitch_class_cents)
+    if n_pitch_classes > _NUM_CHROMATIC_SLOTS:
+        reason = f"{n_pitch_classes} pitch classes exceeds 12 chromatic slots"
+        logger.info("Skipping chromatic SCL: %s", reason)
+        return ChromaticTuningResult(
+            slot_assignments=(),
+            warnings=[],
+            skipped_reason=reason,
+        )
+
+    raw_assignments = assign_chromatic_slots(tuning_analysis.pitch_class_cents)
+    filled_assignments = _nearest_neighbor_fill(raw_assignments)
+
+    warnings: list[str] = []
+    threshold = spec.chromatic_warning_threshold_cents
+    for assignment in filled_assignments:
+        if assignment.source == "scale" and assignment.error_cents > threshold:
+            warnings.append(
+                f"{assignment.slot_name}: {assignment.cents:.1f}c mapped to "
+                f"{CHROMATIC_SLOT_CENTS[assignment.slot]:.0f}c slot "
+                f"(error {assignment.error_cents:.1f}c > {threshold:.0f}c threshold)"
+            )
+
+    for warning in warnings:
+        logger.warning("Chromatic SCL: %s", warning)
+
+    chromatic_name = f"{spec.output_name}_chromatic"
+    scl_path = tuning_dir / f"{chromatic_name}.scl"
+    kbm_path = tuning_dir / f"{chromatic_name}.kbm"
+
+    scl_path.write_text(
+        build_chromatic_scl_text(filled_assignments, spec), encoding="utf-8"
+    )
+    kbm_path.write_text(build_chromatic_kbm_text(tuning_analysis), encoding="utf-8")
+
+    return ChromaticTuningResult(
+        slot_assignments=tuple(filled_assignments),
+        warnings=warnings,
+        scl_path=str(scl_path),
+        kbm_path=str(kbm_path),
+    )
+
+
+def build_chromatic_scl_text(
+    assignments: list[ChromaticSlotAssignment],
+    spec: MidiBundleExportSpec,
+) -> str:
+    """Build a 12-note Scala file from chromatic slot assignments."""
+    name = f"{spec.output_name}_chromatic"
+    lines = [
+        f"! {name}.scl",
+        f"{name} chromatic-fill for MTS-ESP",
+        str(_NUM_CHROMATIC_SLOTS),
+        "!",
+    ]
+    # SCL entries are intervals above 1/1 — skip slot 0 (unison), end with octave
+    for assignment in assignments[1:]:
+        lines.append(f"{assignment.cents:.6f}")
+    lines.append("1200.000000")
+    return "\n".join(lines) + "\n"
+
+
+def build_chromatic_kbm_text(
+    tuning_analysis: TuningAnalysisResult,
+) -> str:
+    """Build a standard 12-note keyboard mapping for the chromatic SCL."""
+    lines = [
+        "! chromatic-fill keyboard mapping",
+        str(_NUM_CHROMATIC_SLOTS),
+        "!",
+        "0",
+        "127",
+        str(tuning_analysis.reference_midi_note),
+        str(tuning_analysis.reference_midi_note),
+        f"{tuning_analysis.reference_frequency_hz:.12f}",
+        str(_NUM_CHROMATIC_SLOTS),
+    ]
+    lines.extend(str(index) for index in range(_NUM_CHROMATIC_SLOTS))
+    return "\n".join(lines) + "\n"

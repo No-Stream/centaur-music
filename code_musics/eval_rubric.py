@@ -78,12 +78,13 @@ DIMENSIONS: tuple[Dimension, ...] = (
 )
 
 SCALE_ANCHORS = """\
-Score each dimension 1-10 (integers only):
-  1-2:  Fundamentally broken or empty.
-  3-4:  Has basic content but major problems.
-  5-6:  Competent but unremarkable — works as a sketch or study.
-  7-8:  Genuinely good — musical, shaped, worth revisiting.
-  9-10: Exceptional — memorable, complete, could stand alongside composed works."""
+Score each dimension 0-100 (integers only):
+   0-15: Fundamentally broken or empty.
+  16-35: Has basic content but major problems.
+  36-55: Competent but unremarkable — works as a sketch or study.
+  56-75: Genuinely good — musical, shaped, worth revisiting.
+  76-90: Very strong — memorable, complete, could stand alongside composed works.
+  91-100: Exceptional — remarkable craft and artistry."""
 
 
 def build_judge_system_prompt() -> str:
@@ -108,11 +109,11 @@ no extra text):
 
 {{
   "dimensions": {{
-    "musical_substance": {{"score": <int 1-10>, "notes": "<2-3 sentences>"}},
-    "structure_form": {{"score": <int 1-10>, "notes": "<2-3 sentences>"}},
-    "texture_expression": {{"score": <int 1-10>, "notes": "<2-3 sentences>"}},
-    "completeness": {{"score": <int 1-10>, "notes": "<2-3 sentences>"}},
-    "open_subjective": {{"score": <int 1-10>, "notes": "<2-3 sentences>"}}
+    "musical_substance": {{"score": <int 0-100>, "notes": "<2-3 sentences>"}},
+    "structure_form": {{"score": <int 0-100>, "notes": "<2-3 sentences>"}},
+    "texture_expression": {{"score": <int 0-100>, "notes": "<2-3 sentences>"}},
+    "completeness": {{"score": <int 0-100>, "notes": "<2-3 sentences>"}},
+    "open_subjective": {{"score": <int 0-100>, "notes": "<2-3 sentences>"}}
   }},
   "overall_notes": "<1-2 sentence strongest impression>"
 }}"""
@@ -127,7 +128,7 @@ JUDGE_RESPONSE_SCHEMA = {
                 dim.key: {
                     "type": "object",
                     "properties": {
-                        "score": {"type": "integer", "minimum": 1, "maximum": 10},
+                        "score": {"type": "integer", "minimum": 0, "maximum": 100},
                         "notes": {"type": "string"},
                     },
                     "required": ["score", "notes"],
@@ -144,6 +145,5 @@ JUDGE_RESPONSE_SCHEMA = {
 DEFAULT_JUDGE_MODELS: tuple[str, ...] = (
     "opus",
     "sonnet",
-    "claude-opus-4-5-20250301",
-    "claude-sonnet-4-5-20241022",
+    "haiku",
 )

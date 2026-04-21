@@ -34,6 +34,8 @@
   thickening tools for shoegaze/dream-pop aesthetics.
 - `code_musics/harmonic_drift.py` contains JI-aware consonance-shaped pitch drift
   trajectories for slow timbral evolution.
+- `code_musics/drum_helpers.py` contains `setup_drum_bus()` and `add_drum_voice()`
+  convenience helpers for percussion voice setup and routing.
 - `code_musics/render.py` is the named-piece orchestration layer.
 - `code_musics/analysis.py` contains render analysis, artifact-risk warnings, and
   librosa-based visual analysis (mel spectrogram, chromagram, spectral contrast).
@@ -41,6 +43,8 @@
 - `code_musics/spectra.py` contains spectral profile helpers for the additive engine.
 - `code_musics/midi_export.py` exports score-backed pieces as shared tuning files
   plus per-voice MIDI stems.
+- `code_musics/stem_export.py` exports per-voice audio stem WAVs with send bus
+  returns and optional mastered reference mix.
 - `code_musics/midi_import.py` imports MIDI files into the score model.
 - `code_musics/meter.py` contains the optional high-level musical-time layer:
   `Timeline`, beat/bar helpers, rhythmic values, and bar-aware location math.
@@ -53,7 +57,7 @@
 ## Composition Model
 
 - `NoteEvent` is the atomic musical event. It stores timing, amplitude, and either a
-  `partial` relative to `Score.f0` or an absolute `freq`.
+  `partial` relative to `Score.f0_hz` or an absolute `freq`.
 - `NoteEvent` also supports per-note `velocity`, `amp_db`, optional
   `pitch_motion`, and optional note-local automation.
 - `Phrase` is a reusable collection of relative-time `NoteEvent`s. Use it for motifs,
@@ -81,26 +85,38 @@
   name, optional `preset`, and engine-specific params documented in `docs/synth_api.md`.
 - Voices can enforce `max_polyphony` (including strict mono with `1`) and an
   optional simple `legato` mode for overlap-driven non-retrigger behavior.
-- `code_musics.composition` includes phrase-first helpers for melodic writing and
-  section building. High-level examples: `line(...)` / `ratio_line(...)` for phrase
-  creation, `concat(...)` / `overlay(...)` / `echo(...)` for phrase transforms,
-  `sequence(...)` / `canon(...)` for repeated placement, and
-  `voiced_ratio_chord(...)` / `progression(...)` for harmonic writing. The optional
-  high-level timing layer adds `Timeline`, rhythmic values like `Q` / `E`, optional
-  `SwingSpec` feel control for eighth- or sixteenth-note swing, and grid-style
-  helpers such as `grid_line(...)`, `grid_sequence(...)`, `grid_canon(...)`,
-  `metered_sections(...)`, and `bar_automation(...)` for bar-aware voice timbre
-  arcs that compile back down to the existing seconds-based score model. Full API
-  details live in
-  `docs/composition_api.md`.
-- `code_musics.generative` provides algorithmic composition helpers including
-  weighted pitch pools, euclidean rhythms, probability gates, Markov chains,
-  Turing machine sequencers, lattice walkers, and stochastic clouds. All are
-  seeded/deterministic and produce standard `Phrase` or `RhythmCell` objects.
-  Full API details live in the "Generative Composition Helpers" section of
+- `code_musics.composition` includes phrase-first helpers for melodic
+  writing and section building. Phrase creation: `line(...)` /
+  `ratio_line(...)`. Articulation transforms: `concat(...)` /
+  `overlay(...)` / `echo(...)`. Rhythmic transforms: `augment(...)` /
+  `diminish(...)` / `rhythmic_retrograde(...)` / `displace(...)` /
+  `rotate(...)`. Polyrhythm builders: `polyrhythm(...)` /
+  `cross_rhythm(...)` (same-span different-division) plus
+  `polymeter_layer(...)` and `polymeter_alignment(...)` for layering a
+  phrase at its *own* cycle length against an ambient bar grid (e.g. a
+  7-beat line phasing against 16). Placement: `sequence(...)` / `canon(...)`.
+  Harmonic: `voiced_ratio_chord(...)` / `progression(...)`. The
+  optional high-level timing layer adds `Timeline`, rhythmic values
+  like `Q` / `E`, `Groove` templates with named presets and per-step
+  velocity weighting, `tuplet(n, m, value)` for general tuplet
+  durations, and grid-style helpers (`grid_line`, `grid_sequence`,
+  `grid_canon`, `metered_sections`, `bar_automation`) that compile
+  back down to the existing seconds-based score model. Full API
+  details live in `docs/composition_api.md`.
+- `code_musics.generative` provides algorithmic composition helpers
+  including weighted pitch pools, euclidean rhythms, probability
+  gates, Markov chains, Turing machine sequencers, lattice walkers,
+  stochastic clouds, and generative rhythm tools: `prob_rhythm`
+  (weighted metric probability), `AksakPattern` (additive meter
+  with Balkan/Turkish presets), `ca_rhythm` / `ca_rhythm_layers`
+  (cellular automata rhythms), and `mutate_rhythm` (stochastic
+  groove variation). All are seeded/deterministic and produce
+  standard `Phrase` or `RhythmCell` objects. Full API details live
+  in the "Generative Composition Helpers" section of
   `docs/composition_api.md`.
 - For detailed score-surface semantics, parameter meanings, and render-order
   behavior, read `docs/score_api.md`.
+- Prefer musical notation compostion (bars, notes) over raw time.  
 
 ## Expression Model
 
@@ -144,11 +160,45 @@
   right tool for ensemble breathing rather than independent per-voice wobble.
 - `envelope_humanize` is for subtle ADSR variation over score time. This is the
   current "env slop" surface.
+- Per-stage ADSR curve powers (`attack_power`, `decay_power`, `release_power`)
+  and the VCV-style `attack_target` overshoot are accepted as synth params (in
+  `synth_defaults` / per-note `synth={...}`) and as automation targets. Defaults
+  are `1.0` (linear, preserves legacy behavior). For acoustic-feeling voices
+  try `decay_power=2.0` / `release_power=2.0`; for "pokey" analog attack tops
+  try `attack_target=1.2`. See `docs/synth_api.md` for the full surface.
 - `timing_humanize` is score-level. Use it for ensemble looseness and shared drift,
   not for rewriting rhythmic structure.
+- `DriftSpec.style` supports `random_walk`, `smooth_noise`, `lfo`, `sample_hold`,
+  and `smoothed_random` (Helm-style: random anchors at `rate_hz` crossfaded with
+  a raised-cosine window — organic wobble distinct from the steppy `sample_hold`
+  and the pink-ish `smooth_noise`).
 - automation is the explicit parameter-motion surface. Use it for deliberate
   sweeps, bends, timbral motion, and wet/send/pan rides; use humanization for
   subtle living variation.
+- `code_musics/modulation.py` adds a Vital-style per-connection modulation
+  matrix. Every routing is a `ModConnection` (source -> destination with
+  `amount`, `bipolar`, `stereo`, `power`, optional `breakpoints`, combine
+  `mode`). Sources: `LFOSource`, `EnvelopeSource`, `MacroSource`,
+  `VelocitySource`, `RandomSource`, `ConstantSource` (stereo pan-split),
+  `DriftAdapter`. Attach via `Voice.modulations` or `Score.modulations`;
+  register shared scalars via `Score.add_macro(name, default, automation)`.
+  Complements `AutomationSpec` (timeline curves) rather than replacing it —
+  matrix contributions combine after base automation per destination. MVP
+  per-sample synth coverage is `cutoff_hz` on `polyblep` via engine
+  `param_profiles`; other synth targets are sampled per-note at onset. See
+  `docs/score_api.md` and `FUTURE.md` for full details and deferred work, and
+  `code_musics/pieces/mod_matrix_study.py` for a worked example.
+- **Pitch motion is a standard part of the composition surface**, not an optional
+  extra. Melodic and sustained voices should almost always use `PitchMotionSpec`:
+  lead voices get vibrato on sustained notes (increasing depth/rate with
+  intensity), pad voices benefit from `ratio_glide` between chord changes, and
+  `linear_bend` serves deliberate pitch gestures. A melody with no pitch motion
+  sounds static and lifeless.
+- **Use exponential automation (`shape="exp"`) for frequency-domain parameters**
+  (cutoff_hz, hpf_cutoff_hz, any `_hz` param). Frequency perception is
+  logarithmic, so linear sweeps sound unnatural — they rush through the bottom
+  and crawl at the top. Linear (`shape="linear"`) is correct for dB, pan, drive,
+  morph, and other perceptually linear parameters.
 - When documenting or changing these APIs, keep `AGENTS.md` high-level and put the
   parameter-by-parameter details in `docs/score_api.md`,
   `docs/composition_api.md`, and
@@ -162,7 +212,7 @@ interpreter and will fail with import errors.
 
 **Always use one of:**
 
-```
+```bash
 make all                           # default quality gate: format-check, lint, compile, typecheck, full tests
 make check                         # alias for make all
 make list                          # list registered pieces
@@ -177,8 +227,14 @@ make render-all                    # render every piece
 make midi PIECE=ji_chorale          # export a full MIDI bundle
 make midi-snippet PIECE=ji_chorale AT=2:10 WINDOW=12  # export a centered MIDI snippet bundle
 make midi-window PIECE=ji_chorale START=130 DUR=12    # export an exact MIDI snippet bundle
+make stems PIECE=ji_chorale         # export per-voice audio stem WAVs
+make stems PIECE=ji_chorale DRY=1   # export dry (pre-effects) stems
+make stems-snippet PIECE=ji_chorale AT=2:10 WINDOW=12  # export stem snippet
+make stems-window PIECE=ji_chorale START=130 DUR=12    # export exact stem window
 make test                          # run the full test suite
 make test-selected TESTS=tests/test_score.py  # run a focused subset while iterating
+make test-selected TESTS="tests/test_a.py tests/test_b.py"  # multiple files
+make scratch SCRIPT=scratch/smoke.py  # run a scratch script (no prompt; scratch/ only)
 make typecheck                     # basedpyright
 make compile                       # syntax / bytecode compilation check
 make lint                          # ruff check with bug-finding rules
@@ -190,10 +246,40 @@ make evaluate-all                  # evaluate all rendered pieces
 make inspire                       # oblique strategy / musical inspiration prompts
 ```
 
-If you need to run a one-off Python command, prefix it with `uv run` and set
-`PYTHONPATH=.`:
+For **read-only smoke-test scripts with zero side effects**, use `make scratch
+SCRIPT=scratch/foo.py`.  The `make *` pattern is allowlisted so `make scratch`
+runs without a permission prompt; raw `uv run python ...` invocations prompt
+every time.  The target refuses any path outside `scratch/` (which is
+gitignored).
 
+**Strict scope.** `make scratch` is only for read-only inspection, engine
+smoke tests, and character measurements — things you'd be happy running
+twice by accident.  Do NOT use it for:
+
+- writing files to the repo (including logs, audio, plots, caches)
+- piece renders, MIDI export, stem export, evaluation (use `make render`,
+  `make midi`, `make stems`, `make evaluate` — those have proper plumbing)
+- network calls, subprocess spawning, env mutation
+- anything you'd hesitate to run without reading carefully
+
+If a script outgrows that scope, promote it to a proper test in `tests/`
+or a named make target instead.
+
+```bash
+# Write the script first, then run via make:
+cat > scratch/smoke_filters.py <<'EOF'
+import numpy as np
+from code_musics.engines._filters import apply_filter
+y = apply_filter(np.random.randn(4410), cutoff_profile=np.full(4410, 1000.0),
+                 sample_rate=44100, filter_topology="k35", resonance_q=4.0)
+print(f"k35: peak={np.max(np.abs(y)):.3f}, finite={np.all(np.isfinite(y))}")
+EOF
+make scratch SCRIPT=scratch/smoke_filters.py
 ```
+
+For edge cases where `make` targets don't fit, you can still fall back to:
+
+```bash
 PYTHONPATH=. uv run python main.py --list
 PYTHONPATH=. uv run pytest tests/
 ```
@@ -237,6 +323,11 @@ The project is no longer just about proving that xenharmonic ideas work. Prefer 
 that feels like music: shaped, intentional, and complete, even when it is strange.
 Be ambitious! Use velocity, humanization, frequent and thorough parameter automation, effects, and so on to create rich, complex, alive pieces. Creativity is welcome and mistakes are cheap. Be not afraid!
 
+**API feedback welcome:** If you encounter API surfaces in this library that feel
+unintuitive, backwards, or have surprising defaults, flag them to the user rather
+than silently working around them. The goal is a library that's delightful for
+agents to compose with — bad ergonomics should be fixed, not tolerated.
+
 Current aesthetic center:
 
 - just intonation
@@ -272,10 +363,111 @@ See `FUTURE.md` for way more ideas.
 - The additive engine supports explicit spectral partial sets plus optional
   onset-to-sustain spectral morphing; use that when tuning and timbre should be
   co-designed instead of assuming a plain harmonic ladder.
+- The additive engine also supports Vital-style spectral morphs on the partial
+  bank: `inharmonic_scale` (piano-stiffness / inharmonic drift),
+  `phase_disperse` (pad-style spread without chorus), `smear` (pink amplitude
+  leak into overtones), `shepard` (octave-ghost crossfade), and
+  `random_amplitudes` (seeded stable 16-stage random mask). Optional
+  `sigma_approximation=True` applies Lanczos sigma factors to reduce Gibbs
+  ringing. See `docs/synth_api.md` and the `stiff_piano` / `dispersed_pad` /
+  `smear_drone` / `shepard_bells` / `chaos_cloud` demo presets for usage.
 - The `polyblep` engine supports an optional second oscillator via `osc2_*`
   parameters for detuned stacks and sub layers.
+- The `va` engine provides 90s/00s Virtual Analog-flavored synthesis with two
+  oscillator modes: `supersaw` (Szabo-accurate JP-8000 detune/mix law + 7-voice
+  PolyBLEP bank with random phase and optional hard-sync) and `spectralwave`
+  (partial-bank with continuous saw→spectral→square `spectral_position` plus
+  optional `_spectral_morphs` layering). Supports dual-filter routing
+  (single/serial/parallel/split), pre-filter waveshaper drive, and a resonant
+  comb filter slot with keytracking for karplus-strong-ish bell character.
+  Presets cover JP-8000 (`jp8000_hoover`, `jp8000_lead`, `supersaw_pad`),
+  Access Virus (`virus_pad`, `virus_bass`, `virus_lead`), and Waldorf Q
+  (`q_comb_pad`, `q_comb_bell`, `q_spectral_lead`) flavors. The new
+  `apply_comb(...)` primitive in `_filters.py` is available to future engines.
+  See `docs/synth_api.md` and `code_musics/pieces/va_showcase.py`.
+- The `polyblep` and `filtered_stack` engines support eight `filter_topology`
+  options: `"svf"` (2-pole ZDF state-variable, default), `"ladder"` (4-pole
+  Moog-style with per-stage saturation + `bass_compensation`, defaulting to
+  `0.5` for moderate bass preservation — set to `0.0` for authentic Moog
+  bass-suck in acid-style patches), `"sallen_key"`
+  (Diva-style biting 2-pole with pre-filter asymmetric soft-clip under drive),
+  `"cascade"` (4-pole Prophet-5-style cascade of independent 1-poles + peaking
+  bandpass — no global tanh growl), `"sem"` (Oberheim SEM-flavored 2-pole with
+  continuous LP→Notch→HP morph and bass-preserving gentle resonance),
+  `"jupiter"` (Roland IR3109-flavored 4-pole OTA cascade with single global
+  tanh feedback for creamy, less-peaky character; pair with `hpf_cutoff_hz`
+  for Jupiter-8 dual-filter or leave at 0 for Juno-106), `"k35"` (Korg MS-20
+  Sallen-Key with diode-clipped feedback via `k35_feedback_asymmetry` knob —
+  the screamer), and `"diode"` (TB-303 3-pole diode ladder with feedback
+  tap between stages 2 and 3 for acid squelch, ADAA + Newton solvers). The
+  drum_voice engine also honors `filter_topology` on its post-mix voice
+  filter so percussion voices can borrow any analog character (defaults to
+  `"svf"` — existing drum patches unchanged). See `docs/synth_api.md` for
+  the full per-topology parameter surface, and
+  `code_musics/pieces/filter_palette_study.py` for an 8-topology A/B tour.
+- The ladder filter supports a Diva-style **Newton-iterated ZDF solver**
+  (`filter_solver="newton"`, now the default) that resolves the delay-free
+  feedback loop implicitly per-sample. Engine-level `quality` param
+  (`"draft"` / `"fast"` / `"great"` / `"divine"`, default `"great"`) picks
+  the solver + internal oversampling factor. Audibly cleaner self-oscillation
+  and drive behavior vs. the prior one-step-delay ADAA path. See
+  `docs/synth_api.md` Quality Modes for the full mapping and
+  `diva_bass_resonance`, `cs80_attack`, `prophet_pad`, `moog_acid_newton`,
+  `sk_bite_lead`, `cascade_bass` presets for showcase patches.
+- The Newton solver also closes the **external feedback loop**
+  (`feedback_amount`) implicitly on `svf`, `cascade`, `sem`, `sallen_key`,
+  `ladder`, `jupiter` — eliminating the unit-delay damping that previously
+  smoothed out high-resonance and feedback-growl leads. `k35` and `diode`
+  still use unit-delay ext feedback (see `FUTURE.md` for the
+  diode-derivative Jacobian they need). `filter_solver="adaa"` remains
+  bit-identical to the pre-change behaviour everywhere.
+- Oscillator imperfection params (`osc_asymmetry`, `osc_softness`,
+  `osc_dc_offset`, `osc_shape_drift`) model analog VCO behavior in the
+  `polyblep` and `filtered_stack` engines.
+- `voice_card_spread` (0-3) replaces the old `voice_card` param for controlling
+  inter-voice calibration variation, with named tiers from JI-conservative (1.0)
+  through Oberheim-level (3.0). When set explicitly on a voice it also drives
+  multiplicative per-voice attack/release scaling at the Score level (OB-Xd-
+  style); `voice_card_envelope_spread` overrides that dimension independently.
+- `analog_jitter` now also drives an OB-Xd-style per-sample CV dither layer
+  (pitch ±0.05 semitone, cutoff ±3% at amount=1.0, 4 kHz one-pole smoothed)
+  on polyblep + filtered_stack, stacked on top of the stable voice_card
+  offsets; `analog_jitter=0` disables it.
+- `voice_dist_mode` on `polyblep`, `va`, and `filtered_stack` adds a
+  RePro-5-style per-note distortion slot applied *inside the engine's note
+  loop, after the VCA and before the per-note buffers sum into the voice
+  output*. Modes: `soft_clip` / `hard_clip` / `foldback` / `corrode` /
+  `saturation` (reuses `apply_saturation`) / `preamp` (reuses
+  `apply_preamp`). Chord tones distort independently, preserving harmonic
+  identity instead of collapsing into the IMD mud that a post-mix shaper
+  produces. Default `off`; paired params `voice_dist_drive`,
+  `voice_dist_mix`, `voice_dist_tone`. See `docs/synth_api.md`.
+- Audio-rate modulation coverage: `polyblep` accepts per-sample
+  `pulse_width`, `osc2_detune_cents`, `osc2_freq_ratio` (in addition to
+  `cutoff_hz`), and `va` accepts per-sample `osc_spread_cents`. Drive
+  these from the new `OscillatorSource` in `code_musics/modulation.py` —
+  a sibling to `LFOSource` with no 200 Hz cap, usable at audio rate for
+  PWM, cross-osc FM, and detune modulation.
+- `osc_phase_noise` (0.0–1.0) on `polyblep` and `va` adds per-sample
+  phase-accumulator jitter — broadband zero-crossing texture distinct
+  from `analog_jitter` (CV-rail dither) and `drift_bus` (slow correlated
+  drift). Deterministic from note hash; per-oscillator independent
+  streams.
+- `filter_morph` enables continuous blending between filter modes (SVF:
+  LP/BP/HP/Notch cycle; ladder: pole-tap blending for 24 -> 6 dB/oct slope
+  control). Automatable.
+- `feedback_amount` and `feedback_saturation` model Minimoog-style
+  post-filter -> pre-filter feedback for thickening and growl. Ladder and
+  SVF feedback summations inject deterministic 1e-6 bootstrap noise (seeded
+  from the signal) so high-Q self-oscillation can wake from silence.
+- `hpf_cutoff_hz` adds a serial 2-pole ZDF highpass before the main filter,
+  modeling CS80/Jupiter-8 dual-filter architecture.
+- `vca_nonlinearity` adds gain-dependent envelope saturation for OTA-based VCA
+  character on attack peaks.
 - The native effect chain includes a minimum-phase multi-band `eq` effect with
   ordered highpass, lowpass, bell, and shelf bands for routine tone shaping.
+  Band params: highpass/lowpass use `cutoff_hz`/`slope_db_per_oct`; bell/shelf
+  use `freq_hz`/`gain_db`/`q`. See `docs/synth_api.md` for full details.
 - The native effect chain includes a stereo-linked `compressor` effect with
   feedforward/feedback modes, detector-path EQ bands, and voice-to-voice
   sidechaining plus lookahead for ducking/glue workflows.
@@ -288,9 +480,82 @@ See `FUTURE.md` for way more ideas.
   more than treble, producing minimal intermodulation on harmonically rich
   material. Use `preamp` for gentle warmth/coloring (master bus, subtle voice
   color); use `saturation` for intentional distortion/drive effects.
-- The `kick_tom` synth engine provides 808/909-style kicks and toms; the intended
-  happy path is pairing it with the native drum-oriented compressor/saturation
-  presets documented in `docs/synth_api.md`.
+- The native `bbd_chorus` effect is a Juno-faithful BBD-style stereo chorus
+  with quadrature LFOs (true L/R decorrelation from mono input), cross-feedback,
+  BBD-style pre/post bandlimiting, and an optional gentle compander. Presets:
+  `juno_i`, `juno_ii`, `juno_i_plus_ii`, `dimension_wide`. Wet is summed with
+  dry (not crossfaded) — `mix` controls wet level. Prefer this over the older
+  native `chorus` when you want the recognizable Juno-106 / Dimension-D vibe.
+- The `kick_tom` synth engine provides 808/909-style kicks and toms with
+  optional multi-point envelopes (body amp, pitch, overtone), per-body ZDF
+  SVF filter with envelope-modulated cutoff, FM body synthesis for
+  harmonically rich attacks, and per-oscillator waveshaping (9 algorithms).
+  The intended happy path is pairing it with the native drum-oriented
+  compressor/saturation presets documented in `docs/synth_api.md`. Note:
+  `drive_ratio` and `post_lowpass_hz` are deprecated; use the effect chain.
+- The `metallic_perc` engine provides additive/FM metallic percussion (hihats,
+  cymbals, cowbell, clave) with inharmonic partials and optional ring modulation.
+  Supports optional multi-point envelopes for amplitude and filter cutoff, and
+  configurable filter mode. Presets: `closed_hat`, `open_hat`, `ride_bell`,
+  `cowbell`, `clave`. Use `engine="metallic_perc"` in `synth_defaults`.
+- The `snare` engine provides 909-inspired snare synthesis with pitched body,
+  comb-filtered wire buzz, and click transient. Supports optional multi-point
+  envelopes for body amp, wire amp, body pitch sweep, and wire filter cutoff.
+  Pair with `snare_punch`/`snare_body` compressor presets and `snare_bite`
+  saturation preset. Presets: `909_tight`, `909_fat`, `rim_shot`, `brush`.
+  Use `engine="snare"` in `synth_defaults`.
+- The `clap` engine provides multi-tap noise burst synthesis for clap and snap
+  sounds. Supports optional multi-point envelopes for body tail decay and
+  overall amplitude shaping (gated claps). Presets: `909_clap`, `tight_clap`,
+  `big_clap`, `finger_snap`. Use `engine="clap"` in `synth_defaults`.
+- The `synth_voice` engine is the unified composable tonal synthesizer —
+  **prefer it for new melodic/pad/lead voices**. Four parallel source slots
+  (`osc`: polyblep/supersaw/pulse; `partials`: additive/spectralwave/drawbars;
+  `fm`: 2-op; `noise`: white/pink/bandpass/flow) summed into a shared
+  post-chain (HPF → full `_filters.py` topology palette → VCA → voice shaper).
+  Flat-namespace params with slot prefixes, `{slot}_type=None` disables any
+  slot. Four perceptual macros — `brightness` / `movement` / `body` / `dirt` —
+  fill unset params via `_set_if_absent` (preset → macro → user kwargs wins).
+  15 curated cross-pollination presets ship (`fm_bell_over_supersaw`,
+  `additive_pad_through_ladder`, `drawbar_diode_acid`, …). The older tonal
+  engines (`polyblep`, `va`, `additive`, `fm`, `filtered_stack`, `organ`,
+  `piano`, `piano_additive`, `harpsichord`) stay registered for existing
+  pieces; piano and harpsichord remain dedicated engines because their
+  hammer/pluck → modal-resonator topology doesn't fit the source→filter→VCA
+  model. See `docs/synth_api.md` for the full surface.
+- The `drum_voice` engine is a unified composable percussion synthesizer with four
+  independent layers (exciter, tone, noise, metallic). It replaces the five separate
+  drum engines with a single architecture where any synthesis mode can be combined
+  with any other. Presets from all original engines are available. Shaper slots can
+  dispatch to waveshaper algorithms, the modern saturation effect, or the preamp
+  transformer model. Three ergonomic macros (punch, decay_shape, character) provide
+  high-level perceptual control. `drum_voice` now also covers Machinedrum-inspired
+  kernels: EFM 2-op FM bodies (`tone_type="efm"`), PI modal resonator banks driven
+  by `spectra.py` mode tables (`tone_type="modal"` / `metallic_type="modal_bank"`),
+  EFM cymbals (`metallic_type="efm_cymbal"`), E12-style sample exciters
+  (`exciter_type="sample"`), and digital-character voice shapers (`shaper="bit_crush"`
+  / `"rate_reduce"` / `"digital_clip"`), with `pi_hardness` / `pi_tension` /
+  `pi_damping` / `pi_damping_tilt` / `pi_position` macros for quick perceptual
+  shaping. See `docs/synth_api.md` for the full parameter surface.
+- The `sample` engine plays back WAV one-shots with pitch adjustment (map
+  note `freq` against `root_freq`), optional `decay_ms` / `amp_envelope`
+  shaping, a filter slot, and Machinedrum-E12-style macros (retrigger flams,
+  pitch bend envelope, ring modulation, rate reduction, bit-depth grit).
+  Samples resolve relative to the project root; loaded buffers are cached.
+  Use `engine="sample"` with a `sample_path` param in `synth_defaults`.
+- The waveshaper module (`_waveshaper.py`) now includes first-order ADAA
+  anti-aliasing for 7 of 11 algorithms and optional 2x oversampling for the
+  remaining fold-type algorithms.
+- All drum engines share multi-point envelope support via `_envelopes.py`
+  (linear, exponential, bezier interpolation). Any param ending in `_envelope`
+  accepts a list of `{time, value, curve}` dicts. Shared utilities live in
+  `_drum_utils.py` (RNG, bandpass noise, phase integration) and
+  `_waveshaper.py` (11 distortion algorithms with ADAA for per-oscillator use).
+- `Voice.choke_group` lets voices in the same named group cut each other on note
+  onset (e.g., open/closed hi-hat pairs). See `docs/score_api.md`.
+- `code_musics/drum_helpers.py` provides `setup_drum_bus()` and `add_drum_voice()`
+  convenience helpers for percussion voice setup with sensible defaults
+  (`normalize_peak_db=-6.0`, no velocity humanization, optional bus routing).
 - The `bricasti` convolution wrapper supports basic wet-return tone shaping
   (`highpass_hz`, `lowpass_hz`, `tilt_db`) for cleaner, darker, or brighter tails.
 - The local Linux environment has a small plugin palette installed for
@@ -338,10 +603,16 @@ See `FUTURE.md` for way more ideas.
   custom partial ratio sets for xenharmonic timbre-harmony fusion. Use
   `engine="harpsichord"` in `synth_defaults`.
 - `Voice` supports engine-agnostic sympathetic resonance via
-  `sympathetic_amount`, `sympathetic_decay`, and `sympathetic_modes`. This
+  `sympathetic_amount`, `sympathetic_decay_s`, and `sympathetic_modes`. This
   adds a resonator bank tuned to active note harmonics, applied after note
   mixing and before normalization. Works best with harpsichord and piano
   voices where harmonically related notes reinforce each other.
+- `Score.add_drift_bus(name, rate_hz, depth_cents, seed)` registers a shared
+  slow pitch-drift bus; voices subscribe via `drift_bus=<name>` and
+  `drift_bus_correlation` (0.0 = fully independent, 1.0 = fully shared). Held
+  chords on subscribed voices breathe as a correlated unit, replacing the
+  per-voice-independent analog drift with modular-rack-style shared CV.
+  Defaults: no bus and no subscription, so existing pieces are unchanged.
 - The `surge_xt` instrument engine renders voices through Surge XT via
   pedalboard's VSTi hosting. It uses MPE-style per-note pitch bend
   (48-semitone range) for microtonal accuracy. Unlike the native per-note
@@ -359,16 +630,34 @@ See `FUTURE.md` for way more ideas.
 - `code_musics/harmonic_drift.py` provides JI-aware pitch drift automation
   shaped by consonance — slow, smooth trajectories that weight their path
   toward harmonically related intervals rather than drifting randomly.
+- The additive engine supports advanced timbral features beyond basic
+  harmonic stacks: per-partial envelopes, noise hybrid bands, spectral
+  gravity (attraction toward JI intervals), and stochastic flickering as
+  engine params. `code_musics/spectra.py` provides builder functions for
+  physical model spectra (membrane, bar, plate, tube, bowl), spectral
+  convolution, fractal spectra, and formant shaping/morphing. See
+  `docs/synth_api.md` for the full parameter surface. Two study pieces
+  demonstrate these features: `vowel_cathedral` (vowel formant morphing
+  with spectral gravity) and `struck_light` (inharmonic strikes resolving
+  to fractal drones) in `code_musics/pieces/additive_studies.py`.
+- The additive engine's partial noise bands support `noise_mode="flow"`
+  plus `flow_density` (0-1) for a Mutable Instruments Elements-style
+  rare-event sample-and-hold exciter.  Produces breath/brush-like
+  organic texture that plain white noise and S&H cannot.  `brush_breath`
+  and `brush_cymbal` presets demonstrate the range.  The `breath_study`
+  piece in `code_musics/pieces/breath_study.py` shows it in context.
+  Underlying primitive is `flow_exciter()` in
+  `code_musics/engines/_dsp_utils.py`.
 - Keep plugin notes here high-level. Detailed parameter semantics and any new
   `EffectSpec` integration still belong in `docs/synth_api.md`.
-- If you change score/expression parameters or presets, update the docs in the same
-  pass. `AGENTS.md` should mention the feature exists; the detailed semantics belong
-  in the docs, especially `docs/score_api.md` for score-surface changes.
-- When you add new functionality that future agents are likely to use, add a brief
-  high-level callout to `AGENTS.md` in the same pass so the capability persists
-  across sessions. Keep the mention short and intuitive here, and put the full API
-  semantics in `docs/composition_api.md`, `docs/score_api.md`, or
-  `docs/synth_api.md` as appropriate.
+- **Docs are part of implementation, not cleanup.** When you add, change, or
+  remove a public surface (engine, effect, score/composition API, generative
+  helper, export path, etc.), update the relevant docs in the same pass.
+  `AGENTS.md` gets a short high-level callout; the full parameter/signature
+  reference lives in `docs/synth_api.md`, `docs/score_api.md`,
+  `docs/composition_api.md`, or a dedicated `docs/<topic>.md` file. Do not
+  defer doc writes to a later pass — stale or missing docs cause future agent
+  work to stall. A code change is not complete until the docs match.
 - Timestamp inspection is part of the normal workflow. Prefer the timeline
   artifacts and `make inspect` when responding to comments like "2:10 in
   ji_chorale" instead of manually hunting through score code.
@@ -376,7 +665,13 @@ See `FUTURE.md` for way more ideas.
   Prefer `make snippet` or `make render-window` when iterating on a local moment
   instead of re-rendering the whole piece.
 - MIDI export mirrors that workflow for score-backed pieces via shared tuning
-  files plus per-voice stems; prefer `make midi-snippet` or `make midi-window` when iterating on a local passage for DAW work.
+  files plus per-voice stems; prefer `make midi-snippet` or `make midi-window`
+  when iterating on a local passage for DAW work.
+- Audio stem export writes per-voice WAVs (wet or dry), send bus returns, and an
+  optional mastered reference mix to a bundle directory with a JSON manifest.
+  Wet stems + send returns sum to the pre-master mix. Dry stems are
+  post-normalization, pre-effects/pan (mono). Use `make stems PIECE=...` or
+  `make stems-window` for windowed export.
 - Score analysis includes timing-drift diagnostics. Overall drift is fine, but
   inter-voice spread should stay musically plausible across the piece; keep the
   warning thresholds and artifact details documented under `docs/`.
@@ -421,7 +716,7 @@ delegation-to-subagents pattern.
 
 ## Test Philosophy
 
-- Test early and often. Ideally write tests _first_ then code (TDD).  
+- Test early and often. Ideally write tests *first* then code (TDD).  
 - Focus on realistic, e2e tests (smoke, integration).  
 - No need for trivial tests or testing each unexpected edge case. First and foremost, tests should validate that code runs properly, end to end, without major bugs; and they should prevent regressions.
 - Backward compatibility is not always required or expected; this is a local, creative library not a business one.
@@ -435,18 +730,19 @@ delegation-to-subagents pattern.
 - septimal harmony
 - harmonic series, otonal and utonal
 - aphex twin, both the simple and pleasant side (avril, aisatsana) and the chaotic side
-- bach, the GOAT
+- bach, the GOAT, and a very algorithmic composer for his time; useful inspiration both in barqoue-adjacent styles and broadly
 - making xenharmonic ideas sound weird is pretty easy, making them sound pleasant is harder. let's bias in the pleasant direction, but not be constrained to narrow ideas of what pleasant is
 - why are most xenharmonic pieces more like experimentations or sketches and not complete pieces? let's err on the side of making music that sounds musical. which shouldn't wall off experimentation and riffing, but can we make full compositions?
-- commas and quirks of tuning systems (but musically; think Giant Steps)
+- commas and quirks of tuning systems (but musically; think Giant Steps, not pure studies)
 - bittersweet, haunting. (think burial - untrue or MBV loveless)
 - spacious, reverb, lofi (BoC, m83's dead cities)
 - spicy but euphonic chords, creative voicing, voice leading, sevenths and septimal harmony
 - it's fine to explore and fail. we can try a bunch of ideas, and none of them have to work
 - think of music creation like a GAN: we come up with ideas, we see how we like them, and we iterate
-- four tet (pretty and euphonic but not cheesy)
-- autechre
-(for more ideas, use `make inspire`; this is an idea generator inspired by Eno's _Oblique Strategies_)
+- four tet (pretty and euphonic but not cheesy, wandering arps, cool organic sounds)
+- autechre (creative, glitchy, weird, but still poppy at its core)
+- emotional journey side of techno, think carl craig's "at les"
+(for more ideas, use `make inspire`; this is an idea generator inspired by Eno's *Oblique Strategies*)
 
 some tuning schemes -
 
@@ -457,7 +753,27 @@ some tuning schemes -
 - otonal
 - meantone and other historical tunings (constraints are good)
 
+```text
+! 7-limit JI.scl
+!
+7-limit Just Intonation scale. Simple 5-limit JI with septimal tritone (7/5) and septimal seventh (7/4).
+ 12
+!
+16/15
+9/8
+6/5
+5/4
+4/3
+7/5
+3/2
+8/5
+5/3
+7/4
+15/8
+2/1
 ```
+
+```text
 ! colundi_ji_core.scl
 !
 Approximate Colundi-inspired 7-note JI scale
@@ -476,3 +792,31 @@ Approximate Colundi-inspired 7-note JI scale
 - Meantone, well temperaments, and baroque tunings
 - Bohlen Pierce?
 - Other?
+
+Note: typically stick in the keys of F through G# for songs with an
+electronic kick for maximum impact. For more ambient/chill pieces, there are
+no restrictions, but don't default to Cmaj/Amin — consider randomizing the
+key or picking one intentionally.
+
+### Automation Ideas
+
+Some classic automation targets to consider:
+
+1. Filter cutoff (LP/HP)
+2. Volume rides (especially pads, textures, background elements)
+3. Reverb send amount
+4. Delay send amount
+5. EQ high shelf / low-end roll-off
+6. Element dropout (kick, hats, snare out for 1-8 bars)
+7. Delay feedback (runaway into transitions)
+8. Sidechain depth
+9. Drive/saturation amount
+10. Reverb decay time
+11. Stereo width (dry/wet on widener, or mid-side balance)
+12. White noise / riser sweeps at transitions (or genre appropriate analogues)
+13. Filter resonance (independent from cutoff)
+14. Note length / gate time (staccato ↔ legato between sections)
+15. Reverse reverb tails before key hits
+16. Pan / auto-pan rate on hats and percussion
+17. Swing/groove and humanization (imperfection, drift)
+Not limited to the above. Creativity is encouraged. Automation can happen on multiple timescales (e.g. 4 bar and piece level).

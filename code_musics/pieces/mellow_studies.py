@@ -63,7 +63,7 @@ def build_septimal_lullaby() -> Score:
     The 7th partial is the bittersweet heart: sweeter than a minor 7th,
     darker than a major 6th. Avril 14th character — slow, sparse, lots of space.
     """
-    score = Score(f0=110.0, master_effects=[SOFT_REVERB_EFFECT])
+    score = Score(f0_hz=110.0, master_effects=[SOFT_REVERB_EFFECT])
 
     score.add_voice(
         "bass",
@@ -131,7 +131,7 @@ def build_comma_rain() -> Score:
 
     More Aisatsana than Avril — the piece is about time and memory.
     """
-    score = Score(f0=220.0, master_effects=[SOFT_REVERB_EFFECT])
+    score = Score(f0_hz=220.0, master_effects=[SOFT_REVERB_EFFECT])
 
     score.add_voice(
         "melody",
@@ -175,7 +175,7 @@ def build_comma_rain() -> Score:
     )
     score.add_phrase("melody", close, start=2.0 + 4 * cycle_dur + 0.5)
 
-    # Bass: A2 drone throughout (partial 0.5 of f0=220 = 110 Hz)
+    # Bass: A2 drone throughout (partial 0.5 of f0_hz=220 = 110 Hz)
     total_dur = 2.0 + 4 * cycle_dur + 0.5 + phrase_dur + 4.0
     score.add_note("bass", start=0.0, duration=total_dur, partial=0.5, amp_db=-26.0)
 
@@ -203,7 +203,7 @@ def build_harmonic_arpeggios() -> Score:
     Partials 11 and 13 give the melody its open-sky alien quality; the
     others ground it in something close to pentatonic. Flim-ish gentle pulse.
     """
-    score = Score(f0=55.0, master_effects=[SOFT_REVERB_EFFECT])
+    score = Score(f0_hz=55.0, master_effects=[SOFT_REVERB_EFFECT])
 
     score.add_voice(
         "bass",
@@ -280,7 +280,7 @@ def build_utonal_elegy() -> Score:
     minor third and a major second, ancient-sounding and doleful.
     Notes enter one by one, like a slow exhale.
     """
-    score = Score(f0=220.0, master_effects=[SOFT_REVERB_EFFECT])
+    score = Score(f0_hz=220.0, master_effects=[SOFT_REVERB_EFFECT])
 
     score.add_voice(
         "chord",
@@ -296,7 +296,7 @@ def build_utonal_elegy() -> Score:
         synth_defaults={**_NEAR_SINE, "attack": 1.8, "release": 6.0},
     )
 
-    # Utonal chord tone partials (of f0=220 Hz)
+    # Utonal chord tone partials (of f0_hz=220 Hz)
     u_root = 1.0  # A3  = 220.0 Hz
     u_m3 = 7 / 6  # ~B♭3 = 256.7 Hz  (septimal minor third)
     u_tri = 7 / 5  # ~D4  = 308.0 Hz  (septimal tritone)
@@ -371,7 +371,7 @@ def build_fond() -> Score:
 
     The bass never moves. The 7th partial is the piece's one unresolved question.
     """
-    score = Score(f0=110.0, master_effects=[SOFT_REVERB_EFFECT])
+    score = Score(f0_hz=110.0, master_effects=[SOFT_REVERB_EFFECT])
 
     score.add_voice(
         "bass",
@@ -393,7 +393,7 @@ def build_fond() -> Score:
     score.add_note("bass", start=0.0, duration=88.0, partial=1.0, amp_db=-26.0)
     score.add_note("bass", start=6.0, duration=82.0, partial=3 / 2, amp_db=-30.0)
 
-    # Partial shorthands (all relative to f0=110 Hz)
+    # Partial shorthands (all relative to f0_hz=110 Hz)
     A3 = 2.0  # 220 Hz
     Cs4 = 5 / 2  # 275 Hz  — pure major third above A3
     E4 = 3.0  # 330 Hz  — pure fifth above A3
@@ -492,7 +492,7 @@ def build_ether() -> Score:
       Conclusion (103–118 s): bass partial 1 (A1, 55 Hz) heard for first time;
                              everything grounds to the fundamental
     """
-    score = Score(f0=55.0, master_effects=[SOFT_REVERB_EFFECT])
+    score = Score(f0_hz=55.0, master_effects=[SOFT_REVERB_EFFECT])
 
     score.add_voice(
         "pulse",

@@ -81,7 +81,7 @@ def build_score() -> Score:
     """Build a ~25-second tone-pool study."""
     total_dur = (SECTION_DUR * 3) + (GAP_BETWEEN_SECTIONS * 2) + DRONE_TAIL
     score = Score(
-        f0=F0_HZ,
+        f0_hz=F0_HZ,
         timing_humanize=TimingHumanizeSpec(preset="tight_ensemble"),
         master_effects=[SOFT_REVERB_EFFECT],
     )

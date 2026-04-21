@@ -59,7 +59,7 @@ Example:
 from code_musics.score import EffectSpec, Score
 
 score = Score(
-    f0=110.0,
+    f0_hz=110.0,
     master_effects=[
         EffectSpec("saturation", {"preset": "tube_warm", "mix": 0.2}),
     ],
@@ -85,7 +85,7 @@ Fields:
 - `synth: dict[str, Any] | None = None`
 - `label: str | None = None`
 - `pitch_motion: PitchMotionSpec | None = None`
-- `automation: list[AutomationSpec] | None = None`
+- `automation: list[AutomationSpec] = []`
 
 Validation and behavior:
 
@@ -101,7 +101,7 @@ Authoring guidance:
 
 - prefer `amp_db` for mix-level choices
 - use `velocity` for note-level accents and phrasing
-- use `partial` when the note should track `Score.f0`
+- use `partial` when the note should track `Score.f0_hz`
 - use `freq` when the note should stay absolute
 - use `synth` for note-local engine overrides or articulation tweaks
 - use `automation` for note-local pitch gestures and explicit param motion
@@ -157,12 +157,17 @@ Convenience constructor for equally spaced partial-based phrases.
 Parameters:
 
 - `partials`
-- `note_dur`
-- `step`
+- `duration` — duration of each note event in seconds
+- `onset_interval` — time between successive note onsets in seconds
 - `amp`
 - `amp_db`
 - `velocity`
 - `synth_defaults`
+
+Deprecated aliases:
+
+- `note_dur` — use `duration` instead; still accepted but emits a `DeprecationWarning`
+- `step` — use `onset_interval` instead; still accepted but emits a `DeprecationWarning`
 
 This is a quick sketching helper, not the only way to build phrases.
 
@@ -179,6 +184,7 @@ Parameters:
 - `start=0.0`
 - `time_scale=1.0`
 - `partial_shift=0.0`
+- `freq_scale=1.0`
 - `amp_scale=1.0`
 - `reverse=False`
 
@@ -187,6 +193,7 @@ Behavior:
 - does not mutate the source phrase
 - scales both onset times and durations
 - shifts partial-space material by addition
+- multiplies absolute-frequency material (notes authored with `freq`) by `freq_scale`; defaults to `1.0` (no change), must be positive
 - multiplies resolved linear amplitude
 - preserves other note metadata such as `velocity` and `pitch_motion`
 - if `reverse=True`, mirrors phrase event placement in time before applying `start`
@@ -246,10 +253,13 @@ Fields:
 - `normalize_peak_db`
 - `max_polyphony`
 - `legato`
+- `choke_group`
 - `pan`
 - `sympathetic_amount`
-- `sympathetic_decay`
+- `sympathetic_decay_s`
 - `sympathetic_modes`
+- `drift_bus`
+- `drift_bus_correlation`
 - `automation`
 - `notes`
 
@@ -262,17 +272,19 @@ Important behavior:
 - `normalize_lufs` defaults to `-24.0`; set to `None` only as a last resort (prefer `normalize_peak_db` for percussive voices)
 - `normalize_peak_db` defaults to `None`; mutually exclusive with `normalize_lufs`
 - `max_polyphony` defaults to `None` (no cap); when provided it must be `>= 1`
+- `choke_group` defaults to `None`; when set, all voices sharing the same string tag form a choke group
 
 Practical interpretation:
 
 - `synth_defaults` is the baseline sound
 - `effects` is the per-voice processing chain
-- `envelope_humanize` is the ADSR variation layer
+- `envelope_humanize` is the ADSR variation layer; it drifts attack/decay/sustain/release times only. The per-stage curve powers (`attack_power`, `decay_power`, `release_power`) and VCV-style `attack_target` overshoot are synth params (see `docs/synth_api.md`) and are NOT drifted by envelope humanization.
+- when `voice_card_spread` (or the legacy `voice_card`) is explicitly set on the voice's synth params, an OB-Xd-style helper multiplicatively scales per-voice attack and release times at render time from the deterministic voice-card offsets — opt-in only, so voices that never set either knob keep their exact authored ADSR times. Use the optional `voice_card_envelope_spread` synth param to override the envelope-rate dimension independently (e.g. spread cutoffs by the full amount but leave envelope times untouched by setting it to `0.0`).
 - `velocity_humanize` is the render-time dynamic variation layer
 - `velocity_group` links multiple voices into a shared velocity-drift family
 - `velocity_to_params` makes louder/softer notes timbrally different
 - `pre_fx_gain_db` is the voice input trim before voice effects; use it when you want to hit chorus, saturation, compression, or reverb harder or softer without changing the note writing
-- `mix_db` is the voice fader after voice effects and before the master bus — use it **only for mix balance**, not for gain staging; normalization handles gain staging
+- `mix_db` is a **post-fader channel level** (like a mixing console fader), not a wet/dry mix ratio — it controls how loud this voice is in the final stereo bus, in dB, after normalization and voice effects have been applied; defaults to `0.0` (unity gain); use it **only for mix balance**, not for gain staging; for wet/dry control on effects, use effect-level `mix` or `wet` parameters on `EffectSpec` instead
 - `sends` routes the post-fader voice signal into one or more shared send buses
 - `normalize_lufs` applies an integrated-LUFS stem gain trim before `pre_fx_gain_db`, pan, voice effects, and `mix_db`; the default `-24.0` is the right choice for all tonal, melodic, and sustained voices
 - `normalize_peak_db` is the alternative for percussive/transient voices (kicks, toms, noise hits): it normalizes the voice to a target peak level before effects, making compressor thresholds and effect drive predictable regardless of BPM or individual note `amp_db` values — use `-6.0` as the standard target when pairing with the `kick_punch` or `kick_glue` compressor presets
@@ -281,15 +293,17 @@ Practical interpretation:
 - `legato=True` only matters when `max_polyphony=1`: overlapping note transitions skip the new note's attack retrigger, giving a simple mono-legato glide behavior without continuous oscillator state carryover
 - `pan` places the rendered voice in stereo
 - `sympathetic_amount` controls the level of sympathetic resonance added to the voice; `0.0` (default) disables it
-- `sympathetic_decay` sets the decay time in seconds for sympathetic resonator ringing; default `2.0`
+- `sympathetic_decay_s` sets the decay time in seconds for sympathetic resonator ringing; default `2.0`
 - `sympathetic_modes` sets how many harmonic modes per note are used as resonator frequencies; default `8`
+- `drift_bus` is the name of a shared `DriftBusSpec` on the score that this voice subscribes to; default `None` (no bus). When set, the bus name must be registered via `Score.add_drift_bus(...)`
+- `drift_bus_correlation` controls how much of the voice's slow pitch drift comes from the shared bus vs. the engine's independent drift; `1.0` (default) is fully shared, `0.0` is fully independent; must be in `[0, 1]`
 - `automation` adds explicit score-time parameter lanes beyond humanization
 - in phase 1, `Voice.automation` can target synth params, `pitch_ratio`, and
   control surfaces such as `pan`, `pre_fx_gain_db`, and `mix_db`
 
 ### Sympathetic Resonance
 
-`sympathetic_amount`, `sympathetic_decay`, and `sympathetic_modes` control an
+`sympathetic_amount`, `sympathetic_decay_s`, and `sympathetic_modes` control an
 optional resonator bank that adds sympathetic ringing to a voice.
 
 Parameters:
@@ -297,7 +311,7 @@ Parameters:
 - `sympathetic_amount: float = 0.0`
   Level of sympathetic resonance mixed into the voice. `0.0` disables the
   feature entirely.
-- `sympathetic_decay: float = 2.0`
+- `sympathetic_decay_s: float = 2.0`
   Decay time in seconds for each resonator mode.
 - `sympathetic_modes: int = 8`
   Number of harmonic modes per note used as resonator frequencies.
@@ -334,7 +348,7 @@ score.add_voice(
     "harpsichord",
     synth_defaults={"engine": "harpsichord", "preset": "baroque"},
     sympathetic_amount=0.15,
-    sympathetic_decay=2.5,
+    sympathetic_decay_s=2.5,
     sympathetic_modes=6,
 )
 ```
@@ -381,13 +395,34 @@ Behavior:
 - if you heavily attenuate both `send_db` and `return_db`, the shared return can become effectively inaudible and harder to reason about
 - `automation` can ride `return_db` and `pan` over score time
 
+## `DriftBusSpec`
+
+`DriftBusSpec` defines a shared slow pitch-drift bus on the score. Voices set
+`drift_bus=<name>` and `drift_bus_correlation=<x>` to subscribe; the bus output
+is mixed into their per-note frequency trajectories in log-cents space.
+
+Fields:
+
+- `name: str`
+- `rate_hz: float = 0.2` — characteristic drift rate; 0.05-0.5 Hz is the musically useful range
+- `depth_cents: float = 5.0` — RMS excursion in cents; 2-12 is the subtle-to-breathing range
+- `seed: int | None = None` — deterministic seed
+
+Behavior:
+
+- bus names must be unique within a score (enforced by `Score.drift_buses` being a dict)
+- `rate_hz` must be positive, `depth_cents` must be non-negative
+- the bus runs independently of audio sample rate; it produces a single slow random-walk trajectory that all subscribed voices sample at their respective absolute note times
+- at `Voice.drift_bus_correlation=1.0` the bus replaces the engine's independent pitch drift entirely; at `0.0` it is ignored; intermediate values blend (engine `pitch_drift` is scaled by `(1 - correlation)` and the bus is applied as `bus_ratio ** correlation` to the frequency trajectory)
+- implementation follows Surge XT's published `DriftLFO` algorithm (single-pole filtered uniform noise with RMS-preserving gain compensation); re-written from the description, not copied
+
 ## `Score`
 
 `Score` is the top-level composition container and renderer.
 
 Fields:
 
-- `f0: float`
+- `f0_hz: float`
 - `sample_rate: int = synth.SAMPLE_RATE`
 - `timing_humanize: TimingHumanizeSpec | None = None`
 - `auto_master_gain_stage: bool = True`
@@ -396,6 +431,9 @@ Fields:
 - `master_input_gain_db: float = 0.0`
 - `master_effects: list[EffectSpec] = []`
 - `send_buses: list[SendBusSpec] = []`
+- `drift_buses: dict[str, DriftBusSpec] = {}`
+- `macros: dict[str, MacroDefinition] = {}`
+- `modulations: list[ModConnection] = []`
 - `voices: dict[str, Voice] = {}`
 
 ### `Score.add_voice(...)`
@@ -419,10 +457,13 @@ Parameters:
 - `normalize_peak_db`
 - `max_polyphony`
 - `legato`
+- `choke_group` — optional string tag; voices sharing a choke group cut each other on note onset (see below)
 - `pan`
 - `sympathetic_amount` — strength of sympathetic resonance; `0.0` (default) disables it
-- `sympathetic_decay` — decay time in seconds for sympathetic resonator ringing; default `2.0`
+- `sympathetic_decay_s` — decay time in seconds for sympathetic resonator ringing; default `2.0`
 - `sympathetic_modes` — number of harmonic modes per note used as resonator frequencies; default `8`
+- `drift_bus` — optional name of a shared `DriftBusSpec` registered on the score via `add_drift_bus(...)`; default `None` (no shared drift)
+- `drift_bus_correlation` — fraction of the voice's slow pitch drift coming from the shared bus vs. the engine's independent drift; `1.0` (default) is fully shared, `0.0` is fully independent; must be in `[0, 1]`
 - `automation` — voice-level score-time automation specs; default `None`
 
 Important behavior:
@@ -431,13 +472,18 @@ Important behavior:
 - `velocity_humanize=None` in the method call currently means "use the default subtle humanizer", not "disable velocity humanization"
 - if you want to disable velocity humanization after a voice exists, set `voice.velocity_humanize = None`
 - `pre_fx_gain_db` defaults to `0.0` and acts like a pre-insert trim
-- `mix_db` defaults to `0.0` and acts like a post-insert voice fader; use it for mix balance only, not gain staging
+- `mix_db` defaults to `0.0` (unity gain) and acts like a post-insert channel fader in dB — it sets how loud the voice is in the final stereo bus; use it for mix balance only, not gain staging; despite the name, it is **not** a wet/dry mix ratio — for effect wet/dry control, use `mix` or `wet` params on `EffectSpec`
 - `sends` defaults to `[]` and routes the post-fader voice into named shared aux buses
 - `normalize_lufs=-24.0` (default) handles gain staging for all tonal voices — leave it at the default and use `mix_db` to balance
 - use `normalize_peak_db=-6.0` for percussive voices (kicks, toms, noise hits) instead of `normalize_lufs`; this gives effects a predictable input level regardless of BPM or note-level `amp_db` variation
 - `normalize_lufs` and `normalize_peak_db` are mutually exclusive
 - `max_polyphony=1` is the strict-mono setting for basses, leads, and other voices where overlap smear is unwanted
 - with `max_polyphony=1`, `legato=True` suppresses the attack retrigger on overlapped note changes
+- `choke_group` assigns the voice to a named choke group; when any voice in the
+  group plays a note, all other voices in the same group are faded out with a
+  10 ms linear ramp at that onset time — the classic use case is open/closed
+  hi-hat pairs where a closed hit silences a ringing open hit
+- `choke_group=None` (default) means the voice is not in any choke group
 
 That second-to-last point is easy to miss and worth being explicit about.
 
@@ -488,14 +534,74 @@ or modulation return instead of duplicating similar insert chains per voice.
 In normal authoring, prefer balancing the effect with voice `mix_db` and per-voice
 `send_db`, leaving `return_db=0.0` unless you explicitly want a global return trim.
 
-### `Score.get_voice(name)`
+### `Score.add_macro(...)`
 
-Returns an existing voice or creates a blank `Voice(name=name)` if missing.
+Registers a named macro scalar for use with `MacroSource` connections in the
+modulation matrix. Macros are shared `[0, 1]` scalars resolved by name; an
+optional `AutomationSpec` lets the macro ride the timeline like any other
+control-scope automation.
 
-This is the escape hatch when you want to mutate a voice directly:
+Parameters:
+
+- `name: str` — macro name referenced by `MacroSource(name)`
+- `default: float = 0.0` — value used when no automation is attached
+- `automation: AutomationSpec | None = None` — optional control-scope
+  automation (`target.kind == "control"`) that drives the macro over score time
+
+Behavior:
+
+- macros are stored in `Score.macros` as `MacroDefinition` instances keyed by name
+- calling `add_macro(...)` with an existing name replaces the existing definition
+- macros are resolved through `MacroSource(name)` at matrix-sample time; an
+  unregistered name raises at render time
+
+See the Modulation Matrix section below for end-to-end use.
+
+### `Score.add_drift_bus(...)`
+
+Adds or replaces a named shared pitch-drift bus definition. Voices that set
+`drift_bus=<name>` receive a correlated slow pitch-drift signal; the amount of
+correlation is controlled per voice via `drift_bus_correlation`.
+
+Parameters:
+
+- `name: str` — bus name referenced by `Voice.drift_bus`
+- `rate_hz: float = 0.2` — characteristic drift rate; musically useful range is 0.05-0.5 Hz
+- `depth_cents: float = 5.0` — RMS excursion in cents; 2-12 is the subtle-to-breathing range
+- `seed: int | None = None` — deterministic seed; omitting it still produces the same output across identical scores, but varying `seed` picks a different random-walk trajectory
+
+Behavior:
+
+- the bus produces a single shared slow random-walk signal; every subscribing voice samples it at their note's absolute score time
+- per-voice `drift_bus_correlation=1.0` means the engine's independent pitch drift is fully replaced by the bus; `0.0` means the bus is entirely ignored and the voice keeps its original independent drift; intermediate values blend linearly in cents space (equivalent to `bus_ratio ** correlation` multiplied into the freq trajectory, with the engine's internal `pitch_drift` parameter scaled by `(1 - correlation)`)
+- the bus is MIT-licensed and re-implemented from Surge XT's published `DriftLFO` algorithm (single-pole filtered uniform noise with gain compensation)
+
+Example:
 
 ```python
-voice = score.get_voice("lead")
+score = Score(f0_hz=220.0)
+score.add_drift_bus("ensemble", rate_hz=0.2, depth_cents=6.0, seed=17)
+for voice_name in ("lead", "alto", "bass"):
+    score.add_voice(
+        voice_name,
+        synth_defaults={"engine": "polyblep", "waveform": "saw"},
+        drift_bus="ensemble",
+        drift_bus_correlation=0.7,  # mostly shared, with a hint of individual wobble
+    )
+```
+
+### `Score.get_or_create_voice(name)`
+
+Returns an existing voice or creates a blank `Voice(name=name)` with no
+defaults if missing. `add_note(...)` and `add_phrase(...)` call this
+internally, so pieces that only author notes rarely need to invoke it
+directly.
+
+This is the escape hatch when you want to mutate a voice in place without
+going through `add_voice(...)`:
+
+```python
+voice = score.get_or_create_voice("lead")
 voice.velocity_humanize = None
 ```
 
@@ -531,6 +637,7 @@ Parameters:
 - `partial_shift`
 - `amp_scale`
 - `reverse`
+- `synth` — optional dict of synth overrides merged into each placed note as a base layer; note-level `synth` entries win on conflict. Useful for applying a per-placement articulation tweak (e.g. `synth={"attack_scale": 0.5}`) to an entire phrase without mutating the underlying `Phrase`.
 
 Use this for phrase-first composition. It returns the placed `NoteEvent`s.
 
@@ -608,7 +715,43 @@ Useful for:
 
 - debugging arrangement balance
 - inspecting per-voice rendering
-- exporting stems later if that becomes a workflow
+- feeding into `export_stem_bundle()` for per-voice WAV export
+
+### `Score.render_stems_with_effect_analysis()`
+
+Renders each voice independently (same as `render_stems()`) and also
+returns per-voice effect diagnostics — the same effect-analysis entries
+the `render_with_effect_analysis()` path emits, but scoped to voice
+inserts only (no send-bus or master-bus analysis).
+
+Returns:
+
+- `tuple[dict[str, np.ndarray], dict[str, list[dict[str, Any]]]]` —
+  `(stems, voice_effects)` where `stems[voice_name]` is the rendered
+  voice stem and `voice_effects[voice_name]` is a list of
+  `EffectAnalysisEntry.to_dict()` payloads describing each insert
+  effect's gain reduction, clipping density, activity level, etc.
+
+Useful when you want stem-level audio alongside actionable diagnostics
+for voice inserts — for example, to flag a compressor that is running
+mostly inactive on a given voice — without paying for a full master-bus
+render.
+
+### `Score.render_for_stem_export(dry=False)`
+
+Renders all components needed for audio stem WAV export in a single pass.
+
+Returns `(voice_stems, send_returns, mix_audio)`:
+
+- `voice_stems: dict[str, np.ndarray]` — wet (post-effects/pan/fader) or dry
+  (post-normalization, pre-effects/pan, mono) depending on the `dry` flag
+- `send_returns: dict[str, np.ndarray]` — mixed bus returns; empty dict if `dry=True`
+- `mix_audio: np.ndarray` — always the full wet mix with master-bus processing
+
+In wet mode, `sum(voice_stems) + sum(send_returns) ≈ pre-master mix`.
+
+Used by `export_stem_bundle()` in `code_musics/stem_export.py`. See
+`make stems PIECE=...` for the CLI workflow.
 
 ### `Score.resolve_timing_offsets()`
 
@@ -654,6 +797,147 @@ Behavior:
 - saves the figure if `path` is provided
 - returns `(figure, axis)`
 
+## Modulation Matrix
+
+`code_musics/modulation.py` implements a Vital-style per-connection
+modulation matrix.  Every routing is a first-class `ModConnection`
+object with `amount`, `bipolar`, `stereo`, `power`, optional
+`breakpoints`, and a combine `mode`.  Connections attach at voice
+scope (`Voice.modulations`) or score scope (`Score.modulations`).
+
+### Sources
+
+All sources expose a common `sample(times, context) -> np.ndarray`
+interface; each subclass advertises its natural output domain
+(bipolar `[-1, 1]` or unipolar `[0, 1]`).
+
+| Source | Output | Per-note | Notes |
+|---|---|---|---|
+| `LFOSource(rate_hz, waveshape, phase_rad, retrigger, seed)` | bipolar | optional | waveshapes: `sine`, `triangle`, `saw_up`, `saw_down`, `square`, `smoothed_random`. `smoothed_random` raises `ValueError` if `rate_hz > 200` (capped below audio rate); use `OscillatorSource` for audio-rate modulation |
+| `OscillatorSource(rate_hz, waveshape, phase, stereo, stereo_phase_offset)` | bipolar | no | audio-rate sibling to `LFOSource` with no sub-audio cap, intended for per-sample synth destinations (PWM, osc2 detune FM, supersaw spread). Waveshapes limited to `sine`, `saw`, `triangle`; no anti-aliasing, so rates near Nyquist will alias (lean on engine oversampling). `stereo=True` returns a `(2, n)` array with the right channel phase-shifted by `stereo_phase_offset` cycles |
+| `EnvelopeSource(attack, hold, decay, sustain, release, *_power)` | unipolar | always | triggered at note onset; mirrors synth ADSR curve powers |
+| `MacroSource(name)` | unipolar | shared | resolved via `Score.add_macro(name, default, automation)` |
+| `VelocitySource(velocity_scale)` | unipolar | always | wraps the resolved (humanized) note velocity |
+| `RandomSource(rate_hz, retrigger, seed)` | bipolar | optional | seeded sample-and-hold |
+| `ConstantSource(value)` | bipolar | no | used for stereo pan-split tricks (`value=1.0`, `amount=+0.55` on one voice, `-0.55` on another) |
+| `DriftAdapter(style, rate_hz, smoothness, seed)` | bipolar | no | reuses `humanize.DriftSpec` curves so drift sources are routable |
+
+### `ModConnection`
+
+```python
+@dataclass(frozen=True)
+class ModConnection:
+    source: ModSource
+    target: AutomationTarget       # same (kind, name) as AutomationSpec
+    amount: float = 1.0
+    bipolar: bool = True           # False rectifies bipolar sources to >= 0
+    stereo: bool = False           # reserved for stereo-aware destinations
+    power: float = 0.0             # Vital sign-magnitude curve, [-20, 20]
+    breakpoints: tuple[tuple[float, float], ...] | None = None
+    mode: AutomationMode = "add"   # "replace" | "add" | "multiply"
+    name: str | None = None        # inspection label
+```
+
+Shaping pipeline applied per connection:
+`raw = source.sample(...)` -> optional bipolar rectification ->
+`power` curve -> `breakpoints` -> `amount` scaling.
+
+### Combine order at a destination
+
+When multiple connections target the same destination, evaluation
+proceeds:
+
+1. existing `AutomationSpec` lanes apply to the base value first
+   (unchanged from the pre-matrix behavior);
+2. matrix contributions are then combined in order: all `replace`
+   connections (last wins), then `multiply`, then `add`.
+
+This matches Vital's precedence: a hard override fully replaces, then
+envelope/LFO scaling, then additive LFO/macro bias.
+
+### Destination namespace
+
+Targets reuse `AutomationTarget`:
+
+- `kind="synth"` — any name in
+  `_SUPPORTED_SYNTH_AUTOMATION_PARAMS`;
+- `kind="control"` — `mix_db`, `pan`, `send_db`, `return_db`,
+  `pre_fx_gain_db`. Effect wet/mix/wet_level targets (`wet`, `mix`,
+  `wet_level`) are reachable by `AutomationSpec` but **not yet** by
+  matrix `ModConnection`s; see `FUTURE.md` under "Modulation
+  architecture";
+- `kind="pitch_ratio"` — the dedicated `pitch_ratio` target.
+
+### Time resolution
+
+Destinations decide the time resolution:
+
+- **Per-sample** — all control targets, `pitch_ratio`, and the
+  per-sample synth whitelist below.
+- **Per-note scalar** — every other synth target is sampled at note
+  onset and folded into the synth params dict alongside
+  `apply_synth_automation`.
+
+The **per-sample synth whitelist** for MVP is a single destination:
+`cutoff_hz` on the `polyblep` engine, via the engine's
+`param_profiles` kwarg.  Engines opt in explicitly via
+`register_param_profile_support(engine_name)`; engines that don't opt
+in silently ignore profiles and use the scalar value.
+
+See `FUTURE.md` under "Modulation architecture" for the deferred
+per-sample destinations.
+
+### Macros
+
+```python
+score.add_macro("brightness", default=0.5, automation=<AutomationSpec>)
+```
+
+Macros are shared `[0, 1]` scalars resolved via `MacroSource(name)`.
+The optional `automation` must target `kind="control"` and can ride
+the timeline the same way voice/score automations do.
+
+### `Score.describe_modulations()`
+
+Returns a flat list of dicts summarizing every registered connection
+(scope, source type, destination, shaping fields).  Useful for
+inspection / analysis without having to walk the voice graph.
+
+### Example
+
+```python
+score = Score(f0_hz=174.614, master_effects=DEFAULT_MASTER_EFFECTS)
+score.add_macro("brightness", default=0.0, automation=AutomationSpec(
+    target=AutomationTarget(kind="control", name="mix"),
+    segments=(AutomationSegment(
+        start=0.0, end=30.0, shape="linear",
+        start_value=0.0, end_value=1.0,
+    ),),
+))
+score.add_voice(
+    "lead",
+    synth_defaults={"engine": "polyblep", "cutoff_hz": 1400.0},
+    modulations=[
+        ModConnection(
+            source=LFOSource(rate_hz=0.7, waveshape="sine"),
+            target=AutomationTarget(kind="synth", name="cutoff_hz"),
+            amount=600.0, power=-4.0, mode="add",
+        ),
+        ModConnection(
+            source=VelocitySource(),
+            target=AutomationTarget(kind="synth", name="resonance_q"),
+            amount=0.6, bipolar=False,
+            breakpoints=((0.0, 0.0), (0.6, 0.15), (1.0, 1.0)),
+            mode="add",
+        ),
+    ],
+)
+```
+
+See `code_musics/pieces/mod_matrix_study.py` for a full end-to-end
+demo piece covering LFO, Macro, Velocity, DriftAdapter, and
+stereo-split `ConstantSource` use cases.
+
 ## Render-Time Resolution Order
 
 The practical render path for one note is:
@@ -666,7 +950,7 @@ The practical render path for one note is:
 6. build pitch trajectory if `pitch_motion` is present
 7. render the raw engine signal
 8. convert velocity into a dB offset using `velocity_db_per_unit`
-9. resolve ADSR with `envelope_humanize`
+9. resolve ADSR with `envelope_humanize` (drifts attack/decay/sustain/release times only; the per-stage curve powers `attack_power` / `decay_power` / `release_power` and `attack_target` overshoot are synth params and are NOT drifted here — see `docs/synth_api.md`)
 10. place the note in time using `timing_humanize`
 11. if `max_polyphony` is set, apply voice-level note allocation; in strict mono this can truncate older notes, and `legato=True` suppresses attack retriggers on overlapped note changes
 12. mix notes into the dry voice stem

@@ -12,34 +12,79 @@ AutomationMode = Literal["replace", "add", "multiply"]
 AutomationShape = Literal["hold", "linear", "exp", "sine_lfo"]
 
 _SUPPORTED_SYNTH_AUTOMATION_PARAMS = {
+    "analog_jitter",
     "attack",
     "attack_brightness",
+    "attack_power",
+    "attack_target",
+    "bass_compensation",
+    "body_distortion_drive",
+    "body_fm_index",
     "brightness",
     "brightness_tilt",
     "click_amount",
+    "cutoff_drift",
     "cutoff_hz",
     "decay",
-    "drive_ratio",
+    "decay_power",
+    "drift",
     "feedback",
+    "feedback_amount",
+    "feedback_saturation",
     "filter_drive",
     "filter_env_amount",
     "filter_env_decay",
+    "filter_even_harmonics",
+    "filter_morph",
     "hammer_hardness",
     "hammer_noise",
+    "hpf_cutoff_hz",
     "index_decay",
+    "leakage",
     "mod_index",
     "morph_time",
     "noise_amount",
+    "noise_floor",
     "osc2_detune_cents",
     "osc2_level",
+    "osc_asymmetry",
+    "osc_dc_offset",
+    "osc_shape_drift",
+    "osc_softness",
     "overtone_amount",
+    "pitch_drift",
     "pluck_hardness",
     "pluck_noise",
     "release",
+    "release_power",
     "resonance_q",
     "soundboard_brightness",
     "soundboard_color",
     "sustain_level",
+    "vca_nonlinearity",
+    "vibrato_chorus",
+    "vibrato_depth",
+    "voice_card_spread",
+    "voice_card_pitch_spread",
+    "voice_card_filter_spread",
+    "voice_card_envelope_spread",
+    "voice_card_osc_spread",
+    "voice_card_level_spread",
+    # va engine: supersaw / spectralwave / drive / comb params
+    "supersaw_detune",
+    "supersaw_mix",
+    "spectral_position",
+    "spectral_morph_amount",
+    "drive_amount",
+    "comb_feedback",
+    "comb_damping",
+    "comb_keytrack",
+    "comb_mix",
+    "comb_delay_ms",
+    "filter1_cutoff_hz",
+    "filter1_resonance_q",
+    "filter2_cutoff_hz",
+    "filter2_resonance_q",
 }
 
 _SUPPORTED_CONTROL_AUTOMATION_PARAMS = {
@@ -86,7 +131,7 @@ class AutomationSegment:
     end_value: float | None = None
     value: float | None = None
     freq_hz: float | None = None
-    phase: float = 0.0
+    phase_rad: float = 0.0
     depth: float | None = None
     offset: float = 0.0
 
@@ -306,19 +351,46 @@ def apply_control_automation(
     return values
 
 
+def apply_mode_vectorized(
+    mode: AutomationMode,
+    base: np.ndarray,
+    contribution: np.ndarray,
+    *,
+    nan_mask_contribution: bool = False,
+) -> np.ndarray:
+    """Apply a combine mode to a contribution against a base curve.
+
+    ``nan_mask_contribution=True`` preserves the automation-segment
+    semantics where NaN in ``contribution`` means "outside any segment —
+    keep base value."  With the default ``False``, every sample of
+    ``contribution`` is treated as defined (modulation-matrix semantics).
+    """
+    if not nan_mask_contribution:
+        if mode == "replace":
+            return contribution.astype(np.float64, copy=True)
+        if mode == "add":
+            return base + contribution
+        if mode == "multiply":
+            return base * contribution
+        raise ValueError(f"Unsupported combine mode: {mode!r}")
+
+    valid = ~np.isnan(contribution)
+    result = base.copy()
+    if mode == "replace":
+        result[valid] = contribution[valid]
+    elif mode == "add":
+        result[valid] = base[valid] + contribution[valid]
+    elif mode == "multiply":
+        result[valid] = base[valid] * contribution[valid]
+    else:
+        raise ValueError(f"Unsupported combine mode: {mode!r}")
+    return result
+
+
 def _apply_mode_vectorized(
     mode: AutomationMode, base: np.ndarray, sampled: np.ndarray
 ) -> np.ndarray:
-    """Apply automation mode element-wise.  NaN in sampled → keep base value."""
-    valid = ~np.isnan(sampled)
-    result = base.copy()
-    if mode == "replace":
-        result[valid] = sampled[valid]
-    elif mode == "add":
-        result[valid] = base[valid] + sampled[valid]
-    elif mode == "multiply":
-        result[valid] = base[valid] * sampled[valid]
-    return result
+    return apply_mode_vectorized(mode, base, sampled, nan_mask_contribution=True)
 
 
 def _sample_segments_vectorized(
@@ -375,7 +447,7 @@ def _sample_segments_vectorized(
         elif seg.shape == "sine_lfo":
             local_t = seg_times - seg.start
             result[mask] = seg.offset + seg.depth * np.sin(  # type: ignore[operator]
-                2.0 * np.pi * seg.freq_hz * local_t + seg.phase  # type: ignore[operator]
+                2.0 * np.pi * seg.freq_hz * local_t + seg.phase_rad  # type: ignore[operator]
             )
 
     if clamp_min is not None:
@@ -429,7 +501,7 @@ def _sample_segment(segment: AutomationSegment, time: float) -> float:
         return float(
             segment.offset
             + segment.depth
-            * np.sin((2.0 * np.pi * segment.freq_hz * local_time) + segment.phase)
+            * np.sin((2.0 * np.pi * segment.freq_hz * local_time) + segment.phase_rad)
         )
 
     raise ValueError(f"Unsupported automation segment shape: {segment.shape!r}")

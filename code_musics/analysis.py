@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.fft import dct
 from scipy.signal import spectrogram
 
 if TYPE_CHECKING:
@@ -307,7 +308,7 @@ def analyze_score(
             else:
                 if note.partial is None:
                     raise ValueError("note must define partial or freq")
-                resolved_freq = score.f0 * note.partial
+                resolved_freq = score.f0_hz * note.partial
             voice_freqs.append(resolved_freq)
             frequencies_hz.append(resolved_freq)
             if note.partial is not None:
@@ -363,7 +364,7 @@ def analyze_score(
         warnings.append("high attack density may feel busy or percussive")
     if (
         note_count > 0
-        and mean_note_duration_hz(score) > 2.5
+        and mean_note_duration(score) > 2.5
         and mean_attack_density_hz < 0.8
     ):
         warnings.append("long-note bias may read as drony")
@@ -629,7 +630,249 @@ def compare_analysis_manifests(
     return comparison
 
 
-def mean_note_duration_hz(score: Score) -> float:
+# ---------------------------------------------------------------------------
+# Audio comparison tooling
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AudioComparison:
+    """Results of comparing two audio signals."""
+
+    envelope_correlation: float  # Pearson r of RMS envelopes
+    band_energy_diff_db: dict[str, float]  # per-band energy difference (A - B)
+    centroid_diff_hz: float  # mean spectral centroid difference
+    mfcc_cosine_similarity: float  # cosine similarity of mean MFCC vectors
+    peak_diff_db: float  # peak level difference
+    spectral_tilt_diff: float  # spectral tilt difference (dB/octave)
+
+
+def compute_mfcc(
+    signal: np.ndarray,
+    *,
+    sample_rate: int,
+    n_mfcc: int = 13,
+    n_mels: int = 40,
+    n_fft: int = 1024,
+    hop_length: int = 256,
+) -> np.ndarray:
+    """Compute MFCCs without librosa dependency.
+
+    Returns shape ``(n_frames, n_mfcc)`` array.
+
+    Implementation: STFT -> power spectrum -> mel filterbank -> log -> DCT-II.
+    """
+    # --- STFT -> power spectrum ---
+    window = np.hanning(n_fft)
+    frames: list[np.ndarray] = []
+    for start in range(0, max(signal.size - n_fft + 1, 1), hop_length):
+        frame = signal[start : start + n_fft]
+        if frame.size < n_fft:
+            padded = np.zeros(n_fft, dtype=np.float64)
+            padded[: frame.size] = frame
+            frame = padded
+        frames.append(frame * window)
+    if not frames:
+        frames.append(np.zeros(n_fft, dtype=np.float64))
+    power_spectra = np.array(
+        [np.abs(np.fft.rfft(frame)) ** 2 for frame in frames],
+        dtype=np.float64,
+    )  # (n_frames, n_fft//2 + 1)
+
+    # --- Mel filterbank from scratch ---
+    n_freqs = n_fft // 2 + 1
+    fft_freqs = np.linspace(0.0, sample_rate / 2.0, n_freqs)
+
+    mel_low = _hz_to_mel(0.0)
+    mel_high = _hz_to_mel(sample_rate / 2.0)
+    mel_points = np.linspace(mel_low, mel_high, n_mels + 2)
+    hz_points = _mel_to_hz(mel_points)
+
+    hz_bins: np.ndarray = np.asarray(hz_points, dtype=np.float64)
+    filterbank = np.zeros((n_mels, n_freqs), dtype=np.float64)
+    for m in range(n_mels):
+        f_left = float(hz_bins[m])
+        f_center = float(hz_bins[m + 1])
+        f_right = float(hz_bins[m + 2])
+        rising = (fft_freqs - f_left) / max(f_center - f_left, 1e-10)
+        falling = (f_right - fft_freqs) / max(f_right - f_center, 1e-10)
+        filterbank[m] = np.maximum(0.0, np.minimum(rising, falling))
+
+    # --- Apply filterbank, log, DCT ---
+    mel_energies = power_spectra @ filterbank.T  # (n_frames, n_mels)
+    log_mel = np.log(mel_energies + 1e-10)
+    cepstral = np.asarray(dct(log_mel, type=2, axis=1, norm="ortho"), dtype=np.float64)
+    return cepstral[:, :n_mfcc]
+
+
+def compare_audio(
+    signal_a: np.ndarray,
+    signal_b: np.ndarray,
+    *,
+    sample_rate: int,
+) -> AudioComparison:
+    """Compare two audio signals across multiple perceptual dimensions."""
+
+    mono_a = synth.to_mono_reference(signal_a)
+    mono_b = synth.to_mono_reference(signal_b)
+
+    # 1. Envelope correlation ------------------------------------------------
+    _, env_a = _frame_rms_envelope(
+        mono_a, sample_rate=sample_rate, window_seconds=0.001, hop_seconds=0.001
+    )
+    _, env_b = _frame_rms_envelope(
+        mono_b, sample_rate=sample_rate, window_seconds=0.001, hop_seconds=0.001
+    )
+    min_env_len = min(env_a.size, env_b.size)
+    if min_env_len >= 2:
+        corrcoef = np.corrcoef(env_a[:min_env_len], env_b[:min_env_len])
+        envelope_correlation = float(corrcoef[0, 1])
+    else:
+        envelope_correlation = 0.0
+
+    # 2. Band energy diff ----------------------------------------------------
+    freqs_a, mag_db_a = _average_spectrum(mono_a, sample_rate=sample_rate)
+    freqs_b, mag_db_b = _average_spectrum(mono_b, sample_rate=sample_rate)
+    bands_a = _compute_band_energies(freqs=freqs_a, magnitude_db=mag_db_a)
+    bands_b = _compute_band_energies(freqs=freqs_b, magnitude_db=mag_db_b)
+    band_energy_diff_db = {
+        name: bands_a[name] - bands_b[name] for name in bands_a if name in bands_b
+    }
+
+    # 3. Spectral centroid diff ----------------------------------------------
+    centroid_a = _spectral_centroid(freqs=freqs_a, magnitude_db=mag_db_a)
+    centroid_b = _spectral_centroid(freqs=freqs_b, magnitude_db=mag_db_b)
+    centroid_diff_hz = centroid_a - centroid_b
+
+    # 4. MFCC cosine similarity ----------------------------------------------
+    mfcc_a = compute_mfcc(mono_a, sample_rate=sample_rate)
+    mfcc_b = compute_mfcc(mono_b, sample_rate=sample_rate)
+    mean_mfcc_a = np.mean(mfcc_a, axis=0)
+    mean_mfcc_b = np.mean(mfcc_b, axis=0)
+    norm_a = float(np.linalg.norm(mean_mfcc_a))
+    norm_b = float(np.linalg.norm(mean_mfcc_b))
+    if norm_a > 0 and norm_b > 0:
+        mfcc_cosine_similarity = float(
+            np.dot(mean_mfcc_a, mean_mfcc_b) / (norm_a * norm_b)
+        )
+    else:
+        mfcc_cosine_similarity = 0.0
+
+    # 5. Peak diff -----------------------------------------------------------
+    peak_a = float(np.max(np.abs(mono_a))) if mono_a.size > 0 else _EPSILON
+    peak_b = float(np.max(np.abs(mono_b))) if mono_b.size > 0 else _EPSILON
+    peak_diff_db = float(20.0 * np.log10(max(peak_a, _EPSILON) / max(peak_b, _EPSILON)))
+
+    # 6. Spectral tilt diff --------------------------------------------------
+    tilt_a = _fit_spectral_tilt(freqs=freqs_a, magnitude_db=mag_db_a)
+    tilt_b = _fit_spectral_tilt(freqs=freqs_b, magnitude_db=mag_db_b)
+    spectral_tilt_diff = tilt_a - tilt_b
+
+    return AudioComparison(
+        envelope_correlation=envelope_correlation,
+        band_energy_diff_db=band_energy_diff_db,
+        centroid_diff_hz=centroid_diff_hz,
+        mfcc_cosine_similarity=mfcc_cosine_similarity,
+        peak_diff_db=peak_diff_db,
+        spectral_tilt_diff=spectral_tilt_diff,
+    )
+
+
+def plot_comparison(
+    signal_a: np.ndarray,
+    signal_b: np.ndarray,
+    *,
+    sample_rate: int,
+    label_a: str = "A",
+    label_b: str = "B",
+    output_path: Path | str | None = None,
+) -> Figure:
+    """Generate a 2x2 comparison figure.
+
+    * Top-left: overlaid RMS amplitude envelopes.
+    * Top-right: overlaid averaged magnitude spectra.
+    * Bottom-left: spectrogram of *signal_a*.
+    * Bottom-right: spectrogram of *signal_b*.
+    """
+    mono_a = synth.to_mono_reference(signal_a)
+    mono_b = synth.to_mono_reference(signal_b)
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+
+    # Top-left: overlaid envelopes -------------------------------------------
+    ax_env = axes[0, 0]
+    env_rate_a, env_a = _frame_rms_envelope(
+        mono_a, sample_rate=sample_rate, window_seconds=0.001, hop_seconds=0.001
+    )
+    env_rate_b, env_b = _frame_rms_envelope(
+        mono_b, sample_rate=sample_rate, window_seconds=0.001, hop_seconds=0.001
+    )
+    if env_a.size > 0:
+        time_a = np.arange(env_a.size) / env_rate_a
+        ax_env.plot(time_a, env_a, linewidth=0.8, label=label_a, alpha=0.8)
+    if env_b.size > 0:
+        time_b = np.arange(env_b.size) / env_rate_b
+        ax_env.plot(time_b, env_b, linewidth=0.8, label=label_b, alpha=0.8)
+    ax_env.set_title("RMS Envelope")
+    ax_env.set_xlabel("Time (s)")
+    ax_env.set_ylabel("Level (dBFS)")
+    ax_env.legend()
+    ax_env.grid(True, alpha=0.25)
+
+    # Top-right: overlaid spectra --------------------------------------------
+    ax_spec = axes[0, 1]
+    freqs_a, mag_db_a = _average_spectrum(mono_a, sample_rate=sample_rate)
+    freqs_b, mag_db_b = _average_spectrum(mono_b, sample_rate=sample_rate)
+    ax_spec.semilogx(freqs_a, mag_db_a, linewidth=1.0, label=label_a, alpha=0.8)
+    ax_spec.semilogx(freqs_b, mag_db_b, linewidth=1.0, label=label_b, alpha=0.8)
+    ax_spec.set_title("Averaged Magnitude Spectrum")
+    ax_spec.set_xlabel("Frequency (Hz)")
+    ax_spec.set_ylabel("Magnitude (dB)")
+    ax_spec.legend()
+    ax_spec.grid(True, which="both", alpha=0.25)
+
+    # Bottom: spectrograms ---------------------------------------------------
+    for ax, mono, label in [
+        (axes[1, 0], mono_a, label_a),
+        (axes[1, 1], mono_b, label_b),
+    ]:
+        sig = mono if mono.size > 0 else np.zeros(256, dtype=np.float64)
+        nperseg = min(2048, max(256, sig.size))
+        noverlap = min(max(nperseg // 2, 1), nperseg - 1)
+        f, t, sxx = spectrogram(
+            sig,
+            fs=sample_rate,
+            nperseg=nperseg,
+            noverlap=noverlap,
+            scaling="spectrum",
+            mode="magnitude",
+        )
+        sxx_db = 20.0 * np.log10(np.maximum(sxx, _EPSILON))
+        mesh = ax.pcolormesh(t, f, sxx_db, shading="auto")
+        ax.set_ylim(20.0, min(sample_rate / 2.0, 12_000.0))
+        ax.set_title(f"Spectrogram: {label}")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Frequency (Hz)")
+        fig.colorbar(mesh, ax=ax, label="dB")
+
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(str(output_path), bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def _hz_to_mel(hz: float | np.ndarray) -> float | np.ndarray:
+    """Convert Hz to mel scale."""
+    return 2595.0 * np.log10(1.0 + np.asarray(hz) / 700.0)
+
+
+def _mel_to_hz(mel: float | np.ndarray) -> float | np.ndarray:
+    """Convert mel scale to Hz."""
+    return 700.0 * (10.0 ** (np.asarray(mel) / 2595.0) - 1.0)
+
+
+def mean_note_duration(score: Score) -> float:
     """Return the average note duration in seconds for warning heuristics."""
     durations = [
         note.duration for voice in score.voices.values() for note in voice.notes

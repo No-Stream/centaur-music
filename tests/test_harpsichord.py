@@ -292,7 +292,7 @@ class TestScoreIntegration:
     def test_score_with_harpsichord_voice(self) -> None:
         from code_musics.score import Score
 
-        score = Score(f0=220.0, sample_rate=22_050)
+        score = Score(f0_hz=220.0, sample_rate=22_050)
         score.add_voice(
             "hpsi",
             synth_defaults={"engine": "harpsichord"},

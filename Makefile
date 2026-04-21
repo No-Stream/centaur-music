@@ -11,6 +11,9 @@ WINDOW ?= 8
 START ?=
 DUR ?=
 MIDI_FORMATS ?=
+BIT_DEPTH ?= 24
+DRY ?= 0
+NO_MIX ?= 0
 ANALYSIS ?= 1
 TESTS ?= tests
 OBLIQUE ?= 0
@@ -39,6 +42,18 @@ else
 MIDI_FORMATS_FLAG =
 endif
 
+ifeq ($(DRY),1)
+STEMS_DRY_FLAG = --dry
+else
+STEMS_DRY_FLAG =
+endif
+
+ifeq ($(NO_MIX),1)
+STEMS_NO_MIX_FLAG = --no-mix
+else
+STEMS_NO_MIX_FLAG =
+endif
+
 .PHONY: all
 all: format-check lint compile typecheck test
 
@@ -50,8 +65,19 @@ list:
 	$(UV_RUN) python main.py --list
 
 .PHONY: lint
-lint:
+lint: lint-py lint-md
+
+.PHONY: lint-py
+lint-py:
 	$(UV_RUN) ruff check .
+
+.PHONY: lint-md
+lint-md:
+	@if command -v markdownlint-cli2 >/dev/null 2>&1; then \
+		markdownlint-cli2 "docs/*.md" "*.md"; \
+	else \
+		echo "markdownlint-cli2 not installed — skipping markdown lint (install via: brew install markdownlint-cli2)"; \
+	fi
 
 .PHONY: format-check
 format-check:
@@ -77,6 +103,38 @@ test:
 .PHONY: test-selected
 test-selected:
 	$(UV_RUN) pytest $(TESTS)
+
+# Run a read-only smoke-test script under scratch/ without a permission prompt.
+#
+# INTENDED USE ONLY:
+#   - Read-only inspection (import a module, call a pure function, print the result)
+#   - DSP/engine smoke tests (render a short buffer, assert finite/bounded)
+#   - Character measurements (FFT a sine through a filter, print harmonic levels)
+#
+# NOT FOR:
+#   - Writing files to the repo (including logs, audio, plots, caches)
+#   - Running renders that touch `renders/`, `midi/`, `stems/`, etc.
+#   - Any DAG/piece render, evaluation, MIDI or stem export — use `make render`,
+#     `make midi`, `make stems`, `make evaluate` targets for those
+#   - Network calls, subprocess spawning, env mutation
+#   - Anything with side effects you wouldn't be happy running twice by accident
+#
+# The scratch/ directory is gitignored so these scripts never leave your tree.
+# If a script needs to grow beyond a pure smoke test, promote it to a proper
+# test under tests/ or a named make target instead.
+#
+# Usage:
+#   make scratch SCRIPT=scratch/smoke_filters.py
+.PHONY: scratch
+scratch:
+ifndef SCRIPT
+	$(error SCRIPT is required, for example `make scratch SCRIPT=scratch/smoke.py`)
+endif
+	@case "$(SCRIPT)" in \
+		scratch/*) ;; \
+		*) echo "SCRIPT must be under scratch/ (got: $(SCRIPT))"; exit 1 ;; \
+	esac
+	$(UV_RUN) python $(SCRIPT)
 
 .PHONY: render
 render:
@@ -147,6 +205,36 @@ ifndef DUR
 	$(error DUR is required, for example `make midi-window PIECE=ji_chorale START=130 DUR=12`)
 endif
 	$(UV_RUN) python main.py $(PIECE) --export-midi $(MIDI_FORMATS_FLAG) --window-start "$(START)" --window-dur $(DUR)
+
+.PHONY: stems
+stems:
+ifndef PIECE
+	$(error PIECE is required, for example `make stems PIECE=ji_chorale`)
+endif
+	$(UV_RUN) python main.py $(PIECE) --export-stems --stem-bit-depth $(BIT_DEPTH) $(STEMS_DRY_FLAG) $(STEMS_NO_MIX_FLAG)
+
+.PHONY: stems-snippet
+stems-snippet:
+ifndef PIECE
+	$(error PIECE is required, for example `make stems-snippet PIECE=ji_chorale AT=2:10 WINDOW=12`)
+endif
+ifndef AT
+	$(error AT is required, for example `make stems-snippet PIECE=ji_chorale AT=2:10 WINDOW=12`)
+endif
+	$(UV_RUN) python main.py $(PIECE) --export-stems --stem-bit-depth $(BIT_DEPTH) $(STEMS_DRY_FLAG) $(STEMS_NO_MIX_FLAG) --snippet-at "$(AT)" --snippet-window $(WINDOW)
+
+.PHONY: stems-window
+stems-window:
+ifndef PIECE
+	$(error PIECE is required, for example `make stems-window PIECE=ji_chorale START=130 DUR=12`)
+endif
+ifndef START
+	$(error START is required, for example `make stems-window PIECE=ji_chorale START=130 DUR=12`)
+endif
+ifndef DUR
+	$(error DUR is required, for example `make stems-window PIECE=ji_chorale START=130 DUR=12`)
+endif
+	$(UV_RUN) python main.py $(PIECE) --export-stems --stem-bit-depth $(BIT_DEPTH) $(STEMS_DRY_FLAG) $(STEMS_NO_MIX_FLAG) --window-start "$(START)" --window-dur $(DUR)
 
 .PHONY: render-sketches
 render-sketches:

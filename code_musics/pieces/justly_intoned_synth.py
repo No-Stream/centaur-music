@@ -142,7 +142,7 @@ def _add_chorale_chord(
 def build_wtc_song_score() -> Score:
     tonic = 220.0  # A3
 
-    score = Score(f0=tonic, master_effects=[SOFT_REVERB_EFFECT])
+    score = Score(f0_hz=tonic, master_effects=[SOFT_REVERB_EFFECT])
 
     score.add_voice(
         "arp",

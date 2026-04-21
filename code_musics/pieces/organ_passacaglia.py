@@ -119,7 +119,7 @@ def build_score() -> Score:
     four-voice climax, then thin to a quiet close.
     """
     score = Score(
-        f0=110.0,
+        f0_hz=110.0,
         timing_humanize=TimingHumanizeSpec(
             ensemble_amount_ms=8.0, follow_strength=0.80
         ),

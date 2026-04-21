@@ -23,7 +23,7 @@ def build_ji_melody_score() -> Score:
     Cs5 = f0 * 5 / 2
 
     score = Score(
-        f0=bass_f0,
+        f0_hz=bass_f0,
         master_effects=[
             EffectSpec(
                 "reverb",
