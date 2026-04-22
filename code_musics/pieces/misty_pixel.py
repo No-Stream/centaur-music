@@ -29,7 +29,6 @@ from code_musics.automation import (
     AutomationTarget,
 )
 from code_musics.composition import (
-    polymeter_alignment,
     polymeter_layer,
 )
 from code_musics.drum_helpers import add_drum_voice, setup_drum_bus
@@ -73,11 +72,10 @@ TOTAL_DUR = TOTAL_BARS * BAR
 F0_HZ = 185.0  # F#3 — shared tonic with clock_of_7 / newton_bloom
 KICK_PARTIAL = 0.25  # F#1 sub
 
-# Polymeter reality check — compile-time assertions so the form commits to
-# non-trivial phase relationships.  The satellites never realign with the
-# 16-beat grid inside the piece; that is the point.
-assert polymeter_alignment([16, 11, 9, 7]) == 11088.0
-assert polymeter_alignment([16, 20]) == 80.0  # EP vs bell realigns every 5 bars
+# The satellites never realign with the 16-beat grid inside the piece:
+# polymeter_alignment([16, 11, 9, 7]) == 11088. The EP vs bell (20 vs 16)
+# realigns every 80 beats (5 bars). See tests/test_polymeter_layer.py for
+# the runtime assertions.
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +91,26 @@ _PAD_CHORDS: tuple[tuple[float, ...], ...] = (
     (7 / 6, 7 / 5, 5 / 3, 2.0),  # bIII-ish
     (3 / 2, 7 / 4, 9 / 4, 21 / 8),  # v7
     (4 / 3, 5 / 3, 2.0, 7 / 3),  # iv
+)
+
+# Brighter, higher-voiced progression for section C — same roots but
+# voicings open up (M9s, upper partials), giving harmonic lift into E
+# without changing the root motion.
+_PAD_CHORDS_C: tuple[tuple[float, ...], ...] = (
+    (3 / 2, 7 / 4, 9 / 4, 21 / 8),  # i, voiced from 5th — bright septimal
+    (7 / 4, 7 / 3, 5 / 2, 3.0),  # bIII, higher
+    (9 / 4, 21 / 8, 27 / 8, 16 / 5),  # V, bloomy upper register
+    (5 / 3, 2.0, 7 / 3, 10 / 3),  # iv, sparkling top
+)
+
+# Peak progression (E) — a third voicing that combines wider spacing and
+# utonal/otonal duality for tension; resolves with conventional voicing
+# for the last chord of the cycle.
+_PAD_CHORDS_E: tuple[tuple[float, ...], ...] = (
+    (1.0, 7 / 5, 3 / 2, 2.0),  # i with septimal tritone — tension
+    (7 / 6, 7 / 5, 7 / 4, 7 / 3),  # septimal cluster
+    (3 / 2, 9 / 4, 21 / 8, 3.0),  # wide-spread V
+    (4 / 3, 5 / 3, 9 / 4, 7 / 3),  # iv with added color
 )
 
 # Bell melody — a 16-beat phrase (one bar) that phrases against the 16-beat
@@ -707,9 +725,17 @@ def _add_pad(score: Score) -> None:
         absolute_start = chord_index * chord_span
         if absolute_start >= TOTAL_DUR:
             break
-        # Break section: shift to a more utonal voicing for harmonic contrast.
+        # Section-sensitive chord palette:
+        #   B/F/G: base progression (_PAD_CHORDS)
+        #   C: brighter open voicings (_PAD_CHORDS_C)
+        #   D: utonal stacked septimals for breakdown contrast
+        #   E: peak progression with septimal tension (_PAD_CHORDS_E)
         if S_D <= bar_start < S_E:
-            chord = (1.0, 7 / 6, 7 / 5, 7 / 4)  # stacked septimals
+            chord = (1.0, 7 / 6, 7 / 5, 7 / 4)
+        elif S_C <= bar_start < S_D:
+            chord = _PAD_CHORDS_C[chord_index % len(_PAD_CHORDS_C)]
+        elif S_E <= bar_start < S_F:
+            chord = _PAD_CHORDS_E[chord_index % len(_PAD_CHORDS_E)]
         else:
             chord = _PAD_CHORDS[chord_index % len(_PAD_CHORDS)]
         # Last 2 bars — resolve on tonic.
@@ -916,6 +942,52 @@ def _pad_cutoff_automation() -> AutomationSpec:
     )
 
 
+def _pad_resonance_automation() -> AutomationSpec:
+    """Pad filter resonance slowly breathes — pushes up into E, settles in F.
+
+    Same modest range as `clock_of_7` (0.8 → 2.0 ish on the ladder) — audible
+    texture change, no self-oscillation.
+    """
+    return AutomationSpec(
+        target=AutomationTarget(kind="synth", name="resonance_q"),
+        segments=(
+            AutomationSegment(start=0.0, end=T_C, shape="hold", value=0.85),
+            AutomationSegment(
+                start=T_C, end=T_E, shape="linear", start_value=0.85, end_value=1.4
+            ),
+            AutomationSegment(
+                start=T_E, end=T_F, shape="linear", start_value=1.4, end_value=1.8
+            ),
+            AutomationSegment(
+                start=T_F, end=TOTAL_DUR, shape="linear", start_value=1.8, end_value=0.9
+            ),
+        ),
+    )
+
+
+def _pad_filter_drive_automation() -> AutomationSpec:
+    """Pad filter drive rides with intensity — subtle edge that blooms in E."""
+    return AutomationSpec(
+        target=AutomationTarget(kind="synth", name="filter_drive"),
+        segments=(
+            AutomationSegment(start=0.0, end=T_C, shape="hold", value=0.15),
+            AutomationSegment(
+                start=T_C, end=T_E, shape="linear", start_value=0.15, end_value=0.3
+            ),
+            AutomationSegment(
+                start=T_E, end=T_F, shape="linear", start_value=0.3, end_value=0.45
+            ),
+            AutomationSegment(
+                start=T_F,
+                end=TOTAL_DUR,
+                shape="linear",
+                start_value=0.45,
+                end_value=0.2,
+            ),
+        ),
+    )
+
+
 def _pad_mix_automation() -> AutomationSpec:
     """Pad mix fader rides the form, stays audible throughout."""
     return AutomationSpec(
@@ -957,6 +1029,52 @@ def _bass_cutoff_automation() -> AutomationSpec:
                 start=T_E, end=T_F, shape="exp", start_value=450.0, end_value=850.0
             ),
             AutomationSegment(start=T_F, end=TOTAL_DUR, shape="hold", value=320.0),
+        ),
+    )
+
+
+def _bass_drive_automation() -> AutomationSpec:
+    """Bass filter drive rides with intensity — builds squelch into E."""
+    return AutomationSpec(
+        target=AutomationTarget(kind="synth", name="filter_drive"),
+        segments=(
+            AutomationSegment(start=0.0, end=T_C, shape="hold", value=0.55),
+            AutomationSegment(
+                start=T_C, end=T_E, shape="linear", start_value=0.55, end_value=0.75
+            ),
+            AutomationSegment(
+                start=T_E, end=T_F, shape="linear", start_value=0.75, end_value=0.95
+            ),
+            AutomationSegment(
+                start=T_F,
+                end=TOTAL_DUR,
+                shape="linear",
+                start_value=0.95,
+                end_value=0.5,
+            ),
+        ),
+    )
+
+
+def _bass_resonance_automation() -> AutomationSpec:
+    """Bass resonance pushes into the peak for acid squelch character."""
+    return AutomationSpec(
+        target=AutomationTarget(kind="synth", name="resonance_q"),
+        segments=(
+            AutomationSegment(start=0.0, end=T_C, shape="hold", value=7.0),
+            AutomationSegment(
+                start=T_C, end=T_E, shape="linear", start_value=7.0, end_value=8.5
+            ),
+            AutomationSegment(
+                start=T_E, end=T_F, shape="linear", start_value=8.5, end_value=10.0
+            ),
+            AutomationSegment(
+                start=T_F,
+                end=TOTAL_DUR,
+                shape="linear",
+                start_value=10.0,
+                end_value=7.0,
+            ),
         ),
     )
 
@@ -1137,39 +1255,44 @@ def build_score() -> Score:
         ],
         mix_db=1.0,
     )
+    # Snare — dedicated `snare` engine with `909_fat` for deeper body and
+    # longer pitched decay. Overrides drop wire_mix so body dominates, and
+    # tune the body pitch sweep for thwack character.
     add_drum_voice(
         score,
         "snare",
-        engine="drum_voice",
-        preset="909_tight",
+        engine="snare",
+        preset="909_fat",
         drum_bus=drum_bus,
         send_db=-5.0,
         synth_overrides={
-            # More pitched body, longer body tail — this is the thwack.
-            # Wire is slightly tamed so body carries the weight.
-            "tone_level": 1.1,
-            "tone_decay_s": 0.09,
-            "noise_level": 0.8,
-            "exciter_level": 0.9,
+            "body_mix": 0.62,  # body over wire — more pitched depth
+            "wire_mix": 0.38,
+            "body_decay": 0.18,  # slightly longer = thwack
+            "click_amount": 0.22,  # sharper transient punch
+            "comb_amount": 0.55,  # more musical rattle (less white wire)
         },
         effects=[
-            # Faster snare_punch attack for a sharper transient slap.
+            # Tighter 3 ms attack punches the transient through the mix.
             EffectSpec(
                 "compressor",
                 {"preset": "snare_punch", "attack_ms": 3.0, "ratio": 3.5},
             ),
-            # Low-mid push for body; tiny 6 kHz cut so ghosts don't get crispy.
             EffectSpec(
                 "eq",
                 {
                     "bands": [
-                        {"kind": "bell", "freq_hz": 220.0, "gain_db": 2.0, "q": 1.1},
-                        {"kind": "high_shelf", "freq_hz": 6000.0, "gain_db": -1.0},
+                        # Low-mid body push — 200 Hz for 909 thump character.
+                        {"kind": "bell", "freq_hz": 200.0, "gain_db": 2.5, "q": 1.1},
+                        # Presence bump for snap, above the ghost hiss range.
+                        {"kind": "bell", "freq_hz": 3800.0, "gain_db": 1.5, "q": 1.4},
+                        # Gentle top roll-off keeps ghosts from going brittle.
+                        {"kind": "high_shelf", "freq_hz": 7000.0, "gain_db": -1.5},
                     ]
                 },
             ),
         ],
-        mix_db=-8.0,  # -3 dB from previous -5.0
+        mix_db=-6.0,
     )
     add_drum_voice(
         score,
@@ -1290,7 +1413,12 @@ def build_score() -> Score:
         pan=-0.08,
         velocity_humanize=None,
         sends=[VoiceSend(target="hall", send_db=-6.0)],
-        automation=[_pad_cutoff_automation(), _pad_mix_automation()],
+        automation=[
+            _pad_cutoff_automation(),
+            _pad_resonance_automation(),
+            _pad_filter_drive_automation(),
+            _pad_mix_automation(),
+        ],
     )
 
     score.add_voice(
@@ -1397,7 +1525,11 @@ def build_score() -> Score:
         mix_db=-4.0,
         pan=0.0,
         velocity_humanize=None,
-        automation=[_bass_cutoff_automation()],
+        automation=[
+            _bass_cutoff_automation(),
+            _bass_drive_automation(),
+            _bass_resonance_automation(),
+        ],
     )
 
     # ---- Populate notes ----

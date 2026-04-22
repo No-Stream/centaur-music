@@ -9,6 +9,13 @@ from dataclasses import dataclass
 import numba
 import numpy as np
 
+from code_musics.engines._ad2_utils import (
+    _AD2_TANH_TABLE,
+    _ADAA_DX_THRESHOLD,
+    _LN2,
+    _ad2_tanh_lut,
+)
+
 _SUPPORTED_FILTER_MODES = {"lowpass", "bandpass", "highpass", "notch"}
 _SUPPORTED_FILTER_TOPOLOGIES = {
     "svf",
@@ -110,8 +117,6 @@ _MODE_STR_TO_INT: dict[str, int] = {
     "notch": _NOTCH,
 }
 
-_LN2: float = 0.6931471805599453
-
 # Max cutoff as a fraction of sample rate — ~19.8 kHz at 44.1 kHz.
 # Prevents tan(pi * fc / sr) from blowing up near Nyquist.
 _NYQUIST_CLAMP_RATIO: float = 0.45
@@ -139,7 +144,7 @@ def _adaa_tanh(x_curr: float, x_prev: float) -> float:
     Falls back to tanh(midpoint) when the denominator is too small.
     """
     dx = x_curr - x_prev
-    if math.fabs(dx) > 1e-5:
+    if math.fabs(dx) > _ADAA_DX_THRESHOLD:
         result = (_log_cosh(x_curr) - _log_cosh(x_prev)) / dx
         if result > 1.0:
             return 1.0
@@ -147,6 +152,48 @@ def _adaa_tanh(x_curr: float, x_prev: float) -> float:
             return -1.0
         return result
     return math.tanh(0.5 * (x_curr + x_prev))
+
+
+# F2(tanh) infrastructure (lookup table, LUT evaluator, AD2 grid constants)
+# lives in ``code_musics.engines._ad2_utils`` and is imported at the top of
+# this module.  The filter's ``_adaa2_tanh`` below is a tanh-only
+# specialization of the waveshaper's ``_adaa2_sample`` (same three-sample
+# Bilbao/Esqueda divided-difference form, same ``_ADAA_DX_THRESHOLD``
+# fallback, same output clamp to ``[-1, 1]``) — the waveshaper version
+# dispatches across ~7 F2 helpers, this one hard-codes the ``tanh`` branch
+# since that is the only nonlinearity inside a filter feedback path.
+
+
+@numba.njit(cache=True)
+def _adaa2_tanh(
+    x_curr: float, x_prev: float, x_prev2: float, table: np.ndarray
+) -> float:
+    """Second-order antiderivative anti-aliased tanh (Bilbao/Esqueda form).
+
+    Three-sample history.  Adds ~30-40 dB of additional alias suppression
+    over :func:`_adaa_tanh` at the same oversampling cost.  Degrades
+    gracefully: when ``|x_curr - x_prev2|`` is tiny we fall back to AD1;
+    when either inner difference is tiny we fall back to ``tanh(midpoint)``.
+    Output is clamped to ``[-1, 1]`` — tanh's natural range.
+    """
+    dx_outer = x_curr - x_prev2
+    if math.fabs(dx_outer) <= _ADAA_DX_THRESHOLD:
+        return _adaa_tanh(x_curr, x_prev)
+    dx_a = x_curr - x_prev
+    dx_b = x_prev - x_prev2
+    if math.fabs(dx_a) <= _ADAA_DX_THRESHOLD or math.fabs(dx_b) <= _ADAA_DX_THRESHOLD:
+        return math.tanh(0.5 * (x_curr + x_prev2))
+    f2_curr = _ad2_tanh_lut(x_curr, table)
+    f2_prev = _ad2_tanh_lut(x_prev, table)
+    f2_prev2 = _ad2_tanh_lut(x_prev2, table)
+    d1 = (f2_curr - f2_prev) / dx_a
+    d2 = (f2_prev - f2_prev2) / dx_b
+    result = 2.0 * (d1 - d2) / dx_outer
+    if result > 1.0:
+        return 1.0
+    if result < -1.0:
+        return -1.0
+    return result
 
 
 @numba.njit(cache=True)
@@ -275,6 +322,33 @@ def _diode_shape(x: float, asymmetry: float) -> float:
     if x >= 0.0:
         return math.log1p(ax / is_pos) / math.log1p(1.0 / is_pos)
     return -math.log1p(ax / is_neg) / math.log1p(1.0 / is_neg)
+
+
+@numba.njit(cache=True)
+def _diode_shape_and_deriv(x: float, asymmetry: float) -> tuple[float, float]:
+    """Return ``(_diode_shape(x, asymmetry), d/dx _diode_shape(x, asymmetry))``.
+
+    The Newton kernels for k35 and diode need both the diode shape and its
+    analytical derivative in the same step to build the Jacobian.  Factored
+    out so both topologies call a single source of truth for the derivative
+    math (previously inlined inside ``_apply_diode_newton_inner``).
+
+    Derivative of ``log1p(|x|/Is) / log1p(1/Is)`` wrt x is
+    ``sign(x) / ((Is + |x|) * log1p(1/Is))`` — positive on both branches so
+    the Newton Jacobian stays well-conditioned through x=0.
+    """
+    a = max(0.0, min(1.0, asymmetry))
+    is_pos = 1.0 - 0.35 * a
+    is_neg = 1.0 + 0.5 * a
+    if x >= 0.0:
+        norm = math.log1p(1.0 / is_pos)
+        value = math.log1p(x / is_pos) / norm
+        deriv = 1.0 / ((is_pos + x) * norm)
+    else:
+        norm = math.log1p(1.0 / is_neg)
+        value = -math.log1p(-x / is_neg) / norm
+        deriv = 1.0 / ((is_neg - x) * norm)
+    return value, deriv
 
 
 # Width of the smoothstep region used to blend clean-vs-driven code paths on
@@ -483,9 +557,9 @@ def _apply_driven_zdf_svf(
     """Apply a nonlinear ZDF/TPT SVF with topology-aware saturation.
 
     Architecture follows Vital's dirty-filter pattern: one strategic
-    saturation at the feedback summation point (with ADAA anti-aliasing),
-    algebraicSat on integrator states, and bidirectional drive/resonance
-    interaction.
+    saturation at the feedback summation point (with second-order ADAA
+    anti-aliasing — Bilbao/Esqueda three-sample form), algebraicSat on
+    integrator states, and bidirectional drive/resonance interaction.
     """
     n = signal.shape[0]
     filtered = np.empty(n, dtype=np.float64)
@@ -531,7 +605,11 @@ def _apply_driven_zdf_svf(
 
     bias_amount = even_harmonics * 0.3
 
+    # AD2 three-sample history on the main feedback-sum saturation.  The
+    # bias sub-term below still uses AD1 — it's a small even-harmonic
+    # correction and doesn't justify a parallel two-sample state.
     prev_sat_input = 0.0
+    prev_sat_input2 = 0.0
 
     for i in range(n):
         if use_precomputed:
@@ -566,7 +644,10 @@ def _apply_driven_zdf_svf(
         elif sat_input < -10.0:
             sat_input = -10.0
 
-        saturated = _adaa_tanh(sat_input, prev_sat_input)
+        saturated = _adaa2_tanh(
+            sat_input, prev_sat_input, prev_sat_input2, _AD2_TANH_TABLE
+        )
+        prev_sat_input2 = prev_sat_input
         prev_sat_input = sat_input
 
         if bias_amount > 0.0:
@@ -2200,13 +2281,15 @@ def _apply_jupiter_inner(
     feedback_saturation: float,
     morph: float,
 ) -> np.ndarray:
-    """Jupiter 4-pole OTA cascade with single global tanh feedback (ADAA).
+    """Jupiter 4-pole OTA cascade with single global tanh feedback (AD2 ADAA).
 
     Structurally: four ZDF 1-poles in series wrapped by ONE global
     feedback loop with a single tanh at the summation.  Distinguishing
     character vs. Moog ladder (which applies tanh per-stage) is
     cleaner saturation and far less bass loss at high Q.  The feedback
-    nonlinearity uses first-order ADAA to cut aliasing at audio rates.
+    nonlinearity uses second-order ADAA (Bilbao/Esqueda three-sample
+    form) so this explicit path alias-performs comparable to the Newton
+    path at high drive.
     """
     n = signal.shape[0]
     filtered = np.empty(n, dtype=np.float64)
@@ -2216,7 +2299,12 @@ def _apply_jupiter_inner(
     s1 = 0.0
     s2 = 0.0
     s3 = 0.0
-    fb_prev = 0.0  # for ADAA on the global feedback tanh
+    # Three-sample history for AD2 on the global feedback tanh.  AD2 adds
+    # ~30-40 dB of extra alias suppression over AD1 at the same
+    # oversampling cost — well worth the one extra state variable on a
+    # sigmoid that sits directly in the filter's resonance path.
+    fb_prev = 0.0
+    fb_prev2 = 0.0
 
     drive_gain = 1.0 + 1.3 * filter_drive
     apply_saturation = sat_blend > 0.0
@@ -2247,13 +2335,14 @@ def _apply_jupiter_inner(
             )
         x = drive_gain * x
 
-        # Global feedback summation with single ADAA tanh.  Uses s3 (the
-        # previous output state) as the one-sample-delayed feedback signal
-        # — characteristic of explicit ADAA ladders when no Newton solve
-        # is available.  Aliasing reduction comes from the log-cosh
-        # antiderivative, not from cross-sample correction.
+        # Global feedback summation with second-order ADAA tanh.  Uses s3
+        # (the previous output state) as the one-sample-delayed feedback
+        # signal — characteristic of explicit ADAA ladders when no Newton
+        # solve is available.  AD2 (Bilbao/Esqueda three-sample form) cuts
+        # aliasing much deeper than the original AD1 path at audio rates.
         fb_curr = s3
-        fb_shaped = _adaa_tanh(fb_curr, fb_prev)
+        fb_shaped = _adaa2_tanh(fb_curr, fb_prev, fb_prev2, _AD2_TANH_TABLE)
+        fb_prev2 = fb_prev
         fb_prev = fb_curr
         u = x - k_feedback * fb_shaped
 
@@ -2742,6 +2831,167 @@ def _apply_k35_inner(
     return filtered
 
 
+@numba.njit(cache=True)
+def _apply_k35_newton_inner(
+    signal: np.ndarray,
+    cutoff_profile: np.ndarray,
+    k_feedback: float,
+    asymmetry: float,
+    sample_rate: int,
+    filter_drive: float,
+    sat_blend: float,
+    precomputed_g: float,
+    nyquist_limit: float,
+    bootstrap_seed: np.uint64,
+    has_bootstrap: bool,
+    feedback_amount: float,
+    feedback_saturation: float,
+    max_iters: int,
+    tolerance: float,
+) -> np.ndarray:
+    """Korg35 LP, Newton-iterated implicit feedback solve.
+
+    The K35 topology is two ZDF 1-poles inside a positive-feedback loop
+    with a diode-shaped feedback.  The ADAA path approximates the
+    implicit solve with ``alpha = 1/(1 + k*g_1p²)`` on the linear part
+    plus a unit-delay ``_diode_shape(y_prev)`` on the feedback — fine at
+    moderate Q but leaves artifacts on self-oscillation (which is core
+    K35 character).
+
+    Newton closes the delay-free loop exactly.  For LP-mode with
+    ``x_eff = x_raw + ext_fb_contribution``:
+
+        y = g_1p² * (x_eff + k * diode(y, asym)) + B_state
+
+    where ``B_state = g_1p*(1-g_1p)*s_a + (1-g_1p)*s_b`` and the two
+    stages are standard ZDF 1-poles with states ``s_a``, ``s_b``.
+    Define ``A = g_1p²`` and the residual
+
+        F(y) = y - A * (x_eff + k * diode(y, asym)) - B_state
+
+    with
+
+        F'(y) = 1 - A * k * diode_deriv(y, asym)
+
+    K35's feedback is positive (unlike the Moog ladder's negative
+    feedback), so ``F'`` picks up a minus sign on the diode-derivative
+    term — the well-posed regime is ``A * k * diode_deriv < 1``.  At
+    high Q (k → 2) and in-band cutoff (g_1p → 1, A → 1) this is near
+    the edge; ``_safe_jacobian`` guards the self-oscillation transition
+    where the Jacobian can momentarily dip to zero.
+
+    The ``outer_newton`` branch additionally closes the external
+    ``tanh(g_fb*y)`` feedback (LP + drive=0 only).  Under drive>0 the
+    input-stage crunch depends on the raw input level, which is fine
+    for the inner solve, but its interaction with the extra outer-tanh
+    term is fiddly — we keep unit-delay ext FB there, still strictly
+    better than the ADAA path since the internal diode-feedback Newton
+    runs unconditionally.
+
+    HP mode is structurally different (HPF inside loop, LPF on output)
+    and falls back to the hybrid alpha+y_prev path upstream.
+    """
+    n = signal.shape[0]
+    filtered = np.empty(n, dtype=np.float64)
+    use_precomputed = precomputed_g >= 0.0
+
+    s_a = 0.0
+    s_b = 0.0
+    y_guess = 0.0
+
+    drive_gain = 1.0 + 1.8 * filter_drive
+    apply_saturation = sat_blend > 0.0
+    sat_mix_clean = 1.0 - sat_blend
+    has_input_crunch = filter_drive > 0.0
+
+    has_ext_fb = feedback_amount > 0.0
+    ext_fb_drive = 1.0 + 3.0 * feedback_saturation
+    # Outer-Newton gate: this entry point is only reached from the Newton
+    # solver path (the ADAA path lives in ``_apply_k35_inner``), so newton-
+    # feedback is implicitly always on here.  The remaining gates — LP
+    # (caller-guaranteed) + no input crunch so the pre-Newton input is a
+    # deterministic function of raw input only and the outer tanh cleanly
+    # folds into the scalar residual — stay explicit below.
+    outer_newton = has_ext_fb and not has_input_crunch
+    prev_ext_output = 0.0
+    weyl_state = bootstrap_seed
+
+    for i in range(n):
+        if use_precomputed:
+            g = precomputed_g
+        else:
+            fc = min(cutoff_profile[i], nyquist_limit)
+            g = math.tan(math.pi * fc / sample_rate)
+
+        g_1p = g / (1.0 + g)
+        one_minus = 1.0 - g_1p
+        # A is the static input gain from u → y for the two-stage LP body.
+        A = g_1p * g_1p
+
+        x = signal[i]
+        if has_ext_fb and not outer_newton:
+            x = x + feedback_amount * math.tanh(ext_fb_drive * prev_ext_output)
+        if has_bootstrap:
+            weyl_state = weyl_state + _WEYL_INCREMENT
+            x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                _BOOTSTRAP_NOISE_AMP * 2.0
+            )
+        if has_input_crunch:
+            clean = x
+            shaped = _diode_shape(drive_gain * x, asymmetry * 0.6)
+            x = clean + sat_blend * (shaped - clean)
+
+        b_state = g_1p * one_minus * s_a + one_minus * s_b
+
+        y = y_guess
+        for _ in range(max_iters):
+            dy, deriv_diode = _diode_shape_and_deriv(y, asymmetry)
+            if outer_newton:
+                th_g = math.tanh(ext_fb_drive * y)
+                sech2_g = 1.0 - th_g * th_g
+                x_eff = x + feedback_amount * th_g
+                resid = y - A * (x_eff + k_feedback * dy) - b_state
+                if math.fabs(resid) < tolerance:
+                    break
+                deriv = _safe_jacobian(
+                    1.0
+                    - A * feedback_amount * ext_fb_drive * sech2_g
+                    - A * k_feedback * deriv_diode
+                )
+            else:
+                resid = y - A * (x + k_feedback * dy) - b_state
+                if math.fabs(resid) < tolerance:
+                    break
+                deriv = _safe_jacobian(1.0 - A * k_feedback * deriv_diode)
+            y = y - resid / deriv
+        y_guess = y
+        if outer_newton:
+            # Replay loop input with resolved y so stage state updates
+            # below see the implicit-solution value of u.
+            x_closed = x + feedback_amount * math.tanh(ext_fb_drive * y)
+        else:
+            x_closed = x
+
+        # Advance integrator states to be consistent with the implicit
+        # solution.  u = x_closed + k*diode(y); lp1 = g_1p*u + (1-g_1p)*s_a;
+        # TPT trapezoidal state update puts lp2 = y by construction.
+        fb = _diode_shape(y, asymmetry)
+        u = x_closed + k_feedback * fb
+        lp1 = g_1p * u + one_minus * s_a
+        s_a = 2.0 * lp1 - s_a
+        s_b = 2.0 * y - s_b
+
+        if apply_saturation:
+            s_a = sat_mix_clean * s_a + sat_blend * _algebraic_sat(s_a)
+            s_b = sat_mix_clean * s_b + sat_blend * _algebraic_sat(s_b)
+
+        output = y
+        prev_ext_output = output
+        filtered[i] = output
+
+    return filtered
+
+
 def _apply_k35(
     signal: np.ndarray,
     *,
@@ -2753,6 +3003,9 @@ def _apply_k35(
     k35_feedback_asymmetry: float = 0.0,
     feedback_amount: float = 0.0,
     feedback_saturation: float = 0.0,
+    solver: str = "newton",
+    max_newton_iters: int = _DEFAULT_NEWTON_MAX_ITERS,
+    newton_tolerance: float = _DEFAULT_NEWTON_TOLERANCE,
 ) -> np.ndarray:
     """Apply a Korg35 (MS-20 style) 12 dB/oct Sallen-Key filter.
 
@@ -2761,6 +3014,14 @@ def _apply_k35(
     keep near ``0.0`` for a cleaner K35.  ``filter_drive`` engages an
     asymmetric input-stage soft-clip that models the real MS-20's
     famous overloading.
+
+    ``solver="newton"`` (the default) runs the implicit ZDF solver that
+    closes the diode-feedback loop per sample — audibly tighter at
+    self-oscillation than the legacy ``"adaa"`` path, which uses an
+    ``alpha = 1/(1 + k*g_1p²)`` pre-scale approximation plus a
+    unit-delayed diode feedback.  HP mode always runs the legacy path
+    (HP topology is structurally different and doesn't fit the same
+    affine-collapse derivation).
     """
     q = max(0.5, float(resonance_q))
     # K35 self-oscillation threshold is at k ≈ 2; map Q → k with a saturating
@@ -2789,6 +3050,27 @@ def _apply_k35(
     has_bootstrap = sig.shape[0] > 0
     clamped_drive = max(0.0, float(filter_drive))
     sat_blend = _drive_sat_blend(clamped_drive)
+
+    # Newton path only covers LP (HP is structurally different) — fall back
+    # to the legacy hybrid solver for HP even when solver="newton".
+    if solver == "newton" and mode_int == _LP:
+        return _apply_k35_newton_inner(
+            sig,
+            cutoff,
+            k_feedback,
+            asym,
+            sample_rate,
+            clamped_drive,
+            sat_blend,
+            precomputed_g,
+            nyquist_limit,
+            bootstrap_seed,
+            has_bootstrap,
+            max(0.0, float(feedback_amount)),
+            max(0.0, float(feedback_saturation)),
+            max(1, int(max_newton_iters)),
+            max(1e-12, float(newton_tolerance)),
+        )
     return _apply_k35_inner(
         sig,
         cutoff,
@@ -2957,6 +3239,12 @@ def _apply_diode_newton_inner(
     stages.  The per-stage diode also enters the solve but we linearize
     those around the current state — for the tap feedback we Newton-
     iterate since that's where the characteristic squelch lives.
+
+    When ``morph == 0``, the external feedback ``tanh(g_fb * output)`` is
+    folded into the same scalar Newton so it is no longer unit-delayed on
+    the output.  The gate mirrors the ladder's ``outer_newton`` — LP +
+    morph=0 is where affine-collapse holds cleanly; morph>0 mixes y1/y0
+    into the output and would require a separate derivation.
     """
     n = signal.shape[0]
     filtered = np.empty(n, dtype=np.float64)
@@ -2973,6 +3261,12 @@ def _apply_diode_newton_inner(
 
     has_ext_fb = feedback_amount > 0.0
     ext_fb_drive = 1.0 + 3.0 * feedback_saturation
+    # Outer-Newton gate: this entry point is only reached via ``solver ==
+    # "newton"``, so newton-feedback is implicitly always on here.  The
+    # remaining gates — LP + no morph (output is linear in y2) — stay
+    # explicit below; when morph>0 we fall back to unit-delay on the
+    # external feedback.
+    outer_newton = has_ext_fb and morph <= 0.0
     prev_ext_output = 0.0
     weyl_state = bootstrap_seed
 
@@ -2986,15 +3280,20 @@ def _apply_diode_newton_inner(
         g_1p = g / (1.0 + g)
         one_minus = 1.0 - g_1p
 
-        x = signal[i]
-        if has_ext_fb:
-            x = x + feedback_amount * math.tanh(ext_fb_drive * prev_ext_output)
+        x_raw = signal[i]
+        if has_ext_fb and not outer_newton:
+            x_raw = x_raw + feedback_amount * math.tanh(ext_fb_drive * prev_ext_output)
         if has_bootstrap:
             weyl_state = weyl_state + _WEYL_INCREMENT
-            x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+            x_raw = x_raw + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
                 _BOOTSTRAP_NOISE_AMP * 2.0
             )
-        x = drive_gain * x
+        # drive_gain_x_raw is the pre-feedback input seen by the three
+        # stages after pre-filter drive gain; A_outer_drive is the static
+        # portion of the outer-tanh feedback gain after drive gain so the
+        # Newton residual can reuse both without recomputing.
+        drive_gain_x_raw = drive_gain * x_raw
+        A_outer_drive = drive_gain * feedback_amount
 
         # Linear coefficient mapping u → y2 through the three stages:
         #   y2 = g_1p^3 * u + B_state  (per-stage linear; the diode
@@ -3002,26 +3301,43 @@ def _apply_diode_newton_inner(
         g3 = g_1p * g_1p * g_1p
         b_state = g_1p * g_1p * one_minus * s0 + g_1p * one_minus * s1 + one_minus * s2
 
-        # Newton-solve y2 = g3 * (x - k*diode(y2)) + b_state
+        # Newton-solve y2 = g3 * (x - k*diode(y2)) + b_state.  For the
+        # ``outer_newton`` path we additionally close the external tanh
+        # feedback in the same scalar residual, eliminating the unit-delay
+        # that remained on external FB after the earlier internal-Newton
+        # landed.  The Jacobian picks up a ``g3*drive_gain*fb_amt*g_fb*
+        # sech²(g_fb*y)`` term; F stays monotonically increasing in y
+        # under the same ``k_feedback * g3 * diode_deriv < 1`` well-posed
+        # regime that the internal solve already respects, plus the outer
+        # tanh whose sech² is bounded above by 1.
         y = y2_guess
         for _ in range(max_iters):
-            a = feedback_asym
-            is_pos = 1.0 - 0.35 * a
-            is_neg = 1.0 + 0.5 * a
-            if y >= 0.0:
-                diode_norm = math.log1p(1.0 / is_pos)
-                dy = math.log1p(y / is_pos) / diode_norm
-                deriv_diode = 1.0 / ((is_pos + y) * diode_norm)
+            dy, deriv_diode = _diode_shape_and_deriv(y, feedback_asym)
+            if outer_newton:
+                th_g = math.tanh(ext_fb_drive * y)
+                sech2_g = 1.0 - th_g * th_g
+                u_inner = drive_gain_x_raw + A_outer_drive * th_g
+                resid = y - g3 * (u_inner - k_feedback * dy) - b_state
+                if math.fabs(resid) < tolerance:
+                    break
+                deriv = _safe_jacobian(
+                    1.0
+                    - g3 * A_outer_drive * ext_fb_drive * sech2_g
+                    + g3 * k_feedback * deriv_diode
+                )
             else:
-                diode_norm = math.log1p(1.0 / is_neg)
-                dy = -math.log1p(-y / is_neg) / diode_norm
-                deriv_diode = 1.0 / ((is_neg - y) * diode_norm)
-            resid = y - g3 * (x - k_feedback * dy) - b_state
-            if math.fabs(resid) < tolerance:
-                break
-            deriv = 1.0 + g3 * k_feedback * deriv_diode
+                resid = y - g3 * (drive_gain_x_raw - k_feedback * dy) - b_state
+                if math.fabs(resid) < tolerance:
+                    break
+                deriv = _safe_jacobian(1.0 + g3 * k_feedback * deriv_diode)
             y = y - resid / deriv
         y2_guess = y
+        if outer_newton:
+            # Replay the input with the solved y so downstream state
+            # updates see the implicit-solution value of x.
+            x = drive_gain_x_raw + A_outer_drive * math.tanh(ext_fb_drive * y)
+        else:
+            x = drive_gain_x_raw
 
         fb = _diode_shape(y, feedback_asym)
         u = x - k_feedback * fb
@@ -3349,6 +3665,9 @@ def apply_filter(
             k35_feedback_asymmetry=fp.k35_feedback_asymmetry,
             feedback_amount=fp.feedback_amount,
             feedback_saturation=fp.feedback_saturation,
+            solver=fp.filter_solver,
+            max_newton_iters=fp.max_newton_iters,
+            newton_tolerance=fp.newton_tolerance,
         )
     if topology == "diode":
         return _apply_diode_filter(

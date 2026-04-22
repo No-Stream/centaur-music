@@ -1,4 +1,8 @@
 {
+  "_notes": {
+    "_convention": "Per-key rationale for each baseline rehash. When you rehash a baseline entry below (e.g. because an intentional DSP change moves its sha256 / rms / peak values), add or update the matching entry in this `_notes` map with an ISO date and one-line explanation (what code change + why). This makes rehash history self-documenting and distinguishes intentional rehashes from accidental ones. Entries with no note default to the original migration commit.",
+    "svf_lp_driven": "2026-04-21 analog-modeling pass: driven-SVF path rebuilt with AD2 on feedback tanh"
+  },
   "cas_bp": {
     "mean_abs": 0.2215254673727181,
     "n": 22050,
@@ -238,11 +242,11 @@
     "sha256": "a5c210c5172ec3bc05790b147bc37177d75b2f9be6ce0cc0c3424e4726f08549"
   },
   "svf_lp_driven": {
-    "mean_abs": 0.37864612091833,
+    "mean_abs": 0.3785734191007636,
     "n": 22050,
-    "peak": 0.999501620910298,
-    "rms": 0.4353050742909522,
-    "sha256": "dccc78ba24fb63d5f5493fcdd4ea604907eee25fd5c25de25dbd5f59e6b727b0"
+    "peak": 1.0010793905205,
+    "rms": 0.43543230863616517,
+    "sha256": "a5326e2c62c5c010f285b68b618d788213792ac91b4eb095797bf97c19e70693"
   },
   "svf_lp_resonant": {
     "mean_abs": 0.4456457208197917,

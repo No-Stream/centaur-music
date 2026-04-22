@@ -30,8 +30,10 @@ from code_musics.engines._dsp_utils import (
 )
 from code_musics.engines._envelopes import render_envelope
 from code_musics.engines._filters import apply_zdf_svf
-from code_musics.engines._modal import render_modal_bank
+from code_musics.engines._modal import COUPLING_MAX, render_modal_bank
 from code_musics.engines._oscillators import polyblep_square as _polyblep_square
+from code_musics.engines._pluck import render_pluck
+from code_musics.engines._sustained_exciters import render_blow, render_bow, render_rub
 from code_musics.engines.kick_tom import _resonator_body
 from code_musics.engines.sample import _load_sample, render_sample_segment
 from code_musics.engines.snare import _comb_filter
@@ -40,10 +42,26 @@ from code_musics.spectra import get_mode_table
 logger: logging.Logger = logging.getLogger(__name__)
 
 _VALID_EXCITER_TYPES = frozenset(
-    {"click", "impulse", "multi_tap", "fm_burst", "noise_burst", "sample"}
+    {
+        "click",
+        "impulse",
+        "multi_tap",
+        "fm_burst",
+        "noise_burst",
+        "sample",
+        "bow",
+        "blow",
+        "rub",
+    }
 )
+
+# Exciter types that represent sustained (continuous) excitation — the
+# ``drum_voice`` orchestrator defaults their amplitude envelope to flat
+# sustain instead of an exponential decay, so the exciter actually drives
+# the modal bank for the full note duration.
+SUSTAINED_EXCITER_TYPES = frozenset({"bow", "blow", "rub"})
 _VALID_TONE_TYPES = frozenset(
-    {"oscillator", "resonator", "fm", "additive", "efm", "modal"}
+    {"oscillator", "resonator", "fm", "additive", "efm", "modal", "pluck"}
 )
 _VALID_NOISE_TYPES = frozenset({"white", "colored", "bandpass", "comb"})
 _VALID_METALLIC_TYPES = frozenset(
@@ -72,16 +90,57 @@ def render_exciter(
     rng: np.random.Generator,
     exciter_type: str,
     params: dict[str, Any],
+    velocity: float = 1.0,
+    duration: float | None = None,
 ) -> np.ndarray:
-    """Render the exciter layer (transient/attack energy)."""
+    """Render the exciter layer (transient or sustained attack energy).
+
+    ``velocity`` drives the optional ``contact_nonlinearity`` hammer-contact
+    curve that shapes transient exciters (``click`` / ``impulse`` /
+    ``multi_tap`` / ``fm_burst`` / ``noise_burst``).  Sustained exciters
+    (``bow`` / ``blow`` / ``rub``) ignore the contact curve — they have
+    their own pressure/speed semantics.  ``duration`` is required for the
+    sustained renderers and derived from ``n_samples / sample_rate`` when
+    not supplied.
+    """
     if exciter_type not in _VALID_EXCITER_TYPES:
         raise ValueError(
             f"exciter_type must be one of {sorted(_VALID_EXCITER_TYPES)}, "
             f"got {exciter_type!r}"
         )
 
+    if exciter_type in SUSTAINED_EXCITER_TYPES:
+        effective_duration = (
+            duration if duration is not None else n_samples / float(sample_rate)
+        )
+        if exciter_type == "bow":
+            return _exciter_bow(
+                freq=freq,
+                duration=effective_duration,
+                sample_rate=sample_rate,
+                rng=rng,
+                params=params,
+            )
+        if exciter_type == "blow":
+            return _exciter_blow(
+                freq=freq,
+                duration=effective_duration,
+                sample_rate=sample_rate,
+                rng=rng,
+                params=params,
+            )
+        return _exciter_rub(
+            freq=freq,
+            duration=effective_duration,
+            sample_rate=sample_rate,
+            rng=rng,
+            params=params,
+        )
+
+    contact_nonlinearity = float(params.get("contact_nonlinearity", 0.0))
+
     if exciter_type == "click":
-        return _exciter_click(
+        raw = _exciter_click(
             n_samples=n_samples,
             sample_rate=sample_rate,
             rng=rng,
@@ -89,23 +148,35 @@ def render_exciter(
             decay_s=float(params.get("exciter_decay_s", 0.007)),
             emphasis=float(params.get("exciter_emphasis", 2.4)),
         )
-
-    if exciter_type == "impulse":
-        return _exciter_impulse(
+    elif exciter_type == "impulse":
+        raw = _exciter_impulse(
             n_samples=n_samples,
             width_samples=int(params.get("exciter_width_samples", 1)),
         )
-
-    if exciter_type == "fm_burst":
-        return _exciter_fm_burst(
+    elif exciter_type == "fm_burst":
+        raw = _exciter_fm_burst(
             n_samples=n_samples,
             freq=freq,
             sample_rate=sample_rate,
             params=params,
         )
-
-    if exciter_type == "noise_burst":
-        return _exciter_noise_burst(
+    elif exciter_type == "noise_burst":
+        raw = _exciter_noise_burst(
+            n_samples=n_samples,
+            freq=freq,
+            sample_rate=sample_rate,
+            rng=rng,
+            params=params,
+        )
+    elif exciter_type == "sample":
+        raw = _exciter_sample(
+            n_samples=n_samples,
+            freq=freq,
+            sample_rate=sample_rate,
+            params=params,
+        )
+    else:
+        raw = _exciter_multi_tap(
             n_samples=n_samples,
             freq=freq,
             sample_rate=sample_rate,
@@ -113,20 +184,124 @@ def render_exciter(
             params=params,
         )
 
-    if exciter_type == "sample":
-        return _exciter_sample(
-            n_samples=n_samples,
-            freq=freq,
-            sample_rate=sample_rate,
-            params=params,
+    if contact_nonlinearity > 0.0:
+        return _apply_contact_nonlinearity(
+            raw,
+            nonlinearity=contact_nonlinearity,
+            velocity=velocity,
         )
+    return raw
 
-    return _exciter_multi_tap(
-        n_samples=n_samples,
+
+def _apply_contact_nonlinearity(
+    signal: np.ndarray,
+    *,
+    nonlinearity: float,
+    velocity: float,
+) -> np.ndarray:
+    """Hammer-contact compression / expansion on a transient exciter signal.
+
+    Models how a physical striker deforms under load: at high velocity the
+    contact flattens (``alpha < 1``, harmonic-rich compression), at low
+    velocity the contact barely engages (``alpha > 1``, soft expansion).
+    Applied as ``sign(x) * |x|^alpha``.
+
+    ``nonlinearity=0`` returns the signal unmodified (bit-identical).  The
+    amount knob blends the exponent away from ``1`` and the velocity knob
+    picks the direction:
+
+        alpha = 1 + nonlinearity * (1 - velocity)
+
+    At ``velocity=1.0`` (full), ``alpha == 1`` regardless of amount — the
+    compression is neutral at unit velocity so presets designed at full
+    velocity don't get darker when nonlinearity is dialed in.  Softer hits
+    (``velocity < 1``) expand toward silence; harder hits (``velocity > 1``)
+    compress peaks.
+    """
+    if nonlinearity <= 0.0:
+        return signal
+
+    nonlinearity = float(min(1.0, nonlinearity))
+    velocity = float(max(0.0, velocity))
+
+    alpha = 1.0 + nonlinearity * (1.0 - velocity)
+    # Preserve the pre-curve peak so presets stay gain-matched when the user
+    # dials nonlinearity up from 0.  Without this, compression (alpha < 1)
+    # can boost RMS by 10 dB+ on peaky click exciters.
+    pre_peak = float(np.max(np.abs(signal)))
+    if pre_peak <= 1e-12:
+        return signal
+    shaped = np.sign(signal) * np.power(np.abs(signal), alpha)
+    post_peak = float(np.max(np.abs(shaped)))
+    if post_peak <= 1e-12:
+        return shaped
+    return shaped * (pre_peak / post_peak)
+
+
+def _exciter_bow(
+    *,
+    freq: float,
+    duration: float,
+    sample_rate: int,
+    rng: np.random.Generator,
+    params: dict[str, Any],
+) -> np.ndarray:
+    """Stick-slip friction bow excitation.  Reads ``exciter_bow_*`` params."""
+    seed = int(rng.integers(0, 2**31 - 1))
+    return render_bow(
         freq=freq,
+        duration=duration,
         sample_rate=sample_rate,
-        rng=rng,
-        params=params,
+        pressure=float(params.get("exciter_bow_pressure", 0.6)),
+        speed=float(params.get("exciter_bow_speed", 0.5)),
+        position=float(params.get("exciter_bow_position", 0.3)),
+        noise_amount=float(params.get("exciter_bow_noise_amount", 0.25)),
+        seed=seed,
+    )
+
+
+def _exciter_blow(
+    *,
+    freq: float,
+    duration: float,
+    sample_rate: int,
+    rng: np.random.Generator,
+    params: dict[str, Any],
+) -> np.ndarray:
+    """Reed-table blown excitation.  Reads ``exciter_blow_*`` params."""
+    seed = int(rng.integers(0, 2**31 - 1))
+    return render_blow(
+        freq=freq,
+        duration=duration,
+        sample_rate=sample_rate,
+        pressure=float(params.get("exciter_blow_pressure", 0.7)),
+        embouchure=float(params.get("exciter_blow_embouchure", 0.4)),
+        breath_noise=float(params.get("exciter_blow_breath_noise", 0.3)),
+        wobble_rate_hz=float(params.get("exciter_blow_wobble_rate_hz", 4.5)),
+        wobble_depth=float(params.get("exciter_blow_wobble_depth", 0.15)),
+        seed=seed,
+    )
+
+
+def _exciter_rub(
+    *,
+    freq: float,
+    duration: float,
+    sample_rate: int,
+    rng: np.random.Generator,
+    params: dict[str, Any],
+) -> np.ndarray:
+    """Filtered-noise rub excitation.  Reads ``exciter_rub_*`` params."""
+    seed = int(rng.integers(0, 2**31 - 1))
+    return render_rub(
+        freq=freq,
+        duration=duration,
+        sample_rate=sample_rate,
+        pressure=float(params.get("exciter_rub_pressure", 0.5)),
+        speed=float(params.get("exciter_rub_speed", 0.3)),
+        roughness=float(params.get("exciter_rub_roughness", 0.5)),
+        stiction=float(params.get("exciter_rub_stiction", 0.2)),
+        seed=seed,
     )
 
 
@@ -419,6 +594,16 @@ def render_tone(
             params=params,
         )
 
+    if tone_type == "pluck":
+        return _tone_pluck(
+            n_samples=n_samples,
+            freq_profile=freq_profile,
+            sample_rate=sample_rate,
+            rng=rng,
+            exciter_signal=exciter_signal,
+            params=params,
+        )
+
     return _tone_additive(
         n_samples=n_samples,
         freq_profile=freq_profile,
@@ -614,6 +799,9 @@ def _tone_modal(
     mode_ratios, mode_amps, mode_decays_s = _resolve_modal_bank_params(
         prefix="modal", params=params
     )
+    coupling, topology, dispersion, n_stages = _resolve_modal_motion_params(
+        prefix="modal", params=params
+    )
     return _render_modal_bank_with_fallback(
         exciter_signal=exciter_signal,
         freq_profile=freq_profile,
@@ -623,7 +811,69 @@ def _tone_modal(
         n_samples=n_samples,
         sample_rate=sample_rate,
         rng=rng,
+        coupling=coupling,
+        coupling_topology=topology,
+        dispersion=dispersion,
+        dispersion_n_stages=n_stages,
     )
+
+
+def _tone_pluck(
+    *,
+    n_samples: int,
+    freq_profile: np.ndarray,
+    sample_rate: int,
+    rng: np.random.Generator,
+    exciter_signal: np.ndarray | None,
+    params: dict[str, Any],
+) -> np.ndarray:
+    """Karplus-Strong++ plucked-string tone layer.
+
+    Reads ``tone_pluck_*`` macros (hardness / damping / position / sustain /
+    drive) and hands off to :func:`code_musics.engines._pluck.render_pluck`.
+    When an ``exciter_signal`` is present it mixes into the KS feed path on
+    top of the internal excitation burst — useful for hybrid plucked-kick or
+    plucked-cymbal textures where the transient comes from a different layer.
+    """
+    if n_samples == 0:
+        return np.zeros(0, dtype=np.float64)
+
+    duration = n_samples / float(sample_rate)
+    hardness = float(params.get("tone_pluck_hardness", 0.5))
+    damping = float(params.get("tone_pluck_damping", 0.3))
+    position = float(params.get("tone_pluck_position", 0.25))
+    sustain = float(params.get("tone_pluck_sustain", 0.0))
+    drive = float(params.get("tone_pluck_drive", 0.0))
+
+    pluck_seed = int(rng.integers(0, 2**31 - 1))
+    base_freq = float(freq_profile[0])
+
+    signal = render_pluck(
+        freq=base_freq,
+        duration=duration,
+        sample_rate=sample_rate,
+        hardness=hardness,
+        damping=damping,
+        position=position,
+        sustain=sustain,
+        drive=drive,
+        seed=pluck_seed,
+        freq_profile=freq_profile,
+    )
+
+    # If the caller provided a distinct exciter layer, blend it in so the
+    # pluck is driven by e.g. a click or FM burst rather than the internal
+    # noise burst alone.  The orchestrator still owns overall levels; this
+    # is an additive blend so the KS loop picks up the new transient
+    # content in its feed.
+    if exciter_signal is not None and np.any(exciter_signal != 0):
+        tail_len = min(signal.shape[0], exciter_signal.shape[0])
+        signal[:tail_len] = signal[:tail_len] + 0.5 * exciter_signal[:tail_len]
+
+    peak = float(np.max(np.abs(signal)))
+    if peak > 1.0:
+        signal = signal / peak
+    return signal
 
 
 def _tone_additive(
@@ -1107,6 +1357,9 @@ def _metallic_modal_bank(
         default_table="bar_metal",
         default_decay_s=0.4,
     )
+    coupling, topology, dispersion, n_stages = _resolve_modal_motion_params(
+        prefix="metallic", params=params
+    )
     return _render_modal_bank_with_fallback(
         exciter_signal=exciter_signal,
         freq_profile=freq_profile,
@@ -1116,7 +1369,46 @@ def _metallic_modal_bank(
         n_samples=n_samples,
         sample_rate=sample_rate,
         rng=rng,
+        coupling=coupling,
+        coupling_topology=topology,
+        dispersion=dispersion,
+        dispersion_n_stages=n_stages,
     )
+
+
+def _resolve_modal_motion_params(
+    *, prefix: str, params: dict[str, Any]
+) -> tuple[float, str, float, int]:
+    """Resolve coupling + dispersion params for modal renderers.
+
+    Accepts both the slot-prefixed form (``modal_coupling``,
+    ``metallic_coupling``, etc.) and a shared ``modal_*`` form that
+    overrides across both slots — same pattern as ``modal_tension`` /
+    ``modal_damping`` sharing already in use.  Defaults reproduce the
+    legacy parallel-biquad, no-dispersion behavior.
+    """
+    coupling = float(
+        params.get("modal_coupling", params.get(f"{prefix}_coupling", 0.0))
+    )
+    coupling = max(0.0, min(COUPLING_MAX, coupling))
+    topology = str(
+        params.get(
+            "modal_coupling_topology",
+            params.get(f"{prefix}_coupling_topology", "chain"),
+        )
+    ).lower()
+    dispersion = float(
+        params.get("modal_dispersion", params.get(f"{prefix}_dispersion", 0.0))
+    )
+    dispersion = max(0.0, min(1.0, dispersion))
+    n_stages = int(
+        params.get(
+            "modal_dispersion_n_stages",
+            params.get(f"{prefix}_dispersion_n_stages", 4),
+        )
+    )
+    n_stages = max(1, n_stages)
+    return coupling, topology, dispersion, n_stages
 
 
 # ---------------------------------------------------------------------------
@@ -1226,6 +1518,10 @@ def _render_modal_bank_with_fallback(
     n_samples: int,
     sample_rate: int,
     rng: np.random.Generator,
+    coupling: float = 0.0,
+    coupling_topology: str = "chain",
+    dispersion: float = 0.0,
+    dispersion_n_stages: int = 4,
 ) -> np.ndarray:
     """Excite a modal resonator bank, synthesising a 1 ms noise burst when the
     caller did not pass an exciter.
@@ -1234,6 +1530,9 @@ def _render_modal_bank_with_fallback(
     same fallback path: if an exciter signal is present and non-silent, it is
     used verbatim (copy-free cast to float64); otherwise a short white-noise
     impulse at the start of the buffer seeds the modes.
+
+    ``coupling`` / ``coupling_topology`` / ``dispersion`` are forwarded to
+    :func:`render_modal_bank` and default to no-op for backward compat.
     """
     if exciter_signal is not None and np.any(exciter_signal != 0):
         excitation = exciter_signal.astype(np.float64, copy=False)
@@ -1251,4 +1550,8 @@ def _render_modal_bank_with_fallback(
         mode_decays_s=mode_decays_s,
         freq_hz=base_freq,
         sample_rate=sample_rate,
+        coupling=coupling,
+        coupling_topology=coupling_topology,
+        dispersion=dispersion,
+        dispersion_n_stages=dispersion_n_stages,
     )

@@ -2,11 +2,16 @@
 
 from code_musics.pieces.additive_studies import PIECES as _ADDITIVE_STUDY_PIECES
 from code_musics.pieces.amber_room import PIECES as _AMBER_ROOM_PIECES
+from code_musics.pieces.analog_filter_bus_study import (
+    PIECES as _ANALOG_FILTER_BUS_STUDY_PIECES,
+)
 from code_musics.pieces.beating_light import PIECES as _BEATING_LIGHT_PIECES
 from code_musics.pieces.bell_pulse import PIECES as _BELL_PULSE_PIECES
+from code_musics.pieces.bowed_glass import PIECES as _BOWED_GLASS_PIECES
 from code_musics.pieces.breath_study import PIECES as _BREATH_STUDY_PIECES
 from code_musics.pieces.bwv_846 import PIECES as _BWV_846_PIECES
 from code_musics.pieces.bwv_846_fugue import PIECES as _BWV_846_FUGUE_PIECES
+from code_musics.pieces.chaos_weather import PIECES as _CHAOS_WEATHER_PIECES
 from code_musics.pieces.clock_of_7 import PIECES as _CLOCK_OF_7_PIECES
 from code_musics.pieces.coltrane_studies import PIECES as _COLTRANE_PIECES
 from code_musics.pieces.colundi_sequence import PIECES as _COLUNDI_SEQUENCE_PIECES
@@ -15,6 +20,7 @@ from code_musics.pieces.composition_showcases import (
     PIECES as _COMPOSITION_SHOWCASE_PIECES,
 )
 from code_musics.pieces.counterpoint_studies import PIECES as _COUNTERPOINT_PIECES
+from code_musics.pieces.coupled_bells import PIECES as _COUPLED_BELLS_PIECES
 from code_musics.pieces.crystal_canon import PIECES as _CRYSTAL_CANON_PIECES
 from code_musics.pieces.diva_study import PIECES as _DIVA_STUDY_PIECES
 from code_musics.pieces.effects_showcase import PIECES as _EFFECTS_SHOWCASE_PIECES
@@ -23,6 +29,7 @@ from code_musics.pieces.filter_palette_study import (
     PIECES as _FILTER_PALETTE_STUDY_PIECES,
 )
 from code_musics.pieces.forge import PIECES as _FORGE_PIECES
+from code_musics.pieces.grain_tides import PIECES as _GRAIN_TIDES_PIECES
 from code_musics.pieces.harmonic_studies import PIECES as _HARMONIC_STUDY_PIECES
 from code_musics.pieces.iron_pulse import PIECES as _IRON_PULSE_PIECES
 from code_musics.pieces.iron_pulse_v2 import PIECES as _IRON_PULSE_V2_PIECES
@@ -39,6 +46,7 @@ from code_musics.pieces.night_lattice import PIECES as _NIGHT_LATTICE_PIECES
 from code_musics.pieces.organ_passacaglia import PIECES as _ORGAN_CHORALE_PIECES
 from code_musics.pieces.phase_garden import PIECES as _PHASE_GARDEN_PIECES
 from code_musics.pieces.registry import merge_piece_maps
+from code_musics.pieces.scanned_garden import PIECES as _SCANNED_GARDEN_PIECES
 from code_musics.pieces.septimal import PIECES as _SEPTIMAL_PIECES
 from code_musics.pieces.septimal_bloom import PIECES as _SEPTIMAL_BLOOM_PIECES
 from code_musics.pieces.seventh_window import PIECES as _SEVENTH_WINDOW_PIECES
@@ -109,6 +117,12 @@ PIECES = merge_piece_maps(
     _NEWTON_BLOOM_PIECES,
     _CLOCK_OF_7_PIECES,
     _MISTY_PIXEL_PIECES,
+    _ANALOG_FILTER_BUS_STUDY_PIECES,
+    _SCANNED_GARDEN_PIECES,
+    _COUPLED_BELLS_PIECES,
+    _GRAIN_TIDES_PIECES,
+    _CHAOS_WEATHER_PIECES,
+    _BOWED_GLASS_PIECES,
 )
 
 __all__ = ["PIECES"]

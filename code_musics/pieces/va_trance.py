@@ -409,6 +409,9 @@ def build_score() -> Score:
             continue
         if bar >= DROP_2_END + 6:  # last 2 bars of outro
             continue
+        # Drop kick for the final bar of each build so the drop hits feel bigger.
+        if bar == BUILD_1_END - 1 or bar == BUILD_2_END - 1:
+            continue
         for beat in range(1, 5):
             amp = -8.0 if bar < INTRO_END else -4.0
             score.add_note(
@@ -419,7 +422,12 @@ def build_score() -> Score:
                 amp_db=amp,
             )
 
-    # ── Clap (beats 2 & 4, drops only) ────────────────────────────────
+    # ── Backbeat: layered clap + snare on 2 & 4 (drops only) ──────────
+    # The 909_clap preset is pure bandpass noise with no pitched body, which
+    # reads as "hissy hands" on its own. Layering a body-forward `snare`
+    # engine voice under it gives the classic 909 snare+clap image — the
+    # clap provides the transient snap, the snare provides the 150-250 Hz
+    # punch that anchors the backbeat.
     add_drum_voice(
         score,
         "clap",
@@ -427,11 +435,48 @@ def build_score() -> Score:
         preset="909_clap",
         drum_bus=drum_bus,
         send_db=-2.0,
-        mix_db=-7.0,
+        mix_db=-8.0,
+        pan=0.12,
         effects=[],  # keep it dry-ish inside the drum bus
     )
-    # Plate send for the clap directly (not via drum bus)
     score.voices["clap"].sends.append(VoiceSend(target="plate", send_db=-12.0))
+
+    add_drum_voice(
+        score,
+        "snare",
+        engine="snare",
+        preset="909_fat",
+        drum_bus=drum_bus,
+        send_db=-4.0,
+        mix_db=-10.5,
+        pan=-0.10,
+        synth_overrides={
+            "body_mix": 0.62,
+            "wire_mix": 0.38,
+            "body_decay": 0.18,
+            "click_amount": 0.20,
+            "comb_amount": 0.55,
+        },
+        effects=[
+            EffectSpec(
+                "compressor",
+                {"preset": "snare_punch", "attack_ms": 3.0, "ratio": 3.5},
+            ),
+            EffectSpec(
+                "eq",
+                {
+                    "bands": [
+                        {"kind": "bell", "freq_hz": 200.0, "gain_db": 2.5, "q": 1.1},
+                        {"kind": "bell", "freq_hz": 3800.0, "gain_db": 1.5, "q": 1.4},
+                        {"kind": "high_shelf", "freq_hz": 7000.0, "gain_db": -1.5},
+                    ]
+                },
+            ),
+            EffectSpec("saturation", {"preset": "snare_bite"}),
+        ],
+    )
+    score.voices["snare"].sends.append(VoiceSend(target="plate", send_db=-14.0))
+
     for bar in range(1, TOTAL_BARS + 1):
         if not _is_drop(bar):
             continue
@@ -442,6 +487,13 @@ def build_score() -> Score:
                 duration=0.12,
                 freq=3000.0,
                 amp_db=-3.0,
+            )
+            score.add_note(
+                "snare",
+                start=_pos(bar, beat),
+                duration=0.18,
+                freq=200.0,
+                amp_db=-4.0,
             )
 
     # ── Hats (16ths with density automation) ──────────────────────────
@@ -514,6 +566,12 @@ def build_score() -> Score:
     )
     for bar in range(1, TOTAL_BARS + 1):
         if not _is_drop(bar):
+            continue
+        # Every 8th bar, skip the open-hat to break the loop (last bar of
+        # each 8-bar phrase — the ear lands on silence, then the next phrase
+        # starts fresh).
+        drop_start = BUILD_1_END if _is_drop_1(bar) else BUILD_2_END
+        if (bar - drop_start) % 8 == 7:
             continue
         # Off-beat 8ths (on the "and" of 1, 2, 3, 4 → beat+n16=2)
         for beat in range(1, 5):
@@ -599,6 +657,205 @@ def build_score() -> Score:
                 amp_db=amp,
             )
 
+    # ── Acid bass (octave-up bright doubling, Felix/Ladyhawke move) ───
+    # Mirrors the off-beat 8th rhythm an octave up, run through a resonant
+    # k35 filter for acid bite. Kick-ducked hard so it clears the kick.
+    # Absent in BUILD-1 (tease), light in DROP-1, louder and more open in
+    # DROP-2 — the "oh, there's a second layer" reveal.
+    score.add_voice(
+        "acid_bass",
+        synth_defaults={
+            "engine": "va",
+            "preset": "virus_bass",
+            "filter_topology": "k35",
+            "k35_feedback_asymmetry": 0.05,
+            "drive_amount": 0.0,
+            "attack": 0.003,
+            "decay": 0.10,
+            "sustain_level": 0.45,
+            "release": 0.06,
+            "filter_env_amount": 0.6,
+        },
+        mix_db=-14.0,
+        max_polyphony=1,
+        velocity_humanize=VelocityHumanizeSpec(preset="subtle_living", seed=73),
+        envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog", seed=74),
+        effects=[
+            EffectSpec(
+                "eq",
+                {
+                    "bands": [
+                        {
+                            "kind": "highpass",
+                            "cutoff_hz": 180.0,
+                            "slope_db_per_oct": 12,
+                        },
+                        {"kind": "high_shelf", "freq_hz": 4000.0, "gain_db": -2.0},
+                    ],
+                },
+            ),
+            _duck("kick_duck"),
+        ],
+        sends=[VoiceSend(target="delay", send_db=-20.0)],
+        automation=[
+            # Resonant sweep opening across each drop — the signature acid move
+            AutomationSpec(
+                target=_synth("cutoff_hz"),
+                segments=(
+                    _seg(_T_D1, _T_BDB, 1400.0, 2600.0, shape="exp"),
+                    _seg(_T_D2, _T_OUT, 1800.0, 3400.0, shape="exp"),
+                ),
+            ),
+            AutomationSpec(
+                target=_synth("resonance_q"),
+                segments=(
+                    _seg(_T_D1, _T_BDB, 1.1, 1.4),
+                    _seg(_T_D2, _T_OUT, 1.3, 1.6),
+                ),
+            ),
+        ],
+    )
+    for bar in range(1, TOTAL_BARS + 1):
+        # Joins properly in DROP-1, absent in breakdowns, louder in DROP-2.
+        if not _is_drop(bar):
+            continue
+        roots = BASS_ROOTS_7LIM if _is_drop_2(bar) else BASS_ROOTS
+        root = roots[_ci(bar)]
+        drop_2 = _is_drop_2(bar)
+        for beat in range(1, 5):
+            # Octave above the main bass — partial × 2, preserve octave alternation
+            base_partial = root if beat % 2 == 1 else root * 2.0
+            partial = base_partial * 2.0
+            # DROP-2 is the payoff: louder + slightly tighter gate
+            amp = (
+                (-9.0 if beat in (1, 3) else -11.0)
+                if not drop_2
+                else (-6.0 if beat in (1, 3) else -8.0)
+            )
+            score.add_note(
+                "acid_bass",
+                start=_pos(bar, beat, 2),
+                duration=S16 * 1.4,
+                partial=partial,
+                amp_db=amp,
+            )
+
+    # ── Riser + impact into DROP-1 (and a shorter version into DROP-2) ─
+    # The signature trance "is-this-going-to-happen-OH-YES-IT'S-HAPPENING"
+    # element. 4-bar bandpass-noise sweep rising in amplitude and cutoff,
+    # released into a single reverb-washed impact on the drop's downbeat.
+    score.add_voice(
+        "riser",
+        synth_defaults={
+            "engine": "synth_voice",
+            "osc_type": None,
+            "partials_type": None,
+            "fm_type": None,
+            "noise_type": "bandpass",
+            "noise_level": 1.0,
+            "filter_mode": "bandpass",
+            "filter_cutoff_hz": 1000.0,
+            "filter_q": 2.2,
+            "attack": 0.01,
+            "decay": 0.0,
+            "sustain_level": 1.0,
+            "release": 0.05,
+        },
+        mix_db=-14.0,
+        velocity_humanize=None,
+        effects=[
+            EffectSpec(
+                "eq",
+                {
+                    "bands": [
+                        {
+                            "kind": "highpass",
+                            "cutoff_hz": 400.0,
+                            "slope_db_per_oct": 12,
+                        },
+                    ],
+                },
+            ),
+        ],
+        sends=[
+            VoiceSend(target="plate", send_db=-6.0),
+            VoiceSend(target="delay", send_db=-14.0),
+        ],
+    )
+
+    # Impact voice — one reverb-bombed hit per drop entry.
+    score.add_voice(
+        "impact",
+        synth_defaults={
+            "engine": "drum_voice",
+            "preset": "909_fat",
+        },
+        normalize_peak_db=-6.0,
+        mix_db=-4.0,
+        velocity_humanize=None,
+        effects=[
+            EffectSpec("compressor", {"preset": "snare_punch", "attack_ms": 2.0}),
+            EffectSpec(
+                "eq",
+                {
+                    "bands": [
+                        {"kind": "bell", "freq_hz": 160.0, "gain_db": 3.0, "q": 0.9},
+                        {"kind": "high_shelf", "freq_hz": 6000.0, "gain_db": -2.0},
+                    ]
+                },
+            ),
+        ],
+        sends=[
+            VoiceSend(target="plate", send_db=-2.0),
+            VoiceSend(target="delay", send_db=-10.0),
+        ],
+    )
+
+    def _place_riser(start_bar: int, bars: int, peak_amp_db: float = -6.0) -> None:
+        """Place a *bars*-bar noise sweep terminating at *start_bar + bars*."""
+        start_t = _pos(start_bar)
+        duration = bars * BAR
+        # Amp swell: ease-in from silent to peak over the whole span
+        amp_env = [
+            {"time": 0.0, "value": 0.02},
+            {"time": 0.55, "value": 0.35, "curve": "exponential"},
+            {"time": 0.90, "value": 0.95, "curve": "exponential"},
+            {"time": 1.0, "value": 1.0, "curve": "linear"},
+        ]
+        # Cutoff sweep: 800 Hz → 9 kHz, exponential
+        filt_env = [
+            {"time": 0.0, "value": 800.0},
+            {"time": 1.0, "value": 9000.0, "curve": "exponential"},
+        ]
+        score.add_note(
+            "riser",
+            start=start_t,
+            duration=duration,
+            freq=1000.0,
+            amp_db=peak_amp_db,
+            synth={"noise_envelope": amp_env, "filter_envelope": filt_env},
+        )
+
+    # Full 4-bar riser into DROP-1 (first-reveal — bigger gesture)
+    _place_riser(BUILD_1_END - 4, 4, peak_amp_db=-5.0)
+    score.add_note(
+        "impact",
+        start=_pos(BUILD_1_END),
+        duration=0.8,
+        freq=180.0,
+        amp_db=-2.0,
+    )
+
+    # Shorter 2-bar riser into DROP-2 (callback — already established)
+    _place_riser(BUILD_2_END - 2, 2, peak_amp_db=-7.0)
+    score.add_note(
+        "impact",
+        start=_pos(BUILD_2_END),
+        duration=0.8,
+        freq=180.0,
+        amp_db=-3.0,
+    )
+
     # ── Pad (supersaw_pad sustained chords) ───────────────────────────
     score.add_voice(
         "pad",
@@ -610,7 +867,7 @@ def build_score() -> Score:
             "sustain_level": 0.85,
             "release": 2.8,
         },
-        mix_db=-12.0,
+        mix_db=-10.0,
         velocity_group="trance_ensemble",
         envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad", seed=30),
         velocity_humanize=VelocityHumanizeSpec(preset="subtle_living", seed=31),
@@ -677,6 +934,38 @@ def build_score() -> Score:
                     _seg(_T_B2, _T_D2, 1.2, 2.0),
                     _hold(_T_D2, _T_OUT, 0.9),
                     _seg(_T_OUT, _T_END, 0.9, 0.6),
+                ),
+            ),
+            # Slow stereo drift — supersaw pads can feel locked dead-centre
+            # without a little motion. ~16 s period, ±0.06 depth.
+            AutomationSpec(
+                target=_ctrl("pan"),
+                segments=(
+                    AutomationSegment(
+                        start=_T_BDA,
+                        end=_T_END,
+                        shape="sine_lfo",
+                        freq_hz=1.0 / 16.0,
+                        depth=0.06,
+                    ),
+                ),
+            ),
+            # Tempo-gated 1/8-note tremolo across BREAKDOWN-B — the campy
+            # Cascada-waiting-for-the-drop pulse shelters under the lead.
+            # 4.6 Hz = eighth notes at 138 BPM. Peaks land on beats (phase_rad
+            # = π/2), trough on the "&" — the pad pulses with the beat.
+            AutomationSpec(
+                target=_ctrl("mix_db"),
+                segments=(
+                    AutomationSegment(
+                        start=_T_BDB,
+                        end=_T_B2,
+                        shape="sine_lfo",
+                        freq_hz=BPM / 60.0 * 2.0,
+                        depth=5.0,
+                        offset=-13.0,
+                        phase_rad=1.5707963267948966,  # π/2 — start at peak
+                    ),
                 ),
             ),
         ],
@@ -922,6 +1211,18 @@ def build_score() -> Score:
             EffectSpec(
                 "delay",
                 {"delay_seconds": dotted_eighth, "feedback": 0.30, "mix": 0.12},
+                automation=[
+                    AutomationSpec(
+                        target=_ctrl("mix"),
+                        segments=(
+                            _hold(_T_D1, _T_BDB, 0.10),
+                            _seg(_T_BDB, _T_B2, 0.18, 0.24),
+                            _seg(_T_B2, _T_D2, 0.22, 0.12),
+                            _hold(_T_D2, _T_OUT, 0.10),
+                            _seg(_T_OUT, _T_END, 0.14, 0.28),
+                        ),
+                    ),
+                ],
             ),
             _duck("kick_duck"),
         ],
@@ -969,8 +1270,14 @@ def build_score() -> Score:
                 velocity=vel,
             )
     # BREAKDOWN-B: lyrical held notes with vibrato
+    # Second half (bars 65-68) gets an octave-down unison doubling — fattens
+    # the money moment without changing the melody. Only the peak four bars
+    # so the lift from "single-voice introduction" to "doubled climax" is felt.
+    peak_start = DROP_1_END + 8  # bar 65
+    peak_end = DROP_1_END + 12  # bar 69 (exclusive)
     for bar in range(DROP_1_END, BREAKDOWN_B_END):
         motif = LEAD_BD[_ci(bar)]
+        in_peak = peak_start <= bar < peak_end
         for beat, n16, partial, gate, vel in motif:
             score.add_note(
                 "lead",
@@ -984,6 +1291,21 @@ def build_score() -> Score:
                     rate_hz=5.2,
                 ),
             )
+            if in_peak:
+                # Octave-down unison — quieter and less vibrato depth so the
+                # top note remains the focus.
+                score.add_note(
+                    "lead",
+                    start=_pos(bar, beat, n16),
+                    duration=gate * S16 * 0.85,
+                    partial=partial * 0.5,
+                    amp_db=-11.0,
+                    velocity=vel * 0.85,
+                    pitch_motion=PitchMotionSpec.vibrato(
+                        depth_ratio=0.003,
+                        rate_hz=5.2,
+                    ),
+                )
     # DROP-2: same topline, more expressive with light vibrato on longer notes
     for bar in range(BUILD_2_END, DROP_2_END):
         motif = LEAD_DROP[_ci(bar)]
@@ -999,6 +1321,47 @@ def build_score() -> Score:
                 amp_db=-5.0,
                 velocity=vel * 1.02,
                 pitch_motion=pm,
+            )
+
+    # ── Fills on beat 4 of the last bar before each major transition ──
+    # Snare flams telegraph incoming drops; clap rolls crescendo into
+    # breakdowns. Keeps section edges from feeling abrupt.
+    drop_entry_fills = [BUILD_1_END - 1, BUILD_2_END - 1]  # bars 32, 80
+    for fill_bar in drop_entry_fills:
+        # Ghost 16th on beat 4 "e"
+        score.add_note(
+            "snare",
+            start=_pos(fill_bar, 4, 1),
+            duration=0.12,
+            freq=200.0,
+            amp_db=-14.0,
+        )
+        # Main flam on beat 4 "and"
+        score.add_note(
+            "snare",
+            start=_pos(fill_bar, 4, 2),
+            duration=0.18,
+            freq=200.0,
+            amp_db=-6.0,
+        )
+        # Accent on beat 4 "a" — final push before the drop hangs
+        score.add_note(
+            "snare",
+            start=_pos(fill_bar, 4, 3),
+            duration=0.16,
+            freq=220.0,
+            amp_db=-4.0,
+        )
+
+    breakdown_entry_fills = [DROP_1_END - 1, DROP_2_END - 1]  # bars 56, 104
+    for fill_bar in breakdown_entry_fills:
+        for n16 in range(4):
+            score.add_note(
+                "clap",
+                start=_pos(fill_bar, 4, n16),
+                duration=0.10,
+                freq=3000.0,
+                amp_db=-10.0 + n16 * 1.5,
             )
 
     return score

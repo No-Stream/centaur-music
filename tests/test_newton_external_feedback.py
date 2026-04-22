@@ -7,14 +7,21 @@ which audibly damps high-resonance behaviour and smears fast transients.
 
 The Newton solver closes the loop implicitly per sample — the filter body
 is collapsed to its affine input-to-output map (or combined with existing
-internal Newton solvers for ladder/Jupiter), and the scalar equation
-`y = H(x + fb_amt · tanh(g_fb · y))` is solved to machine precision.
+internal Newton solvers for ladder/Jupiter/K35/diode), and the scalar
+equation `y = H(x + fb_amt · tanh(g_fb · y))` is solved to machine
+precision.
 
-Topologies with closed Newton external feedback at the time of writing:
+Topologies with closed Newton external feedback (full WS1 pass):
     linear SVF, cascade, SEM, Sallen-Key, ladder (Newton solver),
-    Jupiter (Newton solver).
+    Jupiter (Newton solver), K35 (Newton solver), diode (Newton solver).
 
-Topologies still on unit-delay (see FUTURE.md): K35, diode, driven SVF.
+K35 and diode gained closed-loop external feedback in the WS1 analog-
+modeling maturation pass — unit-delay behaviour there is only retained
+under specific fallback conditions (HP mode for K35, `filter_morph > 0`
+for diode).  The remaining unit-delay topology is the driven-SVF path
+(see FUTURE.md for the derivation work needed).  The ``filter_solver=
+"adaa"`` path remains bit-identical to the pre-change behaviour on every
+topology, so pieces can opt out by pinning ``filter_solver="adaa"``.
 """
 
 from __future__ import annotations

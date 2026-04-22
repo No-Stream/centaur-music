@@ -17,6 +17,19 @@ change):
     CAPTURE_BASELINE=1 uv run pytest tests/test_filter_params_migration.py
 
 Otherwise the baseline is loaded from the JSON file next to this module.
+
+Rehash rationale convention
+---------------------------
+The baseline JSON carries a top-level ``_notes`` map alongside the case
+entries.  When you rehash a baseline entry intentionally (because a DSP
+change moved its sha256 / rms / peak values), add or update the matching
+``_notes`` entry with an ISO date and a one-line explanation of what code
+change caused the rehash and why.  This makes rehash history
+self-documenting and distinguishes intentional rehashes (landed with
+clear rationale) from accidental ones (a bug that silently moved output
+and got committed without explanation).  Case keys never start with ``_``,
+so ``_notes`` is reserved at the top level and ignored by the fingerprint
+match logic.
 """
 
 from __future__ import annotations

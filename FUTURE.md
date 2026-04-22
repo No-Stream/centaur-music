@@ -372,21 +372,14 @@ for those).
   `docs/synth_api.md` "Quality Modes".
 - ~~**Iterative Newton solver on external filter feedback loop.**~~
   **Partially implemented.** `_filters.py` now closes the external
-  feedback loop implicitly for the six highest-priority topologies
-  (linear SVF, cascade, SEM, Sallen-Key, ladder-Newton, Jupiter-Newton)
-  via a shared `_solve_ext_feedback_newton` helper and combined scalar
-  Newton residuals on the Newton-inner kernels. The default
-  `FilterParams.filter_solver` is now `"newton"` so pieces get the
+  feedback loop implicitly for the eight analog topologies — linear
+  SVF, cascade, SEM, Sallen-Key, ladder-Newton, Jupiter-Newton, **K35**,
+  and **diode** (the last two added in the April 2026 analog-modeling
+  maturation pass). Uses a shared `_solve_ext_feedback_newton` helper
+  for pure-affine-body topologies and combined scalar Newton residuals
+  for topologies with additional internal nonlinear feedback. The
+  default `FilterParams.filter_solver` is `"newton"` so pieces get the
   delay-free feedback path by default. Remaining unit-delay hold-outs:
-  - **K35 (MS-20 diode-feedback Sallen-Key).** Uses `_diode_shape` on
-    the feedback instead of `tanh`, so the Newton Jacobian needs the
-    diode-derivative path rather than `sech²`. Self-oscillation
-    character is core to K35, so doing this right matters; low
-    priority because K35 is rarely used.
-  - **Diode 3-pole (TB-303).** Both ADAA and Newton inner paths still
-    use unit-delay on the external feedback. The internal diode feedback
-    tap already uses Newton; extending the solver to include the outer
-    `tanh(ext_fb_drive · y)` is the same pattern as ladder/Jupiter.
   - **Driven SVF path (`filter_drive > 0`).** The pre-filter `tanh(x)`
     shape makes the instantaneous input-to-output map nonlinear in `x`,
     so the affine-collapse derivation used for the clean linear path
@@ -806,6 +799,133 @@ Useful additions:
 - selective visual improvements when they materially speed up listening and
   revision loops
 
+### Testing & robustness
+
+Coverage baseline is 77.9% as of 2026-04-21 (`.coverage-baseline`), and
+`tests/test_pieces_smoke.py` now actually renders a 2s window of 10
+representative pieces. The remaining integration seams below have thin
+or missing end-to-end tests. Listed roughly by value — each entry names
+the seam, why a real regression there would sting, and a sketch of what
+a durable test would look like. Favor audio-level assertions (finite,
+no-NaN, level-in-range, spectral property) over mock-based assertions.
+
+1. **Snippet / render-window equivalence with the full render.**
+   - **Risk:** `make snippet` and `make render-window` are part of the
+     documented iteration workflow, but existing tests only check "it
+     runs and writes files." If `extract_window` silently offsets a
+     send-bus's delay feedback history, re-seeds a drift bus, or clips
+     a partial note, the inspector/snippet output lies about the full
+     piece and agents will debug phantoms.
+   - **Proposed test:** render a small multi-voice score twice — once
+     fully, once via `extract_window(a, b).render()` — and compare the
+     mid-window interior (skip leading reverb pre-roll and trailing
+     tail) via RMS-of-difference < 5% of signal RMS. Cover a score with
+     at least one send bus with feedback and one voice with automation.
+
+2. **Stem sum vs. pre-master mix is only loosely bounded.**
+   - **Risk:** `tests/test_stem_export.py` asserts `diff_rms < 0.1 *
+     signal_rms` — 10% is loose enough that a 1 dB gain-staging
+     regression or a double-counted send bus would slip through. Stems
+     are a consumer-facing artifact; silent drift between "sum of
+     stems" and "the mix you hear" is exactly what DAW users discover,
+     not tests.
+   - **Proposed test:** build a score with 3 voices (mixed LUFS + peak
+     normalization), 2 send buses with different return levels and
+     pans. Verify `sum(wet_stems) + sum(send_returns)` matches
+     `render()` output within 1e-6 RMS when `auto_master_gain_stage=
+     False` and `master_effects=[]`. Run a variant with one voice
+     hard-left, one hard-right, to catch stereo summation bugs.
+
+3. **Shared send-bus gain math with >2 voices and non-zero `return_db`.**
+   - **Risk:** `AGENTS.md` gives specific guidance that `return_db=0.0`
+     should be the default and voice fader + `send_db` does the work.
+     No test verifies the math when `return_db != 0`. A regression
+     that swaps `send_db` and `return_db`, or double-applies either,
+     passes today.
+   - **Proposed test:** three voices feeding one bus at different
+     `send_db` values and non-zero `return_db`, with the bus using a
+     pure-wet 100% `delay` so returns are measurable in isolation.
+     Assert each voice's contribution scales as
+     `db_to_amp(send_db + return_db)` relative to its post-fader stem,
+     within a tight tolerance. Parametrize across pan.
+
+4. **Mixing LUFS-normalized and peak-normalized voices in one score.**
+   - **Risk:** `AGENTS.md` explicitly calls out that kicks/drums must
+     use `normalize_peak_db=-6.0` and tonal voices should use
+     `normalize_lufs`. Nothing renders a real mixed-normalization score
+     and asserts combined sanity. A regression in the mutual-exclusion
+     handling or the dispatch branch gives silent percussion or
+     blown-out drums, only surfacing on full pieces.
+   - **Proposed test:** score with one drum voice (`kick_tom`,
+     `normalize_peak_db=-6.0`) and one pad voice (`synth_voice`,
+     `normalize_lufs=-24.0`), identical loudness-relevant amp levels,
+     rendered through `DEFAULT_MASTER_EFFECTS`. Assert both voices
+     appear in `voice_stems` with expected `peak_dbfs` bands, no
+     clipping, integrated LUFS within an expected window.
+
+5. **Default master-bus chain with `DEFAULT_MASTER_EFFECTS` on a real score.**
+   - **Risk:** `tests/test_shared_master.py` covers fallback dispatch
+     but nothing renders a score through the full `DEFAULT_MASTER_
+     EFFECTS` chain and asserts the output is musical (finite,
+     sub-clip, LUFS in expected region). The plugin-vs-native fallback
+     is a live branch; if Chow plugins fail to load and the native
+     fallback misbehaves, pieces that "sound finished" via the default
+     stop sounding finished.
+   - **Proposed test:** render a two-voice score with
+     `master_effects=DEFAULT_MASTER_EFFECTS`, once under normal
+     conditions and once with plugin availability mocked to `False`.
+     Assert both produce finite audio, the fallback path measurably
+     compresses (RMS lower, peak-to-RMS ratio reduced), and neither
+     clips.
+
+6. **Choke groups combined with `max_polyphony` and `legato`.**
+   - **Risk:** choke groups, mono polyphony, and legato are tested in
+     isolation but not combined. A hi-hat or percussion voice with all
+     three active is a plausible real-world config; the
+     note-scheduling interactions could silently drop or double-trigger
+     notes.
+   - **Proposed test:** two voices in a choke group, one with
+     `max_polyphony=1` + `legato=True`, interleaved overlapping note
+     events. Assert finite output, no NaN, and that the note-count in
+     the rendered envelope (via onset detection on a high-gated signal)
+     matches the expected count after choke cuts.
+
+7. **MIDI import → Score → MIDI export round-trip.**
+   - **Risk:** `read_midi` has parse tests and a real Bach file is
+     parsed, but nothing builds a `Score` from imported MIDI and then
+     exports it. If the score builder drops ticks, velocities, or
+     per-track voice info, it's silent data loss for anyone using the
+     library as a MIDI pivot.
+   - **Proposed test:** round-trip a small synthetic MIDI (3 voices,
+     varying velocities, 32 notes) through import → `Score` →
+     `export_midi_bundle` → re-read the stem. Assert note counts,
+     midi_note, velocity, and start/duration match within one tick.
+
+8. **`OscillatorSource` / matrix driving per-sample synth params on a full voice render.**
+   - **Risk:** engine-level audio-rate modulation is tested with
+     hand-built `param_profiles` arrays. No test wires
+     `OscillatorSource` → `ModConnection` → `Voice` → `Score.render()`
+     at audio rate and verifies sidebands in the final mix. A
+     regression in how `modulation.py` samples and threads the source
+     into `param_profiles` (the integration seam between matrix and
+     engine) would produce silent no-ops.
+   - **Proposed test:** score with a polyblep voice, `OscillatorSource`
+     at 80 Hz driving `pulse_width` through the mod matrix, held note
+     at 220 Hz. FFT the output; assert energy at 140 Hz and 300 Hz
+     (square-wave sidebands at f0 ± f_mod) relative to the unmodulated
+     baseline.
+
+9. **Cross-engine coverage for "engine-agnostic" features.**
+   - **Risk:** `sympathetic_amount`, voice `effects`, and the mod
+     matrix are documented as engine-agnostic, but
+     `tests/test_sympathetic.py` only exercises `additive`. If a new
+     engine skips the post-mix sympathetic resonator hook, the test
+     suite won't notice.
+   - **Proposed test:** parametrize sympathetic-resonance tests over
+     `{additive, polyblep, synth_voice, piano, harpsichord}`, asserting
+     `energy_on > energy_off` for each. Same template could verify
+     per-voice `effects` land across engines.
+
 ### Repo structure follow-up
 
 The repo is in better shape than before, but a few architectural cleanups still
@@ -905,6 +1025,20 @@ digital variants. See `docs/synth_api.md` for the parameter surface.
 
 ## Lower priority
 
+### Modulation source base signature (ty compliance)
+
+`code_musics/modulation.py` defines `ModSource.sample(self, _times, _context)`
+with leading-underscore parameter names on the abstract base, but every
+concrete subclass (`LFOSource`, `OscillatorSource`, `EnvelopeSource`,
+`MacroSource`, `VelocitySource`, `RandomSource`, `ConstantSource`,
+`DriftAdapter`, `ChaoticSource`) overrides with `times` / `context`. ty's
+`invalid-method-override` rule reads this as a Liskov violation even
+though runtime behavior is correct. We silence the rule in `pyproject.toml`
+under `[tool.ty.rules]` as a placeholder — the clean fix is to rename the
+base-class parameters to `times` / `context` and add `# noqa: ARG002` or
+otherwise mark them unused, then remove the ty ignore. Low priority; the
+rule is off-by-one-line and affects no runtime behavior.
+
 ### Rhythm and clearer voice roles
 
 Still worthwhile, but not blocked on infrastructure:
@@ -977,3 +1111,142 @@ Likely later directions:
   chosen plugins
 - eventual use of paid Linux-capable effects already owned, such as `u-he
   Satin` and `u-he Presswerk`, once the activation path is low-friction enough
+
+## Analog modeling — deferred ideas
+
+Captured from a pair of research surveys on virtual-analog DSP. These are ideas
+we consciously _did not_ take on in the April 2026 "analog modeling maturation"
+pass (which shipped: engine parity `quality` dial across `va`/`synth_voice`/
+`drum_voice`, k35 + diode external-FB Newton kernels, analog filter as bus
+`EffectSpec`, second-order ADAA on the waveshaper AD1 set, and the
+`VoiceCardProfile` consolidation). Low priority — preserved here so a future
+session has context instead of re-deriving from scratch.
+
+### Circuit-faithful modeling
+
+- **Wave Digital Filter (WDF) block for a flagship pedal/preamp.** Bernardini
+  2021's Newton-Raphson-in-WDF robustness results make this tractable. Most
+  musical payoff: a Tube Screamer or RAT model on the effects bus,
+  complementary to (not competing with) the existing ChowDSP/Airwindows
+  plugin-host options. Deferred: no WDF infra exists — greenfield lift.
+- **MNA/state-space solver for a flagship voice block.** `apply_preamp`'s
+  flux-domain model is the closest thing we have to memory/state in a
+  non-linear effect; a small MNA solver around a single Fender tone stack or
+  diode clipper would push further. Deferred: ChowDSP plugins + pedalboard
+  hosting already cover the territory.
+
+### Oscillator and antialiasing refinements
+
+- **PolyBLAMP** for triangle and any slope-discontinuity waveform. BLEP
+  infrastructure already exists; BLAMP (Esqueda/Välimäki/Bilbao 2016) extends
+  to slope discontinuities. Relevant for folded waves and triangles with
+  audible corner energy.
+- **BLIT as an alternative to PolyBLEP** for extreme hard-sync / audio-rate
+  FM. Would sit alongside PolyBLEP rather than replace it — PolyBLEP's
+  small-support character is usually preferred.
+- **AD2 for the waveshaper fold-family algos** (`polynomial`, `foldback`,
+  `linear_fold`, `sine_fold`). Currently rely on caller-supplied OS. Closed
+  form AD2 is tractable for `linear_fold`/`sine_fold`, harder for
+  `polynomial`. Deferred from the April 2026 AD2 workstream.
+- **AD2 on `_filters.py` Newton paths.** Newton kernels are exact-per-sample
+  but don't ADAA the nonlinearity — the exact-tanh evaluation still aliases
+  above ~Nyquist/4 at high drive. Subtle-but-measurable improvement.
+- **Level-compensated ADAA.** Bilbao/Esqueda have a constant-gain ADAA variant
+  that avoids unity-gain drift under heavy modulation.
+
+### Subtractive color — additional topologies
+
+- **Formant filter topology.** Four parallel 12 dB SVF BP stages at vowel
+  formant frequencies, bilinear vowel interpolation. Biggest gap in
+  subtractive palette for vocal/talk-box character beyond additive formant
+  morphing in `spectra.py`.
+- **Buchla Low-Pass Gate (LPG)** — vactrol-coupled VCA+LPF. Better modeled as
+  a voice-level feature (VCA and LPF move together with a vactrol time
+  constant) than as a `filter_topology`. Would sit in the envelope/VCA layer.
+- **Prophet-5 SSM2040 / CEM3320 per-stage character.** Low marginal value
+  given existing `cascade` and `jupiter`; sst-filters CEM3320 is a reference
+  starting point. Skip unless a specific piece needs it.
+- **Steiner-Parker filter topology.** Alternate MS-20-era character distinct
+  from the existing K35. Low priority.
+
+### Conditioned / differentiable modeling
+
+- **Differentiable digital Moog filter (Gerat et al. 2023).** Keep a
+  physically meaningful structure with tractable gradients. Wrong tool for a
+  creative library right now; interesting for a "learn a target sound" flow.
+- **Conditioned black-box pedal modeling (Simionato/Fasciani 2023).** Causal
+  TCN/RNN on hardware I/O with control conditioning. Narrow device matching;
+  not synth-filter territory.
+
+### Waveguide and comb upgrades
+
+- **Waveguide string engine.** TPT-family loop replacing the current
+  `apply_comb`: Hermite cubic fractional delay (or Thiran allpass), FIR
+  brightness filter, IIR SVF loop filter, allpass chain for dispersion.
+  Plucked/bowed string textures the project currently can't make. Already
+  appears elsewhere in this document — cross-reference.
+- **TPT-family feedback comb replacement for `apply_comb`.** Thiran allpass
+  fractional delay + TPT damping pole. Would upgrade the `va` engine's comb
+  slot to topology-preserving; audible on karplus-strong-ish bells and acid
+  bass.
+
+### Voice-level aliveness (beyond `VoiceCardProfile`)
+
+- **Power-supply sag / rail modeling** (The Legend-style). Slow global
+  envelope on voice gain modulated by aggregate load. Relevant on heavy
+  polyphonic chords. Modulation-matrix territory.
+- **Per-voice-card component-tolerance drift** — separate fast-thermal and
+  slow-aging drift, per-component rather than per-parameter. Korg multi/poly
+  pushes toward this; `VoiceCardProfile` is a first-layer approximation.
+- **Unison voice-card variance.** When `unison_voices > 1` on
+  `va`/`supersaw`, apply voice-card heterogeneity _within_ the unison stack
+  rather than just across polyphony.
+
+### Per-voice VCA and distortion (beyond the April 2026 basics)
+
+The April 2026 analog pass wires `VoiceCardProfile.sat_threshold_pct_std` into
+`voice_dist_drive` and `vca_nonlinearity` so unison/poly voices register as
+subtly different per-card, and ships a small default VCA nonlinearity as
+baseline analog warmth. These further moves stay deferred:
+
+- **VCA gain-cell asymmetry modeling.** Current `vca_nonlinearity` is a scalar
+  `tanh(drive * x) / tanh(drive)` shape — symmetric. Real OTA-based VCAs have
+  bias-point-dependent asymmetry and small DC offset at zero-envelope. Per-
+  card bias-point spread would push aliveness further. Modest effort.
+- **VCA control-voltage feedthrough.** Envelope shape bleeds into the audio
+  signal at low levels through CV coupling capacitors — adds a faint
+  envelope-shaped thump/click at note-on and release. Prophet-5 has this;
+  Rev Sergeant emulations model it. Very low priority; mostly audible on
+  percussive patches.
+- **Voice-level distortion placement enum** — `voice_dist_placement ∈
+  {post_vca, pre_filter, in_filter_drive}`. `post_vca` is the current
+  behavior; `pre_filter` would route drive to the engine-level `filter_drive`;
+  `in_filter_drive` is an alias for topologies that saturate in-loop
+  (ladder, k35, diode). Gives composers a voice-level location knob without
+  new DSP. Mostly plumbing.
+- **Cross-voice summing-bus bleed.** Real analog polysynths have low-level
+  voice-to-voice bleed through the shared summing bus that adds a faint
+  correlated "glue" across the poly stack. Modeling this would be a
+  summing-stage crosstalk matrix before the master fader. Research reports
+  flag this as part of analog aliveness; marginal creative payoff small.
+- **Flux-domain per-voice preamp.** The effect-side `apply_preamp` is flux-
+  domain (frequency-dependent saturation, memory); extending that model to
+  per-voice would give genuine analog warmth where `voice_dist_mode=preamp`
+  currently just routes to the shared effect function memorylessly.
+  Medium effort; biggest step up from current VCA distortion.
+- **WDF / differential-pair VCA emulation.** Full circuit-level emulation of
+  a 2180-style VCA would give bit-accurate character. Way out of scope for
+  a creative library; noted for completeness.
+
+### Selectable saturation and miscellany
+
+- **Vital's 7 selectable saturation curves** (`algebraicSat`, `quickTanh`,
+  `bumpSat`, `hardTanh`, and 3 more) as a `mode` enum on the modern
+  saturation effect. Already referenced elsewhere in this document — unify on
+  next pass.
+- **Persistent DC offset ("DC thump")** from Repro-5's component-level model.
+  Per-voice DC offset that fades over multiple seconds post-trigger — tiny
+  but "that's analog" tell. Very low priority.
+- **Oscillator sync crossover character.** Hard-sync transition character
+  varies between Moog/Roland/Oberheim implementations; currently all our sync
+  is algorithmically identical.

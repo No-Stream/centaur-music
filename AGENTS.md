@@ -213,8 +213,12 @@ interpreter and will fail with import errors.
 **Always use one of:**
 
 ```bash
-make all                           # default quality gate: format-check, lint, compile, typecheck, full tests
+make all                           # default quality gate: format-check, lint, compile, typecheck, full tests + coverage summary
+make all COV=0                     # same, but skip coverage (slightly faster; for tight iteration loops)
 make check                         # alias for make all
+make coverage                      # full per-file coverage report with uncovered line numbers
+make coverage-baseline             # update .coverage-baseline to current coverage (commit to ratchet)
+make test SLOW=1                   # include --durations=10 output
 make list                          # list registered pieces
 make render PIECE=harmonic_drift   # render a piece (adds --plot by default)
 make render PIECE=harmonic_drift PLOT=0  # render without plot
@@ -415,12 +419,35 @@ See `FUTURE.md` for way more ideas.
   `diva_bass_resonance`, `cs80_attack`, `prophet_pad`, `moog_acid_newton`,
   `sk_bite_lead`, `cascade_bass` presets for showcase patches.
 - The Newton solver also closes the **external feedback loop**
-  (`feedback_amount`) implicitly on `svf`, `cascade`, `sem`, `sallen_key`,
-  `ladder`, `jupiter` — eliminating the unit-delay damping that previously
-  smoothed out high-resonance and feedback-growl leads. `k35` and `diode`
-  still use unit-delay ext feedback (see `FUTURE.md` for the
-  diode-derivative Jacobian they need). `filter_solver="adaa"` remains
+  (`feedback_amount`) implicitly on all eight analog topologies — `svf`,
+  `cascade`, `sem`, `sallen_key`, `ladder`, `jupiter`, `k35`, and `diode`
+  — eliminating the unit-delay damping that previously smoothed out
+  high-resonance and feedback-growl leads. K35 gains its first implicit
+  diode-feedback solver too (rather than the prior `alpha` pre-scale +
+  `y_prev` hybrid), which tightens self-oscillation character into
+  something closer to MS-20 hardware. Gates: K35 outer-Newton is
+  LP + drive=0; diode outer-Newton is LP + morph=0; HP K35 and morph>0
+  diode fall back to the prior path. `filter_solver="adaa"` remains
   bit-identical to the pre-change behaviour everywhere.
+- The `quality` knob (`"draft"` / `"fast"` / `"great"` / `"divine"`) now
+  extends beyond `polyblep` / `filtered_stack` to `va`, `synth_voice`, and
+  `drum_voice` with engine-specific defaults: `va="fast"` (era-accurate
+  JP-8000 / Virus / Q character — ran at moderate internal rates with
+  one-sample-delay-style feedback), `synth_voice="great"` (modern-clean
+  default for the recommended new-tonal-voice engine), `drum_voice="great"`
+  (transient content benefits materially from Newton + oversampling,
+  especially at high drive/resonance). See `docs/synth_api.md` for the full
+  mode/solver/OS table and per-engine defaults.
+- `EffectSpec("analog_filter", ...)` exposes the eight ZDF topologies
+  (`svf`, `ladder`, `sallen_key`, `cascade`, `sem`, `jupiter`, `k35`,
+  `diode`) as a bus / master / voice effect on `Voice.effects`,
+  `Score.master_effects`, and send-bus chains. Wraps the same
+  `apply_filter_oversampled` kernel used by the synth engines, so
+  character matches the per-engine filter slot exactly. Mono input is
+  upmixed to stereo with independent L/R filter states. `cutoff_hz` is
+  sample-accurate; Q / drive / feedback collapse to per-call means with
+  a variance warning. Use `shape="exp"` on cutoff automation. See
+  `docs/synth_api.md` for the full parameter surface.
 - Oscillator imperfection params (`osc_asymmetry`, `osc_softness`,
   `osc_dc_offset`, `osc_shape_drift`) model analog VCO behavior in the
   `polyblep` and `filtered_stack` engines.
@@ -536,7 +563,58 @@ See `FUTURE.md` for way more ideas.
   (`exciter_type="sample"`), and digital-character voice shapers (`shaper="bit_crush"`
   / `"rate_reduce"` / `"digital_clip"`), with `pi_hardness` / `pi_tension` /
   `pi_damping` / `pi_damping_tilt` / `pi_position` macros for quick perceptual
-  shaping. See `docs/synth_api.md` for the full parameter surface.
+  shaping. Three sustained excitation types — `bow` (stick-slip friction),
+  `blow` (reed-table nonlinearity), `rub` (filtered noise with stiction) —
+  run for the full note duration and pair naturally with a *coupled +
+  dispersed* modal bank (`modal_coupling` ~0.15-0.3, `modal_dispersion`
+  ~0.2-0.4) to turn drum_voice into sustained "living body" presets
+  (`bow_gentle`, `bow_taut`, `bow_aggressive`, `blow_breath_pad`,
+  `blow_reed_sing`, `blow_overblow`, `rub_glass`, `rub_skin`, `rub_squeal`).
+  Transient exciters can also receive a velocity-shaped hammer-contact curve
+  via `contact_nonlinearity` (0-1, default 0 = no-op).
+  See `docs/synth_api.md` for the full parameter surface.
+- Modal resonator banks (`tone_type="modal"` / `metallic_type="modal_bank"`)
+  support optional **inter-mode coupling** and **post-bank allpass
+  dispersion**. `modal_coupling` (or the `pi_coupling` macro) injects each
+  mode's last sample into the others' inputs for rolling beats and modulated
+  decays; `modal_coupling_topology` selects `chain` / `ring` / `all`.
+  `modal_dispersion` (or `pi_dispersion`) runs the bank through a cascade of
+  first-order allpasses to produce piano-stiffness / bell-warp tail character.
+  Both default to 0 (no-op, bit-identical legacy behavior). The sustained
+  exciter presets lean on them — coupling 0.15-0.3 + dispersion 0.2-0.4 is
+  the sweet spot. See `docs/synth_api.md` for params and stability clamps.
+- The `synth_voice` `osc` slot now also supports `osc_type="scanned"` —
+  Verplank-style scanned synthesis over a mass-spring ring. Shapes
+  breathe organically under the network's own dynamics; 5 presets
+  (`scanned_breathing_string`, `scanned_singing_loop`, `scanned_glass_swarm`,
+  `scanned_taut_wire`, `scanned_loose_chain`) span pad to glitch. Params:
+  `osc_scan_n_nodes`, `osc_scan_motion`, `osc_scan_tension`,
+  `osc_scan_damping`, `osc_scan_position`. See `docs/synth_api.md`.
+- The `synth_voice` `osc` slot also supports `osc_type="chaotic"` —
+  four deterministic attractors (Lorenz / Rössler / Duffing / Chua)
+  with an `amount` knob that blends between periodic and fully chaotic
+  regimes. The same primitive is exposed as a `ModSource` via
+  `code_musics.modulation.ChaoticSource` for routing attractor motion
+  into mod-matrix destinations (cutoff, detune, etc.) — a living
+  alternative to LFOs and random sources. 4 `osc_type="chaotic"`
+  presets: `lorenz_wobble`, `rossler_smear`, `duffing_bass`,
+  `chua_scatter`. See `docs/synth_api.md`.
+- `synth_voice` has a **fifth source slot — `grain`** — a source-agnostic
+  granulator that granulates a *live-rendered* internal source buffer (osc
+  / partials / fm / noise / sample). The source-agnostic part is the
+  interesting bit: granulating a live synthesis source produces textures
+  that breathe twice — source breathes on its own, grain stream breathes
+  over it. Three modes (`cloud` / `time_freeze` / `texture`), optional
+  `grain_ji_lattice` for consonant pitch quantization, 5 presets
+  (`grain_breathing_cloud`, `grain_frozen_time`, `grain_glitch_scatter`,
+  `grain_tape_dust`, `grain_shimmer_dust`). See `docs/synth_api.md`.
+- Karplus-Strong++ pluck is available as `osc_type="pluck"` in `synth_voice`
+  and `tone_type="pluck"` in `drum_voice`. Creative-KS extensions beyond
+  vanilla KS: fractional delay for pitch accuracy, pick-position comb,
+  loop lowpass, tanh termination inside the feedback path. 5 shared
+  presets (`soft_pluck`, `acid_pluck`, `harp_pluck`, `ebow_pluck`,
+  `cavernous_pluck`); drum_voice ports are percussive variants.
+  See `docs/synth_api.md`.
 - The `sample` engine plays back WAV one-shots with pitch adjustment (map
   note `freq` against `root_freq`), optional `decay_ms` / `amp_envelope`
   shaping, a filter slot, and Machinedrum-E12-style macros (retrigger flams,
@@ -721,6 +799,17 @@ delegation-to-subagents pattern.
 - No need for trivial tests or testing each unexpected edge case. First and foremost, tests should validate that code runs properly, end to end, without major bugs; and they should prevent regressions.
 - Backward compatibility is not always required or expected; this is a local, creative library not a business one.
 - No fallbacks. Fail fast!
+- **Coverage is reported, not enforced.** `make all` prints a one-line
+  coverage summary; `make coverage` gives the full per-file breakdown with
+  uncovered line numbers. Deltas are computed against `.coverage-baseline`
+  (committed); a `⚠ ... ↓` regression warning flags when coverage drops.
+  Run `make coverage-baseline` to ratchet the baseline up after adding
+  tests. Treat the summary as a nudge to add tests when you touch
+  lightly-covered code — there's no minimum %, but always prefer `make all`
+  over `make test` so the signal is in front of you. `make all COV=0`
+  skips coverage for tight iteration loops. `pieces/`, `evaluate.py`, and
+  `inspire.py` are intentionally excluded (configuration/data and
+  LLM-dependent respectively).
 
 ---
 

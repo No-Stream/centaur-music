@@ -22,8 +22,31 @@ import soundfile as sf
 from scipy.signal import butter, lfilter, resample_poly, sosfilt, tf2sos
 
 from code_musics.automation import apply_control_automation
-from code_musics.engines._dsp_utils import classify_thd, compute_signal_thd
+from code_musics.engines._dsp_utils import (
+    apply_filter_oversampled_preupsampled,
+    classify_thd,
+    compute_signal_thd,
+    resolve_quality_mode,
+    upsample_cutoff_profile,
+)
+from code_musics.engines._filters import (
+    _SUPPORTED_FILTER_MODES,
+    _SUPPORTED_FILTER_TOPOLOGIES,
+)
 from code_musics.modulation import combine_connections_on_curve
+
+# Effect-level filter mode aliases.  The filter kernels use "lowpass"/"bandpass"/
+# "highpass"/"notch" internally; on the effect surface we accept the short
+# aliases (lp/bp/hp/notch) that match the documented parameter ranges.
+_ANALOG_FILTER_MODE_ALIAS: dict[str, str] = {
+    "lp": "lowpass",
+    "bp": "bandpass",
+    "hp": "highpass",
+    "notch": "notch",
+    "lowpass": "lowpass",
+    "bandpass": "bandpass",
+    "highpass": "highpass",
+}
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -5961,6 +5984,240 @@ def apply_preamp(
     return processed_signal, analysis
 
 
+# ---------------------------------------------------------------------------
+# Analog filter (bus/master/voice wrapper around the synth filter palette)
+# ---------------------------------------------------------------------------
+
+
+def _coerce_filter_curve(
+    value: float | np.ndarray,
+    *,
+    n: int,
+    name: str,
+) -> np.ndarray:
+    """Return a length-``n`` float64 curve for a scalar or per-sample filter param.
+
+    A scalar becomes a constant array.  A per-sample array must already match
+    the signal length ``n``; mismatched lengths raise ``ValueError`` (fail
+    fast — silent resampling would mask wiring bugs in automation curves and
+    has bitten us historically).
+
+    Non-finite values are rejected outright because the filter kernels run in
+    numba and non-finite inputs silently corrupt state.
+    """
+    arr = np.asarray(value, dtype=np.float64)
+    if arr.ndim == 0:
+        arr = np.full(n, float(arr), dtype=np.float64)
+    elif arr.ndim == 1:
+        if arr.shape[0] == 0:
+            raise ValueError(f"{name} per-sample curve is empty")
+        if arr.shape[0] != n:
+            raise ValueError(
+                f"{name} per-sample curve length {arr.shape[0]} must match signal length {n}"
+            )
+    else:
+        raise ValueError(f"{name} must be a scalar or 1-D per-sample array")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError(f"{name} contains non-finite values")
+    return arr
+
+
+def apply_analog_filter(
+    signal: np.ndarray,
+    *,
+    cutoff_hz: float | np.ndarray = 1000.0,
+    resonance_q: float = 0.707,
+    filter_topology: str = "svf",
+    mode: str = "lp",
+    filter_drive: float = 0.0,
+    feedback_amount: float = 0.0,
+    feedback_saturation: float = 0.3,
+    quality: str = "great",
+    mix: float = 1.0,
+    bass_compensation: float = 0.5,
+    filter_morph: float = 0.0,
+    filter_even_harmonics: float = 0.0,
+    hpf_cutoff_hz: float = 0.0,
+    hpf_resonance_q: float = 0.707,
+    k35_feedback_asymmetry: float = 0.5,
+    sample_rate: int = SAMPLE_RATE,
+) -> np.ndarray:
+    """Apply the analog-modeled filter palette as a bus/master/voice effect.
+
+    Wraps :func:`code_musics.engines._dsp_utils.apply_filter_oversampled` so
+    the eight ZDF/TPT topologies used by the synth engines (``svf``,
+    ``ladder``, ``sallen_key``, ``cascade``, ``sem``, ``jupiter``, ``k35``,
+    ``diode``) are available on ``EffectSpec`` chains.
+
+    Automation surface
+    ------------------
+    Only ``cutoff_hz`` accepts per-sample arrays; the underlying numba
+    filter kernels take cutoff as a per-sample profile but Q / drive /
+    feedback as scalars.  Historically this function silently collapsed
+    per-sample Q/drive/feedback arrays to their mean with a warning — that
+    let the signature lie about what automation actually did.  Rather than
+    pretend per-block sampling makes these "work", the signature now
+    matches reality: ``resonance_q``, ``filter_drive``, ``feedback_amount``
+    are ``float`` only.  Automate ``cutoff_hz`` for sweeps (see the
+    ``analog_filter`` entries in :mod:`code_musics.score`'s EffectSpec
+    automation resolution — ``AutomationSpec`` curves on ``cutoff_hz``
+    are converted to per-sample arrays at render time).
+
+    Parameters
+    ----------
+    signal:
+        Mono ``(N,)`` or stereo ``(2, N)`` audio.  Mono is upmixed to stereo
+        so the output always preserves stereo width; left and right channels
+        run through independent filter states (no cross-channel summing).
+    cutoff_hz:
+        Lowpass/bandpass/highpass/notch corner.  Scalar or per-sample array
+        (for automation-driven sweeps).  Clamped to ``[20 Hz, ~Nyquist]``.
+        Per-sample arrays must match the signal length exactly.
+    resonance_q:
+        Filter Q.  ``0.707`` is neutral; ``> 4.0`` enters self-oscillation
+        territory on ladder / K35 / diode.
+    filter_topology:
+        One of ``svf``, ``ladder``, ``sallen_key``, ``cascade``, ``sem``,
+        ``jupiter``, ``k35``, ``diode``.  See the engine-side topology docs
+        for per-topology character.
+    mode:
+        ``lp`` (lowpass, default), ``bp`` (bandpass), ``hp`` (highpass),
+        or ``notch``.  Topology support matches the synth engines: SVF and
+        SEM support all four; the ladder/cascade/jupiter/sallen_key/k35/diode
+        kernels honour the requested mode where their topology supports it
+        and fall back to lowpass otherwise.
+    filter_drive:
+        Pre-filter saturation drive ``0 – 1``.
+    feedback_amount:
+        Post-filter to pre-filter external feedback ``0 – 1``.  The
+        ``newton`` solver (selected by ``quality`` modes ``fast`` / ``great``
+        / ``divine``) closes this loop implicitly on all eight analog
+        topologies — SVF, cascade, SEM, Sallen-Key, ladder, Jupiter, K35,
+        and diode.  K35 outer-Newton activates only in LP mode with
+        ``filter_drive == 0``; diode outer-Newton requires LP + ``morph == 0``.
+        Outside those gates the topologies fall back to unit-delay external
+        feedback while the internal Newton solve (where present) still runs.
+    feedback_saturation:
+        Shaping of the feedback tanh (0 – 1).
+    quality:
+        ``draft`` / ``fast`` / ``great`` / ``divine``.  Sole axis for solver
+        + internal oversampling selection: ``draft`` uses the ADAA solver
+        with no oversampling (cheapest), ``fast`` / ``great`` / ``divine``
+        use Newton-iterated ZDF with progressively higher iteration caps
+        and oversampling factors.  Use ``great`` (default) for
+        master-bus / send-bus use; ``divine`` for lead-line focal points;
+        ``fast`` or ``draft`` for dense mixes where CPU matters.
+    mix:
+        Wet/dry blend ``0 – 1``.  Default ``1.0`` (fully wet).  Use lower
+        values for parallel filtering (e.g. a K35 scream blended with the
+        dry signal).
+    bass_compensation:
+        Ladder-topology bass-suck offset (0 – 1).  Ignored by other topologies.
+    filter_morph:
+        SVF/ladder filter-mode morph parameter (0 – 4, wraps).  Ignored by
+        other topologies.
+    filter_even_harmonics:
+        Shaping of the per-stage saturation curve (0 – 1).  Ignored by
+        non-driven topologies.
+    hpf_cutoff_hz:
+        Optional serial 2-pole ZDF highpass corner applied *before* the main
+        filter.  Models CS80 / Jupiter-8 dual-filter architecture.  ``0.0``
+        disables.
+    hpf_resonance_q:
+        Q for the serial highpass.  Defaults to Butterworth-neutral ``0.707``.
+    k35_feedback_asymmetry:
+        Korg MS-20 K35 asymmetric-feedback tuning (0 – 1).  Ignored by other
+        topologies.
+    sample_rate:
+        Audio sample rate.
+    """
+    audio = _ensure_stereo(signal)
+    n_samples = int(audio.shape[-1])
+    if n_samples == 0:
+        return audio
+
+    resolved_topology = filter_topology.strip().lower()
+    if resolved_topology not in _SUPPORTED_FILTER_TOPOLOGIES:
+        raise ValueError(
+            f"Unsupported filter_topology: {filter_topology!r}. "
+            f"Supported: {sorted(_SUPPORTED_FILTER_TOPOLOGIES)}"
+        )
+
+    resolved_mode_name = _ANALOG_FILTER_MODE_ALIAS.get(mode.strip().lower())
+    if resolved_mode_name is None or resolved_mode_name not in _SUPPORTED_FILTER_MODES:
+        raise ValueError(
+            f"Unsupported filter mode: {mode!r}. Supported: ['lp', 'bp', 'hp', 'notch']"
+        )
+
+    if not 0.0 <= mix <= 1.0:
+        raise ValueError("mix must be between 0 and 1")
+    if not 0.0 <= feedback_saturation <= 1.0:
+        raise ValueError("feedback_saturation must be between 0 and 1")
+    if hpf_cutoff_hz < 0.0:
+        raise ValueError("hpf_cutoff_hz must be non-negative")
+
+    # Quality is the sole solver/oversample axis — no separate filter_solver
+    # kwarg to reconcile.  Previously we let an explicit filter_solver override
+    # the quality-mode default, which produced a silent no-op when users
+    # combined quality="draft" with the default filter_solver="newton" (ADAA
+    # signal path was dropped in favour of a Newton path with zero iterations).
+    quality_config = resolve_quality_mode(quality)
+
+    cutoff_curve = _coerce_filter_curve(cutoff_hz, n=n_samples, name="cutoff_hz")
+    if not np.isfinite(resonance_q):
+        raise ValueError("resonance_q must be finite")
+    if not np.isfinite(filter_drive):
+        raise ValueError("filter_drive must be finite")
+    if not np.isfinite(feedback_amount):
+        raise ValueError("feedback_amount must be finite")
+
+    # Upsample the cutoff curve once and share it between L/R.  The Kaiser
+    # polyphase resample dominates CPU on long master-bus sweeps; doing it
+    # twice (once per channel) wasted hundreds of ms on typical renders.
+    cutoff_upsampled = upsample_cutoff_profile(
+        cutoff_curve,
+        oversample_factor=quality_config.oversample_factor,
+        sample_rate=sample_rate,
+        n_base=n_samples,
+    )
+
+    def _filter_channel(channel: np.ndarray) -> np.ndarray:
+        channel_f64 = np.ascontiguousarray(channel, dtype=np.float64)
+        return apply_filter_oversampled_preupsampled(
+            channel_f64,
+            cutoff_profile_upsampled=cutoff_upsampled,
+            sample_rate=sample_rate,
+            oversample_factor=quality_config.oversample_factor,
+            resonance_q=float(resonance_q),
+            filter_mode=resolved_mode_name,
+            filter_drive=float(filter_drive),
+            filter_even_harmonics=filter_even_harmonics,
+            filter_topology=resolved_topology,
+            bass_compensation=bass_compensation,
+            filter_morph=filter_morph,
+            hpf_cutoff_hz=hpf_cutoff_hz,
+            hpf_resonance_q=hpf_resonance_q,
+            feedback_amount=float(feedback_amount),
+            feedback_saturation=feedback_saturation,
+            filter_solver=quality_config.solver,
+            max_newton_iters=max(quality_config.max_newton_iters, 1),
+            newton_tolerance=quality_config.newton_tolerance
+            if quality_config.newton_tolerance > 0.0
+            else 1e-9,
+            k35_feedback_asymmetry=k35_feedback_asymmetry,
+        )
+
+    wet_left = _filter_channel(audio[0])
+    wet_right = _filter_channel(audio[1])
+    wet_stereo = np.stack([wet_left, wet_right]).astype(np.float64)
+
+    if mix >= 1.0:
+        return wet_stereo
+    if mix <= 0.0:
+        return audio.astype(np.float64)
+    return ((1.0 - mix) * audio + mix * wet_stereo).astype(np.float64)
+
+
 def apply_stereo_width(
     signal: np.ndarray,
     width: float = 1.0,
@@ -5987,6 +6244,16 @@ def apply_stereo_width(
 
 
 _SUPPORTED_EFFECT_AMOUNT_AUTOMATION_TARGETS = {"mix", "wet", "wet_level"}
+
+# Per-effect automation targets that resolve to per-sample param arrays rather
+# than wet/dry amount curves.  ``analog_filter`` supports ``cutoff_hz`` natively
+# because the numba filter kernel reads cutoff as a per-sample profile; Q,
+# drive, and feedback remain scalar-only on that effect (see apply_analog_filter
+# docstring).  Add entries here for other effects that want AutomationSpec
+# surfaces on their own param names.
+_PER_EFFECT_PARAM_AUTOMATION_TARGETS: dict[str, frozenset[str]] = {
+    "analog_filter": frozenset({"cutoff_hz"}),
+}
 
 
 def _blend_signals(
@@ -6088,6 +6355,90 @@ def _resolve_effect_amount_automation(
     return target_name, amount_curve
 
 
+def _resolve_effect_param_automation(
+    *,
+    effect: Any,
+    params: dict[str, Any],
+    signal_length: int,
+    start_time_seconds: float,
+    matrix_connections: list[Any] | None = None,
+    source_sampling_context: Any | None = None,
+) -> dict[str, Any]:
+    """Resolve per-effect AutomationSpec curves to per-sample param arrays.
+
+    Mutates a *copy* of ``params`` by replacing scalar entries with per-sample
+    numpy arrays when an ``AutomationSpec`` on the effect targets a supported
+    per-effect param (currently ``cutoff_hz`` on ``analog_filter``).  Unknown
+    target names are left for :func:`_resolve_effect_amount_automation` to
+    handle (mix/wet/wet_level) — per-effect params and wet/dry amount curves
+    are independent surfaces.
+    """
+    supported_targets = _PER_EFFECT_PARAM_AUTOMATION_TARGETS.get(effect.kind)
+    if not supported_targets:
+        return params
+
+    automation_specs = list(getattr(effect, "automation", []))
+    matrix_conns = list(matrix_connections or [])
+    resolved = dict(params)
+
+    signal_times: np.ndarray | None = None
+    for target_name in supported_targets:
+        targeted_specs = [
+            spec
+            for spec in automation_specs
+            if spec.target.kind == "control" and spec.target.name == target_name
+        ]
+        targeted_conns = [
+            connection
+            for connection in matrix_conns
+            if connection.target.kind == "control"
+            and connection.target.name == target_name
+        ]
+        if not targeted_specs and not targeted_conns:
+            continue
+
+        if target_name not in resolved:
+            raise ValueError(
+                f"effect automation target {target_name!r} requires that parameter "
+                f"on the {effect.kind!r} effect"
+            )
+
+        base_scalar = resolved[target_name]
+        if isinstance(base_scalar, np.ndarray):
+            raise ValueError(
+                f"effect param {target_name!r} on {effect.kind!r} cannot mix an "
+                "explicit per-sample array with AutomationSpec curves — supply "
+                "one or the other"
+            )
+
+        if signal_times is None:
+            signal_times = start_time_seconds + (
+                np.arange(signal_length, dtype=np.float64) / SAMPLE_RATE
+            )
+
+        curve = apply_control_automation(
+            base_value=float(base_scalar),
+            specs=targeted_specs,
+            target_name=target_name,
+            times=signal_times,
+        )
+        if targeted_conns:
+            if source_sampling_context is None:
+                raise ValueError(
+                    f"matrix connections on {effect.kind}.{target_name} require "
+                    "source_sampling_context"
+                )
+            curve = combine_connections_on_curve(
+                base=curve,
+                connections=targeted_conns,
+                times=signal_times,
+                context=source_sampling_context,
+            )
+        resolved[target_name] = curve
+
+    return resolved
+
+
 _PLUGIN_BACKED_EFFECTS: dict[str, str] = {
     "chow_tape": "chow_tape",
     "phaser": "chow_phaser_stereo",
@@ -6165,6 +6516,7 @@ _SIMPLE_EFFECT_DISPATCH: dict[str, Callable[..., np.ndarray]] = {
     "rare_se": apply_rare_se,
     "tuba": apply_tuba,
     "stereo_width": apply_stereo_width,
+    "analog_filter": apply_analog_filter,
 }
 
 
@@ -6243,6 +6595,14 @@ def apply_effect_chain(
             "chow_centaur",
         }:
             params = _resolve_effect_params(effect.kind, params)
+        params = _resolve_effect_param_automation(
+            effect=effect,
+            params=params,
+            signal_length=effect_input.shape[-1],
+            start_time_seconds=start_time_seconds,
+            matrix_connections=matrix_connections,
+            source_sampling_context=source_sampling_context,
+        )
         effect_amount_automation = _resolve_effect_amount_automation(
             effect=effect,
             params=params,

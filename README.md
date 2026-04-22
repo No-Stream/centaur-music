@@ -1,5 +1,7 @@
 # centaur musical workstation
 
+![Centaur Music](centaur-music-cover.png)
+
 Exploring musical collaboration with agentic AI, focused on tuning systems that
 are awkward to work with in traditional tools: just intonation, harmonic series,
 septimal harmony, and other xenharmonic ideas.
@@ -109,48 +111,81 @@ The current center of gravity:
 AGENTS.md contains my personal preference and inspirations.
 Humans should almost certainly tweak it to suit their preferences.
 
-## Project structure
+## Project map
 
-```text
-code_musics/           main package
-  score.py             Score / Voice / Phrase / NoteEvent composition model
-  composition.py       phrase-first helpers, metered-time grid layer
-  synth.py             low-level DSP, rendering, and effect helpers
-  engines/             synth engine registry and per-engine renderers
-  generative/          algorithmic composition tools
-  pieces/              named musical works (studies, sketches, full pieces)
-  tuning.py            JI, harmonic series, utonal, EDO helpers
-  humanize.py          timing, envelope, velocity humanization
-  automation.py        AutomationSegment / AutomationSpec / AutomationTarget
-  modulation.py        Vital-style modulation matrix
-  pitch_motion.py      per-note pitch motion (glide, vibrato, bend)
-  smear.py             loveless-inspired pitch smearing
-  harmonic_drift.py    JI-aware pitch drift trajectories
-  spectra.py           physical-model spectral builders
-  drum_helpers.py      percussion voice/bus convenience helpers
-  meter.py             Timeline, bar/beat, rhythmic values
-  midi_export.py       MIDI export with tuning files
-  midi_import.py       MIDI file import into the score model
-  stem_export.py       audio stem export with send bus returns
-  analysis.py          render analysis and visual feedback
-  inspection.py        timestamp inspector for score context
-  evaluate.py          LLM-based piece evaluation
-  eval_rubric.py       evaluation rubric and prompt templates
-  render.py            named-piece orchestration layer
-docs/                  API reference
-  synth_api.md         engines, presets, effects, parameters
-  score_api.md         score model, render pipeline, expression
-  composition_api.md   composition helpers, generative tools, humanization
-  midi_export.md       MIDI export reference
-main.py                CLI entrypoint
-FUTURE.md              roadmap and ideas
+```mermaid
+flowchart LR
+    subgraph Authoring
+        pieces["pieces/<br/>named works"]
+        composition["composition.py<br/>phrases, canons, progressions"]
+        generative["generative/<br/>euclidean, Markov, clouds"]
+        meter["meter.py<br/>bars, beats, tuplets"]
+    end
+
+    subgraph Model["Score Model"]
+        score["score.py<br/>Score • Voice • Phrase • Note"]
+        tuning["tuning.py<br/>JI, harmonic series, EDO"]
+        spectra["spectra.py<br/>membrane, bar, plate, vowel"]
+    end
+
+    subgraph Expression
+        automation["automation.py<br/>parameter curves"]
+        modulation["modulation.py<br/>Vital-style matrix"]
+        humanize["humanize.py<br/>timing/velocity drift"]
+        pitch_motion["pitch_motion.py<br/>glide/vibrato/bend"]
+        drift["smear.py, harmonic_drift.py<br/>textural drift"]
+    end
+
+    subgraph Synthesis
+        engines["engines/<br/>18 synth engines"]
+        synth["synth.py<br/>DSP + effects"]
+        drum_helpers["drum_helpers.py<br/>drum bus routing"]
+    end
+
+    subgraph Output["Output & Analysis"]
+        render["render.py<br/>orchestration"]
+        midi["midi_export.py / midi_import.py<br/>MIDI + tuning files"]
+        stems["stem_export.py<br/>per-voice WAVs"]
+        analysis["analysis.py<br/>spectrograms, chromagrams"]
+        inspection["inspection.py<br/>timestamp inspector"]
+        evaluate["evaluate.py<br/>LLM judges"]
+    end
+
+    Authoring --> Model
+    Model --> Synthesis
+    Expression --> Synthesis
+    Synthesis --> Output
 ```
+
+| Layer | Module | Purpose |
+|-------|--------|---------|
+| Authoring | `pieces/` | Named musical works (studies, sketches, full pieces) |
+| Authoring | `composition.py` | Phrase-first helpers: `line`, `canon`, `progression`, metered-time grid |
+| Authoring | `generative/` | Euclidean rhythms, Markov chains, lattice walkers, stochastic clouds |
+| Authoring | `meter.py` | Bars, beats, tuplets, grooves, rhythmic values |
+| Score Model | `score.py` | `Score` / `Voice` / `Phrase` / `NoteEvent` — the ratio-space composition API |
+| Score Model | `tuning.py` | Just intonation, harmonic series, utonal, EDO helpers |
+| Score Model | `spectra.py` | Physical-model partial sets: membrane, bar, plate, tube, bowl, vowel |
+| Expression | `automation.py` | Parameter curves at score, voice, and note time |
+| Expression | `modulation.py` | Vital-style per-connection modulation matrix |
+| Expression | `humanize.py` | Timing, envelope, and velocity humanization specs |
+| Expression | `pitch_motion.py` | Per-note glide, vibrato, linear bend |
+| Expression | `smear.py`, `harmonic_drift.py` | Loveless-style smearing; JI-aware pitch drift |
+| Synthesis | `engines/` | 18 synth engines (native + Surge XT / Vital plugin hosts) |
+| Synthesis | `synth.py` | Low-level DSP, rendering, effect chain primitives |
+| Synthesis | `drum_helpers.py` | Drum bus and voice convenience helpers |
+| Output | `render.py` | Named-piece orchestration (`make render`) |
+| Output | `midi_export.py`, `midi_import.py` | MIDI + Scala/TUN/KBM tuning files |
+| Output | `stem_export.py` | Per-voice WAVs, send returns, mastered reference |
+| Output | `analysis.py` | Mel spectrograms, tuning-aware chromagrams, artifact warnings |
+| Output | `inspection.py` | Score-context inspection at a timestamp |
+| Output | `evaluate.py` | LLM-judge scoring (Opus / Sonnet) |
 
 ## Documentation
 
-- `AGENTS.md`: agent instructions, running commands, musical direction
 - `docs/synth_api.md`: synth engines, presets, and effect chain reference
 - `docs/score_api.md`: score model, render pipeline, expression controls
 - `docs/composition_api.md`: composition helpers, generative tools, humanization
 - `docs/midi_export.md`: MIDI export with per-voice stems and tuning files
+- `AGENTS.md`: agent instructions, running commands, musical direction
 - `FUTURE.md`: roadmap, ideas, and things to explore

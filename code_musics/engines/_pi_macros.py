@@ -1,15 +1,17 @@
 """Physical-informed macro resolution for the drum_voice engine.
 
-Higher-level perceptual knobs for the modal tone and metallic-modal layers:
-``pi_hardness``, ``pi_tension``, ``pi_damping``, ``pi_damping_tilt``,
-``pi_position``.  Each maps to a small set of concrete ``modal_*`` /
-``metallic_*`` / exciter params and is non-destructive -- user-set values
-always win.  Macro keys are popped after processing.
+Higher-level perceptual knobs that fill in concrete ``modal_*`` / ``metallic_*``
+/ exciter params.  Macros are non-destructive: user-set values always win.
+Macro keys are popped after processing so they never reach the render function.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
+
+from code_musics.engines._modal import COUPLING_MAX
 
 _PI_MACRO_KEYS = frozenset(
     {
@@ -18,26 +20,10 @@ _PI_MACRO_KEYS = frozenset(
         "pi_damping",
         "pi_damping_tilt",
         "pi_position",
+        "pi_coupling",
+        "pi_dispersion",
     }
 )
-
-
-def resolve_pi_macros(params: dict[str, Any]) -> dict[str, Any]:
-    """Apply physical-informed macro mappings, filling in params not already set.
-
-    Operates on *params* in-place and returns it.  Macro keys are popped
-    after processing so they never reach the render function.
-    """
-    _apply_hardness(params)
-    _apply_tension(params)
-    _apply_damping(params)
-    _apply_damping_tilt(params)
-    _apply_position(params)
-
-    for key in _PI_MACRO_KEYS:
-        params.pop(key, None)
-
-    return params
 
 
 def _lerp(t: float, lo: float, hi: float) -> float:
@@ -49,13 +35,79 @@ def _set_if_absent(params: dict[str, Any], key: str, value: Any) -> None:
         params[key] = value
 
 
+@dataclass(frozen=True)
+class _SimpleMacroSpec:
+    """Declarative spec for the table-driven simple macros.
+
+    ``macro_key`` is read from ``params``, clamped to ``[lo, hi]``, optionally
+    transformed by ``xform``, and written to ``target_key`` via
+    :func:`_set_if_absent`.
+    """
+
+    macro_key: str
+    target_key: str
+    lo: float
+    hi: float
+    xform: Callable[[float], float] | None = None
+
+
+# Tension and damping_tilt clamp to [-1, 1]; everything else to [0, 1].
+# ``pi_coupling`` scales the 0..1 macro into [0, COUPLING_MAX] so callers
+# can't silently push the modal bank past its stability-safe ceiling.
+_SIMPLE_MACROS: tuple[_SimpleMacroSpec, ...] = (
+    _SimpleMacroSpec("pi_tension", "modal_tension", -1.0, 1.0),
+    _SimpleMacroSpec(
+        "pi_damping",
+        "modal_damping",
+        0.0,
+        1.0,
+        xform=lambda t: _lerp(t, 2.5, 0.2),
+    ),
+    _SimpleMacroSpec("pi_damping_tilt", "modal_damping_tilt", -1.0, 1.0),
+    _SimpleMacroSpec("pi_position", "modal_position", 0.0, 1.0),
+    _SimpleMacroSpec(
+        "pi_coupling",
+        "modal_coupling",
+        0.0,
+        1.0,
+        xform=lambda t: t * COUPLING_MAX,
+    ),
+    _SimpleMacroSpec("pi_dispersion", "modal_dispersion", 0.0, 1.0),
+)
+
+
+def resolve_pi_macros(params: dict[str, Any]) -> dict[str, Any]:
+    """Apply physical-informed macro mappings, filling in params not already set.
+
+    Operates on *params* in-place and returns it.  Macro keys are popped after
+    processing so they never reach the render function.
+    """
+    _apply_hardness(params)
+    for spec in _SIMPLE_MACROS:
+        _apply_simple_macro(params, spec)
+
+    for key in _PI_MACRO_KEYS:
+        params.pop(key, None)
+
+    return params
+
+
+def _apply_simple_macro(params: dict[str, Any], spec: _SimpleMacroSpec) -> None:
+    """Table-driven macro application: clamp, transform, write-if-absent."""
+    value = params.get(spec.macro_key)
+    if value is None:
+        return
+    t = max(spec.lo, min(spec.hi, float(value)))
+    out = spec.xform(t) if spec.xform is not None else t
+    _set_if_absent(params, spec.target_key, out)
+
+
 def _apply_hardness(params: dict[str, Any]) -> None:
     """``pi_hardness`` (0..1): mallet/strike brightness.
 
-    If no exciter is set, installs a short click whose bandpass center scales
-    with hardness (500 Hz soft mallet -> 5500 Hz hard strike).  If an exciter
-    is already set, biases its bandpass center toward the hardness value
-    without overriding a user-supplied ``exciter_center_hz``.
+    Special-cased because it installs a click exciter when no exciter is set —
+    that side effect doesn't fit the simple "clamp, transform, write one key"
+    shape of the table-driven macros above.
     """
     value = params.get("pi_hardness")
     if value is None:
@@ -72,62 +124,3 @@ def _apply_hardness(params: dict[str, Any]) -> None:
         _set_if_absent(params, "exciter_decay_s", decay_s)
     else:
         _set_if_absent(params, "exciter_center_hz", center_hz)
-
-
-def _apply_tension(params: dict[str, Any]) -> None:
-    """``pi_tension`` (-1..+1): fractional stretch of mode ratios.
-
-    Positive tension stretches ratios (stiffer material / higher partials),
-    negative relaxes them (closer to fundamental).  Stored as a scalar the
-    modal renderers consume: ``ratios[i] = base_ratios[i] ** (1 + 0.3 * t)``.
-    """
-    value = params.get("pi_tension")
-    if value is None:
-        return
-    t = max(-1.0, min(1.0, float(value)))
-    _set_if_absent(params, "modal_tension", t)
-
-
-def _apply_damping(params: dict[str, Any]) -> None:
-    """``pi_damping`` (0..1): global decay multiplier for modal banks.
-
-    0 = barely damped / long ring, 1 = heavily damped / short thud.
-    Maps to a multiplicative scale on ``modal_decay_s`` / ``metallic_decay_s``
-    base decays: ``mult = 2.5 - 2.3 * damping`` (soft 2.5x at damp=0,
-    harsh 0.2x at damp=1).
-    """
-    value = params.get("pi_damping")
-    if value is None:
-        return
-    t = max(0.0, min(1.0, float(value)))
-    mult = _lerp(t, 2.5, 0.2)
-    _set_if_absent(params, "modal_damping", mult)
-
-
-def _apply_damping_tilt(params: dict[str, Any]) -> None:
-    """``pi_damping_tilt`` (-1..+1): high- vs low-mode decay balance.
-
-    Positive = high modes decay faster (wooden / mellow), negative = high
-    modes ring longer (bell-like).  Stored for the modal renderers to apply
-    as ``decays[i] *= exp(-tilt * i / n_modes)``.
-    """
-    value = params.get("pi_damping_tilt")
-    if value is None:
-        return
-    t = max(-1.0, min(1.0, float(value)))
-    _set_if_absent(params, "modal_damping_tilt", t)
-
-
-def _apply_position(params: dict[str, Any]) -> None:
-    """``pi_position`` (0..1): strike position window on the amp envelope.
-
-    Modeled as a cosine amplitude window over mode index:
-    ``amp[i] *= cos(pi * position * (i+1) / n_modes) ** 2``.  0 keeps all
-    modes equal; higher values progressively null out high modes the way a
-    struck-at-center membrane does.
-    """
-    value = params.get("pi_position")
-    if value is None:
-        return
-    t = max(0.0, min(1.0, float(value)))
-    _set_if_absent(params, "modal_position", t)

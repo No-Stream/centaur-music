@@ -15,16 +15,23 @@ from typing import Any
 
 import numpy as np
 
+from code_musics.engines._chaotic import SUPPORTED_SYSTEMS as _CHAOTIC_SYSTEMS
+from code_musics.engines._chaotic import render_chaotic
 from code_musics.engines._dsp_utils import bandpass_noise, flow_exciter
 from code_musics.engines._oscillators import render_polyblep_oscillator
+from code_musics.engines._pluck import render_pluck
+from code_musics.engines._scanned import render_scanned
 from code_musics.engines.fm import _fm_sample_loop
 from code_musics.engines.va import (
     _build_spectralwave_partials,
     _render_partial_bank,
     _render_supersaw_bank,
 )
+from code_musics.humanize import stable_seed
 
-_VALID_OSC_TYPES = frozenset({"polyblep", "supersaw", "pulse"})
+_VALID_OSC_TYPES = frozenset(
+    {"polyblep", "supersaw", "pulse", "pluck", "scanned", "chaotic"}
+)
 _VALID_PARTIALS_TYPES = frozenset({"additive", "spectralwave", "drawbars"})
 _VALID_FM_TYPES = frozenset({"two_op"})
 _VALID_NOISE_TYPES = frozenset({"white", "pink", "bandpass", "flow"})
@@ -55,6 +62,51 @@ _HAMMOND_DRAWBAR_DEFAULT_AMPS: tuple[float, ...] = (
 )
 
 
+def _render_chaotic_slot(
+    *,
+    n_samples: int,
+    freq_profile: np.ndarray,
+    sample_rate: int,
+    rng: np.random.Generator,
+    params: dict[str, Any],
+) -> np.ndarray:
+    """Render a chaotic ODE integrator for the ``osc`` slot.
+
+    Reads ``osc_chaos_system``, ``osc_chaos_rate_hz``, ``osc_chaos_amount``,
+    ``osc_chaos_symmetry``, and ``osc_chaos_seed`` from ``params``.  The
+    default rate tracks the voice's mean fundamental so the attractor's
+    perceived pitch is coupled to note selection.
+    """
+    system = str(params.get("osc_chaos_system", "lorenz")).lower()
+    if system not in _CHAOTIC_SYSTEMS:
+        raise ValueError(
+            f"osc_chaos_system must be one of {sorted(_CHAOTIC_SYSTEMS)}, "
+            f"got {system!r}"
+        )
+    default_rate = float(np.mean(freq_profile))
+    rate_hz = float(params.get("osc_chaos_rate_hz", default_rate))
+    amount = float(params.get("osc_chaos_amount", 0.5))
+    symmetry = float(params.get("osc_chaos_symmetry", 0.0))
+    user_seed = params.get("osc_chaos_seed")
+    if user_seed is None:
+        chaos_seed = stable_seed(
+            "chaotic_osc",
+            int(rng.integers(0, 2**31 - 1)),
+            system,
+        )
+    else:
+        chaos_seed = int(user_seed)
+    return render_chaotic(
+        system=system,
+        rate_hz=rate_hz,
+        amount=amount,
+        symmetry=symmetry,
+        n_samples=n_samples,
+        sample_rate=sample_rate,
+        seed=chaos_seed,
+    )
+
+
 def render_osc(
     *,
     n_samples: int,
@@ -64,10 +116,12 @@ def render_osc(
     osc_type: str,
     params: dict[str, Any],
 ) -> np.ndarray:
-    """Render the ``osc`` slot: polyblep / supersaw / pulse.
+    """Render the ``osc`` slot: polyblep / supersaw / pulse / pluck / scanned / chaotic.
 
     Dispatches on ``osc_type`` and composes oscillator primitives from
-    :mod:`code_musics.engines._oscillators` and :mod:`code_musics.engines.va`.
+    :mod:`code_musics.engines._oscillators`, :mod:`code_musics.engines.va`,
+    :mod:`code_musics.engines._pluck`, :mod:`code_musics.engines._scanned`,
+    or :mod:`code_musics.engines._chaotic`.
     """
     if osc_type not in _VALID_OSC_TYPES:
         raise ValueError(
@@ -135,7 +189,7 @@ def render_osc(
             phase_noise_voice_name="",
         )
 
-    else:  # "pulse"
+    elif osc_type == "pulse":
         pulse_width = float(params.get("osc_pulse_width", 0.5))
         pulse_width = max(0.05, min(0.95, pulse_width))
         start_phase = float(params.get("osc_start_phase", 0.0))
@@ -146,6 +200,59 @@ def render_osc(
             sample_rate=sample_rate,
             start_phase=start_phase,
             phase_noise=None,
+        )
+
+    elif osc_type == "pluck":  # Karplus-Strong++
+        duration = n_samples / float(sample_rate)
+        hardness = float(params.get("osc_pluck_hardness", 0.5))
+        damping = float(params.get("osc_pluck_damping", 0.3))
+        position = float(params.get("osc_pluck_position", 0.25))
+        sustain = float(params.get("osc_pluck_sustain", 0.0))
+        drive = float(params.get("osc_pluck_drive", 0.0))
+        # Derive a deterministic seed from the rng so determinism plumbing
+        # (voice_card / note seeding) still propagates into the pluck loop.
+        pluck_seed = int(rng.integers(0, 2**31 - 1))
+        base_freq = float(freq_profile[0])
+        signal = render_pluck(
+            freq=base_freq,
+            duration=duration,
+            sample_rate=sample_rate,
+            hardness=hardness,
+            damping=damping,
+            position=position,
+            sustain=sustain,
+            drive=drive,
+            seed=pluck_seed,
+            freq_profile=freq_profile,
+        )
+
+    elif osc_type == "scanned":  # Verplank-style mass-spring ring scanner
+        n_nodes = int(params.get("osc_scan_n_nodes", 16))
+        motion = float(params.get("osc_scan_motion", 0.5))
+        tension = float(params.get("osc_scan_tension", 0.5))
+        damping = float(params.get("osc_scan_damping", 0.2))
+        position = float(params.get("osc_scan_position", 0.5))
+        scan_seed = int(rng.integers(0, 2**31 - 1))
+        signal = render_scanned(
+            freq=float(freq_profile[0]),
+            n_samples=n_samples,
+            sample_rate=sample_rate,
+            n_nodes=n_nodes,
+            motion=motion,
+            tension=tension,
+            damping=damping,
+            position=position,
+            seed=scan_seed,
+            freq_profile=freq_profile,
+        )
+
+    else:  # "chaotic" — Lorenz / Rössler / Duffing / Chua
+        signal = _render_chaotic_slot(
+            n_samples=n_samples,
+            freq_profile=freq_profile,
+            sample_rate=sample_rate,
+            rng=rng,
+            params=params,
         )
 
     peak = float(np.max(np.abs(signal)))

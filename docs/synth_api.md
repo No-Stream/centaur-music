@@ -1193,6 +1193,130 @@ score = Score(
 )
 ```
 
+### `analog_filter`
+
+Implementation: [code_musics/synth.py](code_musics/synth.py)
+
+Wraps `apply_filter_oversampled` so the eight analog-modeled ZDF topologies
+used internally by the synth engines are available as a bus / master / voice
+effect on `Voice.effects`, `Score.master_effects`, and send-bus chains.
+Supported topologies (`svf`, `ladder`, `sallen_key`, `cascade`, `sem`,
+`jupiter`, `k35`, `diode`) share the same kernels and character as the
+per-engine filter slot — see the engine-side "Analog Character" sections
+(`polyblep`, `filtered_stack`, `va`) for per-topology voicing notes rather
+than duplicating them here.
+
+Stereo handling: mono input is upmixed to stereo, and left/right run through
+**independent filter states** (no cross-channel summing) so stereo width
+survives the filter. The output is always stereo.
+
+Parameters:
+
+- `filter_topology: str`
+  One of `svf` (default), `ladder`, `sallen_key`, `cascade`, `sem`, `jupiter`,
+  `k35`, `diode`.
+- `mode: str`
+  `lp` (default), `bp`, `hp`, or `notch`. SVF and SEM support all four;
+  ladder / cascade / jupiter / sallen_key / k35 / diode honour the requested
+  mode where their topology supports it and fall back to lowpass otherwise.
+- `cutoff_hz: float | np.ndarray`
+  Filter corner in Hz. Scalar or per-sample array. Clamped to
+  `[20 Hz, ~0.45 · sample_rate]`. **This is the one parameter that flows
+  sample-accurate** all the way through the kernel.
+- `resonance_q: float | np.ndarray`
+  Filter Q. `0.707` is neutral; `> 4.0` enters self-oscillation territory
+  on ladder / K35 / diode. Per-sample arrays are accepted but collapsed to
+  their mean (the numba kernels take Q as a scalar); a warning is logged
+  when variation exceeds 10% of the mean.
+- `filter_drive: float | np.ndarray`
+  Pre-filter saturation drive `0 – 1`. Same scalar-collapse behaviour as
+  `resonance_q`.
+- `feedback_amount: float | np.ndarray`
+  Post-filter → pre-filter external feedback `0 – 1`. Same scalar-collapse
+  behaviour. The Newton solver closes this loop implicitly on `svf`,
+  `ladder`, `sallen_key`, `cascade`, `sem`, `jupiter`, `k35`, and `diode`;
+  ADAA uses unit-delay feedback.
+- `feedback_saturation: float`
+  Feedback-tanh shaping `0 – 1`. Default `0.3`.
+- `filter_solver: str`
+  `newton` (default, Diva-style implicit ZDF) or `adaa` (first-order
+  antiderivative anti-aliasing — bit-identical to the pre-Newton path).
+  Explicit kwargs override the `quality`-mode default when they disagree.
+- `quality: str`
+  `draft` / `fast` / `great` / `divine`. Single-knob preset over
+  `filter_solver`, `max_newton_iters`, `newton_tolerance`, and internal
+  oversampling. Default `great`. See the polyblep "Quality Modes" section
+  for the full mode table.
+- `mix: float`
+  Wet/dry blend `0 – 1`. Default `1.0` (fully wet). Use lower values for
+  parallel filtering (e.g. a K35 scream blended with the dry signal).
+- `bass_compensation: float`
+  Ladder-topology bass-suck offset `0 – 1`. Default `0.5`. Ignored by
+  other topologies.
+- `filter_morph: float`
+  SVF / ladder / cascade / jupiter / diode / SEM filter-mode morph
+  parameter. Ignored by other topologies. Default `0.0`.
+- `filter_even_harmonics: float`
+  Shaping of the per-stage saturation curve `0 – 1`. Default `0.0`.
+- `hpf_cutoff_hz: float`
+  Optional serial 2-pole ZDF highpass applied *before* the main filter —
+  CS80 / Jupiter-8 dual-filter architecture. `0.0` disables (default).
+- `hpf_resonance_q: float`
+  Q for the serial highpass. Default `0.707` (Butterworth-neutral).
+- `k35_feedback_asymmetry: float`
+  Korg MS-20 K35 asymmetric-feedback tuning `0 – 1`. Default `0.5`.
+  Ignored by other topologies.
+
+Notes:
+
+- only `cutoff_hz` is sample-accurate; `resonance_q`, `filter_drive`, and
+  `feedback_amount` accept arrays but run per-call as the curve mean, with
+  a warning when variation exceeds 10% — automate `cutoff_hz` for real sweeps
+- for cutoff automation, **use `shape="exp"`** on the `AutomationSpec`:
+  frequency perception is logarithmic, so linear sweeps rush through the
+  bottom and crawl at the top. `shape="linear"` stays correct for dB, pan,
+  drive, and morph targets
+- quality defaults (`great`) are appropriate for master-bus and send-bus
+  placement; reach for `divine` on lead-line focal points and `fast` /
+  `draft` in dense mixes where CPU matters
+
+Example:
+
+```python
+from code_musics.automation import AutomationSegment, AutomationSpec
+from code_musics.score import EffectSpec
+
+score.add_voice(
+    "lead",
+    effects=[
+        EffectSpec(
+            "analog_filter",
+            {
+                "filter_topology": "ladder",
+                "mode": "lp",
+                "resonance_q": 2.8,
+                "filter_drive": 0.25,
+                "quality": "divine",
+            },
+            automation=[
+                AutomationSpec(
+                    target="cutoff_hz",
+                    segments=(
+                        AutomationSegment(
+                            start=0.0,
+                            end=8.0,
+                            shape="exp",
+                            start_value=400.0,
+                            end_value=6000.0,
+                        ),
+                    ),
+                ),
+            ],
+        ),
+    ],
+)
+```
+
 ### `chow_tape`
 
 Implementation: [code_musics/synth.py](code_musics/synth.py)
@@ -3559,6 +3683,20 @@ The `va` engine consumes the full analog-character surface: `pitch_drift`,
 individual parameter semantics. Defaults are tuned slightly looser than
 polyblep since these synths are meant to feel "alive but produced."
 
+#### Quality Modes (va)
+
+- `quality: str`
+  Engine-level quality control for the filter solver and internal
+  oversampling (shared surface with polyblep / filtered_stack —
+  `"draft"` / `"fast"` / `"great"` / `"divine"`). See the polyblep
+  "Quality Modes" section above for the full mode/solver/OS table.
+
+  **Defaults to `"fast"`** for era-accurate JP-8000 / Virus / Q
+  character — these synths ran at moderate internal rates with
+  one-sample-delay-style feedback, which the `"fast"` tier
+  (Newton 2-iter + 2x OS) approximates. Set `"great"` or `"divine"`
+  for modern-clean behavior on the same oscillator voicing.
+
 Validation:
 
 - `duration > 0`
@@ -3845,6 +3983,9 @@ Key routing:
 | `fm_burst` | Short FM oscillator burst | `exciter_fm_ratio`, `exciter_fm_index`, `exciter_fm_feedback` |
 | `noise_burst` | Wider-band noise with optional tail filter | `exciter_bandwidth_ratio`, `exciter_filter_cutoff_hz`, `exciter_filter_q` |
 | `sample` | WAV playback as transient layer | `exciter_sample_path`, `exciter_sample_pitch_shift`, `exciter_sample_start_jitter_ms`, `exciter_sample_ring_freq_hz`, `exciter_sample_reverse` |
+| `bow` | **Sustained** stick-slip friction (bowed bodies) | `exciter_bow_pressure`, `exciter_bow_speed`, `exciter_bow_position`, `exciter_bow_noise_amount` |
+| `blow` | **Sustained** reed-table nonlinearity (blown reeds) | `exciter_blow_pressure`, `exciter_blow_embouchure`, `exciter_blow_breath_noise`, `exciter_blow_wobble_rate_hz`, `exciter_blow_wobble_depth` |
+| `rub` | **Sustained** filtered noise with pressure + stiction (finger-on-glass, wet-hand-on-drum) | `exciter_rub_pressure`, `exciter_rub_speed`, `exciter_rub_roughness`, `exciter_rub_stiction` |
 
 **Tone layer** (pitched periodic content / body):
 
@@ -3934,6 +4075,23 @@ Key routing:
 | `filter_topology` | `str` | `"svf"` | Any of the eight shared topologies — `"svf"`, `"ladder"`, `"sallen_key"`, `"cascade"`, `"sem"`, `"jupiter"`, `"k35"`, `"diode"`. Same semantics as the polyblep/va filter topology surface. |
 | `filter_morph` | `float` | `0.0` | Continuous pole-tap / mode blend. Range and behavior are topology-dependent; see the Filter Mode Morphing section under polyblep. |
 | `k35_feedback_asymmetry` | `float` | `0.0` | K35-only feedback-diode asymmetry `[0, 1]`. Ignored by other topologies. |
+| `quality` | `str` | `"great"` | Engine-level quality preset for the voice filter (solver + oversampling). See "Quality Modes (drum_voice)" below. |
+
+#### Quality Modes (drum_voice)
+
+- `quality: str`
+  Engine-level quality control for the voice filter solver and internal
+  oversampling (shared surface with polyblep / filtered_stack / va / synth_voice
+  — `"draft"` / `"fast"` / `"great"` / `"divine"`). See the polyblep
+  "Quality Modes" section above for the full mode/solver/OS table.
+
+  **Defaults to `"great"`** (Newton 4-iter + 2x OS). Transient drum content
+  benefits materially from proper Newton + oversampling, especially at
+  high drive/resonance where kick bodies and snare bite can fold harmonics
+  back into the audible band. Drop to `"draft"` for the cheapest render
+  (bit-identical to the pre-2026 pinned-ADAA behavior on SVF is *not*
+  preserved — drum_voice now unifies all topologies through the
+  oversampled dispatcher).
 
 **Voice shaper** (post-mix, optional):
 
@@ -3959,10 +4117,89 @@ Key routing:
 **Multi-point envelope overrides** (optional):
 
 - `tone_envelope: list[dict]` -- replaces tone exponential decay
-- `exciter_envelope: list[dict]` -- replaces exciter exponential decay
+- `exciter_envelope: list[dict]` -- replaces exciter exponential decay.
+  For sustained exciter types (`bow` / `blow` / `rub`), the default is a
+  *flat sustain* with 10 ms attack / release fades instead of an exponential
+  decay — pass an explicit envelope here to override that.
 - `noise_envelope: list[dict]` -- replaces noise exponential decay
 - `metallic_envelope: list[dict]` -- replaces metallic exponential decay
 - `tone_pitch_envelope: list[dict]` -- replaces pitch sweep (values = freq multiplier)
+
+### Sustained exciters (drum_voice)
+
+Three sustained excitation types — `bow`, `blow`, `rub` — run for the full
+note duration, delivering continuous energy into the tone layer instead of
+decaying away in a few milliseconds.  Paired with the modal bank
+(`tone_type="modal"` or `metallic_type="modal_bank"`) and its
+`modal_coupling` + `modal_dispersion` controls, they turn drum_voice
+presets into sustained "living body" textures: bowed bells, blown reeds,
+rubbed skins and glass.
+
+**Aesthetic goal: aliveness, not physical accuracy.** The underlying models
+are approximate friction / reed-table / filtered-noise sketches chosen for
+musical character.  Pair them with a *coupled, dispersed* modal bank —
+`modal_coupling=0.15-0.3` and `modal_dispersion=0.2-0.4` are the sweet spot
+— for tails that warble and breathe rather than ring out statically.
+
+**Envelope default change.** For these three types the exciter envelope
+defaults to a *flat sustain* with short raised-cosine fades at the note
+boundaries, so the exciter actually drives the modal bank for the note's
+full duration.  Pass your own `exciter_envelope` to override (e.g., for a
+swelling bow attack or a tremolo blow).
+
+**Bow params** (consumed when `exciter_type="bow"`):
+
+| Parameter | Type | Range | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `exciter_bow_pressure` | `float` | 0.0-1.0 | `0.6` | Bow pressure — steeper stick region + grittier excitation at higher values |
+| `exciter_bow_speed` | `float` | 0.0-1.0 | `0.5` | Bow speed — biases the friction table toward slip (brighter, less staccato) |
+| `exciter_bow_position` | `float` | 0.0-1.0 | `0.3` | Bow position along the virtual string — shapes spectral center |
+| `exciter_bow_noise_amount` | `float` | 0.0-1.0 | `0.25` | Rosin / hair noise layer content |
+
+**Blow params** (consumed when `exciter_type="blow"`):
+
+| Parameter | Type | Range | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `exciter_blow_pressure` | `float` | 0.0-1.0 | `0.7` | Breath pressure |
+| `exciter_blow_embouchure` | `float` | 0.0-1.0 | `0.4` | Reed stiffness / threshold — higher = later onset, more overtone content |
+| `exciter_blow_breath_noise` | `float` | 0.0-1.0 | `0.3` | Airy fizz content layered over the reed |
+| `exciter_blow_wobble_rate_hz` | `float` | >= 0 | `4.5` | Slow pressure LFO rate (0 disables) |
+| `exciter_blow_wobble_depth` | `float` | 0.0-1.0 | `0.15` | LFO depth as fraction of pressure |
+
+**Rub params** (consumed when `exciter_type="rub"`):
+
+| Parameter | Type | Range | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `exciter_rub_pressure` | `float` | 0.0-1.0 | `0.5` | Overall amplitude |
+| `exciter_rub_speed` | `float` | 0.0-1.0 | `0.3` | Rub speed — modulates bandpass center + stiction event rate |
+| `exciter_rub_roughness` | `float` | 0.0-1.0 | `0.5` | Bandwidth / "abrasiveness" |
+| `exciter_rub_stiction` | `float` | 0.0-1.0 | `0.2` | Intensity of periodic micro-grabs at low speed |
+
+**Contact nonlinearity** (transient exciters only):
+
+| Parameter | Type | Range | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `contact_nonlinearity` | `float` | 0.0-1.0 | `0.0` | Hammer-contact curve on the raw exciter signal. `sign(x) * \|x\|^alpha` with `alpha = 1 + amount * (1 - velocity)`.  `0` is bit-identical no-op; soft hits expand toward silence while hard hits compress peaks harmonically richer |
+
+The contact curve applies to `click`, `impulse`, `multi_tap`, `fm_burst`,
+and `noise_burst`.  Sustained exciters (`bow` / `blow` / `rub`) have their
+own pressure / speed semantics and ignore this knob.  The curve is neutral
+at `velocity == 1.0` regardless of amount, so presets designed at full
+velocity aren't darkened when nonlinearity is dialed in.
+
+**Presets** (pair each exciter type with a complementary modal layer):
+
+| Preset | Exciter | Modal layer | Character |
+|--------|---------|-------------|-----------|
+| `bow_gentle` | `bow` | `bar_metal`, coupling 0.2 | Soft sustained metallic drone |
+| `bow_taut` | `bow` | `bowl`, ring-coupled | Tauter bowed bowl with rolling beats |
+| `bow_aggressive` | `bow` | `membrane`, all-coupled + tanh drive | Driven bowed drum with harmonic growl |
+| `blow_breath_pad` | `blow` | `stopped_pipe` | Soft breathy sustained pad |
+| `blow_reed_sing` | `blow` | `bar_wood` | Focused reed sing over a wooden body |
+| `blow_overblow` | `blow` | `bar_metal`, ring-coupled + drive | Bright overblown metallic voice |
+| `rub_glass` | `rub` | `bar_glass` | Delicate rubbed glass texture |
+| `rub_skin` | `rub` | `membrane` | Wet-hand-on-drum rub with stiction |
+| `rub_squeal` | `rub` | `plate`, all-coupled + drive | Squealing rubbed plate |
 
 **Velocity-to-timbre:**
 
@@ -4062,6 +4299,24 @@ override explicit values.
 | `{prefix}_damping_tilt` | `float` | -1.0 to 1.0 | `0.0` | High- vs low-mode decay balance (also accepted as `pi_damping_tilt`) |
 | `{prefix}_position` | `float` | 0.0-1.0 | `0.0` | Strike position window on mode amplitudes (also accepted as `pi_position`) |
 
+**Mode coupling + allpass dispersion** (apply to both modal layers; either
+the shared `modal_*` form or the slot-prefixed `{prefix}_*` form is accepted,
+with `modal_*` overriding the slot-prefixed form when both are set). Defaults
+are all no-op, so existing presets render bit-identical to the legacy
+parallel-biquad path.
+
+| Parameter | Type | Range | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `modal_coupling` | `float` | 0.0-1.0 | `0.0` | Inter-mode energy exchange. `0` keeps the bank purely parallel (clean ring-out); higher values inject each mode's last sample into the others' inputs, producing rolling beats and modulated decays. Clamped internally to a stability-safe ceiling (≈ 0.35) regardless of user input. |
+| `modal_coupling_topology` | `str` | `"chain"`, `"ring"`, `"all"` | `"chain"` | Topology of the coupling matrix. `"chain"` is cheapest and most physical (i ↔ i+1). `"ring"` wraps the chain. `"all"` does all-to-all with `1/\|i-j\|` distance falloff. Ignored when `modal_coupling == 0`. |
+| `modal_dispersion` | `float` | 0.0-1.0 | `0.0` | Post-bank first-order allpass cascade that frequency-smears the output. Models piano-stiffness / bell-warp — the tail warbles and shimmers instead of ringing straight. Scaled internally to a `[0, 0.85]` allpass coefficient range. |
+| `modal_dispersion_n_stages` | `int` | `>= 1` | `4` | Number of cascaded allpass stages. More stages = deeper phase smear. Ignored when `modal_dispersion == 0`. |
+
+`metallic_coupling`, `metallic_coupling_topology`, `metallic_dispersion`,
+`metallic_dispersion_n_stages` and the tone-side mirrors are the
+slot-specific overrides if you need to drive the two modal slots
+asymmetrically. Otherwise the shared `modal_*` form applies to both.
+
 **PI macros** (map onto the modal params above for quick perceptual control):
 
 | Macro | Range | Description |
@@ -4071,6 +4326,15 @@ override explicit values.
 | `pi_damping` | 0.0-1.0 | Global modal decay multiplier |
 | `pi_damping_tilt` | -1.0 to 1.0 | Decay balance: positive dampens high modes faster, negative the opposite |
 | `pi_position` | 0.0-1.0 | Strike-position window on the modal amplitudes |
+| `pi_coupling` | 0.0-1.0 | Inter-mode coupling amount — drives `modal_coupling`. Leaves topology at the user-supplied `modal_coupling_topology` (default `"chain"`). |
+| `pi_dispersion` | 0.0-1.0 | Post-bank allpass dispersion — drives `modal_dispersion`. Piano-stiffness / bell-warp tail character. |
+
+**Aesthetic note.** The two work well together: the sustained-exciter
+presets (`bow_*`, `blow_*`, `rub_*`) sit in the `modal_coupling=0.15-0.3`
+and `modal_dispersion=0.2-0.4` range. Push coupling past ~0.25 on a
+bright `bar_metal` or `plate` table and decays start warbling
+prominently; push dispersion past ~0.5 and short strikes pick up an
+audible piano-stiffness smear. Both are automatable at score time.
 
 **Sample exciter params** (consumed when `exciter_type="sample"`):
 
@@ -4550,6 +4814,17 @@ compose existing engine primitives rather than reimplementing DSP.
 - `supersaw` — Szabo-law 7-voice PolyBLEP bank (`osc_spread_cents` 0–100,
   `osc_mix` 0–1)
 - `pulse` — PolyBLEP square with `osc_pulse_width` (0.05–0.95)
+- `pluck` — Karplus-Strong++ plucked-string primitive (fractional
+  delay-line, pick-position comb, tanh termination, loop lowpass); see
+  the **Karplus-Strong++ pluck** section below for the `osc_pluck_*`
+  parameter surface
+- `scanned` — Verplank-style mass-spring ring scanner. Reads a
+  slow-evolving physical network at audio rate to produce waveshapes
+  that breathe on their own. See the **Scanned synthesis** section
+  below for the `osc_scan_*` parameter surface.
+- `chaotic` — deterministic chaotic-attractor ODE integrators (Lorenz /
+  Rössler / Duffing / Chua). See the **Chaotic oscillators** section
+  below for the `osc_chaos_*` parameter surface.
 
 **`partials`** — frequency-domain partial banks
 
@@ -4577,6 +4852,12 @@ compose existing engine primitives rather than reimplementing DSP.
 - `flow` — Mutable Elements rare-event S&H exciter; `noise_flow_density`
   0..1
 
+**`grain`** — source-agnostic granulator (fifth slot, sums into the same
+post-chain as the four above). Granulates a *live-rendered* source buffer
+— osc / partials / fm / noise / sample — rather than just playing back a
+sample. See the **Granular slot** section below for the full `grain_*`
+parameter surface.
+
 ### Per-slot common params
 
 Every slot uniformly exposes:
@@ -4596,11 +4877,27 @@ Every slot uniformly exposes:
   svf/ladder/sallen_key/cascade/sem/jupiter/k35/diode), `filter_cutoff_hz`,
   `resonance_q`, `filter_drive`, `filter_morph`, `k35_feedback_asymmetry`,
   `filter_envelope` (multi-point cutoff curve)
+- **Quality**: `quality` — engine-level preset for solver + oversampling;
+  see "Quality Modes (synth_voice)" below
 - **Voice shaper**: `shaper` (any waveshaper algo, `saturation`, or
   `preamp`), `shaper_drive`, `shaper_mix`, `shaper_mode`, `bit_depth`,
   `reduce_ratio`
 - **Voice ADSR**: `attack`, `release` apply simple fades to suppress edge
   clicks; richer amp shaping is owned by the Score layer
+
+### Quality Modes (synth_voice)
+
+- `quality: str`
+  Engine-level quality control for the voice filter solver and internal
+  oversampling (shared surface with polyblep / filtered_stack / va / drum_voice
+  — `"draft"` / `"fast"` / `"great"` / `"divine"`). See the polyblep
+  "Quality Modes" section for the full mode/solver/OS table.
+
+  **Defaults to `"great"`** (Newton 4-iter + 2x OS) — a modern-clean
+  default since `synth_voice` is the recommended engine for new tonal
+  voices and deserves the pristine path by default. The knob is
+  voice-level; it applies to the single voice filter slot uniformly
+  regardless of topology.
 
 ### Perceptual macros
 
@@ -4620,20 +4917,29 @@ convention: 0.2 subtle, 0.33 clear-but-subtle, 0.5 moderate, 0.66 strong,
 
 ### synth_voice presets
 
-15 curated presets ship with the engine, split between 5 basic starters
-and 10 cross-pollination specialties. Use by name:
+A curated preset library ships with the engine. Use by name:
 
 ```python
 synth_defaults={"engine": "synth_voice", "preset": "fm_bell_over_supersaw"}
 ```
 
-**Basic starters**: `bright_saw_lead`, `warm_pad`, `soft_bass`, `glass_pad`,
-`two_op_bell`.
+**Basic starters** (5): `bright_saw_lead`, `warm_pad`, `soft_bass`,
+`glass_pad`, `two_op_bell`.
 
-**Cross-pollination specialties**: `fm_bell_over_supersaw`,
+**Cross-pollination specialties** (10): `fm_bell_over_supersaw`,
 `additive_pad_through_ladder`, `drawbar_diode_acid`, `stiff_piano_sub`,
 `flow_exciter_pad`, `spectralwave_jupiter`, `chaos_cloud_texture`,
 `virus_hybrid_pad`, `formant_vowel_lead`, `tonewheel_drive`.
+
+**Scanned synthesis** (5): `scanned_breathing_string`,
+`scanned_singing_loop`, `scanned_glass_swarm`, `scanned_taut_wire`,
+`scanned_loose_chain`.
+
+**Chaotic oscillators** (4): `lorenz_wobble`, `rossler_smear`,
+`duffing_bass`, `chua_scatter`.
+
+**Granular** (5): `grain_breathing_cloud`, `grain_frozen_time`,
+`grain_glitch_scatter`, `grain_tape_dust`, `grain_shimmer_dust`.
 
 ### Usage example
 
@@ -4683,3 +4989,373 @@ Future extensions tracked in `FUTURE.md`: modal/physical resonator
 "operator" slots, 4-op/6-op FM algorithm matrices, a routing matrix for
 cross-slot modulation, and "two-of-a-kind" slots for e.g. two supersaws
 stacked in one voice.
+
+## Karplus-Strong++ pluck
+
+Implementation: [code_musics/engines/\_pluck.py](code_musics/engines/_pluck.py)
+
+A Karplus-Strong variant with creative-KS extensions for alive, expressive
+plucked/strummed/struck character. Wired into two engines:
+
+- `synth_voice` via `osc_type="pluck"` (reads `osc_pluck_*` params)
+- `drum_voice` via `tone_type="pluck"` (reads `tone_pluck_*` params)
+
+The primitive itself (`render_pluck(...)`) is a shared DSP module — both
+engines dispatch the same inner loop.
+
+### Pluck architecture
+
+Vanilla Karplus-Strong is a delay line in a feedback loop, excited by a
+noise burst. KS++ adds four structural improvements that move the sound
+from "synthy buzz" to "plucked string":
+
+1. **Fractional delay line** (1-sample linear interpolation).  Vanilla
+   KS is detuned at integer delays above a few hundred Hz; interpolation
+   keeps the pitch within ~1 % across 55 Hz – 2.2 kHz.
+2. **Pick-position comb filter** on the excitation burst.  Comb-cancels
+   the `1/position`-th partial, simulating where the pick strikes the
+   string.  `position=0.5` is string centre (strong even-partial
+   cancellation, mellow).  `position=0.1` is near the bridge (brighter,
+   subtle cancellation).
+3. **Loop lowpass** (1-pole).  Controls the high-frequency darkening
+   rate of the ringing string.  Maps to `damping`.
+4. **Nonlinear termination** (tanh soft-clip inside the feedback path).
+   At moderate drive it adds warmth; at high drive it crunches.  It also
+   keeps the loop numerically bounded when `sustain=1`.
+
+Excitation hardness maps from lowpassed (soft mallet) noise at `0.0` to
+raw white (sharp pick) at `1.0` via a 1-pole IIR.
+
+### `osc_pluck_*` params (synth_voice)
+
+| Param | Range | Default | Meaning |
+|---|---|---|---|
+| `osc_pluck_hardness` | 0.0 – 1.0 | 0.5 | Excitation brightness. 0 = soft mallet (LP'd noise), 1 = sharp pick (raw white noise). |
+| `osc_pluck_damping` | 0.0 – 1.0 | 0.3 | Loop lowpass darkness. Quadratic mapping: small values are subtle, the upper half really darkens things. 0 = bright & long, 1 = dark & short. |
+| `osc_pluck_position` | 0.0 – 1.0 | 0.25 | Pick-position comb. 0.5 = string centre (even-partial cancellation); 0.1 near bridge (bright); 0.9 near nut. |
+| `osc_pluck_sustain` | 0.0 – 1.0 | 0.0 | Loop gain control. 0 = classic KS natural decay (loop gain 0.998); 1 = infinite sustain (loop gain 1.0, bounded by the nonlinear termination). |
+| `osc_pluck_drive` | 0.0 – 1.0 | 0.0 | Nonlinear termination drive. 0 = linear, higher values add tanh saturation (warm → crunchy). |
+
+The pitch tracks the standard `freq_profile` from the Score layer, so
+glides and vibrato work as on the other `osc` slot types.
+
+### `tone_pluck_*` params (drum_voice)
+
+Identical semantics as `osc_pluck_*`, with the `tone_pluck_` prefix.
+Flat namespace is deliberate — we don't unify names across the two
+engines because drum_voice already has a `tone_*` prefix for its tone
+layer and synth_voice already has `osc_*` for its source slots; sharing
+one prefix would clash with existing conventions. (When an exciter
+layer is present the drum_voice pluck tone mixes the exciter into its
+feed path on top of the internal noise burst, producing hybrid
+click+pluck percussion.)
+
+| Param | Range | Default | Meaning |
+|---|---|---|---|
+| `tone_pluck_hardness` | 0.0 – 1.0 | 0.5 | See `osc_pluck_hardness`. |
+| `tone_pluck_damping` | 0.0 – 1.0 | 0.3 | See `osc_pluck_damping`. |
+| `tone_pluck_position` | 0.0 – 1.0 | 0.25 | See `osc_pluck_position`. |
+| `tone_pluck_sustain` | 0.0 – 1.0 | 0.0 | See `osc_pluck_sustain`. |
+| `tone_pluck_drive` | 0.0 – 1.0 | 0.0 | See `osc_pluck_drive`. |
+
+### Pluck presets
+
+Five presets ship for both `synth_voice` and `drum_voice`. The drum_voice
+variants are percussive ports with shorter envelopes, click-layer
+attack, and `normalize_peak_db=-6.0`-friendly levels.
+
+| Preset | Character |
+|---|---|
+| `soft_pluck` | Mellow folk-pluck. Soft mallet excitation, moderate damping, medium position. |
+| `acid_pluck` | Bright, nonlinear, short. Sharp pick near the bridge with tanh drive; ladder LP. |
+| `harp_pluck` | Soft excitation, low damping, long natural decay. Sweet, harp-like. |
+| `ebow_pluck` | Infinite sustain with drive=0.15 keeping the loop bounded; slow filter sweep. |
+| `cavernous_pluck` | Position near centre, heavy damping, SEM filter — reverb-friendly and mellow. |
+
+Example:
+
+```python
+voice = Voice(
+    name="plucked_arpeggio",
+    synth_defaults={
+        "engine": "synth_voice",
+        "preset": "harp_pluck",
+    },
+)
+
+# Or the drum-oriented port for percussion buses:
+kick_voice = Voice(
+    name="tuned_pluck_kick",
+    synth_defaults={
+        "engine": "drum_voice",
+        "preset": "cavernous_pluck",
+    },
+    normalize_peak_db=-6.0,
+)
+```
+
+### Determinism
+
+`render_pluck` is deterministic from its inputs: same `seed` + params +
+`freq_profile` → bit-identical output. When dispatched through
+`synth_voice` / `drum_voice`, the pluck seed is derived from the per-note
+RNG (`rng_for_note`), so the same Score renders the same audio each
+time.
+
+## Scanned synthesis
+
+Implementation: [code_musics/engines/\_scanned.py](code_musics/engines/_scanned.py)
+
+Verplank / Shaw / Mathews scanned synthesis: a ring of point masses
+coupled by springs evolves at its own (sub-audio) mechanical rate while
+the scanner reads displacement around the ring at audio rate. The
+*waveform shape* the scanner reads breathes and morphs under the
+network's dynamics, producing oscillator tones that no static wavetable
+or chaotic system matches.
+
+Wired into `synth_voice` via `osc_type="scanned"`. The primitive itself
+(`render_scanned(...)`) is a shared module; no drum_voice hook yet.
+
+### Scanned architecture
+
+- `n_nodes` point masses arranged in a ring.
+- Each mass feels a spring to its two neighbors (stiffness tracked by
+  `tension`) and a small elastic pull to its rest position.
+- Per-mass velocity damping (`damping`).
+- One-shot excitation at note-on imparts an initial displacement
+  distribution whose spatial concentration is controlled by `position`.
+- `motion` scales the mechanical time step — how fast the ring evolves
+  relative to the audio scan. Slow motion = slowly-morphing oscillator
+  shapes; fast motion = bubbling/chaotic textures.
+- Scanner walks phase accumulator around the nodes at the note
+  frequency (`freq_profile`), linear-interpolating between neighbors.
+  The ring advances one mechanical step per *audio* sample, scaled by
+  `motion` — this gives Verplank's characteristic "breathing".
+- Symplectic Euler integrator with `dt` bounded by the ring's
+  stiffness-derived stability limit keeps the ring stable at musical
+  settings across long notes.
+
+### `osc_scan_*` params (synth_voice)
+
+| Param | Range | Default | Meaning |
+|---|---|---|---|
+| `osc_scan_n_nodes` | `int`, `>= 4` | `16` | Number of masses in the ring. Low counts give brittle, high-harmonic shapes; high counts (24-32) give smoother pad-like shapes. |
+| `osc_scan_motion` | 0.0 – 1.0 | `0.5` | Mechanical evolution rate. 0 = nearly frozen (almost a static wavetable); 1 = aggressively morphing/chaotic. |
+| `osc_scan_tension` | 0.0 – 1.0 | `0.5` | Neighbor-spring stiffness. Higher tension → faster mechanical frequency → brighter, more harmonic motion. |
+| `osc_scan_damping` | 0.0 – 1.0 | `0.2` | Velocity damping. 0 = undamped (motion persists indefinitely); 1 = heavily damped (excitation dies quickly, note goes silent). |
+| `osc_scan_position` | 0.0 – 1.0 | `0.5` | Excitation spatial distribution. 0 = broadband (independent random displacement per node → pad-like); 1 = concentrated spike on one mass (→ spiky / harmonic-rich). |
+
+The note frequency from `freq_profile` controls how fast the scanner
+walks around the ring — pitch, glides, and vibrato work as on any
+other `osc` slot type.
+
+### Scanned presets
+
+Five presets ship, each spanning a different corner of the parameter
+space. Use by name:
+
+```python
+synth_defaults={"engine": "synth_voice", "preset": "scanned_breathing_string"}
+```
+
+| Preset | Character |
+|---|---|
+| `scanned_breathing_string` | Gentle, sustained, slow-morphing pad. 24 nodes, low motion, broad excitation. |
+| `scanned_singing_loop` | Singing, slightly vowel-like character morphing over 1-2s. 16 nodes, mid motion + high tension, concentrated excitation, bandpass filter. |
+| `scanned_glass_swarm` | Crystalline shimmering wash from a many-node, low-damping ring through a ladder filter. 32 nodes. |
+| `scanned_taut_wire` | Tight, harmonic-rich snap with short attack. 8 nodes, high tension, K35 filter, dirt macro. |
+| `scanned_loose_chain` | Low-tension, high-motion, heavy damping — gurgling / "chain-of-weights" Autechre-ish glitch texture. |
+
+### Scanned usage example
+
+```python
+voice = Voice(
+    name="scanner_pad",
+    synth_defaults={
+        "engine": "synth_voice",
+        "osc_type": "scanned",
+        "osc_level": 0.9,
+        "osc_scan_n_nodes": 24,
+        "osc_scan_motion": 0.22,
+        "osc_scan_tension": 0.55,
+        "osc_scan_damping": 0.07,
+        "osc_scan_position": 0.4,
+        "filter_topology": "ladder",
+        "filter_cutoff_hz": 2200.0,
+        "resonance_q": 0.8,
+        "attack": 0.3,
+        "release": 2.6,
+    },
+)
+```
+
+`render_scanned` is deterministic: same `seed` + params + `freq_profile`
+→ bit-identical output. When dispatched through `synth_voice`, the
+scanner seed is drawn from the per-note RNG.
+
+## Chaotic oscillators
+
+Implementation: [code_musics/engines/\_chaotic.py](code_musics/engines/_chaotic.py)
+
+Four deterministic chaotic ODE integrators usable as audio-rate source
+material: **Lorenz** (classic butterfly), **Rössler** (single-scroll
+spiral), **Duffing** (driven nonlinear oscillator), **Chua** (double-
+scroll). RK4 integration, numba-jitted. Each system's canonical
+parameters are blended with `amount` (periodic → fully chaotic) and
+`symmetry` (DC bias that breaks the attractor's natural reflective
+symmetry).
+
+Wired into `synth_voice` via `osc_type="chaotic"`. The same primitive is
+exposed as a `ModSource` via `code_musics.modulation.ChaoticSource`, so
+the attractors can also drive automation targets (cutoff, detune,
+density, etc.) in the mod matrix — a living alternative to LFOs and
+smoothed random sources.
+
+### `osc_chaos_*` params (synth_voice)
+
+| Param | Type | Range | Default | Meaning |
+|---|---|---|---|---|
+| `osc_chaos_system` | `str` | `"lorenz"` / `"rossler"` / `"duffing"` / `"chua"` | `"lorenz"` | Which attractor to integrate. |
+| `osc_chaos_rate_hz` | `float` | `> 0` | mean of `freq_profile` | Nominal evolution rate. Scales the integrator's step so one "characteristic revolution" lands near this frequency. Higher → faster, brighter motion. |
+| `osc_chaos_amount` | `float` | 0.0 – 1.0 | `0.5` | 0 collapses the system toward its stable/periodic regime (limit cycles, damped spirals); 1 uses the canonical chaotic parameters (Lorenz's `rho=28`, Chua's `alpha=15.6`, etc.). |
+| `osc_chaos_symmetry` | `float` | -1.0 – 1.0 | `0.0` | DC-ish offset injected into the drive term of each system. Non-zero values break reflective symmetry and bias the output waveform toward one lobe. |
+| `osc_chaos_seed` | `int \| None` | — | inherited from note RNG | Deterministic seed for initial conditions. When `None`, drawn stably from the per-note RNG keyed on the system name. |
+
+Output is peak-normalized to `<= 1.0` per note. If the integrator
+diverges at extreme settings, a `RuntimeError` is raised with a hint to
+lower `rate_hz` — chaotic oscillators are not crash-proof. Keep
+`rate_hz` comfortably below `sample_rate / 2` to avoid aliasing.
+
+### Chaotic presets
+
+Four presets, each picking a filter topology that complements the
+attractor's native spectrum:
+
+| Preset | System | Character |
+|---|---|---|
+| `lorenz_wobble` | Lorenz | Slow swimmy drone through Moog ladder. `rate_hz=3.0` — sub-audio attractor motion reads as vocal wobble, not a tuned tone. |
+| `rossler_smear` | Rössler | Pitched, talking character in a bandpass SVF. Moderate amount + slight symmetry gives a breathing single-scroll. |
+| `duffing_bass` | Duffing | Growly analog bass. Full chaos + strong symmetry through ladder + drive. Short release for percussive use. |
+| `chua_scatter` | Chua | Glitchy digital chaos through diode ladder + bit-crush voice shaper. Full chaos; use sparingly as an accent layer. |
+
+### Chaotic usage example
+
+```python
+voice = Voice(
+    name="attractor_pad",
+    synth_defaults={
+        "engine": "synth_voice",
+        "preset": "lorenz_wobble",
+    },
+)
+
+# Or the mod-matrix variant — Duffing modulating a cutoff:
+from code_musics.modulation import ChaoticSource, ModConnection
+
+mod_conn = ModConnection(
+    source=ChaoticSource(
+        system="duffing", rate_hz=0.8, amount=0.9, symmetry=0.3,
+    ),
+    target=AutomationTarget("voice_param", "filter_cutoff_hz"),
+    amount=600.0,
+)
+```
+
+## Granular slot
+
+Implementation: [code_musics/engines/\_granular.py](code_musics/engines/_granular.py)
+
+A fifth source slot on `synth_voice` — a grain-cloud granulator that
+reads from an internal source buffer filled by one of the other
+synthesis primitives. The key idea is **source-agnostic granulation**:
+unlike sample-only granulators, this can granulate a live-synthesized
+osc / partials / fm / noise render or a loaded WAV, so the cloud's
+character *breathes twice* — the source breathes on its own, and the
+grain stream breathes over it. That's the Fennesz / Four Tet / Autechre
+territory that sample-only granulators miss.
+
+The grain slot sums into the same post-chain as the four main slots
+(HPF → filter → VCA → voice shaper). Its own output is peak-normalized
+before multiplying by `grain_level`.
+
+### Grain modes
+
+- `cloud` — default. Dense overlapping grains with jittered position,
+  pitch, and size across the full source buffer.
+- `time_freeze` — grains read repeatedly from a tiny window of the
+  source, selected by `grain_window_start` (0 = start, 1 = end).
+  Fennesz-ish frozen-time drone.
+- `texture` — sparse, large, heavily jittered grains. Stream density
+  defaults below 1/size so grains audibly punctuate. Autechre /
+  post-IDM glitch territory.
+
+### Grain sources
+
+`grain_source` selects which primitive fills the internal source
+buffer. Each source reads its own `grain_{source}_*` subparam set:
+
+| Source | Source subparams | Notes |
+|---|---|---|
+| `osc` | `grain_osc_wave` (`saw` / `square` / `triangle` / `sine` / `supersaw`), `grain_osc_pulse_width`, `grain_osc_spread_cents` (supersaw), `grain_osc_mix` (supersaw) | PolyBLEP / supersaw source. |
+| `partials` | `grain_partials_n_harmonics`, `grain_partials_rolloff` | Simple harmonic-series additive source. |
+| `fm` | `grain_fm_ratio`, `grain_fm_index`, `grain_fm_feedback` | 2-op FM source, no internal index decay — buffer is steady-state. |
+| `noise` | `grain_noise_mode` (`white` / `pink` / `bandpass` / `flow`), `grain_noise_center_hz`, `grain_noise_width_ratio`, `grain_noise_flow_density` | Four standard noise flavors. |
+| `sample` | `grain_sample_path` (**required**) | WAV path resolved like the `sample` engine — uses the shared sample cache. |
+
+### Core grain params
+
+| Param | Type | Range | Default | Meaning |
+|---|---|---|---|---|
+| `grain_type` | `str \| None` | `cloud` / `time_freeze` / `texture` / `None` | `None` (disabled) | Granulation mode. `None` disables the slot. |
+| `grain_source` | `str` | `osc` / `partials` / `fm` / `noise` / `sample` | `"partials"` | Source buffer generator. |
+| `grain_level` | `float` | `>= 0` | `1.0` | Post-normalize mix level before summing into the voice. |
+| `grain_density` | `float` | `> 0` (grains/sec) | `30.0` (`cloud` / `time_freeze`), `8.0` (`texture`) | Grain stream density. |
+| `grain_size_ms` | `float` | `> 0` | `50.0` (`cloud`), `80.0` (`time_freeze`), `150.0` (`texture`) | Nominal grain length in milliseconds. |
+| `grain_jitter` | `float` | 0.0 – 1.0 | `0.3` (`cloud` / `time_freeze`), `0.8` (`texture`) | Position, size, and gap jitter amount. |
+| `grain_pitch_spread` | `float` | 0.0 – 1.0 | `0.0` | Per-grain pitch deviation. Continuous (up to this many octaves around `grain_pitch_ratio`) unless `grain_ji_lattice` is set. |
+| `grain_pitch_ratio` | `float` | `> 0` | `1.0` | Base playback rate (1.0 = source natural pitch). >1 transposes up, <1 transposes down. |
+| `grain_window_shape` | `str` | `hann` / `gaussian` / `rectangular` | `"hann"` | Per-grain amplitude envelope. |
+| `grain_window_start` | `float` | 0.0 – 1.0 | `0.5` | For `time_freeze` only: which fraction of the source buffer to freeze on. |
+| `grain_ji_lattice` | `list[float] \| None` | — | `None` | Optional JI ratio set. When provided, per-grain pitches quantize onto these ratios instead of smearing continuously — cloud drifts onto consonant intervals rather than off-key. |
+| `grain_envelope` | `list[dict] \| None` | — | `None` | Multi-point envelope override for the grain slot (same format as other `{slot}_envelope` params). |
+| `grain_shaper` / `grain_shaper_drive` / `grain_shaper_mix` | — | — | `None` | Per-slot nonlinearity (any waveshaper algo, `saturation`, or `preamp`), same surface as the other slots. |
+
+For `time_freeze`, the internal source buffer is rendered short
+(~0.2s) and grains read repeatedly around `grain_window_start`. For
+`cloud` / `texture`, the source buffer spans the note duration (at
+minimum 0.5s) so the granulator has enough material to read from.
+
+### Granular presets
+
+Five presets ship, each highlighting a different (mode, source) pair:
+
+| Preset | Mode | Source | Character |
+|---|---|---|---|
+| `grain_breathing_cloud` | `cloud` | `partials` | Dense hann grains over additive partials. `grain_ji_lattice` quantizes onto a 7-limit harmonic lattice so pitches drift onto consonant intervals. |
+| `grain_frozen_time` | `time_freeze` | `partials` | Fennesz-ish frozen-in-time drone at `grain_window_start=0.4`, gaussian windows. |
+| `grain_glitch_scatter` | `texture` | `fm` | Sparse, large, wildly-jittered grains of a 2-op FM source through diode + bit-crush. Autechre territory. |
+| `grain_tape_dust` | `cloud` | `noise` | Pink-noise source under a heavy lowpass — dust swirling in a sunbeam. No pitch spread. |
+| `grain_shimmer_dust` | `cloud` | `partials` | High-register, pitched up an octave (`grain_pitch_ratio=2.0`) with JI-lattice pitch quantization. Glassy shimmer stack layer. |
+
+### Granular usage example
+
+```python
+voice = Voice(
+    name="fennesz_pad",
+    synth_defaults={
+        "engine": "synth_voice",
+        "preset": "grain_frozen_time",
+        # Still composable — the preset only sets the grain slot + filter.
+        # Layer a supersaw underneath by setting the osc slot too:
+        "osc_type": "supersaw",
+        "osc_level": 0.3,
+        "osc_spread_cents": 12.0,
+    },
+)
+```
+
+The grain slot is fully source-agnostic *because* it composes the
+existing primitives: adding a new slot type (e.g. a chaotic source) to
+`synth_voice` automatically becomes a valid `grain_source` if wired
+into `_build_source_buffer`. Determinism follows the per-note RNG like
+the other slots.

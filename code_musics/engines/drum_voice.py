@@ -21,11 +21,14 @@ from code_musics.engines._drum_layers import (
 )
 from code_musics.engines._drum_macros import resolve_macros
 from code_musics.engines._drum_utils import resolve_velocity_timbre, rng_for_note
+from code_musics.engines._dsp_utils import (
+    apply_filter_oversampled,
+    resolve_quality_mode,
+)
 from code_musics.engines._envelopes import render_envelope
 from code_musics.engines._filters import (
     _SUPPORTED_FILTER_MODES,
     _SUPPORTED_FILTER_TOPOLOGIES,
-    apply_filter,
     apply_zdf_svf,
 )
 from code_musics.engines._pi_macros import resolve_pi_macros
@@ -119,6 +122,12 @@ def render(
     filter_morph = float(params.get("filter_morph", 0.0))
     k35_feedback_asymmetry = float(params.get("k35_feedback_asymmetry", 0.0))
 
+    # Engine-level quality: modern-clean default. Transient drum content
+    # benefits materially from proper Newton + oversampling. Picks the ladder
+    # solver + Newton iteration budget + the filter-section oversampling
+    # factor. See ``resolve_quality_mode``.
+    quality_config = resolve_quality_mode(str(params.get("quality", "great")))
+
     # --- Extract noise/metallic per-layer filter ---
     noise_filter_mode: str | None = params.get("noise_filter_mode")
     noise_filter_cutoff_hz = float(params.get("noise_filter_cutoff_hz", 2000.0))
@@ -180,6 +189,10 @@ def render(
     # Exciter
     exciter_signal: np.ndarray | None = None
     if exciter_type is not None and exciter_level > 0:
+        # Import at usage site so ruff cannot strip it between incremental edits.
+        from code_musics.engines._drum_layers import SUSTAINED_EXCITER_TYPES
+
+        is_sustained = exciter_type in SUSTAINED_EXCITER_TYPES
         exciter_signal = render_exciter(
             n_samples=n_samples,
             freq=freq,
@@ -187,6 +200,8 @@ def render(
             rng=rng,
             exciter_type=exciter_type,
             params=params,
+            velocity=amp,
+            duration=duration,
         )
         shaped_exciter = _apply_layer_shaper(
             exciter_signal,
@@ -197,9 +212,14 @@ def render(
             mode=exciter_shaper_mode,
             fidelity=exciter_shaper_fidelity,
         )
-        exciter_env = _build_layer_envelope(
-            exciter_envelope_raw, n_samples, time, exciter_decay_s
-        )
+        if is_sustained and exciter_envelope_raw is None:
+            exciter_env = _build_sustained_exciter_envelope(
+                n_samples=n_samples, sample_rate=sample_rate
+            )
+        else:
+            exciter_env = _build_layer_envelope(
+                exciter_envelope_raw, n_samples, time, exciter_decay_s
+            )
         signal += exciter_level * shaped_exciter * exciter_env
 
     # Tone
@@ -295,32 +315,26 @@ def render(
             )
         else:
             cutoff_profile = np.full(n_samples, filter_cutoff_hz, dtype=np.float64)
-        # SVF stays on its fast direct path to keep existing drums bit-identical;
-        # any non-SVF topology goes through the unified dispatcher.  Since
-        # ``filter_topology`` defaults to ``"svf"``, this preserves existing
-        # behavior exactly and only engages when a drum preset asks for a
-        # different analog character.
-        if filter_topology == "svf":
-            signal = apply_zdf_svf(
-                signal,
-                cutoff_profile=cutoff_profile,
-                resonance_q=filter_q,
-                sample_rate=sample_rate,
-                filter_mode=filter_mode,
-                filter_drive=filter_drive,
-            )
-        else:
-            signal = apply_filter(
-                signal,
-                cutoff_profile=cutoff_profile,
-                resonance_q=filter_q,
-                sample_rate=sample_rate,
-                filter_mode=filter_mode,
-                filter_drive=filter_drive,
-                filter_topology=filter_topology,
-                filter_morph=filter_morph,
-                k35_feedback_asymmetry=k35_feedback_asymmetry,
-            )
+
+        # Route through the unified oversampled dispatcher so the voice-level
+        # ``quality`` param drives both solver selection and filter-section
+        # oversampling uniformly across all 8 topologies (including svf).
+        # Transient drum content especially benefits from OS at higher tiers.
+        signal = apply_filter_oversampled(
+            signal,
+            cutoff_profile=cutoff_profile,
+            resonance_q=filter_q,
+            sample_rate=sample_rate,
+            oversample_factor=quality_config.oversample_factor,
+            filter_mode=filter_mode,
+            filter_drive=filter_drive,
+            filter_topology=filter_topology,
+            filter_morph=filter_morph,
+            k35_feedback_asymmetry=k35_feedback_asymmetry,
+            filter_solver=quality_config.solver,
+            max_newton_iters=quality_config.max_newton_iters,
+            newton_tolerance=quality_config.newton_tolerance,
+        )
 
     # --- Voice shaper (post-mix) ---
     signal = _apply_layer_shaper(
@@ -377,6 +391,27 @@ def _build_layer_envelope(
     if envelope_raw is not None:
         return render_envelope(envelope_raw, n_samples, default_value=0.0)
     return np.exp(-time / max(decay_s, 1e-6))
+
+
+def _build_sustained_exciter_envelope(
+    *, n_samples: int, sample_rate: int
+) -> np.ndarray:
+    """Flat-sustain envelope with brief attack/release fades.
+
+    Used as the default envelope for ``bow`` / ``blow`` / ``rub`` exciter
+    types when the caller did not supply an explicit ``exciter_envelope``.
+    A pure ``1.0`` rectangle would click on note-start/end once summed into
+    the mix, so we add 10 ms Hann-like fades at each edge.
+    """
+    envelope = np.ones(n_samples, dtype=np.float64)
+    fade_samples = min(n_samples // 2, max(1, int(0.010 * sample_rate)))
+    if fade_samples > 0:
+        fade_in = 0.5 - 0.5 * np.cos(
+            np.pi * np.arange(fade_samples, dtype=np.float64) / fade_samples
+        )
+        envelope[:fade_samples] *= fade_in
+        envelope[-fade_samples:] *= fade_in[::-1]
+    return envelope
 
 
 def _apply_layer_shaper(

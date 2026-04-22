@@ -24,14 +24,18 @@ from typing import Any
 
 import numpy as np
 
-from code_musics.engines._dsp_utils import rng_for_note
+from code_musics.engines._dsp_utils import (
+    apply_filter_oversampled,
+    resolve_quality_mode,
+    rng_for_note,
+)
 from code_musics.engines._envelopes import render_envelope
 from code_musics.engines._filters import (
     _SUPPORTED_FILTER_MODES,
     _SUPPORTED_FILTER_TOPOLOGIES,
-    apply_filter,
     apply_zdf_svf,
 )
+from code_musics.engines._granular import render_granular
 from code_musics.engines._synth_macros import resolve_macros
 from code_musics.engines._synth_slots import (
     render_fm,
@@ -75,24 +79,28 @@ def render(
     partials_type: str | None = params.get("partials_type")
     fm_type: str | None = params.get("fm_type")
     noise_type: str | None = params.get("noise_type")
+    grain_type: str | None = params.get("grain_type")
 
     # --- Slot levels ---
     osc_level = float(params.get("osc_level", 1.0))
     partials_level = float(params.get("partials_level", 1.0))
     fm_level = float(params.get("fm_level", 1.0))
     noise_level = float(params.get("noise_level", 0.1))
+    grain_level = float(params.get("grain_level", 1.0))
 
     # --- Per-slot envelope overrides (optional multi-point) ---
     osc_envelope_raw = params.get("osc_envelope")
     partials_envelope_raw = params.get("partials_envelope")
     fm_envelope_raw = params.get("fm_envelope")
     noise_envelope_raw = params.get("noise_envelope")
+    grain_envelope_raw = params.get("grain_envelope")
 
     # --- Per-slot shapers ---
     osc_shaper: str | None = params.get("osc_shaper")
     partials_shaper: str | None = params.get("partials_shaper")
     fm_shaper: str | None = params.get("fm_shaper")
     noise_shaper: str | None = params.get("noise_shaper")
+    grain_shaper: str | None = params.get("grain_shaper")
 
     osc_shaper_drive = float(params.get("osc_shaper_drive", 0.5))
     osc_shaper_mix = float(params.get("osc_shaper_mix", 1.0))
@@ -114,6 +122,11 @@ def render(
     filter_topology = str(params.get("filter_topology", "svf")).lower()
     filter_morph = float(params.get("filter_morph", 0.0))
     k35_feedback_asymmetry = float(params.get("k35_feedback_asymmetry", 0.0))
+
+    # Engine-level quality: modern-clean default for the "prefer for new tonal
+    # voices" engine. Picks the ladder solver + Newton iteration budget + the
+    # filter-section oversampling factor. See ``resolve_quality_mode``.
+    quality_config = resolve_quality_mode(str(params.get("quality", "great")))
 
     voice_shaper: str | None = params.get("shaper")
     voice_shaper_drive = float(params.get("shaper_drive", 0.5))
@@ -234,6 +247,30 @@ def render(
         noise_env = _build_layer_envelope(noise_envelope_raw, n_samples)
         signal += noise_level * noise_signal * noise_env
 
+    if grain_type is not None and grain_level > 0:
+        grain_source = str(params.get("grain_source", "partials")).lower()
+        grain_seed = int(rng.integers(0, 2**31 - 1))
+        grain_signal = render_granular(
+            n_samples=n_samples,
+            freq=freq,
+            sample_rate=sample_rate,
+            seed=grain_seed,
+            grain_type=grain_type,
+            grain_source=grain_source,
+            params=params,
+        )
+        grain_shaper_drive = float(params.get("grain_shaper_drive", 0.5))
+        grain_shaper_mix = float(params.get("grain_shaper_mix", 1.0))
+        grain_signal = _apply_layer_shaper(
+            grain_signal,
+            grain_shaper,
+            grain_shaper_drive,
+            grain_shaper_mix,
+            sample_rate=sample_rate,
+        )
+        grain_env = _build_layer_envelope(grain_envelope_raw, n_samples)
+        signal += grain_level * grain_signal * grain_env
+
     # --- Post-chain: HPF -> main filter -> voice shaper ---
     if hpf_cutoff_hz > 0.0:
         hpf_profile = np.full(n_samples, hpf_cutoff_hz, dtype=np.float64)
@@ -254,27 +291,24 @@ def render(
         else:
             cutoff_profile = np.full(n_samples, filter_cutoff_hz, dtype=np.float64)
 
-        if filter_topology == "svf":
-            signal = apply_zdf_svf(
-                signal,
-                cutoff_profile=cutoff_profile,
-                resonance_q=resonance_q,
-                sample_rate=sample_rate,
-                filter_mode=filter_mode,
-                filter_drive=filter_drive,
-            )
-        else:
-            signal = apply_filter(
-                signal,
-                cutoff_profile=cutoff_profile,
-                resonance_q=resonance_q,
-                sample_rate=sample_rate,
-                filter_mode=filter_mode,
-                filter_drive=filter_drive,
-                filter_topology=filter_topology,
-                filter_morph=filter_morph,
-                k35_feedback_asymmetry=k35_feedback_asymmetry,
-            )
+        # Route through the unified oversampled dispatcher so the voice-level
+        # ``quality`` param drives both solver selection and filter-section
+        # oversampling uniformly across all 8 topologies (including svf).
+        signal = apply_filter_oversampled(
+            signal,
+            cutoff_profile=cutoff_profile,
+            resonance_q=resonance_q,
+            sample_rate=sample_rate,
+            oversample_factor=quality_config.oversample_factor,
+            filter_mode=filter_mode,
+            filter_drive=filter_drive,
+            filter_topology=filter_topology,
+            filter_morph=filter_morph,
+            k35_feedback_asymmetry=k35_feedback_asymmetry,
+            filter_solver=quality_config.solver,
+            max_newton_iters=quality_config.max_newton_iters,
+            newton_tolerance=quality_config.newton_tolerance,
+        )
 
     # Simple attack/release fade to suppress clicks; the Score layer applies
     # richer amp shaping on top.

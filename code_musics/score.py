@@ -121,6 +121,7 @@ EffectKind = Literal[
     "dragonfly",
     "mjuc_jr",
     "plugin",
+    "analog_filter",
 ]
 
 _UNSET: object = object()  # sentinel distinguishing "not passed" from explicit None
