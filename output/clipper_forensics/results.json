@@ -1,0 +1,102 @@
+{
+  "meta": {
+    "adaa_dx_threshold": 1e-05,
+    "sample_rate": 44100,
+    "window": [
+      69.57,
+      77.57
+    ],
+    "note_os_cap": "apply_clipper restricts oversample_factor to {1,2,4,8,16}; V4/V5 use OS=16.",
+    "note_superseded_by": "bisect_v2.json — this legacy snapshot documents the old hardness-crossfade clipper. The 0.85*hard+0.15*tanh superposition added +64% IMD on two-tone and +6.5 dB of 2-8 kHz lift on a kick vs naive at the same shave. The April 2026 rewrite replaces hardness with a monotone polynomial soft-knee; see bisect_v2.json for the new measurements."
+  },
+  "measurements": [
+    {
+      "label": "V1_current_os4_h085",
+      "shaved_db": 2.89,
+      "hb_delta_flat_db": -0.286,
+      "hb_delta_aw_db": -0.292,
+      "imd_ratio": 0.0118,
+      "peak_wet_dbfs": -12.25,
+      "tone_thd_pct": 9.744
+    },
+    {
+      "label": "V2_current_os4_h100",
+      "shaved_db": 2.627,
+      "hb_delta_flat_db": -0.156,
+      "hb_delta_aw_db": -0.153,
+      "imd_ratio": 0.01102,
+      "peak_wet_dbfs": -11.99,
+      "tone_thd_pct": 9.237
+    },
+    {
+      "label": "V3_current_os4_h000",
+      "shaved_db": 2.678,
+      "hb_delta_flat_db": 0.187,
+      "hb_delta_aw_db": 0.059,
+      "imd_ratio": 0.04069,
+      "peak_wet_dbfs": -12.04,
+      "tone_thd_pct": 15.296
+    },
+    {
+      "label": "V4_os16_h085",
+      "shaved_db": 2.838,
+      "hb_delta_flat_db": -0.253,
+      "hb_delta_aw_db": -0.266,
+      "imd_ratio": 0.00406,
+      "peak_wet_dbfs": -12.2,
+      "tone_thd_pct": 10.324
+    },
+    {
+      "label": "V5_os16_h100",
+      "shaved_db": 2.566,
+      "hb_delta_flat_db": -0.103,
+      "hb_delta_aw_db": -0.106,
+      "imd_ratio": 0.00316,
+      "peak_wet_dbfs": -11.93,
+      "tone_thd_pct": 9.241
+    },
+    {
+      "label": "V6_stereo_linked_os4_h085",
+      "shaved_db": 2.896,
+      "hb_delta_flat_db": -0.284,
+      "hb_delta_aw_db": -0.29,
+      "imd_ratio": 0.01188,
+      "peak_wet_dbfs": -12.26,
+      "tone_thd_pct": 9.744
+    },
+    {
+      "label": "V7_naive_hard_clip_no_aa",
+      "shaved_db": 2.894,
+      "hb_delta_flat_db": -0.097,
+      "hb_delta_aw_db": -0.103,
+      "imd_ratio": 0.00039,
+      "peak_wet_dbfs": -12.25,
+      "tone_thd_pct": 9.23
+    }
+  ],
+  "stereo_link_probe": {
+    "ch0_at_left_click_peak": 1.304286546147018,
+    "ch0_at_right_click_peak": 0.13485675486894927,
+    "ch1_at_left_click_peak": 0.03025738423745792,
+    "ch1_at_right_click_peak": 1.304286546147018,
+    "channels_independent": false
+  },
+  "crossfade_probe": {
+    "hb_hard_db": 28.368,
+    "hb_soft_db": 25.295,
+    "hb_mid_db": 26.889,
+    "hb_linear_superposition_prediction_db": 26.889,
+    "complex_spectral_residual_ratio": 0.0,
+    "note": "ratio ≈ 0 ⇒ linear-superposition holds; > 0 ⇒ non-linear interaction"
+  },
+  "linear_fallback_probe": {
+    "adaa_dx_threshold": 1e-05,
+    "os": 16,
+    "sample_rate_upsampled": 705600,
+    "n_samples": 6160464,
+    "fraction_dx_outer_below_threshold_pct": 4.462,
+    "fraction_inner_below_threshold_pct": 6.049,
+    "median_abs_dx_outer": 0.004454500109082896,
+    "median_abs_dx_a": 0.0022291821543930224
+  }
+}

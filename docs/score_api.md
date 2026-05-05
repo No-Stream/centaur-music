@@ -61,7 +61,7 @@ from code_musics.score import EffectSpec, Score
 score = Score(
     f0_hz=110.0,
     master_effects=[
-        EffectSpec("saturation", {"preset": "tube_warm", "mix": 0.2}),
+        EffectSpec("drive", {"preset": "tube_warm", "mix": 0.2}),
     ],
 )
 ```

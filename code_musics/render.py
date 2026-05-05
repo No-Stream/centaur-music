@@ -276,12 +276,17 @@ def render_piece(
     else:
         raise ValueError(f"Piece {piece_name} has no render path configured")
 
+    export_target_lufs = (
+        definition.export_target_lufs
+        if definition.export_target_lufs is not None
+        else _EXPORT_TARGET_LUFS
+    )
     mastering_result = finalize_master(
         audio,
         sample_rate=render_score.sample_rate
         if render_score is not None
         else SAMPLE_RATE,
-        target_lufs=_EXPORT_TARGET_LUFS,
+        target_lufs=export_target_lufs,
         true_peak_ceiling_dbfs=_EXPORT_TRUE_PEAK_CEILING_DBFS,
     )
     export_audio = mastering_result.signal
@@ -585,7 +590,11 @@ def _build_render_metadata(
             "output_dir": str(output_dir),
             "save_plot": save_plot,
             "save_analysis": save_analysis,
-            "export_target_lufs": _EXPORT_TARGET_LUFS,
+            "export_target_lufs": (
+                definition.export_target_lufs
+                if definition.export_target_lufs is not None
+                else _EXPORT_TARGET_LUFS
+            ),
             "export_true_peak_ceiling_dbfs": _EXPORT_TRUE_PEAK_CEILING_DBFS,
             "render_window": _serialize_render_window(render_window),
         },

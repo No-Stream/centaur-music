@@ -501,6 +501,178 @@ def _ad2_full_wave_rect(x: float) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Polynomial soft-knee clipper (monotone cubic Hermite flavour).
+#
+# Transfer for threshold T and knee half-width K (both linear, >= 0):
+#
+#     f(x) = sign(x) * g(|x|),     with
+#     g(ax) =
+#         ax                               ax <= T - K            (passthrough)
+#         T - K * (1 - t)^2                T - K < ax < T + K     (knee)
+#         T                                ax >= T + K            (ceiling)
+#
+#     t = (ax - (T - K)) / (2 K)      in [0, 1]
+#
+# Why this form and not a quintic smoothstep: the transfer must be
+# *monotone non-decreasing* in |x| or clipping would produce a backward
+# fold on the upper knee.  A quintic smoothstep h(t) = 10t^3 - 15t^4 + 6t^5
+# that blends ax -> T produces y'(ax) = (1-h) + h'(t)/(2K) * (T - ax);
+# on the upper half of the knee (ax > T) the second term goes negative
+# while the first term is small, and the overall slope becomes negative.
+# That is musically wrong for a clipper.
+#
+# Cubic Hermite with g(0) = T-K, g(1) = T, g'(0) = 2K (slope 1 in ax),
+# g'(1) = 0 is the unique monotone C^1 transfer with those boundary
+# conditions.  That works out to g(t) = T - K * (1-t)^2 with derivative
+# g'(t) = 2K * (1-t) which is always >= 0.  C^1 at the splice points
+# (not C^2) is enough for ADAA: F1 is then C^2 and F2 is C^3, so the
+# three-sample divided-difference form in AD2 never straddles a
+# discontinuity in F2.
+#
+# Why we use this at all over ``hardness * hard_clip + (1-hardness) * tanh``
+# (the previous clipper default): summing hard-clip with tanh produces a
+# transfer whose derivative both has a kink at threshold AND keeps growing
+# above it.  The ``clipper_bisect`` diagnostic (scratch/clipper_bisect.py)
+# showed that crossfade adds +64% IMD on a two-tone stimulus and +6.5 dB
+# of 2-8 kHz brightness on a kick transient vs pure hard-clip, at the
+# same shave amount.  The polynomial knee nulls to naive hard-clip at K=0
+# and stays within a few percent of naive IMD for knee widths up to 6 dB.
+# ---------------------------------------------------------------------------
+
+
+@numba.njit(cache=True)
+def _poly_knee(x: float, threshold: float, knee_half: float) -> float:
+    """Direct per-sample evaluation of the poly-knee transfer."""
+    ax = math.fabs(x)
+    if knee_half <= 0.0:
+        if ax <= threshold:
+            return x
+        return threshold if x > 0.0 else -threshold
+    lo = threshold - knee_half
+    hi = threshold + knee_half
+    if ax <= lo:
+        return x
+    if ax >= hi:
+        return threshold if x > 0.0 else -threshold
+    t = (ax - lo) / (2.0 * knee_half)
+    one_minus_t = 1.0 - t
+    shaped = threshold - knee_half * one_minus_t * one_minus_t
+    return shaped if x > 0.0 else -shaped
+
+
+# Closed-form F1 and F2 on the knee region.
+#
+# On the knee (u = lo + 2K t, ax in [lo, hi], lo = T - K):
+#   f(u) = T - K * (1 - t)^2.
+#
+#   _knee_F1_delta(t_end, K, T)
+#     = integral from u=lo to u=lo+2K t_end of f(u) du
+#     = 2K * integral_0^{t_end} [T - K (1-s)^2] ds
+#     = 2K * [ T * t_end - (K/3) * (1 - (1-t_end)^3) ].
+#
+#   F1 on the knee, parameterised by t:
+#     F1(u(t)) = F1(lo) + _knee_F1_delta(t, K, T)
+#             = lo^2/2 + 2K T t - (2 K^2 / 3) (1 - (1-t)^3).
+#
+#   _knee_F2_delta(t_end, lo, K, T)
+#     = integral from u=lo to u=lo+2K t_end of F1(u) du
+#     = 2K * integral_0^{t_end} F1(u(s)) ds
+#     = 2K * [ (lo^2/2) * t_end
+#              + K T * t_end^2
+#              - (2 K^2 / 3) * t_end
+#              + (K^2 / 6) * (1 - (1-t_end)^4) ].
+#
+# All terms are elementary polynomials in t_end and (1 - t_end), so the
+# per-sample cost of F1 and F2 is a handful of multiplies.
+# ---------------------------------------------------------------------------
+
+
+@numba.njit(cache=True)
+def _knee_F1_delta(t_end: float, knee_half: float, threshold: float) -> float:
+    omt = 1.0 - t_end
+    return (
+        2.0
+        * knee_half
+        * (threshold * t_end - (knee_half / 3.0) * (1.0 - omt * omt * omt))
+    )
+
+
+@numba.njit(cache=True)
+def _knee_F2_delta(
+    t_end: float, lo: float, knee_half: float, threshold: float
+) -> float:
+    omt = 1.0 - t_end
+    omt4 = omt * omt * omt * omt
+    return (
+        2.0
+        * knee_half
+        * (
+            0.5 * lo * lo * t_end
+            + knee_half * threshold * t_end * t_end
+            - (2.0 * knee_half * knee_half / 3.0) * t_end
+            + (knee_half * knee_half / 6.0) * (1.0 - omt4)
+        )
+    )
+
+
+@numba.njit(cache=True)
+def _ad1_poly_knee(x: float, threshold: float, knee_half: float) -> float:
+    """First antiderivative F1(x) = integral_0^x f(u) du for poly-knee (even)."""
+    ax = math.fabs(x)
+    if knee_half <= 0.0:
+        if ax <= threshold:
+            return 0.5 * ax * ax
+        return threshold * ax - 0.5 * threshold * threshold
+    lo = threshold - knee_half
+    hi = threshold + knee_half
+    f1_at_lo = 0.5 * lo * lo
+    if ax <= lo:
+        return 0.5 * ax * ax
+    if ax >= hi:
+        f1_at_hi = f1_at_lo + _knee_F1_delta(1.0, knee_half, threshold)
+        return f1_at_hi + threshold * (ax - hi)
+    t = (ax - lo) / (2.0 * knee_half)
+    return f1_at_lo + _knee_F1_delta(t, knee_half, threshold)
+
+
+@numba.njit(cache=True)
+def _ad2_poly_knee(x: float, threshold: float, knee_half: float) -> float:
+    """Second antiderivative F2(x) = integral_0^x F1(u) du (odd function)."""
+    ax = math.fabs(x)
+    if knee_half <= 0.0:
+        if ax <= threshold:
+            val = ax * ax * ax / 6.0
+        else:
+            # Matches the _ad2_hard_clip closed form for T=1; T-scaled here.
+            val = (
+                threshold * threshold * threshold / 6.0
+                + 0.5 * threshold * ax * ax
+                - 0.5 * threshold * threshold * ax
+            )
+        return val if x >= 0.0 else -val
+    lo = threshold - knee_half
+    hi = threshold + knee_half
+    f2_at_lo = lo * lo * lo / 6.0
+    if ax <= lo:
+        val = ax * ax * ax / 6.0
+        return val if x >= 0.0 else -val
+    if ax >= hi:
+        f2_at_hi = f2_at_lo + _knee_F2_delta(1.0, lo, knee_half, threshold)
+        f1_at_hi = 0.5 * lo * lo + _knee_F1_delta(1.0, knee_half, threshold)
+        # On ax >= hi, F1(u) = threshold * u + (f1_at_hi - threshold * hi).
+        # Integrate from hi to ax.
+        val = (
+            f2_at_hi
+            + 0.5 * threshold * (ax * ax - hi * hi)
+            + (f1_at_hi - threshold * hi) * (ax - hi)
+        )
+        return val if x >= 0.0 else -val
+    t = (ax - lo) / (2.0 * knee_half)
+    val = f2_at_lo + _knee_F2_delta(t, lo, knee_half, threshold)
+    return val if x >= 0.0 else -val
+
+
+# ---------------------------------------------------------------------------
 # Per-sample ADAA dispatch
 # ---------------------------------------------------------------------------
 
@@ -774,6 +946,7 @@ def _adaa2_sample(
     algorithm_id: int,
     drive_gain: float,
     tanh_table: np.ndarray,
+    sample_rate_hz: float = 44100.0,
 ) -> float:
     """Compute one AD2 ADAA output sample from a three-sample history.
 
@@ -785,7 +958,15 @@ def _adaa2_sample(
         midpoint / direct evaluation of f.
     This matches the same small-denominator safety that ``_adaa_sample`` uses
     with AD1.
+
+    ``sample_rate_hz`` scales the fallback threshold so that the "too close"
+    boundary shrinks with increasing effective sample rate — inter-sample
+    differences shrink proportionally with SR, so the absolute fallback
+    threshold must shrink too or the AD2 path collapses to the AD1/direct
+    fallback too aggressively at OS=16 on typical material.  Defaults to
+    ``44100.0`` which reproduces the legacy constant threshold bit-exactly.
     """
+    effective_dx_threshold = _ADAA_DX_THRESHOLD * (44100.0 / sample_rate_hz)
     dx_outer = x_curr - x_prev2
     dx_a = x_curr - x_prev
     dx_b = x_prev - x_prev2
@@ -793,12 +974,15 @@ def _adaa2_sample(
     # When the outer difference is small we cannot evaluate AD2 stably.
     # Fall back to AD1 (using the existing dispatcher) which already handles
     # its own small-dx guard.
-    if math.fabs(dx_outer) <= _ADAA_DX_THRESHOLD:
+    if math.fabs(dx_outer) <= effective_dx_threshold:
         return _adaa_sample(x_curr, x_prev, algorithm_id, drive_gain)
 
     # If either inner difference is small, both AD1-shaped divided differences
     # would be unstable; fall back to the midpoint direct evaluation.
-    if math.fabs(dx_a) <= _ADAA_DX_THRESHOLD or math.fabs(dx_b) <= _ADAA_DX_THRESHOLD:
+    if (
+        math.fabs(dx_a) <= effective_dx_threshold
+        or math.fabs(dx_b) <= effective_dx_threshold
+    ):
         return _direct_shape(0.5 * (x_curr + x_prev2), algorithm_id, drive_gain)
 
     f2_curr = _ad2_f2(x_curr, algorithm_id, drive_gain, tanh_table)
@@ -831,8 +1015,18 @@ def _apply_adaa2(
     algorithm_id: int,
     drive_gain: float,
     tanh_table: np.ndarray,
+    sample_rate_hz: float = 44100.0,
 ) -> np.ndarray:
-    """Apply waveshaping with second-order ADAA over the whole signal."""
+    """Apply waveshaping with second-order ADAA over the whole signal.
+
+    ``sample_rate_hz`` is forwarded to :func:`_adaa2_sample` so the
+    small-dx fallback threshold scales with effective sample rate.  Default
+    ``44100.0`` reproduces the legacy (pre-SR-aware) behavior bit-exactly.
+    Callers running the kernel at a higher effective rate (e.g. the clipper
+    oversampling path at ``SAMPLE_RATE * oversample_factor``) should pass
+    that effective rate so the AD2 path doesn't collapse into the linear
+    fallback prematurely.
+    """
     n = signal.shape[0]
     out = np.empty(n, dtype=np.float64)
 
@@ -848,10 +1042,121 @@ def _apply_adaa2(
             algorithm_id,
             drive_gain,
             tanh_table,
+            sample_rate_hz,
         )
         prev2_driven = prev_driven
         prev_driven = curr_driven
 
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Polynomial-knee ADAA loops.
+#
+# Thin per-array wrappers around the poly-knee F1/F2 helpers above.  Both
+# take per-sample threshold and knee-half profiles so AutomationSpec curves
+# can be threaded through without a second copy of the loop.  Callers that
+# only need constant threshold/knee can pass broadcast arrays.
+# ---------------------------------------------------------------------------
+
+
+@numba.njit(cache=True)
+def _apply_adaa_poly_knee(
+    signal: np.ndarray,
+    threshold: np.ndarray,
+    knee_half: np.ndarray,
+    sample_rate_hz: float = 44100.0,
+) -> np.ndarray:
+    """Apply polynomial-knee clipping with first-order ADAA over a whole signal.
+
+    ``threshold`` and ``knee_half`` are per-sample arrays matching
+    ``signal.shape[0]`` (broadcast constant-value arrays for static
+    operation).  ``sample_rate_hz`` scales the small-dx fallback threshold
+    the same way :func:`_adaa2_sample` does — pass
+    ``SAMPLE_RATE * oversample_factor`` when running the kernel at the
+    oversampled rate.
+    """
+    n = signal.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    effective_dx = _ADAA_DX_THRESHOLD * (44100.0 / sample_rate_hz)
+
+    prev = signal[0] if n > 0 else 0.0
+    for i in range(n):
+        curr = signal[i]
+        t_i = threshold[i]
+        k_i = knee_half[i]
+        dx = curr - prev
+        if math.fabs(dx) > effective_dx:
+            # AD1 divided difference on F1.  Use the same threshold/knee for
+            # both samples — per-AD2-envelope caveat applies here analogously,
+            # but at AD1 with a single difference the error is one order
+            # smaller and inaudible under slow parameter sweeps.
+            out[i] = (
+                _ad1_poly_knee(curr, t_i, k_i) - _ad1_poly_knee(prev, t_i, k_i)
+            ) / dx
+        else:
+            out[i] = _poly_knee(0.5 * (curr + prev), t_i, k_i)
+        prev = curr
+    return out
+
+
+@numba.njit(cache=True)
+def _apply_adaa2_poly_knee(
+    signal: np.ndarray,
+    threshold: np.ndarray,
+    knee_half: np.ndarray,
+    sample_rate_hz: float = 44100.0,
+) -> np.ndarray:
+    """Apply polynomial-knee clipping with second-order ADAA over a whole signal.
+
+    Same contract as :func:`_apply_adaa_poly_knee` but uses the three-sample
+    Bilbao/Esqueda form on F2.  Falls back cleanly to AD1 on a small outer
+    difference and to direct evaluation on small inner differences, mirroring
+    :func:`_adaa2_sample`.  The polynomial knee is C² on the real line, so
+    the AD2 form does not straddle any derivative discontinuity even when
+    samples cross the threshold — unlike AD2 of hard-clip which strictly
+    requires the bounded-range clamp at the exit.
+    """
+    n = signal.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    effective_dx = _ADAA_DX_THRESHOLD * (44100.0 / sample_rate_hz)
+
+    prev = signal[0] if n > 0 else 0.0
+    prev2 = prev
+    for i in range(n):
+        curr = signal[i]
+        t_i = threshold[i]
+        k_i = knee_half[i]
+        dx_outer = curr - prev2
+        dx_a = curr - prev
+        dx_b = prev - prev2
+        # Fallback priority:
+        #  1. If outer dx is tiny (AD2 denominator unstable), fall back to
+        #     AD1 between curr and prev (which has its own dx guard).
+        #  2. If dx_b is tiny (initialization case: prev2 == prev at sample 1),
+        #     also fall back to AD1 between curr and prev.  The old code
+        #     fell through to midpoint(curr, prev2) here, which introduced
+        #     a systematic halving bug on the very first below-threshold
+        #     sample when prev == prev2 == signal[0] and curr != signal[0].
+        #  3. If dx_a alone is tiny, average curr and prev2 via direct eval.
+        if math.fabs(dx_outer) <= effective_dx or math.fabs(dx_b) <= effective_dx:
+            if math.fabs(dx_a) > effective_dx:
+                out[i] = (
+                    _ad1_poly_knee(curr, t_i, k_i) - _ad1_poly_knee(prev, t_i, k_i)
+                ) / dx_a
+            else:
+                out[i] = _poly_knee(0.5 * (curr + prev), t_i, k_i)
+        elif math.fabs(dx_a) <= effective_dx:
+            out[i] = _poly_knee(0.5 * (curr + prev2), t_i, k_i)
+        else:
+            f2_c = _ad2_poly_knee(curr, t_i, k_i)
+            f2_p = _ad2_poly_knee(prev, t_i, k_i)
+            f2_p2 = _ad2_poly_knee(prev2, t_i, k_i)
+            d1 = (f2_c - f2_p) / dx_a
+            d2 = (f2_p - f2_p2) / dx_b
+            out[i] = 2.0 * (d1 - d2) / dx_outer
+        prev2 = prev
+        prev = curr
     return out
 
 
@@ -900,7 +1205,13 @@ def _apply_with_envelope_adaa2(
         curr_driven = signal[i] * g
 
         out[i] = _adaa2_sample(
-            curr_driven, prev_driven, prev2_driven, algorithm_id, g, tanh_table
+            curr_driven,
+            prev_driven,
+            prev2_driven,
+            algorithm_id,
+            g,
+            tanh_table,
+            44100.0,
         )
         prev2_driven = prev_driven
         prev_driven = curr_driven

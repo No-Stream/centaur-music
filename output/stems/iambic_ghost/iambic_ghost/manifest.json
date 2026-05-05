@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "piece_name": "iambic_ghost",
+  "output_name": "iambic_ghost",
+  "sample_rate": 44100,
+  "bit_depth": 24,
+  "dry": false,
+  "total_duration_seconds": 167.6943,
+  "total_samples": 7395319,
+  "voice_stems": [
+    {
+      "name": "bass",
+      "kind": "voice",
+      "path": "voices/bass.wav",
+      "channels": 1,
+      "sample_count": 7395319,
+      "peak_dbfs": -12.46
+    },
+    {
+      "name": "ghost_perc",
+      "kind": "voice",
+      "path": "voices/ghost_perc.wav",
+      "channels": 1,
+      "sample_count": 7395319,
+      "peak_dbfs": -13.86
+    },
+    {
+      "name": "glitch_lead",
+      "kind": "voice",
+      "path": "voices/glitch_lead.wav",
+      "channels": 2,
+      "sample_count": 7395319,
+      "peak_dbfs": -23.1
+    },
+    {
+      "name": "hats",
+      "kind": "voice",
+      "path": "voices/hats.wav",
+      "channels": 1,
+      "sample_count": 7395319,
+      "peak_dbfs": -11.0
+    },
+    {
+      "name": "kick",
+      "kind": "voice",
+      "path": "voices/kick.wav",
+      "channels": 1,
+      "sample_count": 7395319,
+      "peak_dbfs": -3.09
+    },
+    {
+      "name": "pad",
+      "kind": "voice",
+      "path": "voices/pad.wav",
+      "channels": 1,
+      "sample_count": 7395319,
+      "peak_dbfs": -20.72
+    },
+    {
+      "name": "pad_lead",
+      "kind": "voice",
+      "path": "voices/pad_lead.wav",
+      "channels": 2,
+      "sample_count": 7395319,
+      "peak_dbfs": -19.74
+    },
+    {
+      "name": "reese",
+      "kind": "voice",
+      "path": "voices/reese.wav",
+      "channels": 1,
+      "sample_count": 7395319,
+      "peak_dbfs": -21.38
+    },
+    {
+      "name": "riser",
+      "kind": "voice",
+      "path": "voices/riser.wav",
+      "channels": 1,
+      "sample_count": 7395319,
+      "peak_dbfs": -22.84
+    },
+    {
+      "name": "snare",
+      "kind": "voice",
+      "path": "voices/snare.wav",
+      "channels": 1,
+      "sample_count": 7395319,
+      "peak_dbfs": -2.77
+    },
+    {
+      "name": "sub",
+      "kind": "voice",
+      "path": "voices/sub.wav",
+      "channels": 1,
+      "sample_count": 7395319,
+      "peak_dbfs": -13.0
+    }
+  ],
+  "send_stems": [
+    {
+      "name": "delay",
+      "kind": "send",
+      "path": "sends/delay.wav",
+      "channels": 2,
+      "sample_count": 7395319,
+      "peak_dbfs": -24.31
+    },
+    {
+      "name": "drum_bus",
+      "kind": "send",
+      "path": "sends/drum_bus.wav",
+      "channels": 2,
+      "sample_count": 7395319,
+      "peak_dbfs": -7.29
+    },
+    {
+      "name": "glitch_fx",
+      "kind": "send",
+      "path": "sends/glitch_fx.wav",
+      "channels": 2,
+      "sample_count": 7395319,
+      "peak_dbfs": -30.19
+    },
+    {
+      "name": "hall",
+      "kind": "send",
+      "path": "sends/hall.wav",
+      "channels": 2,
+      "sample_count": 7395319,
+      "peak_dbfs": -28.87
+    }
+  ],
+  "mix_path": "mix.wav",
+  "processing_notes": "Voice stems include: normalization, pre_fx_gain, pan, voice effects, mix_db fader. Send stems include: bus summing, bus effects, return_db, bus pan. Stems sum to the pre-master mix (before auto gain staging and master effects). The reference mix includes full mastering.",
+  "stem_gain_db": 0.0,
+  "warnings": []
+}

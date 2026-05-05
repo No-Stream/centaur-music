@@ -133,13 +133,7 @@ def build_score() -> Score:
 
     drum_bus = setup_drum_bus(
         score,
-        effects=[
-            EffectSpec("compressor", {"preset": "kick_glue"}),
-            EffectSpec(
-                "saturation",
-                {"drive": 0.15, "mix": 0.4, "mode": "tube"},
-            ),
-        ],
+        style="light",
         return_db=0.0,
     )
 

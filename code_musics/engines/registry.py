@@ -2730,6 +2730,11 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "noise_center_ratio": 48.0,
         },
         "distorted_hardkick": {
+            # Previously used shaper="tanh" (memoryless waveshaper — cheap, adds
+            # papery 2-8 kHz buildup). Upgraded to shaper="preamp" (flux-domain
+            # transformer saturation — bass-emphasized, minimal treble
+            # buildup), which is the right tool for quality drum distortion
+            # per AGENTS.md division-of-labor guidance.
             "exciter_type": "click",
             "exciter_level": 0.24,
             "exciter_decay_s": 0.005,
@@ -2746,9 +2751,9 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "noise_level": 0.05,
             "noise_decay_s": 0.018,
             "noise_center_ratio": 52.0,
-            "shaper": "tanh",
-            "shaper_drive": 0.6,
-            "shaper_mix": 0.8,
+            "shaper": "preamp",
+            "shaper_drive": 0.55,
+            "shaper_mix": 0.7,
         },
         "zap_kick": {
             "exciter_type": "click",
@@ -4078,20 +4083,35 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "shaper_mix": 0.8,
         },
         "snare_digital_fuzz": {
+            # Noise-forward snare with FM body as attack transient.
+            # Previous (2026-04 and earlier) was tone_level=1.0 / noise_level=0.3
+            # with digital_clip shaper — the FM pitch dominated and snare read
+            # as "zappy" / overly melodic rather than percussive. Current:
+            # noise-dominant body (comb + white blend via bandpass), fast FM
+            # decay with strong pitch sweep so the FM resolves into a click,
+            # and preamp shaper for flux-domain warmth instead of memoryless
+            # digital-clip fizz.
+            "exciter_type": "click",
+            "exciter_level": 0.22,
+            "exciter_decay_s": 0.004,
+            "exciter_center_hz": 4200.0,
             "tone_type": "efm",
-            "tone_level": 1.0,
-            "tone_decay_s": 0.18,
+            "tone_level": 0.55,
+            "tone_decay_s": 0.06,
+            "tone_sweep_ratio": 3.2,
+            "tone_sweep_decay_s": 0.014,
             "efm_ratio": 2.5,
             "efm_ratio_2": 4.3,
             "efm_index_peak": 3.5,
             "efm_index_2": 2.8,
             "efm_feedback": 0.4,
-            "noise_type": "white",
-            "noise_level": 0.3,
-            "noise_decay_s": 0.12,
-            "shaper": "digital_clip",
-            "shaper_drive": 0.55,
-            "shaper_mix": 0.9,
+            "noise_type": "bandpass",
+            "noise_level": 0.75,
+            "noise_decay_s": 0.14,
+            "noise_center_ratio": 14.0,
+            "shaper": "preamp",
+            "shaper_drive": 0.45,
+            "shaper_mix": 0.7,
         },
         # --- Karplus-Strong++ pluck tone-layer presets (tone_type="pluck") ---
         # Percussive-leaning ports of the synth_voice pluck presets.  Levels

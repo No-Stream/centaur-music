@@ -14,6 +14,7 @@ from code_musics.pieces.bwv_846_fugue import PIECES as _BWV_846_FUGUE_PIECES
 from code_musics.pieces.chaos_weather import PIECES as _CHAOS_WEATHER_PIECES
 from code_musics.pieces.clock_of_7 import PIECES as _CLOCK_OF_7_PIECES
 from code_musics.pieces.coltrane_studies import PIECES as _COLTRANE_PIECES
+from code_musics.pieces.colundi_arps_study import PIECES as _COLUNDI_ARPS_STUDY_PIECES
 from code_musics.pieces.colundi_sequence import PIECES as _COLUNDI_SEQUENCE_PIECES
 from code_musics.pieces.comma_pump import PIECES as _COMMA_PUMP_PIECES
 from code_musics.pieces.composition_showcases import (
@@ -31,6 +32,7 @@ from code_musics.pieces.filter_palette_study import (
 from code_musics.pieces.forge import PIECES as _FORGE_PIECES
 from code_musics.pieces.grain_tides import PIECES as _GRAIN_TIDES_PIECES
 from code_musics.pieces.harmonic_studies import PIECES as _HARMONIC_STUDY_PIECES
+from code_musics.pieces.iambic_ghost import PIECES as _IAMBIC_GHOST_PIECES
 from code_musics.pieces.iron_pulse import PIECES as _IRON_PULSE_PIECES
 from code_musics.pieces.iron_pulse_v2 import PIECES as _IRON_PULSE_V2_PIECES
 from code_musics.pieces.ji import PIECES as _JI_PIECES
@@ -42,6 +44,7 @@ from code_musics.pieces.misty_pixel import PIECES as _MISTY_PIXEL_PIECES
 from code_musics.pieces.mod_matrix_study import PIECES as _MOD_MATRIX_STUDY_PIECES
 from code_musics.pieces.natural_steps import PIECES as _NATURAL_STEPS_PIECES
 from code_musics.pieces.newton_bloom import PIECES as _NEWTON_BLOOM_PIECES
+from code_musics.pieces.night_carriage import PIECES as _NIGHT_CARRIAGE_PIECES
 from code_musics.pieces.night_lattice import PIECES as _NIGHT_LATTICE_PIECES
 from code_musics.pieces.organ_passacaglia import PIECES as _ORGAN_CHORALE_PIECES
 from code_musics.pieces.phase_garden import PIECES as _PHASE_GARDEN_PIECES
@@ -54,6 +57,7 @@ from code_musics.pieces.slow_glass import PIECES as _SLOW_GLASS_PIECES
 from code_musics.pieces.slow_glass_v2 import PIECES as _SLOW_GLASS_V2_PIECES
 from code_musics.pieces.spectral_passage import PIECES as _SPECTRAL_PASSAGE_PIECES
 from code_musics.pieces.spectral_studies import PIECES as _SPECTRAL_STUDY_PIECES
+from code_musics.pieces.still_window import PIECES as _STILL_WINDOW_PIECES
 from code_musics.pieces.studies import PIECES as _STUDIES_PIECES
 from code_musics.pieces.tape_hymn import PIECES as _TAPE_HYMN_PIECES
 from code_musics.pieces.techno_studies import PIECES as _TECHNO_PIECES
@@ -92,6 +96,7 @@ PIECES = merge_piece_maps(
     _SPECTRAL_PASSAGE_PIECES,
     _SPECTRAL_STUDY_PIECES,
     _TECHNO_PIECES,
+    _COLUNDI_ARPS_STUDY_PIECES,
     _COLUNDI_SEQUENCE_PIECES,
     _STUDIES_PIECES,
     _ORGAN_CHORALE_PIECES,
@@ -117,12 +122,15 @@ PIECES = merge_piece_maps(
     _NEWTON_BLOOM_PIECES,
     _CLOCK_OF_7_PIECES,
     _MISTY_PIXEL_PIECES,
+    _NIGHT_CARRIAGE_PIECES,
     _ANALOG_FILTER_BUS_STUDY_PIECES,
     _SCANNED_GARDEN_PIECES,
     _COUPLED_BELLS_PIECES,
     _GRAIN_TIDES_PIECES,
     _CHAOS_WEATHER_PIECES,
     _BOWED_GLASS_PIECES,
+    _IAMBIC_GHOST_PIECES,
+    _STILL_WINDOW_PIECES,
 )
 
 __all__ = ["PIECES"]

@@ -583,17 +583,27 @@ def test_analyze_audio_does_not_flag_saw_wave_thd() -> None:
     assert "harmonic_distortion" not in risk_codes
 
 
-def test_save_analysis_artifacts_flags_mastering_introduced_thd(
+def test_save_analysis_artifacts_flags_mastering_introduced_distortion(
     tmp_path: Path,
 ) -> None:
+    """Heavy clipping between pre-master and post-master should fire the
+    IMD-based harmonic_distortion warning.  Uses an incommensurate
+    two-tone stimulus + noise floor so ``_pick_two_tones`` detects
+    cleanly; see the matching comment in
+    ``test_aggressive_saturation_triggers_distortion_warning`` for why
+    this shape is the detector's happy path."""
+    rng = np.random.default_rng(7)
     sample_rate = 44_100
     duration = 2.0
     time = np.arange(int(sample_rate * duration), dtype=np.float64) / sample_rate
-    pre_master = 0.3 * np.sin(2.0 * np.pi * 220.0 * time)
-    post_master = np.clip(pre_master * 5.0, -1.0, 1.0)
+    pre_master = 0.15 * np.sin(2.0 * np.pi * 311.0 * time) + 0.15 * np.sin(
+        2.0 * np.pi * 523.0 * time
+    )
+    pre_master += 0.005 * rng.standard_normal(len(time))
+    post_master = np.clip(pre_master * 8.0, -1.0, 1.0)
 
     manifest = save_analysis_artifacts(
-        output_prefix=tmp_path / "thd_delta",
+        output_prefix=tmp_path / "imd_delta",
         mix_signal=post_master,
         pre_master_mix_signal=pre_master,
         pre_export_mix_signal=post_master,
@@ -602,6 +612,38 @@ def test_save_analysis_artifacts_flags_mastering_introduced_thd(
 
     mix_risk_codes = {risk["code"] for risk in manifest["artifact_risk"]["mix"]}
     assert "harmonic_distortion" in mix_risk_codes
+
+
+def test_save_analysis_artifacts_does_not_flag_saw_wave_mastering(
+    tmp_path: Path,
+) -> None:
+    """A band-limited saw wave passing cleanly through mastering should NOT
+    fire harmonic_distortion — the old THD-based detector would false-positive
+    on saw waves (all integer-harmonic energy read as distortion), the new
+    IMD-based detector correctly sees only one dominant tone and produces
+    ratio=0.0 in single-tone mode."""
+    sample_rate = 44_100
+    duration = 2.0
+    time = np.arange(int(sample_rate * duration), dtype=np.float64) / sample_rate
+    saw = np.zeros_like(time)
+    for harmonic in range(1, 21):
+        saw += (
+            ((-1.0) ** (harmonic + 1))
+            / harmonic
+            * np.sin(2.0 * np.pi * 220.0 * harmonic * time)
+        )
+    saw *= 0.5 / np.max(np.abs(saw))
+    # Pass the saw wave through unchanged — no distortion introduced.
+    manifest = save_analysis_artifacts(
+        output_prefix=tmp_path / "saw_passthrough",
+        mix_signal=saw,
+        pre_master_mix_signal=saw,
+        pre_export_mix_signal=saw,
+        sample_rate=sample_rate,
+    )
+
+    mix_risk_codes = {risk["code"] for risk in manifest["artifact_risk"]["mix"]}
+    assert "harmonic_distortion" not in mix_risk_codes
 
 
 def test_analyze_audio_does_not_flag_rhythmic_pattern_as_modulation_artifact() -> None:

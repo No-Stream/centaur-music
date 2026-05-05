@@ -147,7 +147,7 @@
   management.
 - `code_musics/pieces/_shared.py` exports `DEFAULT_MASTER_EFFECTS` — a
   plugin-preferred default master chain (BritPre preamp → MJUC Jr vari-mu
-  compression, with native saturation + compressor fallbacks). New pieces
+  compression, with native preamp + compressor fallbacks). New pieces
   can use `master_effects=DEFAULT_MASTER_EFFECTS` for a "sounds finished"
   baseline. Pieces that define their own `master_effects` fully replace the
   default — no layering.
@@ -464,7 +464,7 @@ See `FUTURE.md` for way more ideas.
   RePro-5-style per-note distortion slot applied *inside the engine's note
   loop, after the VCA and before the per-note buffers sum into the voice
   output*. Modes: `soft_clip` / `hard_clip` / `foldback` / `corrode` /
-  `saturation` (reuses `apply_saturation`) / `preamp` (reuses
+  `saturation` (reuses `apply_drive`) / `preamp` (reuses
   `apply_preamp`). Chord tones distort independently, preserving harmonic
   identity instead of collapsing into the IMD mud that a post-mix shaper
   produces. Default `off`; paired params `voice_dist_drive`,
@@ -498,15 +498,32 @@ See `FUTURE.md` for way more ideas.
 - The native effect chain includes a stereo-linked `compressor` effect with
   feedforward/feedback modes, detector-path EQ bands, and voice-to-voice
   sidechaining plus lookahead for ducking/glue workflows.
-- The native `saturation` effect defaults to a higher-fidelity two-stage
-  analog-style path with optional clean low/high-band preservation; see
-  `docs/synth_api.md` for the modern vs legacy behavior and parameter surface.
+- The native `drive` effect (`apply_drive`, `EffectSpec` kind `"drive"`;
+  formerly `apply_saturation` / `"saturation"`) is a **colored overdrive**
+  kernel — any non-zero drive lifts the 2–8 kHz band. The `drive` scalar
+  is calibrated to the project-wide 0–1 knob scale: `drive=0` is a
+  bit-exact **unity bypass** (true passthrough), `0.2`–`0.33` is subtle
+  warmth, `0.5`–`0.7` is musical saturation, `1.0` is the top of the
+  musical range, and `>1.0` moves into fuzz / stompbox territory. The
+  general effect-calibration guidance below (gentle 0.2, harmony-compatible
+  0.33, musical 0.5, strong-but-musical 0.66, distortion 0.8) is now the
+  actual measured behavior of `drive` post-rescale. Defaults to a
+  two-stage analog-style path with `multiband=True` crossover bypass so
+  bass (`low_crossover_hz=120.0`) and air (`high_crossover_hz=5000.0`)
+  bands skip the nonlinearity by default. The legacy `preserve_lows_hz` /
+  `preserve_highs_hz` params are a dry-path crossover (not an actual band
+  bypass) and are deprecated in favor of the multiband surface. See
+  `docs/synth_api.md` for the full parameter surface and the modern vs
+  legacy path.
 - The `preamp` effect provides flux-domain transformer saturation for
-  analog-style warmth. Unlike the `saturation` effect (which uses waveshaping),
-  `preamp` operates in the magnetic flux domain where bass naturally saturates
-  more than treble, producing minimal intermodulation on harmonically rich
-  material. Use `preamp` for gentle warmth/coloring (master bus, subtle voice
-  color); use `saturation` for intentional distortion/drive effects.
+  analog-style warmth. Unlike `drive` (memoryless waveshaping with
+  pre-emphasis), `preamp` operates in the magnetic flux domain where bass
+  naturally saturates more than treble, producing minimal intermodulation
+  and minimal 2–8 kHz buildup on harmonically rich material.
+  **Division of labor: `preamp` for hi-fi warmth / bus glue / master-bus
+  sweetening; `drive` for deliberate character / stompbox color / voice-level
+  grit.** Prefer `preamp` as the default finishing tool and reach for `drive`
+  only when you want audible coloration.
 - The native `bbd_chorus` effect is a Juno-faithful BBD-style stereo chorus
   with quadrature LFOs (true L/R decorrelation from mono input), cross-feedback,
   BBD-style pre/post bandlimiting, and an optional gentle compander. Presets:
@@ -634,6 +651,26 @@ See `FUTURE.md` for way more ideas.
 - `code_musics/drum_helpers.py` provides `setup_drum_bus()` and `add_drum_voice()`
   convenience helpers for percussion voice setup with sensible defaults
   (`normalize_peak_db=-6.0`, no velocity humanization, optional bus routing).
+  `setup_drum_bus` is default-on: calling it with no effects arg installs the
+  `style="electronic"` chain (compressor → preamp) tuned for finished
+  modern-electronic kits. True-peak management lives on the master bus via
+  `DEFAULT_MASTER_EFFECTS`, not on the drum bus. The `electronic` style uses
+  `apply_preamp` for hi-fi warmth rather than `apply_drive`, which previously
+  tended to pile papery 2–8 kHz harmonics onto kicks and transients. Four
+  styles are available via `style=...`: `"light"` (Four Tet / BoC clean glue),
+  `"electronic"` (default), `"weighty"` (iron-preamp, kick-forward),
+  `"berghain"` (peak-hour techno wall). Passing `effects=[...]` explicitly
+  fully replaces the style chain.
+- The `clipper` effect (`apply_clipper` in `synth.py`) is a native peak
+  clipper with a monotone polynomial soft-knee, oversampling (Kaiser β=14
+  polyphase), and stereo linking. Knee width is the main character knob:
+  narrow (`0..1.5 dB`) for firm mastering-clipper edge, wide (`3..6 dB`)
+  for forgiving kick-forward glue. `algorithm="hard"` also available for
+  literal `np.clip` semantics. `threshold_db`, `knee_width_db`, and `mix`
+  all accept per-sample arrays for automation. Live on the default drum
+  bus for `electronic` / `weighty` / `berghain` styles; follow with
+  `limiter` on the master for a strict true-peak ceiling. See
+  `docs/synth_api.md`.
 - The `bricasti` convolution wrapper supports basic wet-return tone shaping
   (`highpass_hz`, `lowpass_hz`, `tilt_db`) for cleaner, darker, or brighter tails.
 - The local Linux environment has a small plugin palette installed for
@@ -780,6 +817,9 @@ See `FUTURE.md` for way more ideas.
   to have plausibly musical but not broken very strong effects from 0.8-1.0.
   For example, a saturation effect might offer gentle mix warmth at 0.2, harmony-compatible warmth at 0.33,
   musical saturation at 0.5, strong but still musical saturation at 0.66, and distortion at 0.8.
+  The native `drive` effect is now calibrated to exactly this spec post-rescale: `drive=0` is a
+  bit-exact unity bypass, 0.2–0.33 is subtle warmth, 0.5 is musical, 1.0 caps the musical range, and
+  >1.0 is fuzz / stompbox territory.
 - Effects and voices should be designed considering musicality, not textbook designs.
   Don't cut corners to save time.
   For example, if a distortion plugin would benefit from antialiasing,

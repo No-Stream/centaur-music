@@ -1175,20 +1175,7 @@ def build_score() -> Score:
     # Send buses
     drum_bus = setup_drum_bus(
         score,
-        effects=[
-            EffectSpec(
-                "compressor",
-                {
-                    "threshold_db": -16.0,
-                    "ratio": 2.2,
-                    "attack_ms": 10.0,
-                    "release_ms": 140.0,
-                    "knee_db": 6.0,
-                    "topology": "feedback",
-                    "detector_mode": "rms",
-                },
-            ),
-        ],
+        style="electronic",
         return_db=0.0,
     )
     score.add_send_bus(
@@ -1250,8 +1237,8 @@ def build_score() -> Score:
         },
         effects=[
             EffectSpec("compressor", {"preset": "kick_punch"}),
-            # Iron-oxide-ish weight for the low end.
-            EffectSpec("saturation", {"preset": "kick_weight"}),
+            # Iron-oxide-ish weight for the low end (flux-domain preamp).
+            EffectSpec("preamp", {"preset": "kick_body"}),
         ],
         mix_db=1.0,
     )
@@ -1511,7 +1498,7 @@ def build_score() -> Score:
                 "compressor", {"preset": "kick_duck", "sidechain_source": "kick"}
             ),
             # Tube warmth downstream of the diode ladder — harmonics, not distortion.
-            EffectSpec("saturation", {"preset": "tube_warm"}),
+            EffectSpec("drive", {"preset": "tube_warm"}),
             EffectSpec(
                 "eq",
                 {

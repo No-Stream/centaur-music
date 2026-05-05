@@ -192,7 +192,7 @@ class TestClippingProtection:
             "hot",
             normalize_lufs=None,
             velocity_humanize=None,
-            effects=[EffectSpec("saturation", {"drive": 0.9})],
+            effects=[EffectSpec("drive", {"drive": 0.9})],
         )
         score.add_voice("quiet", normalize_lufs=None, velocity_humanize=None)
         score.add_note("hot", start=0.0, duration=0.3, partial=2.0, amp=0.9)

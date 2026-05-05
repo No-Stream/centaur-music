@@ -1,0 +1,58 @@
+{
+  "schema_version": 2,
+  "evaluated_at_utc": "2026-04-29T23:20:45Z",
+  "piece_name": "iambic_ghost",
+  "render_ref": {
+    "render_json_path": "output/iambic_ghost/iambic_ghost.render.json",
+    "git_commit": "eff0efd75a87386b1fba7fb315598e873da67295",
+    "rendered_at_utc": "20260429-231432"
+  },
+  "judges": [
+    {
+      "model": "opus",
+      "backend": "headless",
+      "dimensions": {
+        "musical_substance": {
+          "score": 62,
+          "notes": "JI/harmonic-series materials (partials 0.5\u20139.33) over a techno-adjacent groove with acid bass (diode filter + kick sidechain), reese, and a Chua-chaotic glitch lead \u2014 a real conceptual hybrid rather than a study. Pad harmony is rooted in clean integer-partial voicings that give the JI tuning legible identity under the groove. The glitch_lead and ghost_perc ideas are inventive but the upper register reads as more texture than melodic argument."
+        },
+        "structure_form": {
+          "score": 68,
+          "notes": "Seven labelled sections (intro / break_in / groove_a / breakdown / groove_b / final_push / outro) and the density plot confirms a real arc: sparse pad intro, clear build at 11s, sustained groove, a breakdown dip around 50\u201366s, and a final_push climbing to 54 simultaneous notes before tapering. Contrast and pacing feel composed, not generative, and you'd know where you are if dropped in."
+        },
+        "texture_expression": {
+          "score": 58,
+          "notes": "Eleven voices with rich routing (hall, mod_delay, glitch_fx sends, drum_bus with clipper + analog_filter, master BritPre\u2192MJUC Jr) and automation/sidechain ducking give real interaction. However the mix is severely high-band-dominant \u2014 spectral centroid 7.6 kHz with ghost_perc and hats centroids at 13\u201315 kHz and bit-crushed aliasing visible as a harsh 10\u201314 kHz shelf. The drum-bus compressor sits above 1 dB GR for 95 seconds, flattening transients and choking dynamic life."
+        },
+        "completeness": {
+          "score": 70,
+          "notes": "Feels like a finished 2:45 piece: intro, build, grooves, breakdown, final push, and outro with proper taper, mastered through a coherent BritPre + vari-mu chain at \u221218 LUFS / \u22123 dBFS true peak. Not a sketch \u2014 the arrangement fills its runtime intentionally. A proper ending gesture rather than a hard cut helps seal it."
+        },
+        "open_subjective": {
+          "score": 55,
+          "notes": "Ambitious JI-techno concept with a genuine compositional spine, and the acid/reese/glitch_lead palette plus the final_push climb suggest real authorial vision. But the brittle 13\u201315 kHz ghost-perc shelf and constant drum-bus compression push the overall impression toward piercing and fatiguing rather than euphoric; the low-high balance warning (+30 dB) suggests a mix that fights itself. Interesting, not quite moving."
+        }
+      },
+      "overall_notes": "A legitimately composed JI-techno piece with strong sectional architecture and a vivid voice palette, held back by a harsh upper shelf from bit-crushed percussion and a drum-bus compressor that flattens transients for most of the runtime."
+    }
+  ],
+  "aggregate": {
+    "overall_score": 61.3,
+    "dimension_medians": {
+      "musical_substance": 62,
+      "structure_form": 68,
+      "texture_expression": 58,
+      "completeness": 70,
+      "open_subjective": 55
+    },
+    "dimension_spreads": {
+      "musical_substance": 0,
+      "structure_form": 0,
+      "texture_expression": 0,
+      "completeness": 0,
+      "open_subjective": 0
+    },
+    "confidence": "high",
+    "synthesized_feedback": "A legitimately composed JI-techno piece with strong sectional architecture and a vivid voice palette, held back by a harsh upper shelf from bit-crushed percussion and a drum-bus compressor that flattens transients for most of the runtime."
+  }
+}

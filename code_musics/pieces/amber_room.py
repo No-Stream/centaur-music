@@ -659,24 +659,7 @@ def build_score() -> Score:
 
     drum_bus = setup_drum_bus(
         score,
-        effects=[
-            EffectSpec(
-                "compressor",
-                {
-                    "threshold_db": -18.0,
-                    "ratio": 1.6,
-                    "attack_ms": 25.0,
-                    "release_ms": 200.0,
-                    "knee_db": 8.0,
-                    "topology": "feedback",
-                    "detector_mode": "rms",
-                    "detector_bands": [
-                        {"kind": "highpass", "cutoff_hz": 60.0, "slope_db_per_oct": 12},
-                    ],
-                },
-            ),
-            EffectSpec("saturation", {"mode": "triode", "drive": 2.0, "mix": 0.30}),
-        ],
+        style="electronic",
         return_db=0.0,
     )
 

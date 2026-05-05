@@ -708,7 +708,7 @@ def build_score() -> Score:
             "release": 0.4,
         },
         effects=[
-            EffectSpec("saturation", {"preset": "tube_warm", "mix": 0.15}),
+            EffectSpec("drive", {"preset": "tube_warm", "mix": 0.15}),
         ],
         normalize_lufs=-22.0,
         mix_db=-1.0,
@@ -781,7 +781,7 @@ def build_score() -> Score:
             "release": 0.5,
         },
         effects=[
-            EffectSpec("saturation", {"preset": "tube_warm", "mix": 0.2}),
+            EffectSpec("drive", {"preset": "tube_warm", "mix": 0.2}),
             EffectSpec(
                 "eq",
                 {

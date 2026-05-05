@@ -414,9 +414,9 @@ def _apply_layer_shaper(
 
     if shaper == "saturation":
         # Deferred import: synth.py -> engines/__init__.py -> synth_voice.py
-        from code_musics.synth import apply_saturation
+        from code_musics.synth import apply_drive
 
-        result = apply_saturation(
+        result = apply_drive(
             signal,
             drive=drive,
             mix=mix,

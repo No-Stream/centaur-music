@@ -570,7 +570,9 @@ def build_pure_states() -> Score:
                     ]
                 },
             ),
-            EffectSpec("saturation", {"drive": 0.35, "mix": 0.4, "mode": "tube"}),
+            EffectSpec(
+                "drive", {"drive": 0.12, "mix": 0.4, "mode": "tube", "multiband": True}
+            ),
             EffectSpec(
                 "compressor", {"preset": "kick_duck", "sidechain_source": "kick"}
             ),

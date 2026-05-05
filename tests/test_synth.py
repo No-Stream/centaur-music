@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -447,13 +448,16 @@ def test_apply_compressor_reduces_hot_signal() -> None:
         duration_seconds=1.0,
     )
 
-    processed = synth.apply_compressor(
-        signal,
-        threshold_db=-18.0,
-        ratio=4.0,
-        attack_ms=0.5,
-        release_ms=120.0,
-        knee_db=6.0,
+    processed = cast(
+        np.ndarray,
+        synth.apply_compressor(
+            signal,
+            threshold_db=-18.0,
+            ratio=4.0,
+            attack_ms=0.5,
+            release_ms=120.0,
+            knee_db=6.0,
+        ),
     )
 
     settled_region = slice(synth.SAMPLE_RATE // 4, None)
@@ -478,26 +482,32 @@ def test_apply_compressor_detector_eq_changes_control_behavior() -> None:
     high = 0.25 * np.sin(2.0 * np.pi * 1_600.0 * time)
     signal = low + high
 
-    without_detector_eq = synth.apply_compressor(
-        signal,
-        threshold_db=-22.0,
-        ratio=3.5,
-        attack_ms=8.0,
-        release_ms=180.0,
-        knee_db=4.0,
-        detector_mode="rms",
+    without_detector_eq = cast(
+        np.ndarray,
+        synth.apply_compressor(
+            signal,
+            threshold_db=-22.0,
+            ratio=3.5,
+            attack_ms=8.0,
+            release_ms=180.0,
+            knee_db=4.0,
+            detector_mode="rms",
+        ),
     )
-    with_detector_eq = synth.apply_compressor(
-        signal,
-        threshold_db=-22.0,
-        ratio=3.5,
-        attack_ms=8.0,
-        release_ms=180.0,
-        knee_db=4.0,
-        detector_mode="rms",
-        detector_bands=[
-            {"kind": "highpass", "cutoff_hz": 180.0, "slope_db_per_oct": 24},
-        ],
+    with_detector_eq = cast(
+        np.ndarray,
+        synth.apply_compressor(
+            signal,
+            threshold_db=-22.0,
+            ratio=3.5,
+            attack_ms=8.0,
+            release_ms=180.0,
+            knee_db=4.0,
+            detector_mode="rms",
+            detector_bands=[
+                {"kind": "highpass", "cutoff_hz": 180.0, "slope_db_per_oct": 24},
+            ],
+        ),
     )
 
     high_without_eq = _component_rms(
@@ -530,22 +540,28 @@ def test_apply_compressor_external_sidechain_ducks_signal_below_threshold() -> N
         2.0 * np.pi * 55.0 * time[burst_window]
     )
 
-    without_sidechain = synth.apply_compressor(
-        program_signal,
-        threshold_db=-24.0,
-        ratio=6.0,
-        attack_ms=1.0,
-        release_ms=140.0,
-        knee_db=2.0,
+    without_sidechain = cast(
+        np.ndarray,
+        synth.apply_compressor(
+            program_signal,
+            threshold_db=-24.0,
+            ratio=6.0,
+            attack_ms=1.0,
+            release_ms=140.0,
+            knee_db=2.0,
+        ),
     )
-    with_sidechain = synth.apply_compressor(
-        program_signal,
-        threshold_db=-24.0,
-        ratio=6.0,
-        attack_ms=1.0,
-        release_ms=140.0,
-        knee_db=2.0,
-        sidechain_signal=sidechain_signal,
+    with_sidechain = cast(
+        np.ndarray,
+        synth.apply_compressor(
+            program_signal,
+            threshold_db=-24.0,
+            ratio=6.0,
+            attack_ms=1.0,
+            release_ms=140.0,
+            knee_db=2.0,
+            sidechain_signal=sidechain_signal,
+        ),
     )
 
     burst_rms_without_sidechain = float(
@@ -575,25 +591,31 @@ def test_apply_compressor_lookahead_starts_gain_reduction_earlier() -> None:
         2.0 * np.pi * 80.0 * time[burst_start:burst_end]
     )
 
-    without_lookahead = synth.apply_compressor(
-        program_signal,
-        threshold_db=-28.0,
-        ratio=8.0,
-        attack_ms=0.5,
-        release_ms=100.0,
-        knee_db=0.0,
-        sidechain_signal=sidechain_signal,
-        lookahead_ms=0.0,
+    without_lookahead = cast(
+        np.ndarray,
+        synth.apply_compressor(
+            program_signal,
+            threshold_db=-28.0,
+            ratio=8.0,
+            attack_ms=0.5,
+            release_ms=100.0,
+            knee_db=0.0,
+            sidechain_signal=sidechain_signal,
+            lookahead_ms=0.0,
+        ),
     )
-    with_lookahead = synth.apply_compressor(
-        program_signal,
-        threshold_db=-28.0,
-        ratio=8.0,
-        attack_ms=0.5,
-        release_ms=100.0,
-        knee_db=0.0,
-        sidechain_signal=sidechain_signal,
-        lookahead_ms=8.0,
+    with_lookahead = cast(
+        np.ndarray,
+        synth.apply_compressor(
+            program_signal,
+            threshold_db=-28.0,
+            ratio=8.0,
+            attack_ms=0.5,
+            release_ms=100.0,
+            knee_db=0.0,
+            sidechain_signal=sidechain_signal,
+            lookahead_ms=8.0,
+        ),
     )
 
     pre_burst_window = slice(burst_start - int(0.006 * sample_rate), burst_start)
@@ -613,21 +635,27 @@ def test_apply_compressor_feedforward_and_feedback_differ() -> None:
     burst = _sine_wave(220.0, sample_rate=sample_rate, duration_seconds=0.08)
     signal[: burst.size] = 1.2 * burst
 
-    feedforward = synth.apply_compressor(
-        signal,
-        threshold_db=-24.0,
-        ratio=4.0,
-        attack_ms=2.0,
-        release_ms=220.0,
-        topology="feedforward",
+    feedforward = cast(
+        np.ndarray,
+        synth.apply_compressor(
+            signal,
+            threshold_db=-24.0,
+            ratio=4.0,
+            attack_ms=2.0,
+            release_ms=220.0,
+            topology="feedforward",
+        ),
     )
-    feedback = synth.apply_compressor(
-        signal,
-        threshold_db=-24.0,
-        ratio=4.0,
-        attack_ms=2.0,
-        release_ms=220.0,
-        topology="feedback",
+    feedback = cast(
+        np.ndarray,
+        synth.apply_compressor(
+            signal,
+            threshold_db=-24.0,
+            ratio=4.0,
+            attack_ms=2.0,
+            release_ms=220.0,
+            topology="feedback",
+        ),
     )
 
     assert np.max(np.abs(feedforward - feedback)) > 1e-3
@@ -646,13 +674,16 @@ def test_apply_compressor_preserves_stereo_layout() -> None:
     right = 0.4 * _sine_wave(660.0, sample_rate=synth.SAMPLE_RATE)
     stereo = np.stack([left, right])
 
-    processed = synth.apply_compressor(
-        stereo,
-        threshold_db=-20.0,
-        ratio=3.0,
-        attack_ms=6.0,
-        release_ms=150.0,
-        topology="feedforward",
+    processed = cast(
+        np.ndarray,
+        synth.apply_compressor(
+            stereo,
+            threshold_db=-20.0,
+            ratio=3.0,
+            attack_ms=6.0,
+            release_ms=150.0,
+            topology="feedforward",
+        ),
     )
 
     assert processed.shape == stereo.shape
@@ -666,14 +697,17 @@ def test_apply_compressor_two_stage_release_recovers_fast_then_tails_out() -> No
     burst = 1.25 * np.sin(2.0 * np.pi * 220.0 * time[: int(0.10 * sample_rate)])
     signal[: burst.size] = burst
 
-    processed = synth.apply_compressor(
-        signal,
-        threshold_db=-26.0,
-        ratio=4.0,
-        attack_ms=0.5,
-        release_ms=25.0,
-        release_tail_ms=350.0,
-        knee_db=2.0,
+    processed = cast(
+        np.ndarray,
+        synth.apply_compressor(
+            signal,
+            threshold_db=-26.0,
+            ratio=4.0,
+            attack_ms=0.5,
+            release_ms=25.0,
+            release_tail_ms=350.0,
+            knee_db=2.0,
+        ),
     )
 
     early_window = slice(int(0.11 * sample_rate), int(0.16 * sample_rate))
@@ -688,3 +722,97 @@ def test_apply_compressor_two_stage_release_recovers_fast_then_tails_out() -> No
     )
 
     assert early_recovery_ratio < late_recovery_ratio
+
+
+def test_apply_gate_mono_bit_identical_to_mono_duplicated_stereo() -> None:
+    """Stereo-linked gate on a mono-duplicated signal must match the mono path.
+
+    Back-compat guard: existing mono consumers see zero change; stereo
+    content where L == R sees the same gain envelope as the mono path.
+    """
+    sample_rate = synth.SAMPLE_RATE
+    rng = np.random.default_rng(0)
+    burst = np.concatenate(
+        [
+            0.9 * _sine_wave(220.0, sample_rate=sample_rate, duration_seconds=0.25),
+            np.zeros(int(0.25 * sample_rate), dtype=np.float64),
+            0.6 * _sine_wave(330.0, sample_rate=sample_rate, duration_seconds=0.25),
+        ]
+    )
+    # Add low noise so smoothed RMS has interesting texture in the gated regions.
+    mono = burst + 0.003 * rng.standard_normal(burst.size)
+    stereo = np.stack([mono, mono])
+
+    mono_out = cast(
+        np.ndarray,
+        synth.apply_gate(
+            mono,
+            threshold_db=-30.0,
+            hold_ms=10.0,
+        ),
+    )
+    stereo_out = cast(
+        np.ndarray,
+        synth.apply_gate(
+            stereo,
+            threshold_db=-30.0,
+            hold_ms=10.0,
+        ),
+    )
+
+    # L and R must be bit-identical to the mono result.
+    np.testing.assert_array_equal(stereo_out[0], mono_out)
+    np.testing.assert_array_equal(stereo_out[1], mono_out)
+
+
+def test_apply_gate_stereo_link_preserves_quieter_channel() -> None:
+    """Loud L content must open the gate on both channels — no stereo tearing.
+
+    With per-channel gating, a quiet R sitting below threshold would be
+    attenuated to the floor even while L is full-blast.  With a linked
+    detector, the same gain envelope is applied to both channels, so R
+    follows L through the gated burst.
+    """
+    sample_rate = synth.SAMPLE_RATE
+    left = 0.9 * _sine_wave(220.0, sample_rate=sample_rate, duration_seconds=0.30)
+    # Right channel: quieter sustained tone that by itself sits below threshold.
+    right = 0.02 * _sine_wave(440.0, sample_rate=sample_rate, duration_seconds=0.30)
+    stereo = np.stack([left, right])
+
+    # Compare to per-channel behavior by gating the right channel alone.
+    right_alone = cast(
+        np.ndarray,
+        synth.apply_gate(
+            right,
+            threshold_db=-30.0,
+            hold_ms=10.0,
+            floor_db=-80.0,
+        ),
+    )
+
+    processed = cast(
+        np.ndarray,
+        synth.apply_gate(
+            stereo,
+            threshold_db=-30.0,
+            hold_ms=10.0,
+            floor_db=-80.0,
+        ),
+    )
+
+    # Sample the mid-burst region where linked gating should hold R open.
+    mid_window = slice(int(0.12 * sample_rate), int(0.20 * sample_rate))
+    linked_right_rms = float(np.sqrt(np.mean(processed[1, mid_window] ** 2)))
+    per_channel_right_rms = float(np.sqrt(np.mean(right_alone[mid_window] ** 2)))
+
+    # Linked path preserves the quiet right channel; per-channel path floors it.
+    assert linked_right_rms > 10.0 * per_channel_right_rms
+    # L and R share the same gain envelope (shape), so their ratio across
+    # the window should equal the input ratio of the two channels.
+    expected_ratio = float(np.mean(np.abs(right[mid_window]))) / max(
+        float(np.mean(np.abs(left[mid_window]))), 1e-12
+    )
+    actual_ratio = float(np.mean(np.abs(processed[1, mid_window]))) / max(
+        float(np.mean(np.abs(processed[0, mid_window]))), 1e-12
+    )
+    assert abs(actual_ratio - expected_ratio) < 0.02

@@ -731,20 +731,7 @@ def build_score() -> Score:
     # ---- Send buses ----
     drum_bus = setup_drum_bus(
         score,
-        effects=[
-            EffectSpec(
-                "compressor",
-                {
-                    "threshold_db": -18.0,
-                    "ratio": 2.0,
-                    "attack_ms": 12.0,
-                    "release_ms": 150.0,
-                    "knee_db": 6.0,
-                    "topology": "feedback",
-                    "detector_mode": "rms",
-                },
-            ),
-        ],
+        style="electronic",
         return_db=0.0,
     )
     score.add_send_bus(

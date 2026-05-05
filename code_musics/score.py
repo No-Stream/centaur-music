@@ -111,10 +111,12 @@ EffectKind = Literal[
     "chorus",
     "bbd_chorus",
     "mod_delay",
-    "saturation",
+    "drive",
     "preamp",
     "eq",
     "compressor",
+    "clipper",
+    "limiter",
     "phaser",
     "tal_chorus_lx",
     "tal_reverb2",
@@ -419,9 +421,36 @@ class Voice:
     sympathetic_modes: int = 8
     drift_bus: str | None = None
     drift_bus_correlation: float = 1.0
+    percussive: bool | None = None
     automation: list[AutomationSpec] = field(default_factory=list)
     modulations: list[ModConnection] = field(default_factory=list)
     notes: list[NoteEvent] = field(default_factory=list)
+
+    def is_percussive(self) -> bool:
+        """Resolve percussive classification (explicit override wins; else heuristic).
+
+        Heuristic fires when any of the following is true:
+        - ``choke_group`` is set (percussive kits typically use choke groups),
+        - the voice uses the ``drum_voice`` engine family,
+        - ``normalize_peak_db`` is set instead of ``normalize_lufs``
+          (transients are unreliable to LUFS-normalize, so peak-normalized
+          voices are virtually always percussive).
+
+        Override via the ``percussive`` kwarg on ``add_voice`` /
+        ``add_drum_voice`` when the heuristic misclassifies a voice.
+        """
+        if self.percussive is not None:
+            return bool(self.percussive)
+        if self.choke_group is not None:
+            return True
+        if self.normalize_peak_db is not None and self.normalize_lufs is None:
+            return True
+        engine = (
+            str(self.synth_defaults.get("engine", "")) if self.synth_defaults else ""
+        )
+        # drum_voice is the canonical percussion engine; the older per-drum
+        # engines (kick_tom, snare, clap, metallic_perc) are also percussive.
+        return engine in {"drum_voice", "kick_tom", "snare", "clap", "metallic_perc"}
 
 
 @dataclass(frozen=True)
@@ -536,6 +565,7 @@ class Score:
         sympathetic_modes: int = 8,
         drift_bus: str | None = None,
         drift_bus_correlation: float = 1.0,
+        percussive: bool | None = None,
         automation: list[AutomationSpec] | None = None,
         modulations: list[ModConnection] | None = None,
     ) -> Voice:
@@ -593,6 +623,7 @@ class Score:
             sympathetic_modes=sympathetic_modes,
             drift_bus=drift_bus,
             drift_bus_correlation=drift_bus_correlation,
+            percussive=percussive,
             automation=list(automation or []),
             modulations=list(modulations or []),
         )
@@ -776,7 +807,7 @@ class Score:
         np.ndarray, dict[str, np.ndarray], dict[str, np.ndarray], dict[str, Any]
     ]:
         """Render the score plus per-effect diagnostics for agents and analysis."""
-        stems, send_returns, voice_effects, send_effects, _ = (
+        stems, send_returns, voice_effects, send_effects, dry_stems = (
             self._render_mix_components_internal(
                 collect_effect_analysis=collect_effect_analysis
             )
@@ -787,7 +818,12 @@ class Score:
                 np.zeros(0),
                 {},
                 {},
-                {"mix_effects": [], "voice_effects": {}, "send_effects": {}},
+                {
+                    "mix_effects": [],
+                    "voice_effects": {},
+                    "send_effects": {},
+                    "voice_stem_deltas": {},
+                },
             )
 
         mix = self._stack_signals(mix_inputs)
@@ -797,6 +833,21 @@ class Score:
             collect_effect_analysis=collect_effect_analysis,
             mix_effects=mix_effects,
         )
+
+        voice_stem_deltas: dict[str, Any] = {}
+        if collect_effect_analysis:
+            for voice_name, voice in self.voices.items():
+                dry = dry_stems.get(voice_name)
+                wet = stems.get(voice_name)
+                if dry is None or wet is None or dry.size == 0 or wet.size == 0:
+                    continue
+                voice_stem_deltas[voice_name] = synth.build_voice_stem_delta(
+                    voice_name=voice_name,
+                    dry_signal=dry,
+                    wet_signal=wet,
+                    sample_rate=self.sample_rate,
+                    percussive=voice.is_percussive(),
+                )
 
         return (
             mix,
@@ -812,6 +863,7 @@ class Score:
                     bus_name: [entry.to_dict() for entry in entries]
                     for bus_name, entries in send_effects.items()
                 },
+                "voice_stem_deltas": voice_stem_deltas,
             },
         )
 
@@ -2019,6 +2071,7 @@ class Score:
         )
         if voice.effects and processed_voice_mix.size > 0:
             voice_fx_context = self._build_source_context(times=signal_times)
+            is_percussive_voice = voice.is_percussive()
             if collect_effect_analysis:
                 rendered_voice_mix, rendered_effect_analysis = cast(
                     tuple[np.ndarray, list[synth.EffectAnalysisEntry]],
@@ -2031,6 +2084,7 @@ class Score:
                         matrix_connections=voice_matrix,
                         source_sampling_context=voice_fx_context,
                         return_analysis=True,
+                        percussive=is_percussive_voice,
                     ),
                 )
                 processed_voice_mix = rendered_voice_mix
@@ -2046,6 +2100,7 @@ class Score:
                         start_time_seconds=self.time_origin_seconds,
                         matrix_connections=voice_matrix,
                         source_sampling_context=voice_fx_context,
+                        percussive=is_percussive_voice,
                     ),
                 )
         processed_voice_mix = self._apply_db_control(

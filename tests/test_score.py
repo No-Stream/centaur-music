@@ -1890,7 +1890,7 @@ def test_stereo_effect_chain_continues_into_saturation() -> None:
         signal,
         [
             EffectSpec("chorus", {"preset": "juno_subtle"}),
-            EffectSpec("saturation", {"preset": "tube_warm"}),
+            EffectSpec("drive", {"preset": "tube_warm"}),
         ],
     )
 
@@ -1906,7 +1906,7 @@ def test_saturation_gain_compensation_keeps_level_reasonable() -> None:
 
     processed = synth.apply_effect_chain(
         signal,
-        [EffectSpec("saturation", {"preset": "neve_gentle"})],
+        [EffectSpec("drive", {"preset": "neve_gentle"})],
     )
 
     input_peak = np.max(np.abs(signal))
@@ -1919,7 +1919,7 @@ def test_saturation_modern_asymmetry_remains_dc_safe() -> None:
     t = np.arange(synth.SAMPLE_RATE, dtype=np.float64) / synth.SAMPLE_RATE
     signal = 0.4 * np.sin(2.0 * np.pi * 220.0 * t)
 
-    processed = synth.apply_saturation(
+    processed = synth.apply_drive(
         signal,
         drive=1.8,
         mix=1.0,
@@ -1938,7 +1938,7 @@ def test_saturation_effect_analysis_reports_shaper_activity() -> None:
 
     _processed, effect_analysis = synth.apply_effect_chain(
         signal,
-        [EffectSpec("saturation", {"drive": 4.0, "mix": 0.9, "bias": 0.2})],
+        [EffectSpec("drive", {"drive": 4.0, "mix": 0.9, "bias": 0.2})],
         return_analysis=True,
     )
 
@@ -1952,7 +1952,7 @@ def test_saturation_modern_auto_uses_lufs_for_sustained_signal() -> None:
     t = np.arange(synth.SAMPLE_RATE * 2, dtype=np.float64) / synth.SAMPLE_RATE
     signal = 0.26 * np.sin(2.0 * np.pi * 220.0 * t)
 
-    processed, analysis = synth.apply_saturation(
+    processed, analysis = synth.apply_drive(
         signal,
         drive=1.45,
         mix=0.8,
@@ -1971,7 +1971,7 @@ def test_saturation_modern_auto_uses_rms_for_short_signal() -> None:
     t = np.linspace(0.0, 0.15, int(0.15 * synth.SAMPLE_RATE), endpoint=False)
     signal = 0.5 * np.sin(2.0 * np.pi * 110.0 * t) * np.exp(-t / 0.05)
 
-    _processed, analysis = synth.apply_saturation(
+    _processed, analysis = synth.apply_drive(
         signal,
         drive=1.5,
         mix=0.8,
@@ -1987,7 +1987,7 @@ def test_saturation_explicit_lufs_is_strict() -> None:
     t = np.linspace(0.0, 0.15, int(0.15 * synth.SAMPLE_RATE), endpoint=False)
     signal = 0.5 * np.sin(2.0 * np.pi * 110.0 * t) * np.exp(-t / 0.05)
 
-    _processed, analysis = synth.apply_saturation(
+    _processed, analysis = synth.apply_drive(
         signal,
         drive=1.5,
         mix=0.8,
@@ -2046,7 +2046,7 @@ def test_saturation_modern_preserve_highs_retains_more_air() -> None:
         + 0.10 * np.sin(2.0 * np.pi * 8_900.0 * t)
     )
 
-    without_preserve = synth.apply_saturation(
+    without_preserve = synth.apply_drive(
         signal,
         drive=1.7,
         mix=1.0,
@@ -2055,7 +2055,7 @@ def test_saturation_modern_preserve_highs_retains_more_air() -> None:
         preserve_highs_hz=0.0,
         compensation_mode="none",
     )
-    with_preserve = synth.apply_saturation(
+    with_preserve = synth.apply_drive(
         signal,
         drive=1.7,
         mix=1.0,
@@ -2092,14 +2092,14 @@ def test_saturation_modern_has_lower_alias_proxy_than_legacy() -> None:
     t = np.arange(synth.SAMPLE_RATE, dtype=np.float64) / synth.SAMPLE_RATE
     signal = 0.6 * np.sin(2.0 * np.pi * 9_000.0 * t)
 
-    legacy = synth.apply_saturation(
+    legacy = synth.apply_drive(
         signal,
         drive=8.0,
         mix=1.0,
         algorithm="legacy",
         compensation_mode="none",
     )
-    modern = synth.apply_saturation(
+    modern = synth.apply_drive(
         signal,
         drive=1.85,
         mix=1.0,
@@ -2136,7 +2136,7 @@ def test_saturation_modern_preserve_lows_keeps_low_end_more_stable() -> None:
         high_hz=120.0,
         sample_rate=synth.SAMPLE_RATE,
     )
-    without_preserve = synth.apply_saturation(
+    without_preserve = synth.apply_drive(
         signal,
         drive=1.9,
         mix=1.0,
@@ -2145,7 +2145,7 @@ def test_saturation_modern_preserve_lows_keeps_low_end_more_stable() -> None:
         preserve_lows_hz=0.0,
         compensation_mode="none",
     )
-    with_preserve = synth.apply_saturation(
+    with_preserve = synth.apply_drive(
         signal,
         drive=1.9,
         mix=1.0,
@@ -2533,14 +2533,12 @@ def test_polyblep_resonance_q_overrides_resonance() -> None:
 
 
 def test_saturation_thd_reported_in_analysis() -> None:
-    """apply_saturation with return_analysis=True should report thd_pct and
+    """apply_drive with return_analysis=True should report thd_pct and
     thd_character in the analysis dict."""
     signal = 0.5 * np.sin(
         np.linspace(0.0, 4.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
     )
-    _, analysis = synth.apply_saturation(
-        signal, drive=1.5, mix=0.5, return_analysis=True
-    )
+    _, analysis = synth.apply_drive(signal, drive=1.5, mix=0.5, return_analysis=True)
 
     assert isinstance(analysis, dict)
     assert "thd_pct" in analysis
@@ -2562,10 +2560,10 @@ def test_saturation_thd_increases_with_drive() -> None:
     signal = 0.3 * np.sin(
         np.linspace(0.0, 4.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
     )
-    _, low_analysis = synth.apply_saturation(
+    _, low_analysis = synth.apply_drive(
         signal, drive=0.5, mix=0.5, return_analysis=True
     )
-    _, high_analysis = synth.apply_saturation(
+    _, high_analysis = synth.apply_drive(
         signal, drive=3.0, mix=0.5, return_analysis=True
     )
 
@@ -2581,7 +2579,7 @@ def test_saturation_thd_reported_via_effect_chain() -> None:
     )
     _out, effect_analysis = synth.apply_effect_chain(
         signal,
-        [EffectSpec("saturation", {"drive": 2.0, "mix": 0.6})],
+        [EffectSpec("drive", {"drive": 2.0, "mix": 0.6})],
         return_analysis=True,
     )
     metrics = effect_analysis[0].metrics
@@ -2596,7 +2594,7 @@ def test_effect_analysis_includes_signal_thd_metrics() -> None:
 
     _processed, effect_analysis = synth.apply_effect_chain(
         signal,
-        [EffectSpec("saturation", {"drive": 2.0, "mix": 0.6})],
+        [EffectSpec("drive", {"drive": 2.0, "mix": 0.6})],
         return_analysis=True,
     )
 
@@ -2613,14 +2611,25 @@ def test_effect_analysis_includes_signal_thd_metrics() -> None:
     assert float(metrics["thd_delta_pct"]) > 0.0
 
 
-def test_aggressive_saturation_triggers_thd_warning() -> None:
-    """Heavy saturation should trigger the effect_introduced_distortion warning."""
+def test_aggressive_saturation_triggers_distortion_warning() -> None:
+    """Heavy saturation should trigger the effect_introduced_distortion
+    warning.  Uses an incommensurate two-tone stimulus with a whisper of
+    broadband noise, which is the IMD detector's happy path: two clearly
+    identifiable tones whose integer harmonics don't coincide, plus enough
+    noise floor that ``_pick_two_tones`` doesn't grab spurious low-energy
+    bins.  (A single sine clipped hard is textbook THD but produces zero
+    IMD by definition; the effect_introduced_distortion warning targets
+    mix-level damage, where multiple simultaneous tones always exist.)"""
+    rng = np.random.default_rng(7)
     t = np.arange(synth.SAMPLE_RATE, dtype=np.float64) / synth.SAMPLE_RATE
-    signal = 0.7 * np.sin(2.0 * np.pi * 220.0 * t)
+    signal = 0.3 * np.sin(2.0 * np.pi * 311.0 * t) + 0.3 * np.sin(
+        2.0 * np.pi * 523.0 * t
+    )
+    signal += 0.005 * rng.standard_normal(len(t))
 
     _processed, effect_analysis = synth.apply_effect_chain(
         signal,
-        [EffectSpec("saturation", {"drive": 6.0, "mix": 1.0})],
+        [EffectSpec("drive", {"drive": 6.0, "mix": 1.0})],
         return_analysis=True,
     )
 
@@ -2629,13 +2638,15 @@ def test_aggressive_saturation_triggers_thd_warning() -> None:
 
 
 def test_gentle_saturation_does_not_trigger_thd_warning() -> None:
-    """Mild saturation should not fire the distortion warning."""
+    """Mild drive should not fire the distortion warning."""
     t = np.arange(synth.SAMPLE_RATE, dtype=np.float64) / synth.SAMPLE_RATE
     signal = 0.3 * np.sin(2.0 * np.pi * 220.0 * t)
 
+    # drive=0.3 is the CLAUDE.md "gentle warmth" point under post-unity-rescale
+    # semantics — produces ~2-3% THD which should stay under the warning floor.
     _processed, effect_analysis = synth.apply_effect_chain(
         signal,
-        [EffectSpec("saturation", {"drive": 1.2, "mix": 0.3})],
+        [EffectSpec("drive", {"drive": 0.3, "mix": 0.3})],
         return_analysis=True,
     )
 

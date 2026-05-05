@@ -109,7 +109,7 @@ def build_score() -> Score:
         master_effects=[
             # Master saturation — warm glue that thins over time
             EffectSpec(
-                "saturation",
+                "drive",
                 {"preset": "tube_warm", "drive": 1.2, "mix": 0.30},
                 automation=[
                     AutomationSpec(

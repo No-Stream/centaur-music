@@ -27,7 +27,15 @@ class PieceSection:
 
 @dataclass(frozen=True)
 class PieceDefinition:
-    """Named renderable piece."""
+    """Named renderable piece.
+
+    ``export_target_lufs`` overrides the export-stage LUFS target for
+    pieces whose natural integrated loudness falls well below the
+    project-wide default (-18 LUFS).  Quiet/sparse/dynamic pieces
+    (solo piano meditations, ambient textures with long silences)
+    otherwise force the final mastering stage into heavy limiting as
+    it tries to pull their LUFS up.  Leave as ``None`` for the default.
+    """
 
     name: str
     output_name: str
@@ -35,6 +43,7 @@ class PieceDefinition:
     render_audio: Callable[[], np.ndarray] | None = None
     sections: tuple[PieceSection, ...] = field(default_factory=tuple)
     study: bool = False
+    export_target_lufs: float | None = None
 
 
 type PieceMap = Mapping[str, PieceDefinition]
