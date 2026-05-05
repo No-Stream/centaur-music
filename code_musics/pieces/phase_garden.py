@@ -83,7 +83,7 @@ def _hall_reverb() -> EffectSpec:
 
 def _master_saturation() -> EffectSpec:
     """Gentle master glue."""
-    return EffectSpec("saturation", {"preset": "tube_warm", "mix": 0.18, "drive": 1.1})
+    return EffectSpec("drive", {"preset": "tube_warm", "mix": 0.18, "drive": 0.37})
 
 
 # ---------------------------------------------------------------------------

@@ -480,7 +480,7 @@ def test_score_can_render_kick_tom_with_finished_effect_chain() -> None:
         },
         effects=[
             EffectSpec("compressor", {"preset": "kick_punch"}),
-            EffectSpec("saturation", {"preset": "kick_weight"}),
+            EffectSpec("preamp", {"preset": "kick_body"}),
         ],
     )
     score.add_note("kick", start=0.0, duration=0.35, freq=55.0, amp=0.22, velocity=0.9)

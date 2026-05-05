@@ -519,6 +519,88 @@ class DriftAdapter(ModSource):
 
 
 @dataclass(frozen=True)
+class ChaoticSource(ModSource):
+    """Chaotic-attractor mod source.
+
+    Exposes the same four ODE systems as ``osc_type="chaotic"``
+    (Lorenz, Rössler, Duffing, Chua) as a :class:`ModSource`.  Usable
+    for driving cutoff, detune, density, or any other automation
+    target that benefits from alive but bounded motion.  The source is
+    sampled on the caller-supplied ``times`` grid by rendering the
+    attractor at the host sample rate and resampling onto the target
+    grid — which means rates well above ``sample_rate / 2`` alias.
+
+    Parameters
+    ----------
+    system
+        One of ``"lorenz"``, ``"rossler"``, ``"duffing"``, ``"chua"``.
+    rate_hz
+        Nominal evolution rate.  Higher values produce faster /
+        brighter motion.  Must be strictly positive.  Matches the
+        ``osc_chaos_rate_hz`` parameter on the synth_voice engine.
+    amount
+        ``[0, 1]``: 0 collapses the attractor toward its stable /
+        periodic regime; 1 uses the canonical chaotic parameters.
+    symmetry
+        ``[-1, +1]``: DC-ish offset that breaks the attractor's
+        reflective symmetry.  Biases the output waveform.
+    seed
+        Deterministic seed for initial conditions.  ``None`` falls
+        back to :func:`seed_or_default` keyed on the system name.
+    output_domain
+        ``"bipolar"`` (default) returns the native attractor output.
+    """
+
+    system: Literal["lorenz", "rossler", "duffing", "chua"] = "lorenz"
+    rate_hz: float = 1.0
+    amount: float = 0.5
+    symmetry: float = 0.0
+    seed: int | None = None
+    output_domain: ModSourceDomain = "bipolar"
+
+    def __post_init__(self) -> None:
+        # Lazy import: _chaotic imports from humanize, keeping the
+        # module-level import graph small.
+        from code_musics.engines._chaotic import SUPPORTED_SYSTEMS
+
+        if self.system not in SUPPORTED_SYSTEMS:
+            raise ValueError(
+                "ChaoticSource.system must be one of "
+                f"{sorted(SUPPORTED_SYSTEMS)}, got {self.system!r}"
+            )
+        if self.rate_hz <= 0:
+            raise ValueError("ChaoticSource.rate_hz must be positive")
+        if not 0.0 <= self.amount <= 1.0:
+            raise ValueError("ChaoticSource.amount must be in [0, 1]")
+        if not -1.0 <= self.symmetry <= 1.0:
+            raise ValueError("ChaoticSource.symmetry must be in [-1, 1]")
+
+    def sample(self, times: np.ndarray, context: SourceSamplingContext) -> np.ndarray:
+        from code_musics.engines._chaotic import render_chaotic
+
+        if times.size == 0:
+            return np.zeros(0, dtype=np.float64)
+        times_arr = np.asarray(times, dtype=np.float64)
+        t0 = float(times_arr[0])
+        t1 = float(times_arr[-1])
+        span = max(t1 - t0, 1.0 / context.sample_rate)
+        sample_rate = context.sample_rate
+        n_render = max(2, int(math.ceil(span * sample_rate)) + 1)
+        seed = seed_or_default(self.seed, "chaotic_source", self.system)
+        raw = render_chaotic(
+            system=self.system,
+            rate_hz=self.rate_hz,
+            amount=self.amount,
+            symmetry=self.symmetry,
+            n_samples=n_render,
+            sample_rate=sample_rate,
+            seed=seed,
+        )
+        render_times = t0 + np.arange(n_render, dtype=np.float64) / sample_rate
+        return np.interp(times_arr, render_times, raw).astype(np.float64, copy=False)
+
+
+@dataclass(frozen=True)
 class ModConnection:
     """One source -> destination routing.
 

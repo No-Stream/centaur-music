@@ -147,7 +147,7 @@
   management.
 - `code_musics/pieces/_shared.py` exports `DEFAULT_MASTER_EFFECTS` — a
   plugin-preferred default master chain (BritPre preamp → MJUC Jr vari-mu
-  compression, with native saturation + compressor fallbacks). New pieces
+  compression, with native preamp + compressor fallbacks). New pieces
   can use `master_effects=DEFAULT_MASTER_EFFECTS` for a "sounds finished"
   baseline. Pieces that define their own `master_effects` fully replace the
   default — no layering.
@@ -213,8 +213,12 @@ interpreter and will fail with import errors.
 **Always use one of:**
 
 ```bash
-make all                           # default quality gate: format-check, lint, compile, typecheck, full tests
+make all                           # default quality gate: format-check, lint, compile, typecheck, full tests + coverage summary
+make all COV=0                     # same, but skip coverage (slightly faster; for tight iteration loops)
 make check                         # alias for make all
+make coverage                      # full per-file coverage report with uncovered line numbers
+make coverage-baseline             # update .coverage-baseline to current coverage (commit to ratchet)
+make test SLOW=1                   # include --durations=10 output
 make list                          # list registered pieces
 make render PIECE=harmonic_drift   # render a piece (adds --plot by default)
 make render PIECE=harmonic_drift PLOT=0  # render without plot
@@ -415,12 +419,35 @@ See `FUTURE.md` for way more ideas.
   `diva_bass_resonance`, `cs80_attack`, `prophet_pad`, `moog_acid_newton`,
   `sk_bite_lead`, `cascade_bass` presets for showcase patches.
 - The Newton solver also closes the **external feedback loop**
-  (`feedback_amount`) implicitly on `svf`, `cascade`, `sem`, `sallen_key`,
-  `ladder`, `jupiter` — eliminating the unit-delay damping that previously
-  smoothed out high-resonance and feedback-growl leads. `k35` and `diode`
-  still use unit-delay ext feedback (see `FUTURE.md` for the
-  diode-derivative Jacobian they need). `filter_solver="adaa"` remains
+  (`feedback_amount`) implicitly on all eight analog topologies — `svf`,
+  `cascade`, `sem`, `sallen_key`, `ladder`, `jupiter`, `k35`, and `diode`
+  — eliminating the unit-delay damping that previously smoothed out
+  high-resonance and feedback-growl leads. K35 gains its first implicit
+  diode-feedback solver too (rather than the prior `alpha` pre-scale +
+  `y_prev` hybrid), which tightens self-oscillation character into
+  something closer to MS-20 hardware. Gates: K35 outer-Newton is
+  LP + drive=0; diode outer-Newton is LP + morph=0; HP K35 and morph>0
+  diode fall back to the prior path. `filter_solver="adaa"` remains
   bit-identical to the pre-change behaviour everywhere.
+- The `quality` knob (`"draft"` / `"fast"` / `"great"` / `"divine"`) now
+  extends beyond `polyblep` / `filtered_stack` to `va`, `synth_voice`, and
+  `drum_voice` with engine-specific defaults: `va="fast"` (era-accurate
+  JP-8000 / Virus / Q character — ran at moderate internal rates with
+  one-sample-delay-style feedback), `synth_voice="great"` (modern-clean
+  default for the recommended new-tonal-voice engine), `drum_voice="great"`
+  (transient content benefits materially from Newton + oversampling,
+  especially at high drive/resonance). See `docs/synth_api.md` for the full
+  mode/solver/OS table and per-engine defaults.
+- `EffectSpec("analog_filter", ...)` exposes the eight ZDF topologies
+  (`svf`, `ladder`, `sallen_key`, `cascade`, `sem`, `jupiter`, `k35`,
+  `diode`) as a bus / master / voice effect on `Voice.effects`,
+  `Score.master_effects`, and send-bus chains. Wraps the same
+  `apply_filter_oversampled` kernel used by the synth engines, so
+  character matches the per-engine filter slot exactly. Mono input is
+  upmixed to stereo with independent L/R filter states. `cutoff_hz` is
+  sample-accurate; Q / drive / feedback collapse to per-call means with
+  a variance warning. Use `shape="exp"` on cutoff automation. See
+  `docs/synth_api.md` for the full parameter surface.
 - Oscillator imperfection params (`osc_asymmetry`, `osc_softness`,
   `osc_dc_offset`, `osc_shape_drift`) model analog VCO behavior in the
   `polyblep` and `filtered_stack` engines.
@@ -437,7 +464,7 @@ See `FUTURE.md` for way more ideas.
   RePro-5-style per-note distortion slot applied *inside the engine's note
   loop, after the VCA and before the per-note buffers sum into the voice
   output*. Modes: `soft_clip` / `hard_clip` / `foldback` / `corrode` /
-  `saturation` (reuses `apply_saturation`) / `preamp` (reuses
+  `saturation` (reuses `apply_drive`) / `preamp` (reuses
   `apply_preamp`). Chord tones distort independently, preserving harmonic
   identity instead of collapsing into the IMD mud that a post-mix shaper
   produces. Default `off`; paired params `voice_dist_drive`,
@@ -471,15 +498,32 @@ See `FUTURE.md` for way more ideas.
 - The native effect chain includes a stereo-linked `compressor` effect with
   feedforward/feedback modes, detector-path EQ bands, and voice-to-voice
   sidechaining plus lookahead for ducking/glue workflows.
-- The native `saturation` effect defaults to a higher-fidelity two-stage
-  analog-style path with optional clean low/high-band preservation; see
-  `docs/synth_api.md` for the modern vs legacy behavior and parameter surface.
+- The native `drive` effect (`apply_drive`, `EffectSpec` kind `"drive"`;
+  formerly `apply_saturation` / `"saturation"`) is a **colored overdrive**
+  kernel — any non-zero drive lifts the 2–8 kHz band. The `drive` scalar
+  is calibrated to the project-wide 0–1 knob scale: `drive=0` is a
+  bit-exact **unity bypass** (true passthrough), `0.2`–`0.33` is subtle
+  warmth, `0.5`–`0.7` is musical saturation, `1.0` is the top of the
+  musical range, and `>1.0` moves into fuzz / stompbox territory. The
+  general effect-calibration guidance below (gentle 0.2, harmony-compatible
+  0.33, musical 0.5, strong-but-musical 0.66, distortion 0.8) is now the
+  actual measured behavior of `drive` post-rescale. Defaults to a
+  two-stage analog-style path with `multiband=True` crossover bypass so
+  bass (`low_crossover_hz=120.0`) and air (`high_crossover_hz=5000.0`)
+  bands skip the nonlinearity by default. The legacy `preserve_lows_hz` /
+  `preserve_highs_hz` params are a dry-path crossover (not an actual band
+  bypass) and are deprecated in favor of the multiband surface. See
+  `docs/synth_api.md` for the full parameter surface and the modern vs
+  legacy path.
 - The `preamp` effect provides flux-domain transformer saturation for
-  analog-style warmth. Unlike the `saturation` effect (which uses waveshaping),
-  `preamp` operates in the magnetic flux domain where bass naturally saturates
-  more than treble, producing minimal intermodulation on harmonically rich
-  material. Use `preamp` for gentle warmth/coloring (master bus, subtle voice
-  color); use `saturation` for intentional distortion/drive effects.
+  analog-style warmth. Unlike `drive` (memoryless waveshaping with
+  pre-emphasis), `preamp` operates in the magnetic flux domain where bass
+  naturally saturates more than treble, producing minimal intermodulation
+  and minimal 2–8 kHz buildup on harmonically rich material.
+  **Division of labor: `preamp` for hi-fi warmth / bus glue / master-bus
+  sweetening; `drive` for deliberate character / stompbox color / voice-level
+  grit.** Prefer `preamp` as the default finishing tool and reach for `drive`
+  only when you want audible coloration.
 - The native `bbd_chorus` effect is a Juno-faithful BBD-style stereo chorus
   with quadrature LFOs (true L/R decorrelation from mono input), cross-feedback,
   BBD-style pre/post bandlimiting, and an optional gentle compander. Presets:
@@ -536,7 +580,58 @@ See `FUTURE.md` for way more ideas.
   (`exciter_type="sample"`), and digital-character voice shapers (`shaper="bit_crush"`
   / `"rate_reduce"` / `"digital_clip"`), with `pi_hardness` / `pi_tension` /
   `pi_damping` / `pi_damping_tilt` / `pi_position` macros for quick perceptual
-  shaping. See `docs/synth_api.md` for the full parameter surface.
+  shaping. Three sustained excitation types — `bow` (stick-slip friction),
+  `blow` (reed-table nonlinearity), `rub` (filtered noise with stiction) —
+  run for the full note duration and pair naturally with a *coupled +
+  dispersed* modal bank (`modal_coupling` ~0.15-0.3, `modal_dispersion`
+  ~0.2-0.4) to turn drum_voice into sustained "living body" presets
+  (`bow_gentle`, `bow_taut`, `bow_aggressive`, `blow_breath_pad`,
+  `blow_reed_sing`, `blow_overblow`, `rub_glass`, `rub_skin`, `rub_squeal`).
+  Transient exciters can also receive a velocity-shaped hammer-contact curve
+  via `contact_nonlinearity` (0-1, default 0 = no-op).
+  See `docs/synth_api.md` for the full parameter surface.
+- Modal resonator banks (`tone_type="modal"` / `metallic_type="modal_bank"`)
+  support optional **inter-mode coupling** and **post-bank allpass
+  dispersion**. `modal_coupling` (or the `pi_coupling` macro) injects each
+  mode's last sample into the others' inputs for rolling beats and modulated
+  decays; `modal_coupling_topology` selects `chain` / `ring` / `all`.
+  `modal_dispersion` (or `pi_dispersion`) runs the bank through a cascade of
+  first-order allpasses to produce piano-stiffness / bell-warp tail character.
+  Both default to 0 (no-op, bit-identical legacy behavior). The sustained
+  exciter presets lean on them — coupling 0.15-0.3 + dispersion 0.2-0.4 is
+  the sweet spot. See `docs/synth_api.md` for params and stability clamps.
+- The `synth_voice` `osc` slot now also supports `osc_type="scanned"` —
+  Verplank-style scanned synthesis over a mass-spring ring. Shapes
+  breathe organically under the network's own dynamics; 5 presets
+  (`scanned_breathing_string`, `scanned_singing_loop`, `scanned_glass_swarm`,
+  `scanned_taut_wire`, `scanned_loose_chain`) span pad to glitch. Params:
+  `osc_scan_n_nodes`, `osc_scan_motion`, `osc_scan_tension`,
+  `osc_scan_damping`, `osc_scan_position`. See `docs/synth_api.md`.
+- The `synth_voice` `osc` slot also supports `osc_type="chaotic"` —
+  four deterministic attractors (Lorenz / Rössler / Duffing / Chua)
+  with an `amount` knob that blends between periodic and fully chaotic
+  regimes. The same primitive is exposed as a `ModSource` via
+  `code_musics.modulation.ChaoticSource` for routing attractor motion
+  into mod-matrix destinations (cutoff, detune, etc.) — a living
+  alternative to LFOs and random sources. 4 `osc_type="chaotic"`
+  presets: `lorenz_wobble`, `rossler_smear`, `duffing_bass`,
+  `chua_scatter`. See `docs/synth_api.md`.
+- `synth_voice` has a **fifth source slot — `grain`** — a source-agnostic
+  granulator that granulates a *live-rendered* internal source buffer (osc
+  / partials / fm / noise / sample). The source-agnostic part is the
+  interesting bit: granulating a live synthesis source produces textures
+  that breathe twice — source breathes on its own, grain stream breathes
+  over it. Three modes (`cloud` / `time_freeze` / `texture`), optional
+  `grain_ji_lattice` for consonant pitch quantization, 5 presets
+  (`grain_breathing_cloud`, `grain_frozen_time`, `grain_glitch_scatter`,
+  `grain_tape_dust`, `grain_shimmer_dust`). See `docs/synth_api.md`.
+- Karplus-Strong++ pluck is available as `osc_type="pluck"` in `synth_voice`
+  and `tone_type="pluck"` in `drum_voice`. Creative-KS extensions beyond
+  vanilla KS: fractional delay for pitch accuracy, pick-position comb,
+  loop lowpass, tanh termination inside the feedback path. 5 shared
+  presets (`soft_pluck`, `acid_pluck`, `harp_pluck`, `ebow_pluck`,
+  `cavernous_pluck`); drum_voice ports are percussive variants.
+  See `docs/synth_api.md`.
 - The `sample` engine plays back WAV one-shots with pitch adjustment (map
   note `freq` against `root_freq`), optional `decay_ms` / `amp_envelope`
   shaping, a filter slot, and Machinedrum-E12-style macros (retrigger flams,
@@ -556,6 +651,26 @@ See `FUTURE.md` for way more ideas.
 - `code_musics/drum_helpers.py` provides `setup_drum_bus()` and `add_drum_voice()`
   convenience helpers for percussion voice setup with sensible defaults
   (`normalize_peak_db=-6.0`, no velocity humanization, optional bus routing).
+  `setup_drum_bus` is default-on: calling it with no effects arg installs the
+  `style="electronic"` chain (compressor → preamp) tuned for finished
+  modern-electronic kits. True-peak management lives on the master bus via
+  `DEFAULT_MASTER_EFFECTS`, not on the drum bus. The `electronic` style uses
+  `apply_preamp` for hi-fi warmth rather than `apply_drive`, which previously
+  tended to pile papery 2–8 kHz harmonics onto kicks and transients. Four
+  styles are available via `style=...`: `"light"` (Four Tet / BoC clean glue),
+  `"electronic"` (default), `"weighty"` (iron-preamp, kick-forward),
+  `"berghain"` (peak-hour techno wall). Passing `effects=[...]` explicitly
+  fully replaces the style chain.
+- The `clipper` effect (`apply_clipper` in `synth.py`) is a native peak
+  clipper with a monotone polynomial soft-knee, oversampling (Kaiser β=14
+  polyphase), and stereo linking. Knee width is the main character knob:
+  narrow (`0..1.5 dB`) for firm mastering-clipper edge, wide (`3..6 dB`)
+  for forgiving kick-forward glue. `algorithm="hard"` also available for
+  literal `np.clip` semantics. `threshold_db`, `knee_width_db`, and `mix`
+  all accept per-sample arrays for automation. Live on the default drum
+  bus for `electronic` / `weighty` / `berghain` styles; follow with
+  `limiter` on the master for a strict true-peak ceiling. See
+  `docs/synth_api.md`.
 - The `bricasti` convolution wrapper supports basic wet-return tone shaping
   (`highpass_hz`, `lowpass_hz`, `tilt_db`) for cleaner, darker, or brighter tails.
 - The local Linux environment has a small plugin palette installed for
@@ -702,6 +817,9 @@ See `FUTURE.md` for way more ideas.
   to have plausibly musical but not broken very strong effects from 0.8-1.0.
   For example, a saturation effect might offer gentle mix warmth at 0.2, harmony-compatible warmth at 0.33,
   musical saturation at 0.5, strong but still musical saturation at 0.66, and distortion at 0.8.
+  The native `drive` effect is now calibrated to exactly this spec post-rescale: `drive=0` is a
+  bit-exact unity bypass, 0.2–0.33 is subtle warmth, 0.5 is musical, 1.0 caps the musical range, and
+  >1.0 is fuzz / stompbox territory.
 - Effects and voices should be designed considering musicality, not textbook designs.
   Don't cut corners to save time.
   For example, if a distortion plugin would benefit from antialiasing,
@@ -721,6 +839,17 @@ delegation-to-subagents pattern.
 - No need for trivial tests or testing each unexpected edge case. First and foremost, tests should validate that code runs properly, end to end, without major bugs; and they should prevent regressions.
 - Backward compatibility is not always required or expected; this is a local, creative library not a business one.
 - No fallbacks. Fail fast!
+- **Coverage is reported, not enforced.** `make all` prints a one-line
+  coverage summary; `make coverage` gives the full per-file breakdown with
+  uncovered line numbers. Deltas are computed against `.coverage-baseline`
+  (committed); a `⚠ ... ↓` regression warning flags when coverage drops.
+  Run `make coverage-baseline` to ratchet the baseline up after adding
+  tests. Treat the summary as a nudge to add tests when you touch
+  lightly-covered code — there's no minimum %, but always prefer `make all`
+  over `make test` so the signal is in front of you. `make all COV=0`
+  skips coverage for tight iteration loops. `pieces/`, `evaluate.py`, and
+  `inspire.py` are intentionally excluded (configuration/data and
+  LLM-dependent respectively).
 
 ---
 

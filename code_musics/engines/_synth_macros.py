@@ -16,7 +16,17 @@ from __future__ import annotations
 import math
 from typing import Any
 
-_MACRO_KEYS = frozenset({"brightness", "movement", "body", "dirt"})
+_MACRO_KEYS = frozenset(
+    {
+        "brightness",
+        "movement",
+        "body",
+        "dirt",
+        "chaos_amount",
+        "chaos_rate",
+        "chaos_system",
+    }
+)
 
 
 def resolve_macros(params: dict[str, Any]) -> dict[str, Any]:
@@ -29,6 +39,7 @@ def resolve_macros(params: dict[str, Any]) -> dict[str, Any]:
     _apply_movement(params)
     _apply_body(params)
     _apply_dirt(params)
+    _apply_chaos(params)
 
     for key in _MACRO_KEYS:
         params.pop(key, None)
@@ -137,3 +148,30 @@ def _apply_dirt(params: dict[str, Any]) -> None:
     if t > 0.8:
         high = (t - 0.8) * 5.0
         _set_if_absent(params, "feedback_amount", _lerp(high, 0.0, 0.15))
+
+
+def _apply_chaos(params: dict[str, Any]) -> None:
+    """``chaos_amount`` / ``chaos_rate`` / ``chaos_system`` (chaotic osc slot).
+
+    These macros only fan out when ``osc_type == "chaotic"``; otherwise they
+    would pollute unrelated voices with no-op params.  ``chaos_amount`` maps
+    to ``osc_chaos_amount`` in ``[0, 1]``, ``chaos_rate`` maps to
+    ``osc_chaos_rate_hz`` on an exponential ``[0.5, 200] Hz`` sweep, and
+    ``chaos_system`` passes through as the string-valued ``osc_chaos_system``.
+    """
+    if params.get("osc_type") != "chaotic":
+        return
+
+    amount = params.get("chaos_amount")
+    if amount is not None:
+        t = float(max(0.0, min(1.0, float(amount))))
+        _set_if_absent(params, "osc_chaos_amount", t)
+
+    rate = params.get("chaos_rate")
+    if rate is not None:
+        t = float(max(0.0, min(1.0, float(rate))))
+        _set_if_absent(params, "osc_chaos_rate_hz", _exp_lerp(t, 0.5, 200.0))
+
+    system = params.get("chaos_system")
+    if system is not None:
+        _set_if_absent(params, "osc_chaos_system", str(system).lower())

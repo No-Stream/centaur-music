@@ -119,3 +119,33 @@ class TestSympatheticIntegration:
         audio = score.render()
         assert audio.size > 0
         assert np.all(np.isfinite(audio))
+
+    def test_piano_sympathetic_alters_output(self) -> None:
+        """Sympathetic resonance must actually modify the piano engine output.
+
+        Regression guard: if a future change lists ``piano`` as an instrument
+        engine, the warning path would skip sympathetic wiring and the two
+        renders here would become bit-identical.
+        """
+
+        def _render(sympathetic_amount: float) -> np.ndarray:
+            score = Score(f0_hz=220.0, sample_rate=SAMPLE_RATE)
+            score.add_voice(
+                "piano",
+                synth_defaults={"engine": "piano", "preset": "felt"},
+                sympathetic_amount=sympathetic_amount,
+                sympathetic_decay_s=2.0,
+                sympathetic_modes=8,
+                normalize_lufs=None,
+            )
+            score.add_note("piano", start=0.0, duration=0.6, partial=1.0, amp=0.6)
+            return score.render()
+
+        dry = _render(0.0)
+        wet = _render(0.25)
+        min_len = min(len(dry), len(wet))
+        diff_rms = float(np.sqrt(np.mean((wet[:min_len] - dry[:min_len]) ** 2)))
+        assert diff_rms > 1e-4, (
+            f"sympathetic resonance produced no measurable change on piano engine "
+            f"(diff_rms={diff_rms:.2e})"
+        )

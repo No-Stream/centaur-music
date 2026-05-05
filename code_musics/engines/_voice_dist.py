@@ -21,7 +21,7 @@ Design notes:
   smoothstep of ``drive`` in ``[0, epsilon]`` rather than a hard gate.
   This avoids stepping / click artifacts.
 * Deferred imports: ``saturation`` and ``preamp`` modes dispatch to
-  :func:`code_musics.synth.apply_saturation` and
+  :func:`code_musics.synth.apply_drive` and
   :func:`code_musics.synth.apply_preamp`.  These must be imported inside
   the function body — importing at module top triggers the
   ``synth.py -> engines/__init__.py`` cycle.  See
@@ -70,7 +70,7 @@ _MODE_TO_WAVESHAPER_ALGO: dict[str, str] = {
 # smaller values would expose FFT quantization in the continuity test.
 _BLEND_EPSILON: float = 1e-3
 
-# Tone-tilt corner frequencies (mirroring the ``_apply_saturation_legacy``
+# Tone-tilt corner frequencies (mirroring the ``_apply_drive_legacy``
 # idiom at synth.py:5162-5165 where the legacy path uses a 2.8 kHz one-pole
 # lowpass split).  Asymmetric corners keep the "bright" vs "dark" side
 # perceptually distinct.
@@ -95,7 +95,7 @@ def _map_drive(drive: float) -> float:
     * drive=0.5 -> 0.25 (subtle per AGENTS.md loudness ladder)
     * drive=1.0 -> 0.5 (moderate)
     * drive=2.0 -> 1.0 (max drive for the cheap shapers; meaningful for
-      ``apply_saturation`` / ``apply_preamp`` on the gentler side)
+      ``apply_drive`` / ``apply_preamp`` on the gentler side)
 
     NOTE: the plan-doc suggested ``0.5 + 2.0 * drive``, but that mapping
     is discontinuous at drive->0+ (jumps from fast-path dry to internal
@@ -117,7 +117,7 @@ def _apply_tone_stage(signal: np.ndarray, tone: float, sample_rate: int) -> np.n
     """Pre-shaper 1-pole tilt.
 
     Mirrors the ``tone_tilt`` idiom used by
-    :func:`code_musics.synth._apply_saturation_legacy` (synth.py:5162-5165):
+    :func:`code_musics.synth._apply_drive_legacy` (synth.py:5162-5165):
     add a scaled copy of ``signal - lowpass(signal)`` to brighten, or
     subtract the mirror dual to darken.
 
@@ -220,9 +220,9 @@ def apply_voice_dist(
     elif mode == "saturation":
         # Deferred import breaks the synth.py <-> engines/__init__.py cycle.
         # See drum_voice.py:367-369 for the established pattern.
-        from code_musics.synth import apply_saturation
+        from code_musics.synth import apply_drive
 
-        wet_result = apply_saturation(
+        wet_result = apply_drive(
             toned,
             drive=internal_drive,
             mix=1.0,

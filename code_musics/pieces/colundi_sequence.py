@@ -146,9 +146,7 @@ def build_score() -> Score:
                     ],
                 },
             ),
-            EffectSpec(
-                "saturation", {"preset": "tube_warm", "mix": 0.12, "drive": 0.7}
-            ),
+            EffectSpec("drive", {"preset": "tube_warm", "mix": 0.12, "drive": 0.23}),
         ],
     )
 
@@ -173,7 +171,7 @@ def build_score() -> Score:
         },
         effects=[
             EffectSpec("compressor", {"preset": "kick_punch"}),
-            EffectSpec("saturation", {"preset": "kick_weight"}),
+            EffectSpec("preamp", {"preset": "kick_body"}),
         ],
         normalize_peak_db=-6.0,
         mix_db=-4.0,
@@ -211,9 +209,10 @@ def build_score() -> Score:
         max_polyphony=1,
         velocity_humanize=None,
         effects=[
-            EffectSpec(
-                "saturation", {"preset": "kick_weight", "mix": 0.18, "drive": 0.9}
-            ),
+            # Subtle bass drive color (was `kick_weight` with heavy overrides —
+            # `kick_weight` is being deprecated; `neve_gentle` is a better
+            # base here since the overrides match its defaults closely).
+            EffectSpec("drive", {"preset": "neve_gentle", "mix": 0.18, "drive": 0.30}),
             EffectSpec(
                 "compressor", {"preset": "kick_duck", "sidechain_source": "kick"}
             ),
@@ -256,7 +255,7 @@ def build_score() -> Score:
                 "eq",
                 {"bands": [{"kind": "high_shelf", "freq_hz": 8000.0, "gain_db": 3.0}]},
             ),
-            EffectSpec("saturation", {"drive": 0.35}),
+            EffectSpec("drive", {"drive": 0.12, "multiband": True}),
             EffectSpec("delay", {"delay_seconds": S16, "feedback": 0.28, "mix": 0.28}),
             EffectSpec(
                 "compressor", {"preset": "kick_duck", "sidechain_source": "kick"}
@@ -384,9 +383,7 @@ def build_score() -> Score:
                     ]
                 },
             ),
-            EffectSpec(
-                "saturation", {"preset": "tube_warm", "mix": 0.18, "drive": 0.9}
-            ),
+            EffectSpec("drive", {"preset": "tube_warm", "mix": 0.18, "drive": 0.30}),
             EffectSpec(
                 "delay",
                 {"delay_seconds": 3.0 * S16, "feedback": 0.45, "mix": 0.35},

@@ -4,11 +4,25 @@ from __future__ import annotations
 
 import random
 from dataclasses import replace
+from typing import Any
 
 from code_musics.generative._rng import make_rng
 from code_musics.score import NoteEvent, Phrase
 
 _RNG = random.Random
+
+
+def _replace_event(event: NoteEvent, **changes: Any) -> NoteEvent:
+    """Wrap dataclasses.replace to drop redundant amp_db before reconstruction.
+
+    NoteEvent.__post_init__ resolves amp_db into amp but leaves amp_db set
+    on the instance. A bare dataclasses.replace would then pass both amp and
+    amp_db to the constructor and hit the "provide amp or amp_db, not both"
+    validator. amp is the canonical resolved value; amp_db is informational.
+    """
+    if "amp" not in changes and "amp_db" not in changes and event.amp_db is not None:
+        changes["amp_db"] = None
+    return replace(event, **changes)
 
 
 def mutate_rhythm(
@@ -99,7 +113,7 @@ def _apply_merge(
             enext = events[i + 1]
             merged_dur = e.duration + enext.duration
             synth_dict = dict(e.synth) if e.synth is not None else None
-            result.append(replace(e, duration=merged_dur, synth=synth_dict))
+            result.append(_replace_event(e, duration=merged_dur, synth=synth_dict))
             i += 2
         else:
             result.append(events[i])
@@ -120,9 +134,11 @@ def _apply_subdivide(
             half_dur = e.duration / 2.0
             synth_a = dict(e.synth) if e.synth is not None else None
             synth_b = dict(e.synth) if e.synth is not None else None
-            result.append(replace(e, duration=half_dur, synth=synth_a))
+            result.append(_replace_event(e, duration=half_dur, synth=synth_a))
             result.append(
-                replace(e, start=e.start + half_dur, duration=half_dur, synth=synth_b)
+                _replace_event(
+                    e, start=e.start + half_dur, duration=half_dur, synth=synth_b
+                )
             )
         else:
             result.append(e)
@@ -150,7 +166,7 @@ def _apply_add(
             ghost_vel = min(0.3, prev.velocity * 0.4)
             ghost_vel = max(0.01, ghost_vel)
             synth_dict = dict(prev.synth) if prev.synth is not None else None
-            ghost = replace(
+            ghost = _replace_event(
                 prev,
                 start=mid_start,
                 duration=mid_dur,
@@ -174,7 +190,7 @@ def _apply_shift(
         offset = rng.uniform(-amount, amount)
         new_start = max(0.0, e.start + offset)
         synth_dict = dict(e.synth) if e.synth is not None else None
-        result.append(replace(e, start=new_start, synth=synth_dict))
+        result.append(_replace_event(e, start=new_start, synth=synth_dict))
     return result
 
 
@@ -190,7 +206,7 @@ def _apply_accent_drift(
         delta = rng.uniform(-drift, drift)
         new_vel = max(0.01, min(2.0, e.velocity + delta))
         synth_dict = dict(e.synth) if e.synth is not None else None
-        result.append(replace(e, velocity=new_vel, synth=synth_dict))
+        result.append(_replace_event(e, velocity=new_vel, synth=synth_dict))
     return result
 
 

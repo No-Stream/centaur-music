@@ -448,7 +448,9 @@ def build_score() -> Score:
                     ]
                 },
             ),
-            EffectSpec(kind="saturation", params={"drive": 0.08, "mix": 0.3}),
+            EffectSpec(
+                kind="drive", params={"drive": 0.03, "mix": 0.3, "multiband": True}
+            ),
         ],
         timing_humanize=TimingHumanizeSpec(preset="chamber"),
     )

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 from code_musics import synth
 from code_musics.engines._dsp_utils import compute_signal_thd
+from code_musics.engines._instrumentation import intermodulation_ratio
 from code_musics.pieces.registry import PieceSection
 from code_musics.score import Score
 
@@ -98,6 +99,18 @@ class AudioAnalysis:
     dominant_amplitude_modulation_hz: float
     thd_pct: float
     thd_character: str
+    # IMD (intermodulation distortion) — more reliable than THD on mixed /
+    # harmonically-dense content because it distinguishes "sum-and-difference
+    # products from nonlinear interaction between tones" (real distortion)
+    # from "integer harmonics of the dominant bin" (which THD conflates with
+    # distortion but is legitimate spectral content on JI chords, drum bodies,
+    # saw waves, etc.). ``imd_ratio`` is energy in IMD products /
+    # energy in harmonics; 0.0 = no IMD, 1.0 = equal, >1.0 = IMD dominates
+    # ("crunchy" character). ``imd_detection`` is "two_tone" when a valid
+    # two-tone probe landed, else "single_tone" (ratio forced to 0.0). See
+    # :func:`code_musics.engines._instrumentation.intermodulation_ratio`.
+    imd_ratio: float
+    imd_detection: str
     band_energy_db: dict[str, float]
     warnings: list[str]
     artifact_risks: list[ArtifactRiskWarning]
@@ -157,6 +170,8 @@ def analyze_audio(
             dominant_frequency_hz=0.0,
             thd_pct=0.0,
             thd_character="clean",
+            imd_ratio=0.0,
+            imd_detection="single_tone",
             low_high_balance_db=0.0,
             high_band_emphasis_db=0.0,
             spectral_tilt_db_per_octave=0.0,
@@ -206,6 +221,7 @@ def analyze_audio(
     thd_pct, thd_character = compute_signal_thd(
         freqs, magnitude_db, dominant_frequency_hz
     )
+    imd_result = intermodulation_ratio(freqs, magnitude_db)
     spectral_tilt = _fit_spectral_tilt(freqs=freqs, magnitude_db=magnitude_db)
     dominant_amplitude_modulation_hz = _dominant_amplitude_modulation_hz(
         mono_signal,
@@ -256,6 +272,8 @@ def analyze_audio(
         dominant_frequency_hz=dominant_frequency_hz,
         thd_pct=thd_pct,
         thd_character=thd_character,
+        imd_ratio=imd_result.ratio,
+        imd_detection=imd_result.detection,
         low_high_balance_db=low_high_balance_db,
         high_band_emphasis_db=high_band_emphasis_db,
         spectral_tilt_db_per_octave=spectral_tilt,
@@ -1569,35 +1587,70 @@ def _build_artifact_risk_report(
                 )
             )
 
-        thd_delta_pct = (
-            pre_export_mix_analysis.thd_pct - pre_master_mix_analysis.thd_pct
+        # Distortion detection via IMD-ratio delta, not THD.
+        #
+        # THD treats all integer-harmonic energy as distortion, which
+        # produces catastrophic false positives on harmonically-dense
+        # content (JI chords, dense pads, saw waves, drum buses). IMD
+        # measures energy in sum/difference products of the two strongest
+        # tones — that energy only grows when the signal path actually
+        # becomes nonlinear (clipping, saturation, compressor waveform
+        # reshaping), not when the input already has rich harmonic
+        # structure. See :func:`intermodulation_ratio` for the algorithm.
+        #
+        # The trigger is a *relative-growth* test rather than an absolute
+        # delta because IMD baselines vary 100x across content types: a
+        # clean piano might sit at IMD 0.02, a dense pad at 4.0, a kick at
+        # 20.0. "Output IMD grew by >= 0.5x the input level" is the
+        # content-invariant version of "something nonlinear happened."
+        imd_pre = pre_master_mix_analysis.imd_ratio
+        imd_post = pre_export_mix_analysis.imd_ratio
+        imd_delta = imd_post - imd_pre
+        # Use a 0.1 floor on the denominator so very-clean pre-master
+        # signals (imd_pre near 0) don't produce divide-by-zero or
+        # hypersensitive ratios on tiny absolute growths.
+        imd_growth_factor = imd_delta / max(imd_pre, 0.1)
+        _reporting_fields = {
+            "imd_ratio_delta": round(imd_delta, 4),
+            "imd_growth_factor": round(imd_growth_factor, 3),
+            "pre_master_imd_ratio": round(imd_pre, 4),
+            "post_master_imd_ratio": round(imd_post, 4),
+            # Keep THD in the risk payload for reference, but don't gate on it.
+            "pre_master_thd_pct": round(pre_master_mix_analysis.thd_pct, 2),
+            "post_master_thd_pct": round(pre_export_mix_analysis.thd_pct, 2),
+        }
+        # Require both detections be valid (two_tone) — a single_tone
+        # detection forces ratio to 0.0, which would produce phantom
+        # deltas when the content shifts between one-tone and two-tone
+        # regimes (e.g. a transient-heavy window vs. a sustained one).
+        both_detected = (
+            pre_master_mix_analysis.imd_detection == "two_tone"
+            and pre_export_mix_analysis.imd_detection == "two_tone"
         )
-        if thd_delta_pct >= 12.0:
+        if both_detected and imd_growth_factor >= 1.5:
             mix_risks.append(
                 _artifact_risk(
                     severity="severe",
                     code="harmonic_distortion",
                     source="mastering_analysis",
-                    message="master bus processing introduced heavy harmonic distortion",
-                    thd_delta_pct=round(thd_delta_pct, 2),
-                    pre_master_thd_pct=round(pre_master_mix_analysis.thd_pct, 2),
-                    post_master_thd_pct=round(pre_export_mix_analysis.thd_pct, 2),
-                    pre_master_thd_character=pre_master_mix_analysis.thd_character,
-                    post_master_thd_character=pre_export_mix_analysis.thd_character,
+                    message=(
+                        "master bus IMD grew sharply — output has much more "
+                        "nonlinear content than input (likely overdriven)"
+                    ),
+                    **_reporting_fields,
                 )
             )
-        elif thd_delta_pct >= 5.0:
+        elif both_detected and imd_growth_factor >= 0.5:
             mix_risks.append(
                 _artifact_risk(
                     severity="warning",
                     code="harmonic_distortion",
                     source="mastering_analysis",
-                    message="master bus processing added noticeable harmonic distortion",
-                    thd_delta_pct=round(thd_delta_pct, 2),
-                    pre_master_thd_pct=round(pre_master_mix_analysis.thd_pct, 2),
-                    post_master_thd_pct=round(pre_export_mix_analysis.thd_pct, 2),
-                    pre_master_thd_character=pre_master_mix_analysis.thd_character,
-                    post_master_thd_character=pre_export_mix_analysis.thd_character,
+                    message=(
+                        "master bus added noticeable nonlinear coloration "
+                        "(fine if intentional warmth; check the audio)"
+                    ),
+                    **_reporting_fields,
                 )
             )
 
@@ -1896,12 +1949,104 @@ def _log_artifact_risk(*, scope: str, risk: ArtifactRiskWarning) -> None:
 def _log_effect_analysis_warnings(effect_analysis: dict[str, Any]) -> None:
     for entry in effect_analysis.get("mix_effects", []):
         _log_effect_entry_warnings(scope="mix_fx", entry=entry)
-    for voice_name, entries in effect_analysis.get("voice_effects", {}).items():
+    mix_summary = _attach_chain_summary(
+        effect_analysis, container_key="mix_effects", label="mix_fx"
+    )
+    if mix_summary is not None:
+        _log_chain_summary_warnings(scope="mix_fx", summary=mix_summary)
+
+    voice_effects = effect_analysis.get("voice_effects", {})
+    voice_summaries: dict[str, dict[str, Any]] = {}
+    for voice_name, entries in voice_effects.items():
         for entry in entries:
             _log_effect_entry_warnings(scope=f"voice_fx:{voice_name}", entry=entry)
-    for bus_name, entries in effect_analysis.get("send_effects", {}).items():
+        summary = synth.build_chain_summary_from_dicts(
+            entries, chain_label=f"voice_fx:{voice_name}"
+        )
+        if summary is not None:
+            voice_summaries[voice_name] = summary.to_dict()
+            _log_chain_summary_warnings(
+                scope=f"voice_fx:{voice_name}", summary=summary.to_dict()
+            )
+    if voice_summaries:
+        effect_analysis["voice_chain_summaries"] = voice_summaries
+
+    send_effects = effect_analysis.get("send_effects", {})
+    send_summaries: dict[str, dict[str, Any]] = {}
+    for bus_name, entries in send_effects.items():
         for entry in entries:
             _log_effect_entry_warnings(scope=f"send_fx:{bus_name}", entry=entry)
+        summary = synth.build_chain_summary_from_dicts(
+            entries, chain_label=f"send_fx:{bus_name}"
+        )
+        if summary is not None:
+            send_summaries[bus_name] = summary.to_dict()
+            _log_chain_summary_warnings(
+                scope=f"send_fx:{bus_name}", summary=summary.to_dict()
+            )
+    if send_summaries:
+        effect_analysis["send_chain_summaries"] = send_summaries
+
+    voice_stem_deltas = effect_analysis.get("voice_stem_deltas", {})
+    for voice_name, delta_entry in voice_stem_deltas.items():
+        _log_voice_stem_delta_warnings(voice_name=voice_name, entry=delta_entry)
+
+
+def _log_voice_stem_delta_warnings(*, voice_name: str, entry: dict[str, Any]) -> None:
+    for warning in entry.get("warnings", []):
+        metric_items = ", ".join(
+            f"{key}={value}"
+            for key, value in sorted(warning.get("metrics", {}).items())
+        )
+        log_message = "Voice-stem delta [%s] %s/%s: %s%s"
+        log_args = (
+            voice_name,
+            warning.get("severity", "warning"),
+            warning.get("code", "unknown"),
+            warning.get("message", ""),
+            f" ({metric_items})" if metric_items else "",
+        )
+        if warning.get("severity") == "severe":
+            logger.error(log_message, *log_args)
+        else:
+            logger.warning(log_message, *log_args)
+
+
+def _attach_chain_summary(
+    effect_analysis: dict[str, Any],
+    *,
+    container_key: str,
+    label: str,
+) -> dict[str, Any] | None:
+    entries = effect_analysis.get(container_key)
+    if not entries:
+        return None
+    summary = synth.build_chain_summary_from_dicts(entries, chain_label=label)
+    if summary is None:
+        return None
+    summary_dict = summary.to_dict()
+    effect_analysis[f"{container_key}_summary"] = summary_dict
+    return summary_dict
+
+
+def _log_chain_summary_warnings(*, scope: str, summary: dict[str, Any]) -> None:
+    for warning in summary.get("warnings", []):
+        metric_items = ", ".join(
+            f"{key}={value}"
+            for key, value in sorted(warning.get("metrics", {}).items())
+        )
+        log_message = "Chain summary [%s] %s/%s: %s%s"
+        log_args = (
+            scope,
+            warning.get("severity", "warning"),
+            warning.get("code", "unknown"),
+            warning.get("message", ""),
+            f" ({metric_items})" if metric_items else "",
+        )
+        if warning.get("severity") == "severe":
+            logger.error(log_message, *log_args)
+        else:
+            logger.warning(log_message, *log_args)
 
 
 def _log_effect_entry_warnings(*, scope: str, entry: dict[str, Any]) -> None:

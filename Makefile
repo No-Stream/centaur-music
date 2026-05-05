@@ -23,6 +23,22 @@ IMAGE ?= 0
 CONSTRAINT ?= 0
 N ?=
 MODELS ?=
+COV ?= 1
+SLOW ?= 0
+
+ifeq ($(COV),1)
+COV_FLAGS = --cov=code_musics --cov=main
+COV_QUIET_FLAG = --cov-report=
+else
+COV_FLAGS =
+COV_QUIET_FLAG =
+endif
+
+ifeq ($(SLOW),1)
+SLOW_FLAG = --durations=10
+else
+SLOW_FLAG =
+endif
 
 ifeq ($(PLOT),1)
 RENDER_PLOT_FLAG = --plot
@@ -90,7 +106,7 @@ format:
 
 .PHONY: compile
 compile:
-	$(UV_RUN) python -m compileall code_musics tests main.py
+	@$(UV_RUN) python -m compileall -q code_musics tests main.py
 
 .PHONY: typecheck
 typecheck:
@@ -98,11 +114,24 @@ typecheck:
 
 .PHONY: test
 test:
-	$(UV_RUN) pytest $(TESTS)
+	$(UV_RUN) pytest -q $(COV_FLAGS) $(COV_QUIET_FLAG) $(SLOW_FLAG) $(TESTS)
+ifeq ($(COV),1)
+	@$(UV_RUN) python scripts/coverage_summary.py
+endif
 
 .PHONY: test-selected
 test-selected:
-	$(UV_RUN) pytest $(TESTS)
+	$(UV_RUN) pytest $(SLOW_FLAG) $(TESTS)
+
+.PHONY: coverage
+coverage:
+	$(UV_RUN) pytest --cov=code_musics --cov=main --cov-report=term-missing $(SLOW_FLAG) $(TESTS)
+	@$(UV_RUN) python scripts/coverage_summary.py
+
+.PHONY: coverage-baseline
+coverage-baseline:
+	$(UV_RUN) pytest -q --cov=code_musics --cov=main --cov-report= $(TESTS)
+	$(UV_RUN) python scripts/coverage_summary.py --update-baseline
 
 # Run a read-only smoke-test script under scratch/ without a permission prompt.
 #

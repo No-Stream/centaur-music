@@ -132,7 +132,7 @@ def render_effects_showcase_demo() -> np.ndarray:
             {
                 "master_effects": [
                     EffectSpec(
-                        "saturation",
+                        "drive",
                         {
                             "preset": "tube_warm",
                             "mix": 0.62,

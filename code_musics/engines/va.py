@@ -26,10 +26,13 @@ from typing import Any
 
 import numba
 import numpy as np
+from scipy.signal import resample_poly
 
 from code_musics.engines._dsp_utils import (
+    _OVERSAMPLE_RESAMPLE_WINDOW,
     apply_analog_post_processing,
     apply_cutoff_cv_dither,
+    apply_filter_oversampled,
     apply_note_jitter,
     apply_pitch_cv_dither,
     apply_voice_card,
@@ -39,7 +42,9 @@ from code_musics.engines._dsp_utils import (
     build_keytracked_cutoff_profile,
     extract_analog_params,
     nyquist_fade,
+    resolve_quality_mode,
     rng_for_note,
+    upsample_cutoff_profile,
     voice_card_offsets,
 )
 from code_musics.engines._filters import (
@@ -679,6 +684,11 @@ def _apply_va_defaults(params: dict[str, Any]) -> dict[str, Any]:
         # tuple (and thus the same RNG seed) so downstream phase/dither draws
         # match.
         "drive_amount": 0.0,
+        # VA models late-90s/00s VSTi DSP — JP-8000 / Virus / Q ran at moderate
+        # internal rates with one-sample-delay-style feedback.  The ``"fast"``
+        # tier (Newton w/ 2 iters + 2x OS) keeps that era-accurate character;
+        # set ``quality="great"`` or ``"divine"`` for modern-clean behavior.
+        "quality": "fast",
     }
     if osc_mode == "supersaw":
         va_defaults["hpf_cutoff_hz"] = _SUPERSAW_DEFAULT_HPF_HZ
@@ -855,6 +865,7 @@ def render(
     noise_floor_level = analog["noise_floor"]
     drift_rate_hz = analog["drift_rate_hz"]
     cutoff_drift_amount = analog["cutoff_drift"]
+    quality_config = resolve_quality_mode(str(analog["quality"]))
 
     n_samples = int(sample_rate * duration)
     if n_samples == 0:
@@ -1154,15 +1165,24 @@ def render(
     if comb_position == "pre_filter":
         pre = _comb(pre, mix=1.0)
 
-    # VA models late-90s/00s VSTi DSP, which used unit-delay ADAA feedback.
-    # Pin the solver so the engine keeps its period character even when the
-    # global FilterParams default is Newton.
-    def _f1(sig: np.ndarray) -> np.ndarray:
+    # Quality selects solver + oversampling (see ``_apply_va_defaults`` — the
+    # VA default is ``"fast"`` for era-accurate JP-8000/Virus/Q character;
+    # ``"great"`` / ``"divine"`` give modern-clean behavior).
+    #
+    # For non-"single" routings (serial / parallel / split) both filters share
+    # the same oversample_factor, so we upsample input + cutoff curves *once*
+    # at the outer frame, run both filters via ``apply_filter`` at the
+    # upsampled rate, and downsample the result *once*.  This avoids the
+    # double upsample/downsample roundtrip that the naive
+    # ``_f2(_f1(pre))`` pattern would incur.
+    os_factor = int(quality_config.oversample_factor)
+
+    def _f1_at_rate(sig: np.ndarray, cutoff: np.ndarray, rate: int) -> np.ndarray:
         return apply_filter(
             sig,
-            cutoff_profile=cutoff1_profile,
+            cutoff_profile=cutoff,
             resonance_q=filter1["resonance_q"],
-            sample_rate=sample_rate,
+            sample_rate=rate,
             filter_mode=filter1["filter_mode"],
             filter_drive=filter1["filter_drive"],
             filter_even_harmonics=0.0,
@@ -1174,15 +1194,17 @@ def render(
             feedback_amount=filter1["feedback_amount"],
             feedback_saturation=filter1["feedback_saturation"],
             k35_feedback_asymmetry=filter1["k35_feedback_asymmetry"],
-            filter_solver="adaa",
+            filter_solver=quality_config.solver,
+            max_newton_iters=quality_config.max_newton_iters,
+            newton_tolerance=quality_config.newton_tolerance,
         )
 
-    def _f2(sig: np.ndarray) -> np.ndarray:
+    def _f2_at_rate(sig: np.ndarray, cutoff: np.ndarray, rate: int) -> np.ndarray:
         return apply_filter(
             sig,
-            cutoff_profile=cutoff2_profile,
+            cutoff_profile=cutoff,
             resonance_q=filter2["resonance_q"],
-            sample_rate=sample_rate,
+            sample_rate=rate,
             filter_mode=filter2["filter_mode"],
             filter_drive=filter2["filter_drive"],
             filter_even_harmonics=0.0,
@@ -1194,17 +1216,106 @@ def render(
             feedback_amount=filter2["feedback_amount"],
             feedback_saturation=filter2["feedback_saturation"],
             k35_feedback_asymmetry=filter2["k35_feedback_asymmetry"],
-            filter_solver="adaa",
+            filter_solver=quality_config.solver,
+            max_newton_iters=quality_config.max_newton_iters,
+            newton_tolerance=quality_config.newton_tolerance,
         )
 
+    def _filter_dual_hoisted(
+        input_a: np.ndarray, input_b: np.ndarray | None = None
+    ) -> np.ndarray:
+        """Run f1/f2 at OS rate with a single outer up/down resample.
+
+        When ``input_b`` is ``None`` both filters see ``input_a`` (serial /
+        parallel).  When ``input_b`` is provided (split routing) f1 sees
+        ``input_a`` and f2 sees ``input_b``, and their outputs are summed
+        at the downsampled base rate.
+        """
+        n_base = int(input_a.shape[0])
+        cutoff1_up = upsample_cutoff_profile(
+            cutoff1_profile,
+            oversample_factor=os_factor,
+            sample_rate=sample_rate,
+            n_base=n_base,
+        )
+        cutoff2_up = upsample_cutoff_profile(
+            cutoff2_profile,
+            oversample_factor=os_factor,
+            sample_rate=sample_rate,
+            n_base=n_base,
+        )
+        rate_up = sample_rate * os_factor
+        n_up = n_base * os_factor
+
+        def _upsample(x: np.ndarray) -> np.ndarray:
+            if os_factor == 1:
+                return x.astype(np.float64)
+            up = resample_poly(
+                x, up=os_factor, down=1, window=_OVERSAMPLE_RESAMPLE_WINDOW
+            ).astype(np.float64)
+            if up.shape[0] > n_up:
+                up = up[:n_up]
+            elif up.shape[0] < n_up:
+                up = np.concatenate([up, np.zeros(n_up - up.shape[0])])
+            return up
+
+        def _downsample(x: np.ndarray) -> np.ndarray:
+            if os_factor == 1:
+                return x
+            down = resample_poly(
+                x, up=1, down=os_factor, window=_OVERSAMPLE_RESAMPLE_WINDOW
+            ).astype(np.float64)
+            if down.shape[0] > n_base:
+                down = down[:n_base]
+            elif down.shape[0] < n_base:
+                down = np.concatenate([down, np.zeros(n_base - down.shape[0])])
+            return down
+
+        a_up = _upsample(input_a)
+        if filter_routing == "serial":
+            y_up = _f2_at_rate(
+                _f1_at_rate(a_up, cutoff1_up, rate_up), cutoff2_up, rate_up
+            )
+            return _downsample(y_up)
+        if filter_routing == "parallel":
+            y_up = 0.5 * (
+                _f1_at_rate(a_up, cutoff1_up, rate_up)
+                + _f2_at_rate(a_up, cutoff2_up, rate_up)
+            )
+            return _downsample(y_up)
+        # split
+        b_up = _upsample(input_b if input_b is not None else input_a)
+        y_up = _f1_at_rate(a_up, cutoff1_up, rate_up) + _f2_at_rate(
+            b_up, cutoff2_up, rate_up
+        )
+        return _downsample(y_up)
+
     if filter_routing == "single":
-        filtered = _f1(pre)
-    elif filter_routing == "serial":
-        filtered = _f2(_f1(pre))
-    elif filter_routing == "parallel":
-        filtered = 0.5 * (_f1(pre) + _f2(pre))
+        filtered = apply_filter_oversampled(
+            pre,
+            cutoff_profile=cutoff1_profile,
+            resonance_q=filter1["resonance_q"],
+            sample_rate=sample_rate,
+            oversample_factor=os_factor,
+            filter_mode=filter1["filter_mode"],
+            filter_drive=filter1["filter_drive"],
+            filter_even_harmonics=0.0,
+            filter_topology=filter1["filter_topology"],
+            bass_compensation=filter1["bass_compensation"],
+            filter_morph=filter1["filter_morph"],
+            hpf_cutoff_hz=filter1["hpf_cutoff_hz"],
+            hpf_resonance_q=filter1["hpf_resonance_q"],
+            feedback_amount=filter1["feedback_amount"],
+            feedback_saturation=filter1["feedback_saturation"],
+            k35_feedback_asymmetry=filter1["k35_feedback_asymmetry"],
+            filter_solver=quality_config.solver,
+            max_newton_iters=quality_config.max_newton_iters,
+            newton_tolerance=quality_config.newton_tolerance,
+        )
+    elif filter_routing in ("serial", "parallel"):
+        filtered = _filter_dual_hoisted(pre)
     else:  # split
-        filtered = _f1(signal_a) + _f2(signal_b)
+        filtered = _filter_dual_hoisted(signal_a, signal_b)
 
     if comb_position == "post_filter":
         filtered = _comb(filtered, mix=1.0)

@@ -1275,6 +1275,55 @@ def resolve_quality_mode(quality: str) -> QualityConfig:
 _OVERSAMPLE_RESAMPLE_WINDOW = ("kaiser", 8.6)
 
 
+def upsample_cutoff_profile(
+    cutoff_profile: np.ndarray,
+    *,
+    oversample_factor: int,
+    sample_rate: int,
+    n_base: int,
+) -> np.ndarray:
+    """Upsample a base-rate ``cutoff_profile`` to ``oversample_factor * sample_rate``.
+
+    Shared helper so callers processing stereo (or otherwise repeatedly
+    filtering the same audio window) can upsample the cutoff curve *once*
+    and feed it to multiple filter passes via
+    :func:`apply_filter_oversampled_preupsampled`.  Matches the internal
+    upsample step inside :func:`apply_filter_oversampled` exactly.
+    """
+    if oversample_factor < 1:
+        raise ValueError("oversample_factor must be >= 1")
+    if n_base <= 0:
+        return np.zeros(0, dtype=np.float64)
+    n_up_expected = n_base * oversample_factor
+    if oversample_factor == 1:
+        resolved = np.asarray(cutoff_profile, dtype=np.float64)
+        if resolved.shape[0] != n_up_expected:
+            raise ValueError(
+                "cutoff_profile length must match signal length at oversample_factor=1"
+            )
+    else:
+        cutoff_up = resample_poly(
+            cutoff_profile,
+            up=oversample_factor,
+            down=1,
+            window=_OVERSAMPLE_RESAMPLE_WINDOW,
+        ).astype(np.float64)
+        if cutoff_up.shape[0] > n_up_expected:
+            cutoff_up = cutoff_up[:n_up_expected]
+        elif cutoff_up.shape[0] < n_up_expected:
+            pad_value = cutoff_profile[-1] if cutoff_profile.shape[0] > 0 else 1000.0
+            cutoff_up = np.concatenate(
+                [
+                    cutoff_up,
+                    np.full(n_up_expected - cutoff_up.shape[0], float(pad_value)),
+                ]
+            )
+        resolved = cutoff_up
+
+    nyquist_up = (sample_rate * oversample_factor) / 2.0
+    return np.clip(resolved, 20.0, nyquist_up * 0.98)
+
+
 def apply_filter_oversampled(
     signal: np.ndarray,
     *,
@@ -1309,6 +1358,92 @@ def apply_filter_oversampled(
     if oversample_factor < 1:
         raise ValueError("oversample_factor must be >= 1")
 
+    if oversample_factor == 1:
+        fp = FilterParams(
+            resonance_q=resonance_q,
+            filter_mode=filter_mode,
+            filter_drive=filter_drive,
+            filter_even_harmonics=filter_even_harmonics,
+            filter_topology=filter_topology,
+            bass_compensation=bass_compensation,
+            filter_morph=filter_morph,
+            hpf_cutoff_hz=hpf_cutoff_hz,
+            hpf_resonance_q=hpf_resonance_q,
+            feedback_amount=feedback_amount,
+            feedback_saturation=feedback_saturation,
+            filter_solver=filter_solver,
+            k35_feedback_asymmetry=k35_feedback_asymmetry,
+            max_newton_iters=max_newton_iters,
+            newton_tolerance=newton_tolerance,
+        )
+        return apply_filter(
+            signal,
+            cutoff_profile=cutoff_profile,
+            sample_rate=sample_rate,
+            **asdict(fp),
+        )
+
+    cutoff_up = upsample_cutoff_profile(
+        cutoff_profile,
+        oversample_factor=oversample_factor,
+        sample_rate=sample_rate,
+        n_base=int(signal.shape[0]),
+    )
+    return apply_filter_oversampled_preupsampled(
+        signal,
+        cutoff_profile_upsampled=cutoff_up,
+        sample_rate=sample_rate,
+        oversample_factor=oversample_factor,
+        resonance_q=resonance_q,
+        filter_mode=filter_mode,
+        filter_drive=filter_drive,
+        filter_even_harmonics=filter_even_harmonics,
+        filter_topology=filter_topology,
+        bass_compensation=bass_compensation,
+        filter_morph=filter_morph,
+        hpf_cutoff_hz=hpf_cutoff_hz,
+        hpf_resonance_q=hpf_resonance_q,
+        feedback_amount=feedback_amount,
+        feedback_saturation=feedback_saturation,
+        filter_solver=filter_solver,
+        max_newton_iters=max_newton_iters,
+        newton_tolerance=newton_tolerance,
+        k35_feedback_asymmetry=k35_feedback_asymmetry,
+    )
+
+
+def apply_filter_oversampled_preupsampled(
+    signal: np.ndarray,
+    *,
+    cutoff_profile_upsampled: np.ndarray,
+    sample_rate: int,
+    oversample_factor: int,
+    resonance_q: float = 0.707,
+    filter_mode: str = "lowpass",
+    filter_drive: float = 0.0,
+    filter_even_harmonics: float = 0.0,
+    filter_topology: str = "svf",
+    bass_compensation: float = 0.5,
+    filter_morph: float = 0.0,
+    hpf_cutoff_hz: float = 0.0,
+    hpf_resonance_q: float = 0.707,
+    feedback_amount: float = 0.0,
+    feedback_saturation: float = 0.3,
+    filter_solver: str = "adaa",
+    max_newton_iters: int = 4,
+    newton_tolerance: float = 1e-9,
+    k35_feedback_asymmetry: float = 0.0,
+) -> np.ndarray:
+    """Variant of :func:`apply_filter_oversampled` that skips the cutoff upsample.
+
+    The caller supplies ``cutoff_profile_upsampled`` already at
+    ``oversample_factor * sample_rate`` (use :func:`upsample_cutoff_profile`).
+    Saves a redundant Kaiser-8.6 polyphase resample when the same cutoff
+    curve is filtered through multiple channels (e.g. stereo bus effects).
+    """
+    if oversample_factor < 1:
+        raise ValueError("oversample_factor must be >= 1")
+
     fp = FilterParams(
         resonance_q=resonance_q,
         filter_mode=filter_mode,
@@ -1327,29 +1462,33 @@ def apply_filter_oversampled(
         newton_tolerance=newton_tolerance,
     )
 
-    if oversample_factor == 1:
-        return apply_filter(
-            signal,
-            cutoff_profile=cutoff_profile,
-            sample_rate=sample_rate,
-            **asdict(fp),
-        )
-
     n_base = int(signal.shape[0])
     if n_base == 0:
         return np.zeros(0, dtype=np.float64)
 
+    if oversample_factor == 1:
+        if cutoff_profile_upsampled.shape[0] != n_base:
+            raise ValueError(
+                "cutoff_profile_upsampled length must match signal length at "
+                "oversample_factor=1"
+            )
+        return apply_filter(
+            signal,
+            cutoff_profile=cutoff_profile_upsampled,
+            sample_rate=sample_rate,
+            **asdict(fp),
+        )
+
+    n_up_expected = n_base * oversample_factor
+    if cutoff_profile_upsampled.shape[0] != n_up_expected:
+        raise ValueError(
+            f"cutoff_profile_upsampled length {cutoff_profile_upsampled.shape[0]} "
+            f"must equal n_base * oversample_factor = {n_up_expected}"
+        )
+
     signal_up = resample_poly(
         signal, up=oversample_factor, down=1, window=_OVERSAMPLE_RESAMPLE_WINDOW
     ).astype(np.float64)
-    cutoff_up = resample_poly(
-        cutoff_profile,
-        up=oversample_factor,
-        down=1,
-        window=_OVERSAMPLE_RESAMPLE_WINDOW,
-    ).astype(np.float64)
-
-    n_up_expected = n_base * oversample_factor
     if signal_up.shape[0] != n_up_expected:
         if signal_up.shape[0] > n_up_expected:
             signal_up = signal_up[:n_up_expected]
@@ -1357,24 +1496,10 @@ def apply_filter_oversampled(
             signal_up = np.concatenate(
                 [signal_up, np.zeros(n_up_expected - signal_up.shape[0])]
             )
-    if cutoff_up.shape[0] != n_up_expected:
-        if cutoff_up.shape[0] > n_up_expected:
-            cutoff_up = cutoff_up[:n_up_expected]
-        else:
-            pad_value = cutoff_profile[-1] if cutoff_profile.shape[0] > 0 else 1000.0
-            cutoff_up = np.concatenate(
-                [
-                    cutoff_up,
-                    np.full(n_up_expected - cutoff_up.shape[0], float(pad_value)),
-                ]
-            )
-
-    nyquist_up = (sample_rate * oversample_factor) / 2.0
-    cutoff_up = np.clip(cutoff_up, 20.0, nyquist_up * 0.98)
 
     filtered_up = apply_filter(
         signal_up,
-        cutoff_profile=cutoff_up,
+        cutoff_profile=cutoff_profile_upsampled,
         sample_rate=sample_rate * oversample_factor,
         **asdict(fp),
     )

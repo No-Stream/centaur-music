@@ -6,6 +6,12 @@ dist/
 wheels/
 *.egg-info
 
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
 # Virtual environments
 .venv
 .uv-cache

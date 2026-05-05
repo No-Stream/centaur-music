@@ -1,0 +1,171 @@
+{
+  "meta": {
+    "oversample_factor": 8,
+    "sample_rate": 44100,
+    "target_shave_db": 2.5,
+    "knee_db": 3.0,
+    "notes": "Anchor: threshold chosen to give ~target_shave_db dB naive shave. Every variant clipped at the same linear threshold."
+  },
+  "measurements": [
+    {
+      "stimulus": "tones2",
+      "variant": "naive",
+      "shaved_db": 2.491,
+      "imd_ratio_residual": 0.013719,
+      "imd_sideband_energy": 932286.342
+    },
+    {
+      "stimulus": "tones2",
+      "variant": "ad1_hard",
+      "shaved_db": 2.491,
+      "imd_ratio_residual": 0.013723,
+      "imd_sideband_energy": 932261.624
+    },
+    {
+      "stimulus": "tones2",
+      "variant": "ad2_hard",
+      "shaved_db": 2.491,
+      "imd_ratio_residual": 0.013737,
+      "imd_sideband_energy": 932221.469
+    },
+    {
+      "stimulus": "tones2",
+      "variant": "ad2_crossfade_h085",
+      "shaved_db": 2.672,
+      "imd_ratio_residual": 0.022503,
+      "imd_sideband_energy": 1208330.196
+    },
+    {
+      "stimulus": "tones2",
+      "variant": "poly_direct_w3",
+      "shaved_db": 2.5,
+      "imd_ratio_residual": 0.015702,
+      "imd_sideband_energy": 894696.331
+    },
+    {
+      "stimulus": "tones2",
+      "variant": "ad1_poly_w3",
+      "shaved_db": 2.5,
+      "imd_ratio_residual": 0.015707,
+      "imd_sideband_energy": 894675.458
+    },
+    {
+      "stimulus": "tones2",
+      "variant": "ad2_poly_w3",
+      "shaved_db": 2.5,
+      "imd_ratio_residual": 0.01572,
+      "imd_sideband_energy": 894641.707
+    },
+    {
+      "stimulus": "tones2",
+      "variant": "poly_direct_w0",
+      "shaved_db": 2.491,
+      "imd_ratio_residual": 0.013719,
+      "imd_sideband_energy": 932286.342
+    },
+    {
+      "stimulus": "kick",
+      "variant": "naive",
+      "shaved_db": 2.499,
+      "imd_ratio_residual": 0.000494,
+      "hb_delta_aw_db": 2.862
+    },
+    {
+      "stimulus": "kick",
+      "variant": "ad1_hard",
+      "shaved_db": 2.499,
+      "imd_ratio_residual": 0.000495,
+      "hb_delta_aw_db": 2.845
+    },
+    {
+      "stimulus": "kick",
+      "variant": "ad2_hard",
+      "shaved_db": 2.495,
+      "imd_ratio_residual": 0.000497,
+      "hb_delta_aw_db": 2.826
+    },
+    {
+      "stimulus": "kick",
+      "variant": "ad2_crossfade_h085",
+      "shaved_db": 2.668,
+      "imd_ratio_residual": 0.009276,
+      "hb_delta_aw_db": 9.336
+    },
+    {
+      "stimulus": "kick",
+      "variant": "poly_direct_w3",
+      "shaved_db": 2.5,
+      "imd_ratio_residual": 0.00102,
+      "hb_delta_aw_db": 2.014
+    },
+    {
+      "stimulus": "kick",
+      "variant": "ad1_poly_w3",
+      "shaved_db": 2.5,
+      "imd_ratio_residual": 0.00102,
+      "hb_delta_aw_db": 1.989
+    },
+    {
+      "stimulus": "kick",
+      "variant": "ad2_poly_w3",
+      "shaved_db": 2.5,
+      "imd_ratio_residual": 0.001022,
+      "hb_delta_aw_db": 1.962
+    },
+    {
+      "stimulus": "kick",
+      "variant": "poly_direct_w0",
+      "shaved_db": 2.499,
+      "imd_ratio_residual": 0.000494,
+      "hb_delta_aw_db": 2.862
+    },
+    {
+      "stimulus": "sine440",
+      "variant": "naive",
+      "shaved_db": 2.483,
+      "thd_pct": 11.35
+    },
+    {
+      "stimulus": "sine440",
+      "variant": "ad1_hard",
+      "shaved_db": 2.483,
+      "thd_pct": 11.349
+    },
+    {
+      "stimulus": "sine440",
+      "variant": "ad2_hard",
+      "shaved_db": 2.484,
+      "thd_pct": 11.349
+    },
+    {
+      "stimulus": "sine440",
+      "variant": "ad2_crossfade_h085",
+      "shaved_db": 2.649,
+      "thd_pct": 12.25
+    },
+    {
+      "stimulus": "sine440",
+      "variant": "poly_direct_w3",
+      "shaved_db": 2.5,
+      "thd_pct": 10.203
+    },
+    {
+      "stimulus": "sine440",
+      "variant": "ad1_poly_w3",
+      "shaved_db": 2.5,
+      "thd_pct": 10.203
+    },
+    {
+      "stimulus": "sine440",
+      "variant": "ad2_poly_w3",
+      "shaved_db": 2.5,
+      "thd_pct": 10.202
+    },
+    {
+      "stimulus": "sine440",
+      "variant": "poly_direct_w0",
+      "shaved_db": 2.483,
+      "thd_pct": 11.35
+    }
+  ]
+}

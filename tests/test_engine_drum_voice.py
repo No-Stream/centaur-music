@@ -646,3 +646,78 @@ class TestPreampShaperDispatch:
         )
         assert np.isfinite(audio).all()
         assert np.max(np.abs(audio)) > 0
+
+
+# ---------------------------------------------------------------------------
+# Stored-reference regression: default-quality preset fingerprints.
+# ---------------------------------------------------------------------------
+
+
+_REGRESSION_SR = 48000
+
+
+def _spectral_centroid(signal: np.ndarray, sr: int) -> float:
+    spec = np.abs(np.fft.rfft(signal))
+    freqs = np.fft.rfftfreq(len(signal), 1.0 / sr)
+    total = float(spec.sum())
+    if total <= 0.0:
+        return 0.0
+    return float((spec * freqs).sum() / total)
+
+
+class TestDefaultQualityRegression:
+    """Freeze RMS + spectral-centroid fingerprints for representative
+    drum_voice presets at the engine's default quality tier.
+
+    This is the WS2-plan-required "default render matches current output
+    within tight tolerance" regression test for drum_voice.  A 0.5%
+    relative tolerance guards against silent DSP drift on transient
+    content — kick presets are more sensitive to envelope and filter
+    drift than sustained voices, so tight tolerance here is especially
+    valuable.
+
+    Mirrors ``tests/test_engine_va.py::TestPresets::
+    test_signature_preset_fingerprints``.  To rebaseline after an
+    intentional change, re-measure via a scratch script and update the
+    ``expected`` dict — keep the tolerance the same.
+    """
+
+    # Measured at quality="great" (default), freq=110 Hz, duration=1.0 s,
+    # amp=0.5.  909_tight is a transient-dominated snare; 808_house is a
+    # tuned sub kick — covering both ends of the percussion spectrum.
+    _EXPECTED: dict[str, tuple[float, float]] = {
+        "909_tight": (0.048635, 11429.4393),
+        "808_house": (0.123896, 369.3652),
+    }
+
+    @pytest.mark.parametrize("preset_name", sorted(_EXPECTED.keys()))
+    def test_preset_fingerprint_matches_baseline(self, preset_name: str) -> None:
+        from code_musics.engines.registry import (
+            render_note_signal,
+            resolve_synth_params,
+        )
+
+        exp_rms, exp_centroid = self._EXPECTED[preset_name]
+        params = resolve_synth_params({"engine": "drum_voice", "preset": preset_name})
+        params["_voice_name"] = f"regression_{preset_name}"
+        signal = render_note_signal(
+            freq=110.0,
+            duration=1.0,
+            amp=0.5,
+            sample_rate=_REGRESSION_SR,
+            params=params,
+        )
+        rms = float(np.sqrt(np.mean(signal * signal)))
+        centroid = _spectral_centroid(signal, _REGRESSION_SR)
+
+        rms_rel = abs(rms - exp_rms) / max(abs(exp_rms), 1e-12)
+        centroid_rel = abs(centroid - exp_centroid) / max(abs(exp_centroid), 1e-12)
+
+        assert rms_rel < 0.005, (
+            f"{preset_name}: RMS drifted — got {rms:.6f} expected {exp_rms:.6f} "
+            f"(rel_diff={rms_rel:.4f}, tol=0.5%)"
+        )
+        assert centroid_rel < 0.005, (
+            f"{preset_name}: spectral centroid drifted — got {centroid:.4f} "
+            f"expected {exp_centroid:.4f} (rel_diff={centroid_rel:.4f}, tol=0.5%)"
+        )

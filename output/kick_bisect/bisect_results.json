@@ -1,0 +1,187 @@
+[
+  {
+    "label": "0_full_chain",
+    "wav": "output/kick_bisect/kick_bisect_0_full_chain.wav",
+    "mix_peak_dbfs": -9.37,
+    "mix_integrated_lufs": -24.17,
+    "mix_true_peak_dbfs": -9.23,
+    "kick_a_weighted_hb_db": -2.71,
+    "kick_imd_input": 95.56,
+    "kick_imd_output": 80.33,
+    "kick_thd_input_pct": 10.23,
+    "kick_thd_output_pct": 11.11,
+    "kick_transient_kill_db": 0.0,
+    "kick_stem_warnings": [],
+    "drum_bus_hb_lift_db": 0.1,
+    "drum_bus_imd_input": 1.41,
+    "drum_bus_imd_output": 1.15,
+    "drum_bus_warnings": []
+  },
+  {
+    "label": "1_no_voice_preamp",
+    "wav": "output/kick_bisect/kick_bisect_1_no_voice_preamp.wav",
+    "mix_peak_dbfs": -9.44,
+    "mix_integrated_lufs": -24.17,
+    "mix_true_peak_dbfs": -9.3,
+    "kick_a_weighted_hb_db": -3.11,
+    "kick_imd_input": 95.56,
+    "kick_imd_output": 91.18,
+    "kick_thd_input_pct": 10.23,
+    "kick_thd_output_pct": 10.47,
+    "kick_transient_kill_db": 0.0,
+    "kick_stem_warnings": [],
+    "drum_bus_hb_lift_db": 0.11,
+    "drum_bus_imd_input": 1.59,
+    "drum_bus_imd_output": 1.29,
+    "drum_bus_warnings": []
+  },
+  {
+    "label": "2_no_voice_comp",
+    "wav": "output/kick_bisect/kick_bisect_2_no_voice_comp.wav",
+    "mix_peak_dbfs": -9.36,
+    "mix_integrated_lufs": -24.22,
+    "mix_true_peak_dbfs": -9.21,
+    "kick_a_weighted_hb_db": -3.56,
+    "kick_imd_input": 95.56,
+    "kick_imd_output": 84.52,
+    "kick_thd_input_pct": 10.23,
+    "kick_thd_output_pct": 10.84,
+    "kick_transient_kill_db": 0.0,
+    "kick_stem_warnings": [],
+    "drum_bus_hb_lift_db": 0.14,
+    "drum_bus_imd_input": 1.63,
+    "drum_bus_imd_output": 1.37,
+    "drum_bus_warnings": []
+  },
+  {
+    "label": "3_no_voice_fx",
+    "wav": "output/kick_bisect/kick_bisect_3_no_voice_fx.wav",
+    "mix_peak_dbfs": -9.43,
+    "mix_integrated_lufs": -24.22,
+    "mix_true_peak_dbfs": -9.28,
+    "kick_a_weighted_hb_db": -4.0,
+    "kick_imd_input": 95.56,
+    "kick_imd_output": 95.56,
+    "kick_thd_input_pct": 10.23,
+    "kick_thd_output_pct": 10.23,
+    "kick_transient_kill_db": 0.0,
+    "kick_stem_warnings": [],
+    "drum_bus_hb_lift_db": 0.16,
+    "drum_bus_imd_input": 1.82,
+    "drum_bus_imd_output": 1.54,
+    "drum_bus_warnings": []
+  },
+  {
+    "label": "4_no_bus",
+    "wav": "output/kick_bisect/kick_bisect_4_no_bus.wav",
+    "mix_peak_dbfs": -9.27,
+    "mix_integrated_lufs": -24.13,
+    "mix_true_peak_dbfs": -9.11,
+    "kick_a_weighted_hb_db": -2.71,
+    "kick_imd_input": 95.56,
+    "kick_imd_output": 80.33,
+    "kick_thd_input_pct": 10.23,
+    "kick_thd_output_pct": 11.11,
+    "kick_transient_kill_db": 0.0,
+    "kick_stem_warnings": [],
+    "drum_bus_hb_lift_db": -0.08,
+    "drum_bus_imd_input": 0.85,
+    "drum_bus_imd_output": 0.84,
+    "drum_bus_warnings": [
+      {
+        "stage": "compressor",
+        "warnings": [
+          {
+            "severity": "warning",
+            "code": "effect_mostly_inactive",
+            "message": "compressor appears mostly inactive",
+            "metrics": {
+              "avg_gain_reduction_db": 0.0,
+              "max_gain_reduction_db": 0.0
+            }
+          }
+        ]
+      },
+      {
+        "stage": "preamp",
+        "warnings": [
+          {
+            "severity": "warning",
+            "code": "effect_mostly_inactive",
+            "message": "effect appears to be doing very little",
+            "metrics": {
+              "crest_factor_delta_db": 0.03,
+              "spectral_centroid_delta_hz": 24.5,
+              "peak_delta_db": 0.01
+            }
+          }
+        ]
+      },
+      {
+        "stage": "clipper",
+        "warnings": [
+          {
+            "severity": "warning",
+            "code": "effect_mostly_inactive",
+            "message": "clipper is essentially inactive (input not reaching threshold)",
+            "metrics": {
+              "shaved_db": 0.12,
+              "active_fraction": 0.0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "5_light_bus",
+    "wav": "output/kick_bisect/kick_bisect_5_light_bus.wav",
+    "mix_peak_dbfs": -10.08,
+    "mix_integrated_lufs": -24.23,
+    "mix_true_peak_dbfs": -10.01,
+    "kick_a_weighted_hb_db": -2.71,
+    "kick_imd_input": 95.56,
+    "kick_imd_output": 80.33,
+    "kick_thd_input_pct": 10.23,
+    "kick_thd_output_pct": 11.11,
+    "kick_transient_kill_db": 0.0,
+    "kick_stem_warnings": [],
+    "drum_bus_hb_lift_db": 0.44,
+    "drum_bus_imd_input": 1.41,
+    "drum_bus_imd_output": 0.2,
+    "drum_bus_warnings": [
+      {
+        "stage": "compressor",
+        "warnings": [
+          {
+            "severity": "warning",
+            "code": "effect_mostly_inactive",
+            "message": "compressor appears mostly inactive",
+            "metrics": {
+              "avg_gain_reduction_db": 0.07,
+              "max_gain_reduction_db": 0.63
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "6_no_master",
+    "wav": "output/kick_bisect/kick_bisect_6_no_master.wav",
+    "mix_peak_dbfs": -9.51,
+    "mix_integrated_lufs": -24.0,
+    "mix_true_peak_dbfs": -9.33,
+    "kick_a_weighted_hb_db": -2.71,
+    "kick_imd_input": 95.56,
+    "kick_imd_output": 80.33,
+    "kick_thd_input_pct": 10.23,
+    "kick_thd_output_pct": 11.11,
+    "kick_transient_kill_db": 0.0,
+    "kick_stem_warnings": [],
+    "drum_bus_hb_lift_db": 0.1,
+    "drum_bus_imd_input": 1.41,
+    "drum_bus_imd_output": 1.15,
+    "drum_bus_warnings": []
+  }
+]

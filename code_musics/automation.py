@@ -88,6 +88,7 @@ _SUPPORTED_SYNTH_AUTOMATION_PARAMS = {
 }
 
 _SUPPORTED_CONTROL_AUTOMATION_PARAMS = {
+    "cutoff_hz",  # per-effect param automation — analog_filter effect cutoff sweeps
     "mix",
     "mix_db",
     "pan",

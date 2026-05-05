@@ -10,6 +10,7 @@ import re
 import struct
 import sys
 import tempfile
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -22,8 +23,39 @@ import soundfile as sf
 from scipy.signal import butter, lfilter, resample_poly, sosfilt, tf2sos
 
 from code_musics.automation import apply_control_automation
-from code_musics.engines._dsp_utils import classify_thd, compute_signal_thd
+from code_musics.engines._dsp_utils import (
+    apply_filter_oversampled_preupsampled,
+    classify_thd,
+    compute_signal_thd,
+    resolve_quality_mode,
+    upsample_cutoff_profile,
+)
+from code_musics.engines._filters import (
+    _SUPPORTED_FILTER_MODES,
+    _SUPPORTED_FILTER_TOPOLOGIES,
+)
+from code_musics.engines._instrumentation import (
+    PerHitSummary,
+    a_weighted_mean_band_energy_db,
+    detect_percussive_onsets,
+    intermodulation_ratio,
+    per_hit_transient_metrics,
+)
+from code_musics.engines._waveshaper import _apply_adaa2_poly_knee
 from code_musics.modulation import combine_connections_on_curve
+
+# Effect-level filter mode aliases.  The filter kernels use "lowpass"/"bandpass"/
+# "highpass"/"notch" internally; on the effect surface we accept the short
+# aliases (lp/bp/hp/notch) that match the documented parameter ranges.
+_ANALOG_FILTER_MODE_ALIAS: dict[str, str] = {
+    "lp": "lowpass",
+    "bp": "bandpass",
+    "hp": "highpass",
+    "notch": "notch",
+    "lowpass": "lowpass",
+    "bandpass": "bandpass",
+    "highpass": "highpass",
+}
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -101,6 +133,28 @@ class EffectAnalysisEntry:
             "display_name": self.display_name,
             "metrics": dict(self.metrics),
             "warnings": [warning.to_dict() for warning in self.warnings],
+        }
+
+
+@dataclass(frozen=True)
+class ChainSummary:
+    """Cumulative diagnostics across a full effect chain.
+
+    Surfaces "death by a thousand cuts" failure modes where no single
+    effect is over-driven but their stacked contribution is. Metrics
+    aggregate per-effect IO-deltas across the chain and flag drum-bus-
+    style failure patterns (papery brightness creep, transient
+    flattening, harmonic content piling up across serial saturation
+    stages).
+    """
+
+    metrics: dict[str, float | int | str]
+    warnings: list[EffectAnalysisWarning]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "metrics": dict(self.metrics),
+            "warnings": [w.to_dict() for w in self.warnings],
         }
 
 
@@ -1313,6 +1367,40 @@ def highpass(
     return np.asarray(sosfilt(sos, signal))
 
 
+def _linkwitz_riley_lowpass(
+    signal: np.ndarray, cutoff_hz: float, sample_rate: int
+) -> np.ndarray:
+    """Linkwitz-Riley 4th-order lowpass (two cascaded 2nd-order Butterworth).
+
+    Used for complementary multiband crossovers that sum to a flat magnitude
+    response when the two halves are recombined.
+    """
+    nyquist = sample_rate / 2.0
+    if cutoff_hz <= 0.0:
+        return np.zeros_like(signal)
+    if cutoff_hz >= nyquist * 0.995:
+        return np.asarray(signal, dtype=np.float64)
+    sos = butter(2, cutoff_hz / nyquist, btype="lowpass", output="sos")
+    y = sosfilt(sos, signal)
+    y = sosfilt(sos, y)
+    return np.asarray(y, dtype=np.float64)
+
+
+def _linkwitz_riley_highpass(
+    signal: np.ndarray, cutoff_hz: float, sample_rate: int
+) -> np.ndarray:
+    """Linkwitz-Riley 4th-order highpass (two cascaded 2nd-order Butterworth)."""
+    nyquist = sample_rate / 2.0
+    if cutoff_hz <= 0.0:
+        return np.asarray(signal, dtype=np.float64)
+    if cutoff_hz >= nyquist * 0.995:
+        return np.zeros_like(signal)
+    sos = butter(2, cutoff_hz / nyquist, btype="highpass", output="sos")
+    y = sosfilt(sos, signal)
+    y = sosfilt(sos, y)
+    return np.asarray(y, dtype=np.float64)
+
+
 def _apply_tilt_eq(
     signal: np.ndarray,
     *,
@@ -1411,36 +1499,162 @@ def _time_constant_to_coeff(time_ms: float, sample_rate: int) -> float:
     return float(np.exp(-1.0 / (0.001 * time_ms * sample_rate)))
 
 
-def _compressor_gain_db(
-    *,
-    level_db: float,
-    threshold_db: float,
-    ratio: float,
-    knee_db: float,
-) -> float:
-    if knee_db <= 0.0:
-        if level_db <= threshold_db:
-            return 0.0
-        compressed_db = threshold_db + ((level_db - threshold_db) / ratio)
-        return float(compressed_db - level_db)
-
-    lower_knee_db = threshold_db - (knee_db / 2.0)
-    upper_knee_db = threshold_db + (knee_db / 2.0)
-    if level_db <= lower_knee_db:
-        return 0.0
-    if level_db >= upper_knee_db:
-        compressed_db = threshold_db + ((level_db - threshold_db) / ratio)
-        return float(compressed_db - level_db)
-
-    knee_progress_db = level_db - lower_knee_db
-    return float(((1.0 / ratio) - 1.0) * (knee_progress_db**2) / (2.0 * knee_db))
-
-
 def _linked_detector_signal(signal: np.ndarray) -> np.ndarray:
     normalized = _coerce_signal_layout(signal)
     if normalized.ndim == 1:
         return np.abs(normalized)
     return np.max(np.abs(normalized), axis=0)
+
+
+def _compute_detector_rms_envelope(
+    *,
+    detector_source: np.ndarray,
+    sample_rate: int,
+    window_ms: float = 50.0,
+) -> np.ndarray:
+    """Compute a 50 ms non-overlapping RMS envelope of the detector signal.
+
+    The detector source should already have any detector-band EQ applied.
+    Mono or stereo input is reduced to a linked detector (max across
+    channels); the squared signal is divided into non-overlapping
+    ``window_ms`` windows and each window RMS is returned. The envelope
+    length is ``n_samples // window_samples`` (i.e., windowed, not
+    per-sample — see :func:`_expand_windowed_envelope_to_samples` for
+    expansion).
+    """
+    linked = _linked_detector_signal(detector_source)
+    n = linked.shape[0]
+    if n == 0:
+        return np.zeros(0, dtype=np.float64)
+    window_samples = max(1, int(round(window_ms * 1e-3 * sample_rate)))
+    squared = linked.astype(np.float64) ** 2
+    if n < window_samples:
+        return np.array([float(np.sqrt(np.mean(squared)))], dtype=np.float64)
+    n_windows = n // window_samples
+    trimmed = squared[: n_windows * window_samples]
+    windowed = trimmed.reshape(n_windows, window_samples)
+    return np.sqrt(np.mean(windowed, axis=1)).astype(np.float64)
+
+
+def _expand_windowed_envelope_to_samples(
+    windowed_envelope: np.ndarray,
+    *,
+    sample_count: int,
+    window_samples: int,
+) -> np.ndarray:
+    """Broadcast a per-window envelope back to sample-rate by repetition.
+
+    The last partial window (if the signal doesn't divide evenly) repeats
+    the final window value. Returns ``sample_count`` samples.
+    """
+    if windowed_envelope.size == 0:
+        return np.zeros(sample_count, dtype=np.float64)
+    expanded = np.repeat(windowed_envelope, window_samples)
+    if expanded.size < sample_count:
+        tail = np.full(sample_count - expanded.size, windowed_envelope[-1])
+        expanded = np.concatenate([expanded, tail])
+    elif expanded.size > sample_count:
+        expanded = expanded[:sample_count]
+    return expanded
+
+
+def _simulate_compressor_gr_trace_db(
+    *,
+    detector_trace: np.ndarray,
+    attack_coeff: float,
+    release_coeff: float,
+    threshold_db: float,
+    ratio: float,
+    knee_db: float,
+    is_rms: bool,
+    release_stage1_coeff: float,
+    release_stage2_coeff: float,
+) -> np.ndarray:
+    """Simulate the feedforward compressor and return the GR trace in dB.
+
+    Shares the same kernel as the main feedforward path so the solver and
+    the runtime use bit-identical math. Returns a trace where each sample
+    is the instantaneous attenuation in dB as a non-negative value (so
+    ``gr_db[i] = 4.0`` means the compressor is attenuating by 4 dB at
+    sample ``i``).
+    """
+    smoothed_level = _compressor_detector_smooth(
+        detector_trace, attack_coeff, release_coeff, is_rms
+    )
+    level_db = 20.0 * np.log10(np.maximum(smoothed_level, 1e-12))
+    target_gain_db = _compressor_gain_db_vec(level_db, threshold_db, ratio, knee_db)
+    smoothed_gain_db = _compressor_smooth_gain_loop(
+        target_gain_db, attack_coeff, release_stage1_coeff, release_stage2_coeff
+    )
+    return np.maximum(0.0, -smoothed_gain_db)
+
+
+def _solve_compressor_threshold_for_target_avg_gr(
+    *,
+    detector_trace: np.ndarray,
+    active_mask: np.ndarray,
+    attack_coeff: float,
+    release_coeff: float,
+    ratio: float,
+    knee_db: float,
+    is_rms: bool,
+    release_stage1_coeff: float,
+    release_stage2_coeff: float,
+    target_avg_gr_db: float,
+    search_low_db: float,
+    search_high_db: float,
+    max_iterations: int = 10,
+    tolerance_db: float = 0.25,
+) -> tuple[float, float, int]:
+    """Binary-search ``threshold_db`` for target average GR on active samples.
+
+    Returns ``(threshold_db, measured_avg_gr_db, iterations)``. The measure
+    is "mean attenuation in dB over samples where ``active_mask`` is True,"
+    matching the musician intuition that "4 dB of compression" means "you'll
+    see 4 dB avg GR on the parts the compressor is doing work."
+
+    Higher threshold -> less GR (monotonic), so standard bisection converges.
+    If ``active_mask`` is empty the caller is responsible for falling back;
+    we short-circuit and return ``(search_high_db, 0.0, 0)``.
+    """
+    if not np.any(active_mask):
+        return float(search_high_db), 0.0, 0
+
+    low = float(search_low_db)
+    high = float(search_high_db)
+    best_threshold = high
+    best_measured = 0.0
+    best_abs_error = float("inf")
+    iterations = 0
+    for _ in range(max_iterations):
+        iterations += 1
+        mid = 0.5 * (low + high)
+        gr_trace = _simulate_compressor_gr_trace_db(
+            detector_trace=detector_trace,
+            attack_coeff=attack_coeff,
+            release_coeff=release_coeff,
+            threshold_db=mid,
+            ratio=ratio,
+            knee_db=knee_db,
+            is_rms=is_rms,
+            release_stage1_coeff=release_stage1_coeff,
+            release_stage2_coeff=release_stage2_coeff,
+        )
+        measured_avg_gr = float(np.mean(gr_trace[active_mask]))
+        abs_error = abs(measured_avg_gr - target_avg_gr_db)
+        if abs_error < best_abs_error:
+            best_abs_error = abs_error
+            best_threshold = mid
+            best_measured = measured_avg_gr
+        if abs_error < tolerance_db:
+            return float(mid), measured_avg_gr, iterations
+        if measured_avg_gr > target_avg_gr_db:
+            # Too much GR — raise threshold (less compression).
+            low = mid
+        else:
+            # Too little GR — lower threshold (more compression).
+            high = mid
+    return float(best_threshold), float(best_measured), iterations
 
 
 def _resolve_compressor_release_times(
@@ -1482,6 +1696,55 @@ def _build_effect_warning(
     )
 
 
+def _populate_per_hit_effect_metrics(
+    *,
+    metrics: dict[str, float | int | str],
+    input_signal: np.ndarray,
+    output_signal: np.ndarray,
+    sample_rate: int,
+) -> None:
+    """Measure per-hit transient preservation for percussive voice effects.
+
+    Detects onsets on the input (pre-effect) signal and reuses those onset
+    indices on the output so the comparison is apples-to-apples. Writes
+    ``transient_kill_db`` (input p50 transient-peak ratio -> output p50),
+    ``hit_count``, and ``transient_peak_ratio_{input,output}`` to *metrics*.
+    """
+    mono_input = to_mono_reference(input_signal)
+    mono_output = to_mono_reference(output_signal)
+    if mono_input.size == 0 or mono_output.size == 0:
+        metrics["hit_count"] = 0
+        metrics["transient_kill_db"] = 0.0
+        return
+    onset_indices = detect_percussive_onsets(mono_input, sample_rate=sample_rate)
+    if onset_indices.size == 0:
+        metrics["hit_count"] = 0
+        metrics["transient_kill_db"] = 0.0
+        return
+    input_summary: PerHitSummary = per_hit_transient_metrics(
+        mono_input,
+        sample_rate=sample_rate,
+        onset_sample_indices=onset_indices,
+    )
+    output_summary: PerHitSummary = per_hit_transient_metrics(
+        mono_output,
+        sample_rate=sample_rate,
+        onset_sample_indices=onset_indices,
+    )
+    metrics["hit_count"] = int(input_summary.hit_count)
+    metrics["transient_peak_ratio_input_p50"] = round(
+        input_summary.transient_peak_ratio_p50, 4
+    )
+    metrics["transient_peak_ratio_output_p50"] = round(
+        output_summary.transient_peak_ratio_p50, 4
+    )
+    input_ratio = max(input_summary.transient_peak_ratio_p50, 1e-6)
+    output_ratio = max(output_summary.transient_peak_ratio_p50, 1e-6)
+    metrics["transient_kill_db"] = round(
+        20.0 * math.log10(output_ratio / input_ratio), 2
+    )
+
+
 def _build_effect_analysis_entry(
     *,
     index: int,
@@ -1491,6 +1754,7 @@ def _build_effect_analysis_entry(
     output_signal: np.ndarray,
     sample_rate: int,
     native_metrics: dict[str, float | int | str] | None = None,
+    percussive: bool = False,
 ) -> EffectAnalysisEntry:
     input_peak_dbfs = _signal_peak_dbfs(input_signal)
     output_peak_dbfs = _signal_peak_dbfs(output_signal)
@@ -1522,12 +1786,32 @@ def _build_effect_analysis_entry(
         low_hz=2_000.0,
         high_hz=8_000.0,
     )
+    input_a_weighted_high_band_db = a_weighted_mean_band_energy_db(
+        input_freqs,
+        input_magnitude_db,
+        low_hz=2_000.0,
+        high_hz=8_000.0,
+    )
+    output_a_weighted_high_band_db = a_weighted_mean_band_energy_db(
+        output_freqs,
+        output_magnitude_db,
+        low_hz=2_000.0,
+        high_hz=8_000.0,
+    )
     spectral_centroid_delta_hz = _spectral_centroid_hz(
         output_signal,
         sample_rate=sample_rate,
     ) - _spectral_centroid_hz(
         input_signal,
         sample_rate=sample_rate,
+    )
+
+    input_imd = intermodulation_ratio(input_freqs, input_magnitude_db)
+    output_imd = intermodulation_ratio(
+        output_freqs,
+        output_magnitude_db,
+        f1_override_hz=input_imd.f1_hz if input_imd.f1_hz > 0.0 else None,
+        f2_override_hz=input_imd.f2_hz if input_imd.f2_hz > 0.0 else None,
     )
 
     # Signal-level THD: use the input dominant frequency as reference for both
@@ -1571,13 +1855,27 @@ def _build_effect_analysis_entry(
             6,
         ),
         "high_band_delta_db": round(output_high_band_db - input_high_band_db, 2),
+        "a_weighted_high_band_delta_db": round(
+            output_a_weighted_high_band_db - input_a_weighted_high_band_db, 2
+        ),
         "spectral_centroid_delta_hz": round(spectral_centroid_delta_hz, 1),
         "input_thd_pct": round(input_thd_pct, 2),
         "input_thd_character": input_thd_character,
         "output_thd_pct": round(output_thd_pct, 2),
         "output_thd_character": output_thd_character,
         "thd_delta_pct": round(thd_delta_pct, 2),
+        "imd_ratio_input": round(input_imd.ratio, 4),
+        "imd_ratio_output": round(output_imd.ratio, 4),
+        "imd_ratio_delta": round(output_imd.ratio - input_imd.ratio, 4),
+        "imd_detection": output_imd.detection,
     }
+    if percussive:
+        _populate_per_hit_effect_metrics(
+            metrics=metrics,
+            input_signal=input_signal,
+            output_signal=output_signal,
+            sample_rate=sample_rate,
+        )
     if native_metrics is not None:
         metrics.update(native_metrics)
 
@@ -1669,6 +1967,104 @@ def _build_effect_analysis_warnings(
             )
         return warnings
 
+    if kind == "clipper":
+        shaved_db = float(metrics.get("shaved_db", 0.0))
+        active_fraction = float(metrics.get("active_fraction", 0.0))
+        high_band_delta_db = float(metrics.get("high_band_delta_db", 0.0))
+        # New API exposes knee_width_db; fall back to the legacy hardness key
+        # for any cached analysis dicts written before the rewrite.
+        knee_width_db = float(metrics.get("knee_width_db", 0.0))
+        legacy_hardness = float(metrics.get("hardness", -1.0))
+        if legacy_hardness >= 0.0 and "knee_width_db" not in metrics:
+            # Roughly inverse-map old hardness into a knee proxy so the
+            # brittle-character detector still fires on legacy metrics.
+            knee_width_db = (1.0 - legacy_hardness) * 4.0
+        # Thresholds calibrated for the poly-knee clipper (April 2026 rewrite).
+        # The old 3.0 / 6.0 pair was tuned for the hardness-crossfade kernel,
+        # which added ~6.5 dB of 2-8 kHz lift at 3 dB shave on a kick
+        # transient.  The poly-knee kernel adds <0.2 dB of HB lift at the
+        # same depth (measured across va_trance, amber_room, forge,
+        # iron_pulse, iron_pulse_v2); 3-5 dB shave is cleanly musical on
+        # real drum-bus content.  Thresholds bumped so the warning fires
+        # when the clipper is genuinely working hard, not on routine glue.
+        if shaved_db >= 8.0:
+            warnings.append(
+                _build_effect_warning(
+                    severity="severe",
+                    code="aggressive_clipping",
+                    message="clipper is shaving peaks very aggressively",
+                    shaved_db=round(shaved_db, 2),
+                    active_fraction=round(active_fraction, 4),
+                )
+            )
+        elif shaved_db >= 5.0:
+            warnings.append(
+                _build_effect_warning(
+                    severity="warning",
+                    code="aggressive_clipping",
+                    message="clipper is shaving substantial peak energy",
+                    shaved_db=round(shaved_db, 2),
+                    active_fraction=round(active_fraction, 4),
+                )
+            )
+        # Brittle-kick detector: a narrow-knee clipper pushed into wave-shaping
+        # territory sounds papery when it lifts the 2-8 kHz band noticeably.
+        # knee_width_db <= 1 dB is functionally hard; the failure mode is the
+        # combination of narrow knee, non-trivial shave, and HF lift.
+        if knee_width_db <= 1.0 and shaved_db >= 1.5 and high_band_delta_db >= 2.5:
+            warnings.append(
+                _build_effect_warning(
+                    severity="warning",
+                    code="clipper_brittle_character",
+                    message="clipper may be creating brittle/papery high-frequency character",
+                    knee_width_db=round(knee_width_db, 2),
+                    shaved_db=round(shaved_db, 2),
+                    high_band_delta_db=round(high_band_delta_db, 2),
+                )
+            )
+        if active_fraction < 0.001 and shaved_db < 0.2:
+            warnings.append(
+                _build_effect_warning(
+                    severity="warning",
+                    code="effect_mostly_inactive",
+                    message="clipper is essentially inactive (input not reaching threshold)",
+                    shaved_db=round(shaved_db, 2),
+                    active_fraction=round(active_fraction, 4),
+                )
+            )
+        return warnings
+
+    if kind == "limiter":
+        max_gain_reduction_db = float(metrics.get("max_gain_reduction_db", 0.0))
+        avg_gr_when_active_db = float(
+            metrics.get("avg_gain_reduction_when_active_db", 0.0)
+        )
+        active_fraction = float(metrics.get("active_gain_reduction_fraction", 0.0))
+        # max_gain_reduction_db is negative when limiting is active
+        if max_gain_reduction_db <= -6.0 or active_fraction >= 0.20:
+            warnings.append(
+                _build_effect_warning(
+                    severity="severe",
+                    code="aggressive_limiting",
+                    message="limiter is doing heavy work — input is significantly hotter than threshold",
+                    max_gain_reduction_db=round(max_gain_reduction_db, 2),
+                    avg_gain_reduction_when_active_db=round(avg_gr_when_active_db, 2),
+                    active_fraction=round(active_fraction, 4),
+                )
+            )
+        elif max_gain_reduction_db <= -3.0 or active_fraction >= 0.05:
+            warnings.append(
+                _build_effect_warning(
+                    severity="warning",
+                    code="aggressive_limiting",
+                    message="limiter is regularly active — consider easing the input level",
+                    max_gain_reduction_db=round(max_gain_reduction_db, 2),
+                    avg_gain_reduction_when_active_db=round(avg_gr_when_active_db, 2),
+                    active_fraction=round(active_fraction, 4),
+                )
+            )
+        return warnings
+
     crest_factor_delta_db = float(metrics.get("crest_factor_delta_db", 0.0))
     clipped_sample_fraction_delta = float(
         metrics.get("clipped_sample_fraction_delta", 0.0)
@@ -1735,27 +2131,508 @@ def _build_effect_analysis_warnings(
             )
         )
 
-    thd_delta_pct = float(metrics.get("thd_delta_pct", 0.0))
-    if thd_delta_pct >= 20.0:
+    # effect_introduced_distortion is driven by IMD-ratio relative growth
+    # (not THD delta), which stays content-invariant on harmonically-dense
+    # material. See the identical pattern in analysis.py
+    # _build_mastering_analysis_risks for the rationale.
+    imd_input = float(metrics.get("imd_ratio_input", 0.0))
+    imd_output = float(metrics.get("imd_ratio_output", 0.0))
+    imd_delta = imd_output - imd_input
+    imd_growth_factor = imd_delta / max(imd_input, 0.1)
+    imd_detection = str(metrics.get("imd_detection", "single_tone"))
+    if imd_detection == "two_tone" and imd_growth_factor >= 1.5:
         warnings.append(
             _build_effect_warning(
                 severity="severe",
                 code="effect_introduced_distortion",
-                message="effect introduced heavy harmonic distortion",
-                thd_delta_pct=round(thd_delta_pct, 2),
-                input_thd_pct=float(metrics.get("input_thd_pct", 0.0)),
-                output_thd_pct=float(metrics.get("output_thd_pct", 0.0)),
+                message=(
+                    "effect grew IMD sharply — output has much more nonlinear "
+                    "content than input (likely overdriven)"
+                ),
+                imd_ratio_delta=round(imd_delta, 4),
+                imd_growth_factor=round(imd_growth_factor, 3),
+                imd_ratio_input=round(imd_input, 4),
+                imd_ratio_output=round(imd_output, 4),
+                # Retained for reference; not gating.
+                thd_delta_pct=round(float(metrics.get("thd_delta_pct", 0.0)), 2),
             )
         )
-    elif thd_delta_pct >= 8.0:
+    elif imd_detection == "two_tone" and imd_growth_factor >= 0.5:
         warnings.append(
             _build_effect_warning(
                 severity="warning",
                 code="effect_introduced_distortion",
-                message="effect introduced noticeable harmonic distortion",
-                thd_delta_pct=round(thd_delta_pct, 2),
-                input_thd_pct=float(metrics.get("input_thd_pct", 0.0)),
-                output_thd_pct=float(metrics.get("output_thd_pct", 0.0)),
+                message=(
+                    "effect added noticeable nonlinear coloration "
+                    "(fine if intentional warmth; check the audio)"
+                ),
+                imd_ratio_delta=round(imd_delta, 4),
+                imd_growth_factor=round(imd_growth_factor, 3),
+                imd_ratio_input=round(imd_input, 4),
+                imd_ratio_output=round(imd_output, 4),
+                thd_delta_pct=round(float(metrics.get("thd_delta_pct", 0.0)), 2),
+            )
+        )
+
+    return warnings
+
+
+# Effect kinds whose DSP can add harmonic content. Used to gate the
+# cumulative-brightness chain warnings (chain_papery,
+# perceptual_brightness_lift). Linear / time-based effects (eq, delay,
+# reverb, chorus, phaser, bbd_chorus, mod_delay) can lift 2-8 kHz energy at
+# the chain output vs. input simply by adding wet signal, which is not
+# the "stacked brittleness" failure mode those warnings are meant to
+# catch. Measured IMD growth on any stage (tracked separately via
+# nonlinear_stage_count) also qualifies a chain as potentially nonlinear.
+_NONLINEAR_EFFECT_KINDS: frozenset[str] = frozenset(
+    {
+        "drive",
+        "clipper",
+        "preamp",
+        "saturation",  # legacy alias for drive
+        "airwindows",
+        "byod",
+        "chow_centaur",
+    }
+)
+
+
+def build_chain_summary_from_dicts(
+    entries: list[dict[str, Any]],
+    *,
+    chain_label: str | None = None,
+) -> ChainSummary | None:
+    """Build a chain summary from serialized per-effect entry dicts.
+
+    Used when effect analysis has already been materialized into the
+    manifest (post-render) rather than held as live
+    :class:`EffectAnalysisEntry` instances.
+    """
+    rebuilt = [
+        EffectAnalysisEntry(
+            index=int(e.get("index", i)),
+            kind=str(e.get("kind", "")),
+            display_name=str(e.get("display_name", e.get("kind", ""))),
+            metrics=dict(e.get("metrics", {})),
+            warnings=[],
+        )
+        for i, e in enumerate(entries)
+    ]
+    return _build_chain_summary(rebuilt, chain_label=chain_label)
+
+
+def _build_chain_summary(
+    entries: list[EffectAnalysisEntry],
+    *,
+    chain_label: str | None = None,
+) -> ChainSummary | None:
+    """Aggregate per-effect metrics into chain-level diagnostics.
+
+    Returns None for chains of fewer than two effects (no stacking to
+    measure). Sums positive THD, centroid-lift, and high-band-lift deltas;
+    sums negative peak + crest deltas; sums compressor + limiter GR.
+    Emits leveled warnings when cumulative totals cross musical-failure
+    thresholds even though no single stage may have tripped individually.
+    """
+    if len(entries) < 2:
+        return None
+
+    total_thd_growth_pct = 0.0  # kept as reference metric; no longer drives warnings
+    total_imd_growth_factor = 0.0
+    total_centroid_lift_hz = 0.0
+    total_high_band_lift_db = 0.0
+    total_peak_shave_db = 0.0
+    total_crest_loss_db = 0.0
+    total_compressor_gr_db = 0.0
+    total_limiter_gr_db = 0.0
+    total_clipper_shave_db = 0.0
+    nonlinear_stage_count = 0
+    kinds: list[str] = []
+
+    for entry in entries:
+        m = entry.metrics
+        kinds.append(entry.kind)
+
+        thd_delta = float(m.get("thd_delta_pct", 0.0))
+        if thd_delta > 0.0:
+            total_thd_growth_pct += thd_delta
+
+        # Track cumulative IMD growth for chain_over_saturated, and count
+        # nonlinear stages for the chain_papery / perceptual_brightness_lift
+        # gate.  A stage counts as "nonlinear" when its effect kind can
+        # physically produce harmonic buildup (see _NONLINEAR_EFFECT_KINDS)
+        # *and* its measured IMD growth is substantive (>= 20%).
+        #
+        # The kind guard matters: reverb and long delay tails routinely
+        # shift the two-tone IMD ratio measurement by more than 20% just by
+        # redistributing spectral balance in the wet signal, which is a
+        # measurement artifact rather than real nonlinearity.  Without the
+        # kind guard, pure-linear send buses trip the brightness warnings
+        # as false positives.
+        imd_input = float(m.get("imd_ratio_input", 0.0))
+        imd_output = float(m.get("imd_ratio_output", 0.0))
+        stage_imd_growth = (imd_output - imd_input) / max(imd_input, 0.1)
+        if (
+            str(m.get("imd_detection", "single_tone")) == "two_tone"
+            and stage_imd_growth > 0.0
+        ):
+            total_imd_growth_factor += stage_imd_growth
+            if stage_imd_growth >= 0.2 and entry.kind in _NONLINEAR_EFFECT_KINDS:
+                nonlinear_stage_count += 1
+
+        centroid_delta = float(m.get("spectral_centroid_delta_hz", 0.0))
+        if centroid_delta > 0.0:
+            total_centroid_lift_hz += centroid_delta
+
+        high_band_delta = float(m.get("high_band_delta_db", 0.0))
+        if high_band_delta > 0.0:
+            total_high_band_lift_db += high_band_delta
+
+        peak_delta = float(m.get("peak_delta_db", 0.0))
+        if peak_delta < 0.0:
+            total_peak_shave_db += -peak_delta
+
+        crest_delta = float(m.get("crest_factor_delta_db", 0.0))
+        if crest_delta < 0.0:
+            total_crest_loss_db += -crest_delta
+
+        if entry.kind == "compressor":
+            total_compressor_gr_db += float(m.get("avg_gain_reduction_db", 0.0))
+        elif entry.kind == "limiter":
+            # max_gain_reduction_db is negative when active; track as positive
+            total_limiter_gr_db += -float(m.get("max_gain_reduction_db", 0.0))
+        elif entry.kind == "clipper":
+            total_clipper_shave_db += float(m.get("shaved_db", 0.0))
+
+    metrics: dict[str, float | int | str] = {
+        "stage_count": len(entries),
+        "kinds": ",".join(kinds),
+        # Reference metric retained for historical comparison. IMD-ratio
+        # growth is the reliable signal; THD shifts on harmonically-rich
+        # content without any nonlinearity actually being introduced.
+        "total_thd_growth_pct": round(total_thd_growth_pct, 2),
+        "total_imd_growth_factor": round(total_imd_growth_factor, 3),
+        "total_centroid_lift_hz": round(total_centroid_lift_hz, 1),
+        "total_high_band_lift_db": round(total_high_band_lift_db, 2),
+        "total_peak_shave_db": round(total_peak_shave_db, 2),
+        "total_crest_loss_db": round(total_crest_loss_db, 2),
+        "total_compressor_gr_db": round(total_compressor_gr_db, 2),
+        "total_limiter_gr_db": round(total_limiter_gr_db, 2),
+        "total_clipper_shave_db": round(total_clipper_shave_db, 2),
+        "nonlinear_stage_count": nonlinear_stage_count,
+    }
+
+    warnings: list[EffectAnalysisWarning] = []
+    label_prefix = f"{chain_label}: " if chain_label else ""
+
+    # chain_over_saturated fires on cumulative IMD growth, not THD.
+    # Thresholds: >= 3.0 cumulative growth factor = severe (e.g. two stages
+    # each doubling IMD), >= 1.0 = warning (a single stage adding meaningful
+    # nonlinearity, or two moderate ones).
+    if total_imd_growth_factor >= 3.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="severe",
+                code="chain_over_saturated",
+                message=f"{label_prefix}cumulative distortion is very high across the chain",
+                total_imd_growth_factor=round(total_imd_growth_factor, 3),
+                total_thd_growth_pct=round(total_thd_growth_pct, 2),
+                nonlinear_stage_count=nonlinear_stage_count,
+            )
+        )
+    elif total_imd_growth_factor >= 1.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="warning",
+                code="chain_over_saturated",
+                message=f"{label_prefix}cumulative distortion is elevated across the chain",
+                total_imd_growth_factor=round(total_imd_growth_factor, 3),
+                total_thd_growth_pct=round(total_thd_growth_pct, 2),
+                nonlinear_stage_count=nonlinear_stage_count,
+            )
+        )
+
+    # Papery-kick detector — the failure we actually saw in va_trance.
+    # Triggers when high-band energy is being lifted cumulatively by the
+    # chain, indicating stacked saturation + clipping pushing brittle
+    # upper-midrange harmonics.
+    #
+    # Gate: only fire when the chain contains at least one nonlinear stage.
+    # A pure linear/time-based chain (eq + delay, reverb, chorus) can sum
+    # high-band deltas stage-over-stage without producing brittleness —
+    # it just replicates existing content as wet signal.
+    chain_has_nonlinear_stage = nonlinear_stage_count > 0 or any(
+        kind in _NONLINEAR_EFFECT_KINDS for kind in kinds
+    )
+    if chain_has_nonlinear_stage and total_high_band_lift_db >= 8.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="severe",
+                code="chain_papery",
+                message=f"{label_prefix}chain is adding brittle high-frequency content (>8 dB of 2-8 kHz lift)",
+                total_high_band_lift_db=round(total_high_band_lift_db, 2),
+                total_centroid_lift_hz=round(total_centroid_lift_hz, 1),
+            )
+        )
+    elif chain_has_nonlinear_stage and total_high_band_lift_db >= 4.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="warning",
+                code="chain_papery",
+                message=f"{label_prefix}chain may be adding papery high-frequency character",
+                total_high_band_lift_db=round(total_high_band_lift_db, 2),
+                total_centroid_lift_hz=round(total_centroid_lift_hz, 1),
+            )
+        )
+
+    if total_centroid_lift_hz >= 1200.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="severe",
+                code="chain_brightness_creep",
+                message=f"{label_prefix}cumulative spectral centroid lift is very high",
+                total_centroid_lift_hz=round(total_centroid_lift_hz, 1),
+            )
+        )
+    elif total_centroid_lift_hz >= 500.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="warning",
+                code="chain_brightness_creep",
+                message=f"{label_prefix}cumulative spectral centroid is drifting bright",
+                total_centroid_lift_hz=round(total_centroid_lift_hz, 1),
+            )
+        )
+
+    # Thresholds reflect poly-knee clipper + comp glue behavior (April 2026).
+    # A finished drum bus with comp (3-6 dB GR) + poly-knee clipper (1-3 dB
+    # shave) routinely lands in the 3-4.5 dB cumulative crest-loss band
+    # without sounding flattened — that's what "glued" means.  Warning
+    # bumped 3->4.5 dB and severe 6->7 dB so the signal fires on real
+    # transient-killing chains, not on healthy bus glue.
+    if total_crest_loss_db >= 7.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="severe",
+                code="chain_transient_flattening",
+                message=f"{label_prefix}chain is flattening transients substantially",
+                total_crest_loss_db=round(total_crest_loss_db, 2),
+            )
+        )
+    elif total_crest_loss_db >= 4.5:
+        warnings.append(
+            _build_effect_warning(
+                severity="warning",
+                code="chain_transient_flattening",
+                message=f"{label_prefix}chain is flattening transients",
+                total_crest_loss_db=round(total_crest_loss_db, 2),
+            )
+        )
+
+    total_gr = total_compressor_gr_db + total_limiter_gr_db
+    if total_gr >= 14.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="severe",
+                code="chain_over_compressed",
+                message=f"{label_prefix}cumulative gain reduction across comp+limit stages is very high",
+                total_compressor_gr_db=round(total_compressor_gr_db, 2),
+                total_limiter_gr_db=round(total_limiter_gr_db, 2),
+            )
+        )
+    elif total_gr >= 8.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="warning",
+                code="chain_over_compressed",
+                message=f"{label_prefix}cumulative gain reduction across comp+limit stages is elevated",
+                total_compressor_gr_db=round(total_compressor_gr_db, 2),
+                total_limiter_gr_db=round(total_limiter_gr_db, 2),
+            )
+        )
+
+    # A-weighted perceptual brightness lift across the chain.
+    # Gated on nonlinear-stage presence for the same reason as chain_papery
+    # above — linear time-based effects (delay, reverb, eq, chorus) can
+    # accumulate a_weighted_high_band_delta without harmonic buildup.
+    total_a_weighted_lift_db = 0.0
+    for entry in entries:
+        a_delta = float(entry.metrics.get("a_weighted_high_band_delta_db", 0.0))
+        if a_delta > 0.0:
+            total_a_weighted_lift_db += a_delta
+    metrics["total_a_weighted_high_band_lift_db"] = round(total_a_weighted_lift_db, 2)
+    if chain_has_nonlinear_stage and total_a_weighted_lift_db >= 8.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="severe",
+                code="perceptual_brightness_lift",
+                message=f"{label_prefix}A-weighted high-band energy is rising sharply across the chain",
+                total_a_weighted_high_band_lift_db=round(total_a_weighted_lift_db, 2),
+            )
+        )
+    elif chain_has_nonlinear_stage and total_a_weighted_lift_db >= 4.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="warning",
+                code="perceptual_brightness_lift",
+                message=f"{label_prefix}A-weighted high-band energy is drifting upward across the chain",
+                total_a_weighted_high_band_lift_db=round(total_a_weighted_lift_db, 2),
+            )
+        )
+
+    return ChainSummary(metrics=metrics, warnings=warnings)
+
+
+def build_voice_stem_delta(
+    *,
+    voice_name: str,
+    dry_signal: np.ndarray,
+    wet_signal: np.ndarray,
+    sample_rate: int,
+    percussive: bool,
+) -> dict[str, Any]:
+    """Compute dry->wet delta metrics for a single voice-chain stem.
+
+    Mirrors the per-effect IO deltas but at the voice-chain level: synth
+    output pre-effects (*dry_signal*) vs post-voice-effects (*wet_signal*).
+    Catches failure modes invisible to per-effect or global-mix diagnostics:
+    "how did my kick change between voice synth and post-FX?"
+
+    When *percussive* is True, onset detection runs on the dry signal and
+    transient preservation is reported per hit. Emits new warning codes
+    ``percussive_transient_killed``, ``percussive_crunch_character``, and
+    ``transient_brightness_decoupled``.
+    """
+    entry = _build_effect_analysis_entry(
+        index=0,
+        kind="voice_stem",
+        display_name=f"voice_stem:{voice_name}",
+        input_signal=dry_signal,
+        output_signal=wet_signal,
+        sample_rate=sample_rate,
+        percussive=percussive,
+    )
+    metrics: dict[str, float | int | str] = dict(entry.metrics)
+    warnings: list[EffectAnalysisWarning] = []
+    if percussive:
+        warnings.extend(_build_voice_stem_percussive_warnings(metrics))
+    a_weighted_delta = float(metrics.get("a_weighted_high_band_delta_db", 0.0))
+    if a_weighted_delta >= 8.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="severe",
+                code="perceptual_brightness_lift",
+                message=(
+                    f"voice_stem:{voice_name} A-weighted high-band energy "
+                    "rose sharply through the voice chain"
+                ),
+                a_weighted_high_band_delta_db=round(a_weighted_delta, 2),
+            )
+        )
+    elif a_weighted_delta >= 4.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="warning",
+                code="perceptual_brightness_lift",
+                message=(
+                    f"voice_stem:{voice_name} A-weighted high-band energy "
+                    "drifted upward through the voice chain"
+                ),
+                a_weighted_high_band_delta_db=round(a_weighted_delta, 2),
+            )
+        )
+    return {
+        "voice_name": voice_name,
+        "percussive": bool(percussive),
+        "metrics": metrics,
+        "warnings": [w.to_dict() for w in warnings],
+    }
+
+
+def _build_voice_stem_percussive_warnings(
+    metrics: dict[str, float | int | str],
+) -> list[EffectAnalysisWarning]:
+    """Warning codes specific to percussive voice-chain deltas.
+
+    Codes
+    -----
+    ``percussive_transient_killed``
+        Fires when the voice chain's ``transient_kill_db`` crosses
+        warning/severe thresholds. Severe at ~-30% kill (-3.1 dB), warning
+        at ~-15% (-1.4 dB).
+    ``percussive_crunch_character``
+        Fires when the voice chain exhibits BOTH elevated IMD ratio
+        (>0.4) AND substantial A-weighted brightness lift (>2 dB). The
+        "crunchy kick" detector.
+    ``transient_brightness_decoupled``
+        Fires when A-weighted brightness lift is high (>3 dB) but
+        transients are killed (input p50 - output p50 ratio loss). The
+        "papery without punch" detector — brightness is the surface
+        symptom, flattened transients are the root cause.
+    """
+    warnings: list[EffectAnalysisWarning] = []
+    transient_kill_db = float(metrics.get("transient_kill_db", 0.0))
+    imd_ratio_output = float(metrics.get("imd_ratio_output", 0.0))
+    a_weighted_delta = float(metrics.get("a_weighted_high_band_delta_db", 0.0))
+    input_p50 = float(metrics.get("transient_peak_ratio_input_p50", 0.0))
+    output_p50 = float(metrics.get("transient_peak_ratio_output_p50", 0.0))
+
+    # percussive_transient_killed: severe when >30% kill (-3.1 dB),
+    # warning when >15% (-1.4 dB).
+    if transient_kill_db <= -3.1:
+        warnings.append(
+            _build_effect_warning(
+                severity="severe",
+                code="percussive_transient_killed",
+                message="voice chain crushes the per-hit transient by more than 30%",
+                transient_kill_db=round(transient_kill_db, 2),
+                transient_peak_ratio_input_p50=round(input_p50, 4),
+                transient_peak_ratio_output_p50=round(output_p50, 4),
+            )
+        )
+    elif transient_kill_db <= -1.4:
+        warnings.append(
+            _build_effect_warning(
+                severity="warning",
+                code="percussive_transient_killed",
+                message="voice chain is softening per-hit transients by >15%",
+                transient_kill_db=round(transient_kill_db, 2),
+                transient_peak_ratio_input_p50=round(input_p50, 4),
+                transient_peak_ratio_output_p50=round(output_p50, 4),
+            )
+        )
+
+    # percussive_crunch_character: IMD + brightness combo (the THD-invisible
+    # crunch flavor).
+    if imd_ratio_output >= 0.4 and a_weighted_delta >= 2.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="warning",
+                code="percussive_crunch_character",
+                message=(
+                    "voice chain is adding crunchy character "
+                    "(intermodulation products dominate over harmonic distortion)"
+                ),
+                imd_ratio_output=round(imd_ratio_output, 4),
+                a_weighted_high_band_delta_db=round(a_weighted_delta, 2),
+            )
+        )
+
+    # transient_brightness_decoupled: brightness without punch.
+    # Only fires when per-hit data is available (hit_count > 0).
+    hit_count = int(metrics.get("hit_count", 0))
+    if hit_count > 0 and a_weighted_delta >= 3.0 and transient_kill_db <= -1.0:
+        warnings.append(
+            _build_effect_warning(
+                severity="warning",
+                code="transient_brightness_decoupled",
+                message=(
+                    "voice chain adds brightness without preserving punch "
+                    "(papery symptom, flattened transients are the root cause)"
+                ),
+                a_weighted_high_band_delta_db=round(a_weighted_delta, 2),
+                transient_kill_db=round(transient_kill_db, 2),
             )
         )
 
@@ -1966,9 +2843,63 @@ def apply_compressor(
     sidechain_signal: np.ndarray | None = None,
     lookahead_ms: float = 0.0,
     sample_rate: int = SAMPLE_RATE,
+    target_avg_gr_db: float | None = None,
     return_analysis: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
-    """Apply a native stereo-linked compressor with optional detector EQ."""
+    """Apply a native stereo-linked compressor with optional detector EQ.
+
+    Auto-calibration (piece-aware threshold targeting)
+    --------------------------------------------------
+    When ``target_avg_gr_db`` is set (default ``None``), the compressor
+    binary-searches ``threshold_db`` so that the *average gain reduction on
+    active samples* matches the target. "Active" means the 50 ms RMS detector
+    envelope at that sample sits within 40 dB of the detector envelope's p99
+    peak — i.e., the parts of the piece the compressor is doing real work on.
+
+    This matches musician intuition: "4 dB of compression" means "you'll
+    measure 4 dB avg GR on the parts the compressor is working." Unlike a
+    piece-level mean GR (which silent gaps on sparse drum content drag down)
+    or a single-point closed-form solve (which picks a threshold and hopes
+    the ballistics deliver the intended feel), the active-region metric
+    reports the compressor's *character*.
+
+    The solver invokes the same feedforward GR kernel the main path uses, so
+    it's bit-consistent with the runtime kernel (modulo the feedforward vs.
+    feedback topology difference — see Notes below). The binary search runs
+    up to 10 iterations over candidate thresholds; each iteration costs one
+    envelope-kernel pass on the detector trace, which is cheap.
+
+    This is the sibling of :func:`apply_clipper`'s ``max_shave_db`` pattern:
+    both make a compressor/clipper *piece-aware* by letting the user set
+    target behavior in dB rather than tuning threshold for every piece.
+
+    When both ``target_avg_gr_db`` and a non-default ``threshold_db`` are
+    set, a warning is logged and ``target_avg_gr_db`` wins.
+
+    Edge cases
+    ~~~~~~~~~~
+
+    - **Silent / DC-only input**: no active samples exist, so the solver
+      logs a WARNING and falls back to the caller's ``threshold_db`` (or
+      the ``-20.0`` default). No crash, no NaN.
+    - **Solver doesn't converge**: if |measured - target| is still more
+      than 0.75 dB after 10 iterations, a WARNING is logged and the best
+      candidate found is applied anyway.
+
+    Notes
+    -----
+    - The solver uses feedforward simulation even when ``topology="feedback"``
+      is configured. Feedback-loop-coupled GR can differ from the feedforward
+      approximation by ~0.5-1.5 dB on loud material; the design intent is
+      "this is approximately how much glue we want," not bit-exact GR.
+
+    Parameters
+    ----------
+    target_avg_gr_db : float | None
+        Desired average gain reduction in dB on active samples (detector
+        envelope within 40 dB of its p99 peak). Default ``None`` — no
+        auto-calibration; ``threshold_db`` is used directly.
+    """
     if ratio < 1.0:
         raise ValueError("ratio must be at least 1")
     if attack_ms <= 0.0:
@@ -2020,6 +2951,96 @@ def apply_compressor(
         resolved_release_stage2_ms, sample_rate
     )
     makeup_gain = db_to_amp(makeup_gain_db)
+    is_rms = normalized_detector_mode == "rms"
+
+    # Track whether user explicitly overrode the default threshold_db; this
+    # lets us warn when both target_avg_gr_db and a non-default threshold_db
+    # were set.  Mirrors the clipper's sentinel pattern.
+    threshold_db_user_set = threshold_db != -20.0
+
+    auto_calibrated = target_avg_gr_db is not None
+    calibrated_measured_avg_gr_db: float | None = None
+    solver_iterations: int | None = None
+    if auto_calibrated:
+        assert target_avg_gr_db is not None  # for type narrowing
+        if threshold_db_user_set:
+            logger.warning(
+                "Compressor: both threshold_db and target_avg_gr_db set — "
+                "target_avg_gr_db wins; threshold_db ignored."
+            )
+
+        detector_trace_for_solver = _linked_detector_signal(detector_source)
+        window_ms = 50.0
+        window_samples = max(1, int(round(window_ms * 1e-3 * sample_rate)))
+        windowed_env = _compute_detector_rms_envelope(
+            detector_source=detector_source,
+            sample_rate=sample_rate,
+            window_ms=window_ms,
+        )
+        if windowed_env.size == 0:
+            envelope_p99_linear = 0.0
+        else:
+            envelope_p99_linear = float(np.percentile(windowed_env, 99.0))
+        # Silence floor: an envelope peak below -120 dBFS is effectively
+        # silence (DC, zero input, denormals). No useful calibration target.
+        silence_floor_linear = db_to_amp(-120.0)
+        if envelope_p99_linear < silence_floor_linear:
+            active_mask = np.zeros(detector_trace_for_solver.shape[0], dtype=bool)
+            envelope_p99_dbfs = -120.0
+        else:
+            envelope_p99_dbfs = 20.0 * np.log10(envelope_p99_linear)
+            active_threshold_linear = envelope_p99_linear * db_to_amp(-40.0)
+            env_per_sample = _expand_windowed_envelope_to_samples(
+                windowed_env,
+                sample_count=detector_trace_for_solver.shape[0],
+                window_samples=window_samples,
+            )
+            active_mask = env_per_sample >= active_threshold_linear
+
+        if not np.any(active_mask):
+            logger.warning(
+                "Compressor: target_avg_gr_db requested but input has no "
+                "active content (envelope below calibration floor everywhere). "
+                f"Falling back to static threshold_db={threshold_db:.2f} dBFS."
+            )
+        else:
+            env_p50_linear = float(np.percentile(windowed_env, 50.0))
+            env_p50_db = 20.0 * np.log10(max(env_p50_linear, 1e-12))
+            search_low_db = env_p50_db - 30.0
+            search_high_db = envelope_p99_dbfs
+            (
+                threshold_db,
+                calibrated_measured_avg_gr_db,
+                solver_iterations,
+            ) = _solve_compressor_threshold_for_target_avg_gr(
+                detector_trace=detector_trace_for_solver,
+                active_mask=active_mask,
+                attack_coeff=attack_coeff,
+                release_coeff=detector_release_coeff,
+                ratio=ratio,
+                knee_db=knee_db,
+                is_rms=is_rms,
+                release_stage1_coeff=release_stage1_coeff,
+                release_stage2_coeff=release_stage2_coeff,
+                target_avg_gr_db=float(target_avg_gr_db),
+                search_low_db=search_low_db,
+                search_high_db=search_high_db,
+            )
+            residual = abs(calibrated_measured_avg_gr_db - float(target_avg_gr_db))
+            if residual > 0.75:
+                logger.warning(
+                    "Compressor: auto-cal did not converge — "
+                    f"target avg GR on active {float(target_avg_gr_db):.2f} dB, "
+                    f"measured {calibrated_measured_avg_gr_db:.2f} dB, "
+                    f"{solver_iterations} iter, threshold={threshold_db:.2f} dBFS"
+                )
+            logger.info(
+                f"Compressor: auto-calibrated threshold to {threshold_db:.2f} "
+                f"dBFS (target avg GR on active "
+                f"{float(target_avg_gr_db):.2f} dB, "
+                f"measured {calibrated_measured_avg_gr_db:.2f} dB, "
+                f"{solver_iterations} iter)"
+            )
 
     detector_trace = _linked_detector_signal(detector_source)
     sample_count = input_signal.shape[-1]
@@ -2038,7 +3059,6 @@ def apply_compressor(
             mode="constant",
         )
 
-    is_rms = normalized_detector_mode == "rms"
     was_mono = input_signal.ndim == 1
 
     if normalized_topology == "feedback":
@@ -2143,6 +3163,16 @@ def apply_compressor(
             2,
         ),
     }
+    if auto_calibrated:
+        assert target_avg_gr_db is not None
+        analysis["calibrated_threshold_db"] = round(threshold_db, 2)
+        analysis["target_avg_gr_db"] = round(float(target_avg_gr_db), 2)
+        if calibrated_measured_avg_gr_db is not None:
+            analysis["measured_avg_gr_db"] = round(
+                float(calibrated_measured_avg_gr_db), 2
+            )
+        if solver_iterations is not None:
+            analysis["solver_iterations"] = int(solver_iterations)
     return processed_signal, analysis
 
 
@@ -2383,15 +3413,20 @@ def apply_gate(
 
     input_signal = np.asarray(signal, dtype=np.float64)
 
-    def _process_channel(channel: np.ndarray) -> np.ndarray:
-        n = len(channel)
+    # Stereo-linked detection: compute a single gain envelope from the louder of
+    # L/R (max-abs-linked key signal) and apply the same gain to both channels.
+    # This prevents stereo tearing where one channel gates while the other
+    # doesn't.  For mono input the linked key is identical to the channel, so
+    # behavior is bit-identical to per-channel processing.
+    def _gate_gain_envelope(key: np.ndarray) -> np.ndarray:
+        n = len(key)
         if n == 0:
-            return channel.copy()
+            return np.zeros(0, dtype=np.float64)
 
         # 2 ms RMS envelope for smooth key signal (avoids flicker on zero crossings)
         detect_window = max(1, int(0.002 * sample_rate))
         kernel = np.ones(detect_window, dtype=np.float64) / detect_window
-        smoothed_level = np.sqrt(np.convolve(channel**2, kernel, mode="same"))
+        smoothed_level = np.sqrt(np.convolve(key**2, kernel, mode="same"))
 
         # Gate open = level above threshold; hold extends open regions forward
         gate_open = (smoothed_level >= threshold_lin).astype(np.float64)
@@ -2400,12 +3435,19 @@ def apply_gate(
             gate_open = np.convolve(gate_open, hold_kernel, mode="full")[:n]
         gate_target = np.where(gate_open > 0, 1.0, floor_lin)
 
-        gain = _gate_gain_smoothing_loop(
+        return _gate_gain_smoothing_loop(
             gate_target, attack_coeff, release_coeff, floor_lin
         )
-        return channel * gain
 
-    output = _apply_per_channel(input_signal, _process_channel).astype(np.float64)
+    if input_signal.ndim == 1:
+        gain_envelope = _gate_gain_envelope(input_signal)
+        output = (input_signal * gain_envelope).astype(np.float64)
+    elif _is_stereo(input_signal):
+        linked_key = np.max(np.abs(input_signal), axis=0)
+        gain_envelope = _gate_gain_envelope(linked_key)
+        output = (input_signal * gain_envelope[np.newaxis, :]).astype(np.float64)
+    else:
+        raise ValueError(f"Unsupported signal shape: {input_signal.shape}")
 
     if not return_analysis:
         return output
@@ -3664,6 +4706,40 @@ def _limiter_smoothing_loop(
     return smoothed
 
 
+@overload
+def apply_native_limiter(
+    signal: np.ndarray,
+    *,
+    threshold_db: float = ...,
+    input_gain_db: float = ...,
+    output_gain_db: float = ...,
+    sample_rate: int = ...,
+    lookahead_ms: float = ...,
+    release_ms: float = ...,
+    oversample_factor: int = ...,
+    headroom_db: float | None = ...,
+    calibration_percentile: float = ...,
+    return_analysis: Literal[False] = ...,
+) -> np.ndarray: ...
+
+
+@overload
+def apply_native_limiter(
+    signal: np.ndarray,
+    *,
+    threshold_db: float = ...,
+    input_gain_db: float = ...,
+    output_gain_db: float = ...,
+    sample_rate: int = ...,
+    lookahead_ms: float = ...,
+    release_ms: float = ...,
+    oversample_factor: int = ...,
+    headroom_db: float | None = ...,
+    calibration_percentile: float = ...,
+    return_analysis: Literal[True],
+) -> tuple[np.ndarray, dict[str, float | int | str]]: ...
+
+
 def apply_native_limiter(
     signal: np.ndarray,
     *,
@@ -3674,11 +4750,37 @@ def apply_native_limiter(
     lookahead_ms: float = 1.5,
     release_ms: float = 50.0,
     oversample_factor: int = 4,
-) -> np.ndarray:
+    headroom_db: float | None = None,
+    calibration_percentile: float = 99.9,
+    return_analysis: bool = False,
+) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
     """Native true-peak lookahead brickwall limiter.
 
     Oversamples for inter-sample peak detection, applies gain reduction with
     lookahead and smooth attack/release, then downsamples back.
+
+    Auto-calibration (piece-aware headroom targeting)
+    -------------------------------------------------
+    When ``headroom_db`` is set (default ``None``), the limiter computes the
+    ``calibration_percentile``-th percentile (default p99.9) of a windowed
+    peak distribution of the input signal and sets
+    ``threshold_db = reference_peak_dbfs - headroom_db``.  This mirrors
+    :func:`apply_clipper`'s ``max_shave_db`` auto-cal, but applied to the
+    limiter's ceiling rather than the clipper's shave target.  When both
+    ``headroom_db`` and a non-default ``threshold_db`` are set, a warning is
+    logged and ``headroom_db`` wins.
+
+    Parameters
+    ----------
+    headroom_db : float | None
+        When set, auto-calibrate ``threshold_db`` so that the limiter's
+        ceiling sits ``headroom_db`` below the ``calibration_percentile``-th
+        percentile of the windowed input peaks.  Default ``None`` (no
+        auto-calibration; ``threshold_db`` is used directly).
+    calibration_percentile : float
+        Percentile of the windowed peak distribution used for calibration
+        (bounded to ``[50, 100]``).  Default ``99.9`` — robust to isolated
+        transients while ignoring near-silence.
     """
     attack_ms = 0.1
 
@@ -3689,6 +4791,47 @@ def apply_native_limiter(
     if sig.shape[-1] == 0:
         return sig[0] if was_mono else sig
     original_length = sig.shape[1]
+
+    if headroom_db is not None and headroom_db < 0:
+        raise ValueError(
+            f"headroom_db must be non-negative when set, got {headroom_db}"
+        )
+
+    # Auto-calibrate threshold_db from windowed peak statistics before the
+    # input gain is applied — the calibration targets the *pre-input-gain*
+    # signal, matching the clipper's ``reference_peak_dbfs`` convention.
+    threshold_db_user_set = threshold_db != -0.5
+    auto_calibrated = headroom_db is not None
+    reference_peak_dbfs: float | None = None
+    effective_percentile: float | None = None
+    if auto_calibrated:
+        assert headroom_db is not None
+        if threshold_db_user_set:
+            logger.warning(
+                "Limiter: both threshold_db and headroom_db set — "
+                "headroom_db wins; threshold_db ignored."
+            )
+        effective_percentile = float(np.clip(calibration_percentile, 50.0, 100.0))
+        calibration_window_ms = 50.0
+        window_samples = max(1, int(round(calibration_window_ms * 1e-3 * sample_rate)))
+        peak_track = np.max(np.abs(sig), axis=0)
+        n = peak_track.shape[0]
+        if n < window_samples:
+            reference_peak = float(np.max(peak_track)) if n > 0 else 1e-12
+        else:
+            n_windows = n // window_samples
+            trimmed = peak_track[: n_windows * window_samples]
+            windowed = trimmed.reshape(n_windows, window_samples)
+            window_peaks = np.max(windowed, axis=1)
+            reference_peak = float(np.percentile(window_peaks, effective_percentile))
+        reference_peak = max(reference_peak, 1e-12)
+        reference_peak_dbfs = float(20.0 * np.log10(reference_peak))
+        threshold_db = reference_peak_dbfs - float(headroom_db)
+        logger.info(
+            f"Limiter: auto-calibrated threshold to {threshold_db:.2f} dBFS "
+            f"(p{effective_percentile:g} peak {reference_peak_dbfs:.2f} dBFS, "
+            f"headroom {float(headroom_db):.2f} dB)"
+        )
 
     sig = sig * db_to_amp(input_gain_db)
 
@@ -3744,7 +4887,11 @@ def apply_native_limiter(
     limited = limited * db_to_amp(output_gain_db)
 
     max_gr_db = float(np.min(gain_reduction_db))
-    active_fraction = float(np.mean(gain_reduction_db < -0.01))
+    active_mask = gain_reduction_db < -0.01
+    active_fraction = float(np.mean(active_mask))
+    avg_gr_when_active_db = (
+        float(np.mean(gain_reduction_db[active_mask])) if active_fraction > 0 else 0.0
+    )
     logger.info(
         f"Native limiter: max gain reduction {max_gr_db:.2f} dB, "
         f"limiting active on {active_fraction * 100.0:.1f}% of samples"
@@ -3755,9 +4902,390 @@ def apply_native_limiter(
             "input is significantly hotter than threshold"
         )
 
+    output_signal = limited[0] if was_mono else limited
+
+    if not return_analysis:
+        return output_signal
+
+    analysis: dict[str, float | int | str] = {
+        "threshold_db": round(threshold_db, 2),
+        "lookahead_ms": round(lookahead_ms, 2),
+        "release_ms": round(release_ms, 1),
+        "oversample_factor": int(oversample_factor),
+        "max_gain_reduction_db": round(max_gr_db, 2),
+        "avg_gain_reduction_when_active_db": round(avg_gr_when_active_db, 2),
+        "active_gain_reduction_fraction": round(active_fraction, 4),
+    }
+    if auto_calibrated:
+        assert headroom_db is not None
+        assert reference_peak_dbfs is not None
+        assert effective_percentile is not None
+        analysis["calibrated_threshold_db"] = round(threshold_db, 2)
+        analysis["reference_peak_dbfs"] = round(reference_peak_dbfs, 2)
+        analysis["calibration_percentile"] = round(effective_percentile, 2)
+        analysis["headroom_db"] = round(float(headroom_db), 2)
+    return output_signal, analysis
+
+
+_CLIPPER_ALGORITHMS: frozenset[str] = frozenset({"poly_knee", "hard"})
+
+
+@overload
+def apply_clipper(
+    signal: np.ndarray,
+    *,
+    threshold_db: float | np.ndarray = ...,
+    knee_width_db: float | np.ndarray = ...,
+    algorithm: str = ...,
+    oversample_factor: int = ...,
+    mix: float | np.ndarray = ...,
+    makeup_gain_db: float = ...,
+    max_shave_db: float | None = ...,
+    calibration_percentile: float = ...,
+    calibration_window_ms: float = ...,
+    return_analysis: Literal[False] = ...,
+) -> np.ndarray: ...
+
+
+@overload
+def apply_clipper(
+    signal: np.ndarray,
+    *,
+    threshold_db: float | np.ndarray = ...,
+    knee_width_db: float | np.ndarray = ...,
+    algorithm: str = ...,
+    oversample_factor: int = ...,
+    mix: float | np.ndarray = ...,
+    makeup_gain_db: float = ...,
+    max_shave_db: float | None = ...,
+    calibration_percentile: float = ...,
+    calibration_window_ms: float = ...,
+    return_analysis: Literal[True],
+) -> tuple[np.ndarray, dict[str, float | int | str]]: ...
+
+
+def apply_clipper(
+    signal: np.ndarray,
+    *,
+    threshold_db: float | np.ndarray = -3.0,
+    knee_width_db: float | np.ndarray = 2.0,
+    algorithm: str = "poly_knee",
+    oversample_factor: int = 8,
+    mix: float | np.ndarray = 1.0,
+    makeup_gain_db: float = 0.0,
+    max_shave_db: float | None = None,
+    calibration_percentile: float = 99.0,
+    calibration_window_ms: float = 10.0,
+    return_analysis: bool = False,
+) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
+    """Oversampled, stereo-linked peak clipper with a monotone polynomial knee.
+
+    Transfer function (per channel, after oversampling):
+
+    * ``algorithm="poly_knee"`` (default): monotone cubic-Hermite soft knee.
+      ``|x|`` below ``threshold_db - knee_width_db/2`` passes through
+      bit-exact; between ``threshold_db - knee_width_db/2`` and
+      ``threshold_db + knee_width_db/2`` the transfer follows a C¹ cubic
+      Hermite blend to a flat ceiling; above that it is clamped to
+      ``threshold_db`` exactly.  ``knee_width_db=0`` collapses to a pure
+      brickwall.  AD2-antialiased.
+    * ``algorithm="hard"``: literal ``numpy.clip`` on the oversampled signal.
+      ``knee_width_db`` is ignored.  The AD2 hard-clip kernel was measured
+      to add <0.01% IMD over naive ``np.clip`` at OS=8 on transient content,
+      so we skip ADAA here for speed and predictable null-test behavior.
+
+    This replaces the previous ``hardness`` crossfade of
+    ``hard * 0.85 + tanh * 0.15`` which, per the ``clipper_bisect``
+    diagnostic, added +64% IMD on a two-tone stimulus and +6.5 dB of
+    2-8 kHz brightness on a kick transient vs pure hard-clip at the same
+    shave amount.  The polynomial knee fixes that: at
+    ``knee_width_db=2.0`` it nulls to naive hard-clip on sample-below-knee
+    content and reduces kick 2-8 kHz lift *below* naive hard-clip while
+    doing the same peak shave.
+
+    **Stereo linking.** Each channel is shaped on its own signed waveform,
+    then a shared attenuation-gain curve ``min(|clipped_i| / |ch_i|)``
+    across channels is applied to both.  Keeps clipping HF artifacts
+    phase-coherent across L/R.  Mono input bypasses the link and returns
+    the per-channel shaped waveform directly.
+
+    Typical use: drum-bus / master-bus peak shaver doing 1-3 dB of real
+    work above ``threshold_db``.  Follow with :func:`apply_native_limiter`
+    if a strict true-peak ceiling matters — inter-sample peaks can still
+    exist after downsampling.
+
+    Parameters
+    ----------
+    threshold_db : float | np.ndarray
+        Ceiling in dBFS (default -3.0, typical range -12..0).  May be a
+        per-sample array matching the input length for automated rides.
+        Ignored when ``max_shave_db`` is set.
+    knee_width_db : float | np.ndarray
+        Total knee width in dB.  ``0.0`` is a brickwall; ``2.0`` is a
+        mild musical soft-clip; ``6.0`` becomes audibly gentle.  Default
+        2.0.  May also be a per-sample array.  Only used by
+        ``algorithm="poly_knee"``.
+    algorithm : str
+        ``"poly_knee"`` (default) or ``"hard"``.  See transfer-function
+        description above.
+    oversample_factor : int
+        1, 2, 4, 8, or 16.  Default 8.  Uses a sharp Kaiser (β=14) polyphase
+        resampler on both legs for ~-100 dB stopband.
+    mix : float | np.ndarray
+        Dry/wet blend, default 1.0 (fully wet).  Per-sample arrays
+        supported for automated mix rides.
+    makeup_gain_db : float
+        Post-clip gain applied to the wet signal before dry/wet blend.
+    max_shave_db : float | None
+        When set, auto-calibrate a *scalar* ``threshold_db`` so the peak
+        shave on this input is approximately ``max_shave_db``.  Incompatible
+        with per-sample ``threshold_db`` arrays (use one or the other).
+        Default ``None``.
+    calibration_percentile : float
+        Percentile of windowed peak distribution used for calibration,
+        bounded to [50, 100].  Default 99.0.
+    calibration_window_ms : float
+        Window length in ms for the calibration peak envelope.  Default 10.0.
+    """
+    if oversample_factor not in (1, 2, 4, 8, 16):
+        raise ValueError(
+            f"oversample_factor must be 1, 2, 4, 8, or 16; got {oversample_factor}"
+        )
+    if algorithm not in _CLIPPER_ALGORITHMS:
+        raise ValueError(
+            f"algorithm must be one of {sorted(_CLIPPER_ALGORITHMS)}; got {algorithm!r}"
+        )
+
+    sig = np.asarray(signal, dtype=np.float64)
+    was_mono = sig.ndim == 1
     if was_mono:
-        return limited[0]
-    return limited
+        sig = sig[np.newaxis, :]
+    if sig.shape[-1] == 0:
+        return sig[0] if was_mono else sig
+    original_length = sig.shape[1]
+
+    # --- Resolve threshold / knee / mix to scalar or per-sample arrays. ---
+    #
+    # Per-sample arrays are accepted on these three params so downstream
+    # automation can ride the clipper without a second copy of this loop.
+    # Mix can be an array for dry/wet automation; its length must match
+    # ``original_length`` (pre-oversample domain).  Threshold and knee
+    # are used on the *oversampled* signal and are resampled up along
+    # with it below.
+    def _as_pre_os_array(value: float | np.ndarray, name: str) -> np.ndarray:
+        arr = np.asarray(value, dtype=np.float64)
+        if arr.ndim == 0:
+            return np.full(original_length, float(arr))
+        if arr.ndim != 1:
+            raise ValueError(f"{name} must be a scalar or 1-D array")
+        if arr.shape[0] != original_length:
+            raise ValueError(
+                f"{name} array length {arr.shape[0]} must match input length "
+                f"{original_length}"
+            )
+        return arr
+
+    threshold_db_arr = _as_pre_os_array(threshold_db, "threshold_db")
+    knee_width_db_arr = _as_pre_os_array(knee_width_db, "knee_width_db")
+    mix_arr = _as_pre_os_array(mix, "mix")
+    mix_arr = np.clip(mix_arr, 0.0, 1.0)
+    knee_width_db_arr = np.maximum(knee_width_db_arr, 0.0)
+
+    threshold_is_array = (
+        not np.isscalar(threshold_db) and np.asarray(threshold_db).ndim > 0
+    )
+
+    # --- Auto-calibration via max_shave_db (scalar threshold only). ---
+    auto_calibrated = max_shave_db is not None
+    reference_peak_dbfs: float | None = None
+    effective_percentile: float | None = None
+    if auto_calibrated:
+        assert max_shave_db is not None
+        if threshold_is_array:
+            raise ValueError(
+                "max_shave_db is incompatible with a per-sample threshold_db array; "
+                "pick one calibration mode"
+            )
+        threshold_db_scalar = float(np.asarray(threshold_db).item())
+        if threshold_db_scalar != -3.0:
+            logger.warning(
+                "Clipper: both threshold_db and max_shave_db set — "
+                "max_shave_db wins; threshold_db ignored."
+            )
+        effective_percentile = float(np.clip(calibration_percentile, 50.0, 100.0))
+        window_samples = max(1, int(round(calibration_window_ms * 1e-3 * SAMPLE_RATE)))
+        peak_track = np.max(np.abs(sig), axis=0)
+        n = peak_track.shape[0]
+        if n < window_samples:
+            reference_peak = float(np.max(peak_track)) if n > 0 else 1e-12
+        else:
+            n_windows = n // window_samples
+            trimmed = peak_track[: n_windows * window_samples]
+            windowed = trimmed.reshape(n_windows, window_samples)
+            window_peaks = np.max(windowed, axis=1)
+            reference_peak = float(np.percentile(window_peaks, effective_percentile))
+        reference_peak = max(reference_peak, 1e-12)
+        reference_peak_dbfs = float(20.0 * np.log10(reference_peak))
+        calibrated_db = reference_peak_dbfs - float(max_shave_db)
+        threshold_db_arr = np.full(original_length, calibrated_db)
+        logger.info(
+            f"Clipper: auto-calibrated threshold to {calibrated_db:.2f} dBFS "
+            f"(p{effective_percentile:g} peak {reference_peak_dbfs:.2f} dBFS, "
+            f"target shave {max_shave_db:.2f} dB)"
+        )
+
+    # Mix=0 at every sample is a pure bypass; skip the OS round-trip.
+    if np.all(mix_arr <= 0.0):
+        return sig[0].copy() if was_mono else sig.copy()
+
+    makeup_lin = db_to_amp(makeup_gain_db)
+
+    # Sharp Kaiser polyphase: β=14 gives ~-100 dB stopband, vs scipy's default
+    # β=5 at ~-50 dB.  The lower stopband leaked folded alias energy back
+    # into the audio band — audible as papery HF residue on drum content.
+    resample_window = ("kaiser", 14.0)
+    effective_sr_hz = float(SAMPLE_RATE * oversample_factor)
+
+    def _upsample(ch: np.ndarray) -> np.ndarray:
+        if oversample_factor > 1:
+            return np.asarray(
+                resample_poly(ch, oversample_factor, 1, window=resample_window),
+                dtype=np.float64,
+            )
+        return ch.astype(np.float64, copy=False)
+
+    def _downsample_to_length(ch: np.ndarray, target_length: int) -> np.ndarray:
+        if oversample_factor > 1:
+            out = np.asarray(
+                resample_poly(ch, 1, oversample_factor, window=resample_window),
+                dtype=np.float64,
+            )
+        else:
+            out = ch
+        if out.shape[0] > target_length:
+            return out[:target_length]
+        if out.shape[0] < target_length:
+            return np.concatenate([out, np.zeros(target_length - out.shape[0])])
+        return out
+
+    # Lift threshold / knee profiles into the OS domain.  We upsample them
+    # the same way we upsample the signal — this is a mild-Gibbs concern
+    # at sharp control-rate edges, but for the smooth control curves that
+    # AutomationSpec produces it's faithful.  Knee stays positive (negative
+    # clips below).
+    threshold_db_up = (
+        _upsample(threshold_db_arr) if oversample_factor > 1 else threshold_db_arr
+    )
+    knee_width_db_up = (
+        _upsample(knee_width_db_arr) if oversample_factor > 1 else knee_width_db_arr
+    )
+    # Array-safe dB-to-linear (db_to_amp is scalar-only).
+    threshold_lin_up = np.power(10.0, threshold_db_up / 20.0)
+    # knee_width_db is total knee width; knee_half_lin is half-width in linear.
+    # knee_half_lin = threshold_lin * (1 - 10^(-knee_width_db/2 / 20))
+    # Guard the exponent: negative knee widths clip at zero (brickwall).
+    knee_half_lin_up = threshold_lin_up * (
+        1.0 - np.power(10.0, -np.maximum(knee_width_db_up, 0.0) * 0.5 / 20.0)
+    )
+
+    def _clip_signed(ch_up: np.ndarray) -> np.ndarray:
+        """Apply the selected transfer to one oversampled signed channel."""
+        if algorithm == "hard":
+            return np.clip(ch_up, -threshold_lin_up, threshold_lin_up)
+        return _apply_adaa2_poly_knee(
+            ch_up, threshold_lin_up, knee_half_lin_up, effective_sr_hz
+        )
+
+    # Per-channel shape at OS.  For stereo we build a common attenuation
+    # gain curve and apply it to both — preserves phase, kills papery
+    # widening from uncorrelated per-channel HF residue.
+    upsampled_channels = [_upsample(ch) for ch in sig]
+    clipped_channels = [_clip_signed(ch_up) for ch_up in upsampled_channels]
+
+    if len(upsampled_channels) == 1:
+        wet_channels = [_downsample_to_length(clipped_channels[0], sig.shape[1])]
+    else:
+        # Silence floor tracks the current threshold per-sample.  At samples
+        # where the input channel is well below threshold the clipper is a
+        # no-op, so we force the linked gain to 1.0 there rather than
+        # letting tiny divisions dominate.
+        silence_floor_up = threshold_lin_up * 1e-4
+        per_channel_gains: list[np.ndarray] = []
+        for ch_up, clipped_up in zip(upsampled_channels, clipped_channels, strict=True):
+            abs_in = np.abs(ch_up)
+            safe_abs_in = np.maximum(abs_in, silence_floor_up)
+            g = np.clip(np.abs(clipped_up) / safe_abs_in, 0.0, 1.0)
+            g = np.where(abs_in < silence_floor_up, 1.0, g)
+            per_channel_gains.append(g)
+
+        gain_curve = per_channel_gains[0]
+        for g in per_channel_gains[1:]:
+            gain_curve = np.minimum(gain_curve, g)
+
+        wet_channels = []
+        for ch_up in upsampled_channels:
+            attenuated = ch_up * gain_curve
+            wet_channels.append(_downsample_to_length(attenuated, sig.shape[1]))
+
+    wet = np.stack(wet_channels)
+    wet = wet * makeup_lin
+
+    # Dry/wet blend with per-sample mix.
+    result = wet if np.all(mix_arr >= 1.0) else (1.0 - mix_arr) * sig + mix_arr * wet
+
+    if result.shape[1] != original_length:
+        if result.shape[1] > original_length:
+            result = result[:, :original_length]
+        else:
+            pad = original_length - result.shape[1]
+            result = np.pad(result, ((0, 0), (0, pad)))
+
+    peak_before_db = float(20.0 * np.log10(max(np.max(np.abs(sig)), 1e-12)))
+    peak_after_db = float(20.0 * np.log10(max(np.max(np.abs(result)), 1e-12)))
+    shaved_db = peak_before_db - peak_after_db
+    active_fraction = (
+        float(
+            np.mean(
+                np.max(np.abs(sig), axis=0)
+                >= threshold_lin_up[::oversample_factor][:original_length]
+            )
+        )
+        if oversample_factor > 1
+        else float(np.mean(np.max(np.abs(sig), axis=0) >= threshold_lin_up))
+    )
+    threshold_summary_db = float(np.mean(threshold_db_arr))
+    knee_summary_db = float(np.mean(knee_width_db_arr))
+    mix_summary = float(np.mean(mix_arr))
+    logger.info(
+        f"Clipper: algorithm={algorithm}, threshold {threshold_summary_db:.1f} dB, "
+        f"knee {knee_summary_db:.2f} dB, OS {oversample_factor}x, "
+        f"shaved {shaved_db:.2f} dB (peak {peak_before_db:.2f} -> {peak_after_db:.2f} dBFS)"
+    )
+
+    output_signal = result[0] if was_mono else result
+
+    if not return_analysis:
+        return output_signal
+
+    analysis: dict[str, float | int | str] = {
+        "threshold_db": round(threshold_summary_db, 2),
+        "knee_width_db": round(knee_summary_db, 3),
+        "algorithm": algorithm,
+        "oversample_factor": int(oversample_factor),
+        "mix": round(mix_summary, 3),
+        "makeup_gain_db": round(makeup_gain_db, 2),
+        "shaved_db": round(shaved_db, 2),
+        "active_fraction": round(active_fraction, 4),
+    }
+    if auto_calibrated:
+        assert max_shave_db is not None
+        assert reference_peak_dbfs is not None
+        assert effective_percentile is not None
+        analysis["calibrated_threshold_db"] = round(threshold_summary_db, 2)
+        analysis["reference_peak_dbfs"] = round(reference_peak_dbfs, 2)
+        analysis["calibration_percentile"] = round(effective_percentile, 2)
+        analysis["max_shave_db"] = round(float(max_shave_db), 2)
+    return output_signal, analysis
 
 
 def finalize_master(
@@ -3943,11 +5471,11 @@ _CHORUS_PRESETS: dict[str, dict[str, float]] = {
     },
 }
 
-_SATURATION_PRESETS: dict[str, dict[str, Any]] = {
+_DRIVE_PRESETS: dict[str, dict[str, Any]] = {
     "tube_warm": {
         "algorithm": "modern",
         "mode": "tube",
-        "drive": 1.0,
+        "drive": 0.7,
         "mix": 0.34,
         "tone": 0.08,
         "fidelity": 0.76,
@@ -3956,11 +5484,12 @@ _SATURATION_PRESETS: dict[str, dict[str, Any]] = {
         "preserve_lows_hz": 140.0,
         "preserve_highs_hz": 6_500.0,
         "compensation_mode": "auto",
+        "multiband": True,
     },
     "iron_soft": {
         "algorithm": "modern",
         "mode": "iron",
-        "drive": 0.7,
+        "drive": 0.55,
         "mix": 0.35,
         "tone": -0.06,
         "fidelity": 0.88,
@@ -3969,6 +5498,7 @@ _SATURATION_PRESETS: dict[str, dict[str, Any]] = {
         "preserve_lows_hz": 180.0,
         "preserve_highs_hz": 5_200.0,
         "compensation_mode": "auto",
+        "multiband": True,
     },
     "neve_gentle": {
         "algorithm": "modern",
@@ -3982,24 +5512,15 @@ _SATURATION_PRESETS: dict[str, dict[str, Any]] = {
         "preserve_lows_hz": 120.0,
         "preserve_highs_hz": 7_000.0,
         "compensation_mode": "auto",
+        "multiband": True,
     },
-    "kick_weight": {
-        "algorithm": "modern",
-        "mode": "iron",
-        "drive": 2.7,
-        "mix": 0.42,
-        "tone": 0.04,
-        "fidelity": 0.46,
-        "oversample_factor": 4,
-        "highpass_hz": 24.0,
-        "preserve_lows_hz": 90.0,
-        "preserve_highs_hz": 4_200.0,
-        "compensation_mode": "rms",
-    },
-    "kick_crunch": {
+    "kick_heavy": {
+        # Hardcore / aggressive character preset. Not a default — reach for
+        # this when you intentionally want 20%+ THD kick grit (industrial,
+        # hardcore techno). Formerly `kick_crunch`.
         "algorithm": "modern",
         "mode": "triode",
-        "drive": 6.0,
+        "drive": 1.8,
         "mix": 0.62,
         "tone": 0.10,
         "fidelity": 0.26,
@@ -4008,25 +5529,16 @@ _SATURATION_PRESETS: dict[str, dict[str, Any]] = {
         "preserve_lows_hz": 80.0,
         "preserve_highs_hz": 3_600.0,
         "compensation_mode": "rms",
-    },
-    "tom_thicken": {
-        "algorithm": "modern",
-        "mode": "iron",
-        "drive": 2.4,
-        "mix": 0.32,
-        "tone": -0.03,
-        "fidelity": 0.62,
-        "oversample_factor": 4,
-        "highpass_hz": 30.0,
-        "preserve_lows_hz": 110.0,
-        "preserve_highs_hz": 5_000.0,
-        "compensation_mode": "rms",
+        "multiband": True,
     },
     "snare_bite": {
+        # Recalibrated: was drive=1.0/mix=0.35 (~7% THD, too hot as default).
+        # Now ~4% THD with a clear papery-band lift that reads as "bite"
+        # on snare content without collapsing transient character.
         "algorithm": "modern",
         "mode": "triode",
-        "drive": 1.8,
-        "mix": 0.35,
+        "drive": 0.7,
+        "mix": 0.30,
         "tone": 0.06,
         "fidelity": 0.45,
         "oversample_factor": 4,
@@ -4034,6 +5546,7 @@ _SATURATION_PRESETS: dict[str, dict[str, Any]] = {
         "preserve_lows_hz": 150.0,
         "preserve_highs_hz": 5_000.0,
         "compensation_mode": "rms",
+        "multiband": True,
     },
 }
 
@@ -4270,8 +5783,8 @@ def _resolve_effect_params(
         preset_map = _CHORUS_PRESETS
     elif effect_kind == "bbd_chorus":
         preset_map = _BBD_CHORUS_PRESETS
-    elif effect_kind == "saturation":
-        preset_map = _SATURATION_PRESETS
+    elif effect_kind == "drive":
+        preset_map = _DRIVE_PRESETS
     elif effect_kind == "compressor":
         preset_map = _COMPRESSOR_PRESETS
     elif effect_kind == "phaser":
@@ -5032,7 +6545,7 @@ def _asymmetric_saturation_curve(
     )
 
 
-def _apply_saturation_compensation(
+def _apply_drive_compensation(
     signal: np.ndarray,
     *,
     reference_signal: np.ndarray,
@@ -5136,7 +6649,62 @@ def _saturation_thd(
     return round(thd_pct, 2), label
 
 
-def _apply_saturation_legacy(
+def _solve_drive_for_target_thd(
+    *,
+    target_thd_pct: float,
+    probe_processor_factory: Callable[[float], Callable[[np.ndarray], np.ndarray]],
+    search_low: float = 1.0e-3,
+    search_high: float = 10.0,
+    max_iterations: int = 12,
+    tolerance_pct: float = 0.25,
+) -> tuple[float, float, int]:
+    """Binary-search ``drive`` for target shaper THD% (sine-probe characteristic).
+
+    Monotonic: higher drive produces higher characteristic THD on both the
+    modern and legacy shapers, so standard bisection converges. The probe is
+    ``_saturation_thd`` (440 Hz sine, harmonics 2-10) which characterises the
+    shaper curve itself, independent of the caller's actual input. That is
+    the intended perceptual target — "musical saturation" is a property of
+    the shaper, not of the incoming signal.
+
+    If the requested ``target_thd_pct`` is outside the achievable range of
+    ``[search_low, search_high]`` the solver snaps to whichever endpoint is
+    closest and returns early.
+
+    Returns ``(solved_drive, measured_thd_pct, iterations)``.
+    """
+    low_thd, _ = _saturation_thd(probe_processor_factory(search_low))
+    if target_thd_pct <= low_thd:
+        return float(search_low), float(low_thd), 1
+    high_thd, _ = _saturation_thd(probe_processor_factory(search_high))
+    if target_thd_pct >= high_thd:
+        return float(search_high), float(high_thd), 2
+
+    low = float(search_low)
+    high = float(search_high)
+    best_drive = 0.5 * (low + high)
+    best_measured = 0.0
+    best_abs_error = float("inf")
+    iterations = 0
+    for _ in range(max_iterations):
+        iterations += 1
+        mid = 0.5 * (low + high)
+        measured_thd, _ = _saturation_thd(probe_processor_factory(mid))
+        abs_error = abs(measured_thd - target_thd_pct)
+        if abs_error < best_abs_error:
+            best_abs_error = abs_error
+            best_drive = mid
+            best_measured = measured_thd
+        if abs_error < tolerance_pct:
+            return float(mid), float(measured_thd), iterations
+        if measured_thd > target_thd_pct:
+            high = mid
+        else:
+            low = mid
+    return float(best_drive), float(best_measured), iterations
+
+
+def _apply_drive_legacy(
     signal: np.ndarray,
     *,
     drive: float,
@@ -5199,7 +6767,7 @@ def _apply_saturation_legacy(
     wet_signal = _apply_per_channel(input_signal, _process_channel)
     blended = ((1.0 - mix) * input_signal) + (mix * wet_signal)
     compensated_signal, compensation_mode_used, compensation_gain_db = (
-        _apply_saturation_compensation(
+        _apply_drive_compensation(
             blended,
             reference_signal=input_signal,
             sample_rate=SAMPLE_RATE,
@@ -5216,7 +6784,7 @@ def _apply_saturation_legacy(
     thd_pct, thd_character = _saturation_thd(
         lambda x: cast(
             np.ndarray,
-            _apply_saturation_legacy(
+            _apply_drive_legacy(
                 x,
                 drive=drive,
                 mix=1.0,
@@ -5280,7 +6848,7 @@ def _envelope_follower(
     return _envelope_follower_loop(abs_signal, attack_coeff, release_coeff)
 
 
-def _apply_saturation_modern(
+def _apply_drive_modern(
     signal: np.ndarray,
     *,
     drive: float,
@@ -5346,11 +6914,59 @@ def _apply_saturation_modern(
         raise ValueError("mode must be 'tube', 'triode', or 'iron'")
     profile = profile_map[normalized_mode]
 
+    input_signal = np.asarray(signal, dtype=np.float64)
+
+    # Unity-floor short-circuit: `drive=0` must be bit-exact identity at mix=1
+    # and a pure dry/wet crossfade (with wet=input) for mix<1, which is still
+    # identity. We also bypass always-on DSP (highpass, tilt EQ, DC block) here.
+    # Compensation and output_trim_db are still applied so the return path is
+    # semantically consistent with the driven path.
+    _drive_epsilon = 1.0e-6
+    if drive <= _drive_epsilon:
+        # True unity floor — bypass every DSP stage (highpass, pre-emphasis,
+        # shaper, compensation) so drive=0 is bit-exact identity modulo
+        # output_trim_db. Compensation would re-normalize RMS even against
+        # an identical reference, which can drift on non-constant signals;
+        # skipping it keeps the floor genuinely transparent.
+        processed_signal = np.asarray(
+            input_signal * db_to_amp(output_trim_db), dtype=np.float64
+        )
+        if not return_analysis:
+            return processed_signal
+        unity_analysis: dict[str, float | int | str] = {
+            "algorithm": "modern",
+            "mode": normalized_mode,
+            "drive": round(float(drive), 2),
+            "mix": round(float(mix), 2),
+            "fidelity": round(float(fidelity), 2),
+            "tone": round(float(tone), 2),
+            "shaper_hot_fraction": 0.0,
+            "dc_offset": round(float(np.mean(to_mono_reference(processed_signal))), 6),
+            "thd_pct": 0.0,
+            "thd_character": "clean",
+            "compensation_mode_used": "bypass",
+            "compensation_gain_db": 0.0,
+        }
+        return processed_signal, unity_analysis
+
+    # Internal rescaling: map the 0-1 user-facing drive range onto the
+    # internal coefficient range the underlying stages expect.  Previously
+    # drive=1 produced ~2.5% THD and drive=3 produced ~10% THD; calibration
+    # now targets drive=1 -> ~10-15% THD ("musical saturation") and
+    # drive=3 -> "fuzz territory".  A simple linear scale of 3.0 lands
+    # almost exactly on the CLAUDE.md target (see scratch/drive_unity_verify).
+    _INTERNAL_K = 3.0
+    internal_drive = float(drive) * _INTERNAL_K
+    # Gate always-on static color (bias, pre-emphasis) on drive, fading to
+    # zero at drive=0 so the floor stays truly unity and small values of
+    # drive (0.1-0.2) remain gentle rather than pre-colored.  Use min(drive,1)
+    # so above drive=1 these don't balloon — the shaper takes over above 1.
+    _drive_gate = float(min(max(float(drive), 0.0), 1.0))
+
     resolved_oversample_factor = oversample_factor
-    if drive >= 1.7 and resolved_oversample_factor < 8:
+    if internal_drive >= 1.7 and resolved_oversample_factor < 8:
         resolved_oversample_factor = 8
 
-    input_signal = np.asarray(signal, dtype=np.float64)
     shaper_hot_sample_count = 0
     total_wet_sample_count = 0
 
@@ -5358,7 +6974,10 @@ def _apply_saturation_modern(
     resolved_even_harmonics = float(
         np.clip((0.55 * float(profile["even"])) + (0.45 * even_harmonics), 0.0, 1.0)
     )
-    resolved_asymmetry = float(profile["asymmetry"]) + bias
+    # Bias (asymmetric offset) is gated by drive so drive=0 is DC-clean and
+    # small-drive values stay symmetrical.  The profile asymmetry is always
+    # on once the shaper is running, but the user-bias contribution fades.
+    resolved_asymmetry = float(profile["asymmetry"]) + (bias * _drive_gate)
     oversampled_sample_rate = SAMPLE_RATE * resolved_oversample_factor
 
     def _process_channel(channel: np.ndarray) -> np.ndarray:
@@ -5370,7 +6989,11 @@ def _apply_saturation_modern(
             sample_rate=SAMPLE_RATE,
             order=2,
         )
-        pre_tilt_db = (5.0 * resolved_tone) + float(profile["interstage_tilt_db"])
+        # Pre-emphasis tilt is gated by drive so drive=0 and very low drive
+        # values stay spectrally neutral.
+        pre_tilt_db = (
+            (5.0 * resolved_tone) + float(profile["interstage_tilt_db"])
+        ) * _drive_gate
         if pre_tilt_db != 0.0:
             conditioned = _apply_tilt_eq(
                 conditioned,
@@ -5388,16 +7011,16 @@ def _apply_saturation_modern(
             attack_ms=6.0,
             release_ms=90.0,
         )
-        sag_amount = float(profile["sag"]) * (0.65 + (0.35 * drive))
+        sag_amount = float(profile["sag"]) * (0.65 + (0.35 * internal_drive))
         sag_gain = 1.0 / (1.0 + (sag_amount * envelope))
 
-        stage1_drive = 1.0 + (float(profile["stage1_gain"]) * drive)
+        stage1_drive = 1.0 + (float(profile["stage1_gain"]) * internal_drive)
         stage1_input = conditioned * stage1_drive * sag_gain
         stage1 = _asymmetric_saturation_curve(
             stage1_input,
             drive=1.0,
             curve=cast(str, profile["curve1"]),
-            asymmetry=resolved_asymmetry * (0.7 + (0.3 * drive)),
+            asymmetry=resolved_asymmetry * (0.7 + (0.3 * internal_drive)),
             even_harmonics=resolved_even_harmonics,
         )
         shaper_hot_sample_count += int(np.count_nonzero(np.abs(stage1_input) >= 1.0))
@@ -5420,15 +7043,18 @@ def _apply_saturation_modern(
             sample_rate=oversampled_sample_rate,
             order=1,
         )
-        if resolved_tone != 0.0:
+        # Interstage tilt EQ also gated by drive so low-drive values stay
+        # spectrally clean.
+        interstage_tilt_db = 2.5 * resolved_tone * _drive_gate
+        if interstage_tilt_db != 0.0:
             interstage = _apply_tilt_eq(
                 interstage,
                 sample_rate=oversampled_sample_rate,
-                tilt_db=2.5 * resolved_tone,
+                tilt_db=interstage_tilt_db,
                 pivot_hz=3_000.0,
             )
 
-        stage2_drive = 1.0 + (float(profile["stage2_gain"]) * drive)
+        stage2_drive = 1.0 + (float(profile["stage2_gain"]) * internal_drive)
         stage2_input = interstage * stage2_drive
         stage2 = _asymmetric_saturation_curve(
             stage2_input,
@@ -5490,7 +7116,7 @@ def _apply_saturation_modern(
     wet_signal = _apply_per_channel(input_signal, _process_channel)
     blended = ((1.0 - mix) * input_signal) + (mix * wet_signal)
     compensated_signal, compensation_mode_used, compensation_gain_db = (
-        _apply_saturation_compensation(
+        _apply_drive_compensation(
             blended,
             reference_signal=input_signal,
             sample_rate=SAMPLE_RATE,
@@ -5507,7 +7133,7 @@ def _apply_saturation_modern(
     thd_pct, thd_character = _saturation_thd(
         lambda x: cast(
             np.ndarray,
-            _apply_saturation_modern(
+            _apply_drive_modern(
                 x,
                 drive=drive,
                 mix=1.0,
@@ -5548,7 +7174,63 @@ def _apply_saturation_modern(
     return processed_signal, analysis
 
 
-def apply_saturation(
+@overload
+def apply_drive(
+    signal: np.ndarray,
+    drive: float = ...,
+    mix: float = ...,
+    *,
+    algorithm: str = ...,
+    mode: str = ...,
+    tone: float = ...,
+    fidelity: float = ...,
+    bias: float = ...,
+    even_harmonics: float = ...,
+    oversample_factor: int = ...,
+    highpass_hz: float = ...,
+    tone_tilt: float = ...,
+    output_lowpass_hz: float = ...,
+    preserve_lows_hz: float = ...,
+    preserve_highs_hz: float = ...,
+    multiband: bool = ...,
+    low_crossover_hz: float = ...,
+    high_crossover_hz: float = ...,
+    compensation_mode: str = ...,
+    output_trim_db: float = ...,
+    target_thd_pct: float | None = ...,
+    return_analysis: Literal[False] = ...,
+) -> np.ndarray: ...
+
+
+@overload
+def apply_drive(
+    signal: np.ndarray,
+    drive: float = ...,
+    mix: float = ...,
+    *,
+    algorithm: str = ...,
+    mode: str = ...,
+    tone: float = ...,
+    fidelity: float = ...,
+    bias: float = ...,
+    even_harmonics: float = ...,
+    oversample_factor: int = ...,
+    highpass_hz: float = ...,
+    tone_tilt: float = ...,
+    output_lowpass_hz: float = ...,
+    preserve_lows_hz: float = ...,
+    preserve_highs_hz: float = ...,
+    multiband: bool = ...,
+    low_crossover_hz: float = ...,
+    high_crossover_hz: float = ...,
+    compensation_mode: str = ...,
+    output_trim_db: float = ...,
+    target_thd_pct: float | None = ...,
+    return_analysis: Literal[True],
+) -> tuple[np.ndarray, dict[str, float | int | str]]: ...
+
+
+def apply_drive(
     signal: np.ndarray,
     drive: float = 1.18,
     mix: float = 0.34,
@@ -5565,44 +7247,351 @@ def apply_saturation(
     output_lowpass_hz: float = 0.0,
     preserve_lows_hz: float = 120.0,
     preserve_highs_hz: float = 6_000.0,
+    multiband: bool = True,
+    low_crossover_hz: float = 120.0,
+    high_crossover_hz: float = 5_000.0,
     compensation_mode: str = "auto",
     output_trim_db: float = 0.0,
+    target_thd_pct: float | None = None,
     return_analysis: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
-    """Apply subtle analog-style saturation to mono or stereo signal."""
+    """Apply analog-style drive/overdrive to a mono or stereo signal.
+
+    When ``multiband=True`` (the default), the signal is split into three
+    bands via Linkwitz-Riley 4th-order crossovers and only the mid band is
+    routed through the nonlinearity.  The bass (below ``low_crossover_hz``)
+    and treble (above ``high_crossover_hz``) bypass the shaper entirely, so
+    the effect stops piling harmonics into sub-bass on kick content or
+    lifting 2-8 kHz on cymbals.  The three bands sum to flat magnitude at
+    unity, then the standard dry/wet ``mix`` blend is applied.
+
+    When ``multiband=False``, the function runs the legacy monolithic path
+    bit-exactly — useful for callers that relied on the pre-multiband
+    voicing.  In legacy mode, ``preserve_lows_hz`` / ``preserve_highs_hz``
+    still drive the older dry-path parallel crossover.
+
+    The ``preserve_lows_hz`` / ``preserve_highs_hz`` kwargs are **deprecated**
+    in multiband mode.  If either is non-zero and ``multiband=True``, a
+    ``DeprecationWarning`` fires and the value is forwarded to the
+    corresponding ``low_crossover_hz`` / ``high_crossover_hz`` if that kwarg
+    is still at its default.
+    """
     if not 0.0 <= mix <= 1.0:
         raise ValueError("mix must be between 0 and 1")
-    if drive <= 0:
-        raise ValueError("drive must be positive")
+    if drive < 0:
+        raise ValueError("drive must be non-negative")
     if oversample_factor < 1:
         raise ValueError("oversample_factor must be at least 1")
     if highpass_hz < 0.0:
         raise ValueError("highpass_hz must be non-negative")
     if preserve_lows_hz < 0.0 or preserve_highs_hz < 0.0:
         raise ValueError("preserve_lows_hz and preserve_highs_hz must be non-negative")
+    if low_crossover_hz < 0.0 or high_crossover_hz < 0.0:
+        raise ValueError("low_crossover_hz and high_crossover_hz must be non-negative")
+    if (
+        multiband
+        and low_crossover_hz > 0.0
+        and high_crossover_hz > 0.0
+        and low_crossover_hz >= high_crossover_hz
+    ):
+        raise ValueError(
+            "low_crossover_hz must be below high_crossover_hz when both are active"
+        )
+    if target_thd_pct is not None and target_thd_pct < 0.0:
+        raise ValueError("target_thd_pct must be non-negative")
+
+    # Piece-aware auto-calibration via target_thd_pct. Binary-search the
+    # shaper drive that produces the requested characteristic THD on a sine
+    # probe; sibling of apply_clipper's max_shave_db and apply_compressor's
+    # target_avg_gr_db.
+    auto_calibrated = target_thd_pct is not None
+    solved_drive: float | None = None
+    measured_thd_pct: float | None = None
+    solver_iterations: int | None = None
+    if auto_calibrated:
+        assert target_thd_pct is not None
+        if drive != 1.18:
+            logger.warning(
+                "Drive: both drive and target_thd_pct set — "
+                "target_thd_pct wins; drive ignored."
+            )
+        resolved_algorithm_for_probe = algorithm.strip().lower()
+
+        def _probe_factory(
+            candidate_drive: float,
+        ) -> Callable[[np.ndarray], np.ndarray]:
+            if resolved_algorithm_for_probe == "legacy":
+                return lambda x: cast(
+                    np.ndarray,
+                    _apply_drive_legacy(
+                        x,
+                        drive=candidate_drive,
+                        mix=1.0,
+                        bias=bias,
+                        even_harmonics=even_harmonics,
+                        oversample_factor=oversample_factor,
+                        highpass_hz=max(highpass_hz, 10.0),
+                        tone_tilt=tone_tilt,
+                        output_lowpass_hz=output_lowpass_hz,
+                        compensation_mode="none",
+                        output_trim_db=0.0,
+                        return_analysis=False,
+                    ),
+                )
+            return lambda x: cast(
+                np.ndarray,
+                _apply_drive_modern(
+                    x,
+                    drive=candidate_drive,
+                    mix=1.0,
+                    mode=mode,
+                    tone=tone,
+                    fidelity=fidelity,
+                    bias=bias,
+                    even_harmonics=even_harmonics,
+                    oversample_factor=oversample_factor,
+                    highpass_hz=max(highpass_hz, 10.0),
+                    tone_tilt=tone_tilt,
+                    output_lowpass_hz=output_lowpass_hz,
+                    preserve_lows_hz=0.0,
+                    preserve_highs_hz=0.0,
+                    compensation_mode="none",
+                    output_trim_db=0.0,
+                    return_analysis=False,
+                ),
+            )
+
+        solved_drive, measured_thd_pct, solver_iterations = _solve_drive_for_target_thd(
+            target_thd_pct=float(target_thd_pct),
+            probe_processor_factory=_probe_factory,
+        )
+        logger.info(
+            f"Drive: solved drive={solved_drive:.3f} for target THD "
+            f"{target_thd_pct:.2f}% (measured {measured_thd_pct:.2f}% in "
+            f"{solver_iterations} iters)"
+        )
+        drive = solved_drive
+
+    # Internal analysis flag: auto-mode needs the inner function's analysis
+    # dict so we can append calibration metadata. Run inner with
+    # return_analysis=True whenever auto-mode is active, then drop the dict
+    # on the way out if the caller didn't actually ask for it.
+    want_inner_analysis = return_analysis or auto_calibrated
+
+    def _finalize(
+        inner_result: np.ndarray | tuple[np.ndarray, dict[str, float | int | str]],
+    ) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
+        if not want_inner_analysis:
+            return cast(np.ndarray, inner_result)
+        out_signal, out_analysis = cast(
+            tuple[np.ndarray, dict[str, float | int | str]], inner_result
+        )
+        if auto_calibrated:
+            assert solved_drive is not None
+            assert measured_thd_pct is not None
+            assert solver_iterations is not None
+            out_analysis["solved_drive"] = round(float(solved_drive), 4)
+            out_analysis["target_thd_pct"] = round(
+                float(cast(float, target_thd_pct)), 2
+            )
+            out_analysis["measured_thd_pct"] = round(float(measured_thd_pct), 2)
+            out_analysis["solver_iterations"] = int(solver_iterations)
+        if not return_analysis:
+            return out_signal
+        return out_signal, out_analysis
+
+    # Top-level unity floor — drive=0 is true bypass regardless of
+    # algorithm/multiband/mode. This short-circuits before any DSP so the
+    # LR4 crossover + shaper + compensation chain can't contribute
+    # reconstruction delta or pre-emphasis residue.
+    if drive <= 1.0e-6:
+        input_signal = np.asarray(signal, dtype=np.float64)
+        processed_signal = input_signal * db_to_amp(output_trim_db)
+        bypass_analysis: dict[str, float | int | str] = {
+            "algorithm": algorithm,
+            "mode": mode,
+            "drive": 0.0,
+            "mix": round(float(mix), 2),
+            "shaper_hot_fraction": 0.0,
+            "dc_offset": 0.0,
+            "thd_pct": 0.0,
+            "thd_character": "clean",
+            "compensation_mode_used": "bypass",
+            "compensation_gain_db": 0.0,
+        }
+        return _finalize((processed_signal, bypass_analysis))
 
     resolved_algorithm = algorithm.strip().lower()
     if resolved_algorithm == "legacy":
-        return _apply_saturation_legacy(
+        # Legacy algorithm runs the original monolithic path unchanged.
+        return _finalize(
+            _apply_drive_legacy(
+                signal,
+                drive=drive,
+                mix=mix,
+                bias=bias,
+                even_harmonics=even_harmonics,
+                oversample_factor=oversample_factor,
+                highpass_hz=highpass_hz,
+                tone_tilt=tone_tilt,
+                output_lowpass_hz=output_lowpass_hz,
+                compensation_mode=compensation_mode,
+                output_trim_db=output_trim_db,
+                return_analysis=want_inner_analysis,
+            )
+        )
+    if resolved_algorithm != "modern":
+        raise ValueError("algorithm must be 'modern' or 'legacy'")
+
+    # Resolve preserve_* deprecation in multiband mode.
+    resolved_low_xo = low_crossover_hz
+    resolved_high_xo = high_crossover_hz
+    if multiband:
+        if preserve_lows_hz != 120.0:
+            warnings.warn(
+                "preserve_lows_hz is deprecated for apply_drive(multiband=True); "
+                "use low_crossover_hz instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if low_crossover_hz == 120.0:
+                resolved_low_xo = preserve_lows_hz
+        if preserve_highs_hz != 6_000.0:
+            warnings.warn(
+                "preserve_highs_hz is deprecated for apply_drive(multiband=True); "
+                "use high_crossover_hz instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if high_crossover_hz == 5_000.0:
+                resolved_high_xo = preserve_highs_hz
+
+    if not multiband:
+        return _finalize(
+            _apply_drive_modern(
+                signal,
+                drive=drive,
+                mix=mix,
+                mode=mode,
+                tone=tone,
+                fidelity=fidelity,
+                bias=bias,
+                even_harmonics=even_harmonics,
+                oversample_factor=oversample_factor,
+                highpass_hz=highpass_hz,
+                tone_tilt=tone_tilt,
+                output_lowpass_hz=output_lowpass_hz,
+                preserve_lows_hz=preserve_lows_hz,
+                preserve_highs_hz=preserve_highs_hz,
+                compensation_mode=compensation_mode,
+                output_trim_db=output_trim_db,
+                return_analysis=want_inner_analysis,
+            )
+        )
+
+    return _finalize(
+        _apply_drive_multiband(
             signal,
             drive=drive,
             mix=mix,
+            mode=mode,
+            tone=tone,
+            fidelity=fidelity,
             bias=bias,
             even_harmonics=even_harmonics,
             oversample_factor=oversample_factor,
             highpass_hz=highpass_hz,
             tone_tilt=tone_tilt,
             output_lowpass_hz=output_lowpass_hz,
+            low_crossover_hz=resolved_low_xo,
+            high_crossover_hz=resolved_high_xo,
             compensation_mode=compensation_mode,
             output_trim_db=output_trim_db,
-            return_analysis=return_analysis,
+            return_analysis=want_inner_analysis,
         )
-    if resolved_algorithm != "modern":
-        raise ValueError("algorithm must be 'modern' or 'legacy'")
-    return _apply_saturation_modern(
-        signal,
+    )
+
+
+def _apply_drive_multiband(
+    signal: np.ndarray,
+    *,
+    drive: float,
+    mix: float,
+    mode: str,
+    tone: float,
+    fidelity: float,
+    bias: float,
+    even_harmonics: float,
+    oversample_factor: int,
+    highpass_hz: float,
+    tone_tilt: float,
+    output_lowpass_hz: float,
+    low_crossover_hz: float,
+    high_crossover_hz: float,
+    compensation_mode: str,
+    output_trim_db: float,
+    return_analysis: bool,
+) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
+    """Multiband LR4 wrapper around the modern drive algorithm.
+
+    Signal flow per channel:
+      1.  LR4-split into low / mid / high bands.
+          - low  = LR4_LP(low_crossover_hz, x)
+          - high = LR4_HP(high_crossover_hz, x)
+          - mid  = LR4_LP(high_crossover_hz, LR4_HP(low_crossover_hz, x))
+          This parallel structure sums to flat magnitude at unity.
+      2.  Only the mid band goes through the modern drive nonlinearity
+          (with preserve_* disabled — the LR4 bypass replaces them).
+      3.  Sum wet_mid + low + high to form the full wet signal.
+      4.  Apply the standard dry/wet ``mix`` blend against the original
+          input, and run the output through the same loudness compensation
+          and output trim as the monolithic path.
+    """
+    input_signal = np.asarray(signal, dtype=np.float64)
+
+    low_fc = low_crossover_hz
+    high_fc = high_crossover_hz
+
+    def _split_band_mid(channel: np.ndarray) -> np.ndarray:
+        x = np.asarray(channel, dtype=np.float64)
+        # High-pass to strip bass, then low-pass to strip treble: true bandpass.
+        if low_fc > 0.0:
+            mid = _linkwitz_riley_highpass(x, low_fc, SAMPLE_RATE)
+        else:
+            mid = x.copy()
+        if high_fc > 0.0:
+            mid = _linkwitz_riley_lowpass(mid, high_fc, SAMPLE_RATE)
+        return mid
+
+    def _split_band_low(channel: np.ndarray) -> np.ndarray:
+        if low_fc <= 0.0:
+            return np.zeros_like(channel, dtype=np.float64)
+        return _linkwitz_riley_lowpass(
+            np.asarray(channel, dtype=np.float64), low_fc, SAMPLE_RATE
+        )
+
+    def _split_band_high(channel: np.ndarray) -> np.ndarray:
+        if high_fc <= 0.0:
+            return np.zeros_like(channel, dtype=np.float64)
+        return _linkwitz_riley_highpass(
+            np.asarray(channel, dtype=np.float64), high_fc, SAMPLE_RATE
+        )
+
+    low_band = _apply_per_channel(input_signal, _split_band_low)
+    high_band = _apply_per_channel(input_signal, _split_band_high)
+    mid_band = _apply_per_channel(input_signal, _split_band_mid)
+
+    # Process only the mid band through the monolithic nonlinearity at mix=1.0.
+    # We apply the overall dry/wet blend ourselves after summing the bands so
+    # the bypass bands don't get attenuated by mix and the wet side stays
+    # energy-consistent.  preserve_* are disabled here — the LR4 split is
+    # the bypass and we don't want double-routing.  Request analysis from
+    # the mid-band call when the caller wants it so we can surface
+    # shaper_hot_fraction in the outer analysis dict.
+    wet_mid_result = _apply_drive_modern(
+        mid_band,
         drive=drive,
-        mix=mix,
+        mix=1.0,
         mode=mode,
         tone=tone,
         fidelity=fidelity,
@@ -5612,12 +7601,86 @@ def apply_saturation(
         highpass_hz=highpass_hz,
         tone_tilt=tone_tilt,
         output_lowpass_hz=output_lowpass_hz,
-        preserve_lows_hz=preserve_lows_hz,
-        preserve_highs_hz=preserve_highs_hz,
-        compensation_mode=compensation_mode,
-        output_trim_db=output_trim_db,
+        preserve_lows_hz=0.0,
+        preserve_highs_hz=0.0,
+        compensation_mode="none",
+        output_trim_db=0.0,
         return_analysis=return_analysis,
     )
+    mid_analysis: dict[str, float | int | str]
+    if return_analysis:
+        wet_mid_array, mid_analysis = cast(
+            tuple[np.ndarray, dict[str, float | int | str]], wet_mid_result
+        )
+    else:
+        wet_mid_array = cast(np.ndarray, wet_mid_result)
+        mid_analysis = {}
+
+    # Sum bands back into full-range wet signal.  LR4 guarantees
+    # low + mid + high = input at unity (magnitude-flat reconstruction).
+    full_wet = low_band + wet_mid_array + high_band
+
+    # Standard dry/wet crossfade against the original signal.
+    blended = ((1.0 - mix) * input_signal) + (mix * full_wet)
+
+    compensated_signal, compensation_mode_used, compensation_gain_db = (
+        _apply_drive_compensation(
+            blended,
+            reference_signal=input_signal,
+            sample_rate=SAMPLE_RATE,
+            compensation_mode=compensation_mode,
+        )
+    )
+    processed_signal = np.asarray(
+        compensated_signal * db_to_amp(output_trim_db),
+        dtype=np.float64,
+    )
+
+    if not return_analysis:
+        return processed_signal
+
+    thd_pct, thd_character = _saturation_thd(
+        lambda x: cast(
+            np.ndarray,
+            _apply_drive_multiband(
+                x,
+                drive=drive,
+                mix=1.0,
+                mode=mode,
+                tone=tone,
+                fidelity=fidelity,
+                bias=bias,
+                even_harmonics=even_harmonics,
+                oversample_factor=oversample_factor,
+                highpass_hz=max(highpass_hz, 10.0),
+                tone_tilt=tone_tilt,
+                output_lowpass_hz=output_lowpass_hz,
+                low_crossover_hz=low_fc,
+                high_crossover_hz=high_fc,
+                compensation_mode="none",
+                output_trim_db=0.0,
+                return_analysis=False,
+            ),
+        )
+    )
+    analysis: dict[str, float | int | str] = {
+        "algorithm": "modern",
+        "mode": mode.strip().lower(),
+        "drive": round(float(drive), 2),
+        "mix": round(float(mix), 2),
+        "fidelity": round(float(fidelity), 2),
+        "tone": round(float(tone), 2),
+        "multiband": 1,
+        "low_crossover_hz": round(float(low_fc), 1),
+        "high_crossover_hz": round(float(high_fc), 1),
+        "shaper_hot_fraction": mid_analysis.get("shaper_hot_fraction", 0.0),
+        "dc_offset": round(float(np.mean(to_mono_reference(processed_signal))), 6),
+        "thd_pct": thd_pct,
+        "thd_character": thd_character,
+        "compensation_mode_used": compensation_mode_used,
+        "compensation_gain_db": round(float(compensation_gain_db), 2),
+    }
+    return processed_signal, analysis
 
 
 # ---------------------------------------------------------------------------
@@ -5656,6 +7719,31 @@ _PREAMP_PRESETS: dict[str, dict[str, Any]] = {
         "brightness": 0.0,
         "even_odd": 0.75,
         "harmonic_injection": 0.65,
+    },
+    "kick_body": {
+        # Flux-domain body emphasis for kicks. Replaces the old
+        # drive-based `kick_weight` preset, which despite its name added
+        # ~5 dB of 2-5 kHz papery brightness. The preamp's V -> dPhi/dt
+        # integrator saturates bass more than highs, so this preset adds
+        # low-harmonic richness (200-1 kHz +30 dB of wet-sum) while
+        # leaving the 2-5 kHz band essentially flat.
+        "drive": 0.5,
+        "mix": 0.35,
+        "warmth": 0.6,
+        "brightness": 0.0,
+        "even_odd": 0.7,
+        "harmonic_injection": 0.55,
+    },
+    "tom_body": {
+        # Sibling of `kick_body` tuned lighter for tom content. Same
+        # flux-domain low-harmonic emphasis, but gentler mix to preserve
+        # tom sustain and avoid muddying the lowmids in a full kit.
+        "drive": 0.4,
+        "mix": 0.30,
+        "warmth": 0.55,
+        "brightness": 0.0,
+        "even_odd": 0.7,
+        "harmonic_injection": 0.55,
     },
 }
 
@@ -5914,7 +8002,7 @@ def apply_preamp(
         )
 
     compensated_signal, compensation_mode_used, compensation_gain_db = (
-        _apply_saturation_compensation(
+        _apply_drive_compensation(
             blended,
             reference_signal=input_signal,
             sample_rate=sample_rate,
@@ -5961,6 +8049,240 @@ def apply_preamp(
     return processed_signal, analysis
 
 
+# ---------------------------------------------------------------------------
+# Analog filter (bus/master/voice wrapper around the synth filter palette)
+# ---------------------------------------------------------------------------
+
+
+def _coerce_filter_curve(
+    value: float | np.ndarray,
+    *,
+    n: int,
+    name: str,
+) -> np.ndarray:
+    """Return a length-``n`` float64 curve for a scalar or per-sample filter param.
+
+    A scalar becomes a constant array.  A per-sample array must already match
+    the signal length ``n``; mismatched lengths raise ``ValueError`` (fail
+    fast — silent resampling would mask wiring bugs in automation curves and
+    has bitten us historically).
+
+    Non-finite values are rejected outright because the filter kernels run in
+    numba and non-finite inputs silently corrupt state.
+    """
+    arr = np.asarray(value, dtype=np.float64)
+    if arr.ndim == 0:
+        arr = np.full(n, float(arr), dtype=np.float64)
+    elif arr.ndim == 1:
+        if arr.shape[0] == 0:
+            raise ValueError(f"{name} per-sample curve is empty")
+        if arr.shape[0] != n:
+            raise ValueError(
+                f"{name} per-sample curve length {arr.shape[0]} must match signal length {n}"
+            )
+    else:
+        raise ValueError(f"{name} must be a scalar or 1-D per-sample array")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError(f"{name} contains non-finite values")
+    return arr
+
+
+def apply_analog_filter(
+    signal: np.ndarray,
+    *,
+    cutoff_hz: float | np.ndarray = 1000.0,
+    resonance_q: float = 0.707,
+    filter_topology: str = "svf",
+    mode: str = "lp",
+    filter_drive: float = 0.0,
+    feedback_amount: float = 0.0,
+    feedback_saturation: float = 0.3,
+    quality: str = "great",
+    mix: float = 1.0,
+    bass_compensation: float = 0.5,
+    filter_morph: float = 0.0,
+    filter_even_harmonics: float = 0.0,
+    hpf_cutoff_hz: float = 0.0,
+    hpf_resonance_q: float = 0.707,
+    k35_feedback_asymmetry: float = 0.5,
+    sample_rate: int = SAMPLE_RATE,
+) -> np.ndarray:
+    """Apply the analog-modeled filter palette as a bus/master/voice effect.
+
+    Wraps :func:`code_musics.engines._dsp_utils.apply_filter_oversampled` so
+    the eight ZDF/TPT topologies used by the synth engines (``svf``,
+    ``ladder``, ``sallen_key``, ``cascade``, ``sem``, ``jupiter``, ``k35``,
+    ``diode``) are available on ``EffectSpec`` chains.
+
+    Automation surface
+    ------------------
+    Only ``cutoff_hz`` accepts per-sample arrays; the underlying numba
+    filter kernels take cutoff as a per-sample profile but Q / drive /
+    feedback as scalars.  Historically this function silently collapsed
+    per-sample Q/drive/feedback arrays to their mean with a warning — that
+    let the signature lie about what automation actually did.  Rather than
+    pretend per-block sampling makes these "work", the signature now
+    matches reality: ``resonance_q``, ``filter_drive``, ``feedback_amount``
+    are ``float`` only.  Automate ``cutoff_hz`` for sweeps (see the
+    ``analog_filter`` entries in :mod:`code_musics.score`'s EffectSpec
+    automation resolution — ``AutomationSpec`` curves on ``cutoff_hz``
+    are converted to per-sample arrays at render time).
+
+    Parameters
+    ----------
+    signal:
+        Mono ``(N,)`` or stereo ``(2, N)`` audio.  Mono is upmixed to stereo
+        so the output always preserves stereo width; left and right channels
+        run through independent filter states (no cross-channel summing).
+    cutoff_hz:
+        Lowpass/bandpass/highpass/notch corner.  Scalar or per-sample array
+        (for automation-driven sweeps).  Clamped to ``[20 Hz, ~Nyquist]``.
+        Per-sample arrays must match the signal length exactly.
+    resonance_q:
+        Filter Q.  ``0.707`` is neutral; ``> 4.0`` enters self-oscillation
+        territory on ladder / K35 / diode.
+    filter_topology:
+        One of ``svf``, ``ladder``, ``sallen_key``, ``cascade``, ``sem``,
+        ``jupiter``, ``k35``, ``diode``.  See the engine-side topology docs
+        for per-topology character.
+    mode:
+        ``lp`` (lowpass, default), ``bp`` (bandpass), ``hp`` (highpass),
+        or ``notch``.  Topology support matches the synth engines: SVF and
+        SEM support all four; the ladder/cascade/jupiter/sallen_key/k35/diode
+        kernels honour the requested mode where their topology supports it
+        and fall back to lowpass otherwise.
+    filter_drive:
+        Pre-filter saturation drive ``0 – 1``.
+    feedback_amount:
+        Post-filter to pre-filter external feedback ``0 – 1``.  The
+        ``newton`` solver (selected by ``quality`` modes ``fast`` / ``great``
+        / ``divine``) closes this loop implicitly on all eight analog
+        topologies — SVF, cascade, SEM, Sallen-Key, ladder, Jupiter, K35,
+        and diode.  K35 outer-Newton activates only in LP mode with
+        ``filter_drive == 0``; diode outer-Newton requires LP + ``morph == 0``.
+        Outside those gates the topologies fall back to unit-delay external
+        feedback while the internal Newton solve (where present) still runs.
+    feedback_saturation:
+        Shaping of the feedback tanh (0 – 1).
+    quality:
+        ``draft`` / ``fast`` / ``great`` / ``divine``.  Sole axis for solver
+        + internal oversampling selection: ``draft`` uses the ADAA solver
+        with no oversampling (cheapest), ``fast`` / ``great`` / ``divine``
+        use Newton-iterated ZDF with progressively higher iteration caps
+        and oversampling factors.  Use ``great`` (default) for
+        master-bus / send-bus use; ``divine`` for lead-line focal points;
+        ``fast`` or ``draft`` for dense mixes where CPU matters.
+    mix:
+        Wet/dry blend ``0 – 1``.  Default ``1.0`` (fully wet).  Use lower
+        values for parallel filtering (e.g. a K35 scream blended with the
+        dry signal).
+    bass_compensation:
+        Ladder-topology bass-suck offset (0 – 1).  Ignored by other topologies.
+    filter_morph:
+        SVF/ladder filter-mode morph parameter (0 – 4, wraps).  Ignored by
+        other topologies.
+    filter_even_harmonics:
+        Shaping of the per-stage saturation curve (0 – 1).  Ignored by
+        non-driven topologies.
+    hpf_cutoff_hz:
+        Optional serial 2-pole ZDF highpass corner applied *before* the main
+        filter.  Models CS80 / Jupiter-8 dual-filter architecture.  ``0.0``
+        disables.
+    hpf_resonance_q:
+        Q for the serial highpass.  Defaults to Butterworth-neutral ``0.707``.
+    k35_feedback_asymmetry:
+        Korg MS-20 K35 asymmetric-feedback tuning (0 – 1).  Ignored by other
+        topologies.
+    sample_rate:
+        Audio sample rate.
+    """
+    audio = _ensure_stereo(signal)
+    n_samples = int(audio.shape[-1])
+    if n_samples == 0:
+        return audio
+
+    resolved_topology = filter_topology.strip().lower()
+    if resolved_topology not in _SUPPORTED_FILTER_TOPOLOGIES:
+        raise ValueError(
+            f"Unsupported filter_topology: {filter_topology!r}. "
+            f"Supported: {sorted(_SUPPORTED_FILTER_TOPOLOGIES)}"
+        )
+
+    resolved_mode_name = _ANALOG_FILTER_MODE_ALIAS.get(mode.strip().lower())
+    if resolved_mode_name is None or resolved_mode_name not in _SUPPORTED_FILTER_MODES:
+        raise ValueError(
+            f"Unsupported filter mode: {mode!r}. Supported: ['lp', 'bp', 'hp', 'notch']"
+        )
+
+    if not 0.0 <= mix <= 1.0:
+        raise ValueError("mix must be between 0 and 1")
+    if not 0.0 <= feedback_saturation <= 1.0:
+        raise ValueError("feedback_saturation must be between 0 and 1")
+    if hpf_cutoff_hz < 0.0:
+        raise ValueError("hpf_cutoff_hz must be non-negative")
+
+    # Quality is the sole solver/oversample axis — no separate filter_solver
+    # kwarg to reconcile.  Previously we let an explicit filter_solver override
+    # the quality-mode default, which produced a silent no-op when users
+    # combined quality="draft" with the default filter_solver="newton" (ADAA
+    # signal path was dropped in favour of a Newton path with zero iterations).
+    quality_config = resolve_quality_mode(quality)
+
+    cutoff_curve = _coerce_filter_curve(cutoff_hz, n=n_samples, name="cutoff_hz")
+    if not np.isfinite(resonance_q):
+        raise ValueError("resonance_q must be finite")
+    if not np.isfinite(filter_drive):
+        raise ValueError("filter_drive must be finite")
+    if not np.isfinite(feedback_amount):
+        raise ValueError("feedback_amount must be finite")
+
+    # Upsample the cutoff curve once and share it between L/R.  The Kaiser
+    # polyphase resample dominates CPU on long master-bus sweeps; doing it
+    # twice (once per channel) wasted hundreds of ms on typical renders.
+    cutoff_upsampled = upsample_cutoff_profile(
+        cutoff_curve,
+        oversample_factor=quality_config.oversample_factor,
+        sample_rate=sample_rate,
+        n_base=n_samples,
+    )
+
+    def _filter_channel(channel: np.ndarray) -> np.ndarray:
+        channel_f64 = np.ascontiguousarray(channel, dtype=np.float64)
+        return apply_filter_oversampled_preupsampled(
+            channel_f64,
+            cutoff_profile_upsampled=cutoff_upsampled,
+            sample_rate=sample_rate,
+            oversample_factor=quality_config.oversample_factor,
+            resonance_q=float(resonance_q),
+            filter_mode=resolved_mode_name,
+            filter_drive=float(filter_drive),
+            filter_even_harmonics=filter_even_harmonics,
+            filter_topology=resolved_topology,
+            bass_compensation=bass_compensation,
+            filter_morph=filter_morph,
+            hpf_cutoff_hz=hpf_cutoff_hz,
+            hpf_resonance_q=hpf_resonance_q,
+            feedback_amount=float(feedback_amount),
+            feedback_saturation=feedback_saturation,
+            filter_solver=quality_config.solver,
+            max_newton_iters=max(quality_config.max_newton_iters, 1),
+            newton_tolerance=quality_config.newton_tolerance
+            if quality_config.newton_tolerance > 0.0
+            else 1e-9,
+            k35_feedback_asymmetry=k35_feedback_asymmetry,
+        )
+
+    wet_left = _filter_channel(audio[0])
+    wet_right = _filter_channel(audio[1])
+    wet_stereo = np.stack([wet_left, wet_right]).astype(np.float64)
+
+    if mix >= 1.0:
+        return wet_stereo
+    if mix <= 0.0:
+        return audio.astype(np.float64)
+    return ((1.0 - mix) * audio + mix * wet_stereo).astype(np.float64)
+
+
 def apply_stereo_width(
     signal: np.ndarray,
     width: float = 1.0,
@@ -5987,6 +8309,17 @@ def apply_stereo_width(
 
 
 _SUPPORTED_EFFECT_AMOUNT_AUTOMATION_TARGETS = {"mix", "wet", "wet_level"}
+
+# Per-effect automation targets that resolve to per-sample param arrays rather
+# than wet/dry amount curves.  ``analog_filter`` supports ``cutoff_hz`` natively
+# because the numba filter kernel reads cutoff as a per-sample profile; Q,
+# drive, and feedback remain scalar-only on that effect (see apply_analog_filter
+# docstring).  Add entries here for other effects that want AutomationSpec
+# surfaces on their own param names.
+_PER_EFFECT_PARAM_AUTOMATION_TARGETS: dict[str, frozenset[str]] = {
+    "analog_filter": frozenset({"cutoff_hz"}),
+    "clipper": frozenset({"threshold_db", "knee_width_db"}),
+}
 
 
 def _blend_signals(
@@ -6088,6 +8421,90 @@ def _resolve_effect_amount_automation(
     return target_name, amount_curve
 
 
+def _resolve_effect_param_automation(
+    *,
+    effect: Any,
+    params: dict[str, Any],
+    signal_length: int,
+    start_time_seconds: float,
+    matrix_connections: list[Any] | None = None,
+    source_sampling_context: Any | None = None,
+) -> dict[str, Any]:
+    """Resolve per-effect AutomationSpec curves to per-sample param arrays.
+
+    Mutates a *copy* of ``params`` by replacing scalar entries with per-sample
+    numpy arrays when an ``AutomationSpec`` on the effect targets a supported
+    per-effect param (currently ``cutoff_hz`` on ``analog_filter``).  Unknown
+    target names are left for :func:`_resolve_effect_amount_automation` to
+    handle (mix/wet/wet_level) — per-effect params and wet/dry amount curves
+    are independent surfaces.
+    """
+    supported_targets = _PER_EFFECT_PARAM_AUTOMATION_TARGETS.get(effect.kind)
+    if not supported_targets:
+        return params
+
+    automation_specs = list(getattr(effect, "automation", []))
+    matrix_conns = list(matrix_connections or [])
+    resolved = dict(params)
+
+    signal_times: np.ndarray | None = None
+    for target_name in supported_targets:
+        targeted_specs = [
+            spec
+            for spec in automation_specs
+            if spec.target.kind == "control" and spec.target.name == target_name
+        ]
+        targeted_conns = [
+            connection
+            for connection in matrix_conns
+            if connection.target.kind == "control"
+            and connection.target.name == target_name
+        ]
+        if not targeted_specs and not targeted_conns:
+            continue
+
+        if target_name not in resolved:
+            raise ValueError(
+                f"effect automation target {target_name!r} requires that parameter "
+                f"on the {effect.kind!r} effect"
+            )
+
+        base_scalar = resolved[target_name]
+        if isinstance(base_scalar, np.ndarray):
+            raise ValueError(
+                f"effect param {target_name!r} on {effect.kind!r} cannot mix an "
+                "explicit per-sample array with AutomationSpec curves — supply "
+                "one or the other"
+            )
+
+        if signal_times is None:
+            signal_times = start_time_seconds + (
+                np.arange(signal_length, dtype=np.float64) / SAMPLE_RATE
+            )
+
+        curve = apply_control_automation(
+            base_value=float(base_scalar),
+            specs=targeted_specs,
+            target_name=target_name,
+            times=signal_times,
+        )
+        if targeted_conns:
+            if source_sampling_context is None:
+                raise ValueError(
+                    f"matrix connections on {effect.kind}.{target_name} require "
+                    "source_sampling_context"
+                )
+            curve = combine_connections_on_curve(
+                base=curve,
+                connections=targeted_conns,
+                times=signal_times,
+                context=source_sampling_context,
+            )
+        resolved[target_name] = curve
+
+    return resolved
+
+
 _PLUGIN_BACKED_EFFECTS: dict[str, str] = {
     "chow_tape": "chow_tape",
     "phaser": "chow_phaser_stereo",
@@ -6165,6 +8582,7 @@ _SIMPLE_EFFECT_DISPATCH: dict[str, Callable[..., np.ndarray]] = {
     "rare_se": apply_rare_se,
     "tuba": apply_tuba,
     "stereo_width": apply_stereo_width,
+    "analog_filter": apply_analog_filter,
 }
 
 
@@ -6196,6 +8614,7 @@ def apply_effect_chain(
     matrix_connections: list[Any] | None = ...,
     source_sampling_context: Any | None = ...,
     return_analysis: Literal[False] = ...,
+    percussive: bool = ...,
 ) -> np.ndarray: ...
 
 
@@ -6210,6 +8629,7 @@ def apply_effect_chain(
     matrix_connections: list[Any] | None = ...,
     source_sampling_context: Any | None = ...,
     return_analysis: Literal[True],
+    percussive: bool = ...,
 ) -> tuple[np.ndarray, list[EffectAnalysisEntry]]: ...
 
 
@@ -6223,6 +8643,7 @@ def apply_effect_chain(
     matrix_connections: list[Any] | None = None,
     source_sampling_context: Any | None = None,
     return_analysis: bool = False,
+    percussive: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, list[EffectAnalysisEntry]]:
     """Apply a declarative effect chain to mono or stereo audio."""
     processed = _coerce_signal_layout(signal)
@@ -6236,13 +8657,21 @@ def apply_effect_chain(
             "compressor",
             "mod_delay",
             "phaser",
-            "saturation",
+            "drive",
             "preamp",
             "airwindows",
             "byod",
             "chow_centaur",
         }:
             params = _resolve_effect_params(effect.kind, params)
+        params = _resolve_effect_param_automation(
+            effect=effect,
+            params=params,
+            signal_length=effect_input.shape[-1],
+            start_time_seconds=start_time_seconds,
+            matrix_connections=matrix_connections,
+            source_sampling_context=source_sampling_context,
+        )
         effect_amount_automation = _resolve_effect_amount_automation(
             effect=effect,
             params=params,
@@ -6280,38 +8709,30 @@ def apply_effect_chain(
                 params,
                 effect_amount_automation,
             )
-        elif effect.kind == "saturation":
+        elif effect.kind == "drive":
             if effect_amount_automation is None and return_analysis:
-                processed_signal, saturation_metrics = cast(
-                    tuple[np.ndarray, dict[str, float | int | str]],
-                    apply_saturation(
-                        processed,
-                        **params,
-                        return_analysis=True,
-                    ),
+                processed_signal, drive_metrics = apply_drive(
+                    processed,
+                    **params,
+                    return_analysis=True,
                 )
                 processed = processed_signal
-                native_metrics = saturation_metrics
+                native_metrics = drive_metrics
             elif effect_amount_automation is None:
-                processed = cast(np.ndarray, apply_saturation(processed, **params))
+                processed = cast(np.ndarray, apply_drive(processed, **params))
             else:
                 target_name, amount_curve = effect_amount_automation
                 wet_params = dict(params)
                 wet_params[target_name] = 1.0
                 if return_analysis:
-                    wet_signal, saturation_metrics = cast(
-                        tuple[np.ndarray, dict[str, float | int | str]],
-                        apply_saturation(
-                            processed,
-                            **wet_params,
-                            return_analysis=True,
-                        ),
+                    wet_signal, drive_metrics = apply_drive(
+                        processed,
+                        **wet_params,
+                        return_analysis=True,
                     )
-                    native_metrics = saturation_metrics
+                    native_metrics = drive_metrics
                 else:
-                    wet_signal = cast(
-                        np.ndarray, apply_saturation(processed, **wet_params)
-                    )
+                    wet_signal = cast(np.ndarray, apply_drive(processed, **wet_params))
                 processed = _blend_signals(effect_input, wet_signal, amount_curve)
         elif effect.kind == "preamp":
             if effect_amount_automation is None and return_analysis:
@@ -6346,6 +8767,46 @@ def apply_effect_chain(
                 processed = _blend_signals(effect_input, wet_signal, amount_curve)
         elif effect.kind == "eq":
             processed = apply_eq(processed, **params)
+        elif effect.kind == "clipper":
+            # Clipper already accepts per-sample threshold_db / knee_width_db
+            # / mix arrays directly, so _resolve_effect_param_automation
+            # (via the _PER_EFFECT_PARAM_AUTOMATION_TARGETS["clipper"] entry)
+            # has already substituted per-sample arrays into ``params`` if
+            # AutomationSpec / mod-matrix connections targeted those names.
+            # Amount-automation on mix/wet/wet_level goes through the
+            # amount_curve pathway just like other native effects.
+            if effect_amount_automation is None:
+                if return_analysis:
+                    processed_signal, clipper_metrics = apply_clipper(
+                        processed, **params, return_analysis=True
+                    )
+                    processed = processed_signal
+                    native_metrics = clipper_metrics
+                else:
+                    processed = apply_clipper(processed, **params)
+            else:
+                target_name, amount_curve = effect_amount_automation
+                wet_params = dict(params)
+                wet_params[target_name] = 1.0
+                if return_analysis:
+                    wet_signal, clipper_metrics = apply_clipper(
+                        processed, **wet_params, return_analysis=True
+                    )
+                    native_metrics = clipper_metrics
+                else:
+                    wet_signal = cast(
+                        np.ndarray, apply_clipper(processed, **wet_params)
+                    )
+                processed = _blend_signals(effect_input, wet_signal, amount_curve)
+        elif effect.kind == "limiter":
+            if return_analysis:
+                processed_signal, limiter_metrics = apply_native_limiter(
+                    processed, **params, return_analysis=True
+                )
+                processed = processed_signal
+                native_metrics = limiter_metrics
+            else:
+                processed = apply_native_limiter(processed, **params)
         elif effect.kind == "compressor":
             sidechain_signal: np.ndarray | None = None
             sidechain_source = params.pop("sidechain_source", None)
@@ -6458,6 +8919,7 @@ def apply_effect_chain(
                     output_signal=processed,
                     sample_rate=SAMPLE_RATE,
                     native_metrics=native_metrics,
+                    percussive=percussive,
                 )
             )
     if return_analysis:

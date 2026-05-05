@@ -161,7 +161,7 @@ def _hall_reverb() -> EffectSpec:
 
 def _hall_saturation() -> EffectSpec:
     """Warm saturation on the send bus — glues the reverb tail together."""
-    return EffectSpec("saturation", {"preset": "tube_warm", "mix": 0.18, "drive": 1.1})
+    return EffectSpec("drive", {"preset": "tube_warm", "mix": 0.18, "drive": 0.37})
 
 
 def _master_tape() -> EffectSpec:
@@ -171,7 +171,7 @@ def _master_tape() -> EffectSpec:
             "chow_tape",
             {"drive": 0.50, "saturation": 0.42, "bias": 0.50, "mix": 55.0},
         )
-    return EffectSpec("saturation", {"preset": "tube_warm", "mix": 0.20, "drive": 1.15})
+    return EffectSpec("drive", {"preset": "tube_warm", "mix": 0.20, "drive": 0.38})
 
 
 # ---------------------------------------------------------------------------
