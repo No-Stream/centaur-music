@@ -262,6 +262,13 @@ def render_piece(
                 start_seconds=render_window.trim_start_seconds,
                 duration_seconds=render_window.duration_seconds,
             )
+            if pre_master_mix is not None:
+                pre_master_mix = _trim_rendered_audio(
+                    audio=pre_master_mix,
+                    sample_rate=render_score.sample_rate,
+                    start_seconds=render_window.trim_start_seconds,
+                    duration_seconds=render_window.duration_seconds,
+                )
         if save_plot:
             version_plot_path = version_output_path.with_suffix(".png")
             figure, _ = render_score.plot_piano_roll(version_plot_path)

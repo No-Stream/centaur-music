@@ -5365,19 +5365,16 @@ def finalize_master(
 
     mastered = _dispatch_limiter(source_signal, limiter_input_gain_db)
 
+    previous_lufs: float | None = None
     for _ in range(max_iterations):
-        # The native limiter already guarantees peaks are at or below the
-        # ceiling, so normalize_true_peak is only needed for the LSP path
-        # (where the plugin's output might not land exactly at the ceiling)
-        # or as a safety net.  For the native path, skip it — it would boost
-        # a high-crest-factor signal back to the ceiling and defeat LUFS
-        # convergence.
-        if use_lsp_limiter:
-            mastered = normalize_true_peak(
-                mastered,
-                target_peak_dbfs=true_peak_ceiling_dbfs,
-                oversample_factor=oversample_factor,
-            )
+        # Measure LUFS directly on the limiter's own output — do NOT
+        # re-normalize to the true-peak ceiling here.  Re-normalizing every
+        # iteration (as the LSP path used to do) pins the signal's peak to
+        # the ceiling regardless of the limiter's input gain, which makes
+        # measured LUFS nearly insensitive to `limiter_input_gain_db` and
+        # prevents the loop from ever converging on `target_lufs`. The
+        # true-peak ceiling is still guaranteed by the final safety pass
+        # below, after the loop has converged on loudness.
         current_lufs, active_window_fraction = integrated_lufs(
             mastered,
             sample_rate=sample_rate,
@@ -5388,6 +5385,12 @@ def finalize_master(
         loudness_error = target_lufs - current_lufs
         if abs(loudness_error) <= loudness_tolerance_lufs:
             break
+        if previous_lufs is not None and abs(current_lufs - previous_lufs) < 1e-6:
+            # Gain changes are no longer moving measured LUFS (e.g. the
+            # limiter is fully saturating regardless of input gain) — stop
+            # iterating rather than walking gain indefinitely.
+            break
+        previous_lufs = current_lufs
 
         logger.info(
             f"Mastering iteration: LUFS error {loudness_error:+.2f} LU, "

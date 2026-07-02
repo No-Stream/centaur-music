@@ -376,3 +376,34 @@ def test_drum_voice_pluck_presets_render(preset_name: str) -> None:
     )
     assert np.isfinite(audio).all()
     assert np.max(np.abs(audio)) > 0.0
+
+
+def test_pluck_freq_profile_survives_duration_rounding() -> None:
+    """Regression: n_samples -> duration -> int() round-trip lost a sample.
+
+    92942 / 44100 * 44100 rounds down to 92941, so a caller that derived
+    ``duration`` from its sample count got a length-mismatch ValueError
+    when passing a matching ``freq_profile``.  The explicit ``n_samples``
+    parameter must bypass the round-trip.
+    """
+    n_samples = 92942
+    sample_rate = 44100
+    duration = n_samples / float(sample_rate)
+    assert int(duration * sample_rate) == n_samples - 1  # the lossy case
+
+    freq_profile = np.full(n_samples, 220.0, dtype=np.float64)
+    audio = render_pluck(
+        freq=220.0,
+        duration=duration,
+        sample_rate=sample_rate,
+        hardness=0.3,
+        damping=0.3,
+        position=0.3,
+        sustain=0.2,
+        drive=0.0,
+        seed=7,
+        freq_profile=freq_profile,
+        n_samples=n_samples,
+    )
+    assert audio.shape[0] == n_samples
+    assert np.isfinite(audio).all()

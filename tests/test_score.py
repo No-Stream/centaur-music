@@ -3,6 +3,7 @@
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -439,6 +440,35 @@ def test_voice_legato_skips_attack_retrigger_when_polyphony_is_one() -> None:
     )
 
 
+def test_mono_voice_with_drift_bus_renders_after_voice_stealing() -> None:
+    """Voice stealing shortens notes after their freq trajectory is built.
+
+    Regression: a ``max_polyphony=1`` voice subscribed to a drift bus (or
+    any note with a pitch trajectory) crashed with ``freq_trajectory length
+    must match note duration`` whenever stealing truncated a note, because
+    the trajectory kept its original length.
+    """
+    score = Score(f0_hz=49.0, auto_master_gain_stage=False)
+    score.add_drift_bus("d", rate_hz=0.1, depth_cents=4.0, seed=1)
+    score.add_voice(
+        "bass",
+        synth_defaults={"engine": "synth_voice", "preset": "soft_bass"},
+        normalize_lufs=None,
+        max_polyphony=1,
+        legato=True,
+        drift_bus="d",
+        drift_bus_correlation=0.8,
+    )
+    # Adjacent notes: each release tail overlaps the next onset, so every
+    # note but the last gets stolen and truncated.
+    for i, partial in enumerate((2.0, 2.0, 8 / 3, 3.0)):
+        score.add_note("bass", start=i * 0.4, duration=0.4, partial=partial, amp=0.2)
+
+    audio = score.render()
+    assert audio.size > 0
+    assert np.all(np.isfinite(audio))
+
+
 def test_score_send_bus_adds_shared_return_to_mix() -> None:
     dry_reference = Score(f0_hz=55.0, auto_master_gain_stage=False)
     dry_reference.add_voice("lead", normalize_lufs=None)
@@ -568,6 +598,33 @@ def test_extract_window_preserves_absolute_timing_context() -> None:
 
     assert resolved_note.authored_start == pytest.approx(5.5)
     assert resolved_note.resolved_end == pytest.approx(6.5)
+
+
+def test_extract_window_clamps_duration_for_notes_extending_past_window_end() -> None:
+    score = Score(f0_hz=55.0)
+    score.add_note("pad", start=0.0, duration=20.0, partial=2.0, amp=0.2)
+
+    windowed_score = score.extract_window(start_seconds=5.0, end_seconds=8.0)
+
+    kept_note = windowed_score.voices["pad"].notes[0]
+    assert kept_note.start == pytest.approx(0.0)
+    assert kept_note.duration == pytest.approx(3.0)
+
+
+def test_extract_window_bounds_long_sustained_note_to_window_span() -> None:
+    score = Score(f0_hz=55.0)
+    score.add_note("drone", start=0.0, duration=100.0, partial=2.0, amp=0.2)
+    score.add_note("lead", start=10.0, duration=0.5, partial=4.0, amp=0.2)
+    score.add_note("lead", start=10.6, duration=0.5, partial=5.0, amp=0.2)
+
+    window_span = 4.0
+    windowed_score = score.extract_window(
+        start_seconds=10.0, end_seconds=10.0 + window_span
+    )
+
+    for voice in windowed_score.voices.values():
+        for note in voice.notes:
+            assert note.duration <= window_span + 1e-9
 
 
 def test_chorus_promotes_mono_to_stereo() -> None:
@@ -1487,6 +1544,74 @@ def test_extract_window_preserves_send_buses() -> None:
     assert window.voices["lead"].sends == [VoiceSend("room", send_db=-6.0)]
 
 
+def test_extract_window_render_matches_full_render_interior() -> None:
+    """Windowed render should reproduce the full render's audio away from the
+    window's own edges, even with send-bus feedback and voice automation
+    that spans the whole piece timeline."""
+
+    def build() -> Score:
+        score = Score(f0_hz=110.0)
+        score.add_send_bus(
+            "delay",
+            effects=[
+                EffectSpec("delay", {"delay_seconds": 0.2, "feedback": 0.4, "mix": 0.5})
+            ],
+            return_db=-6.0,
+        )
+        score.add_voice(
+            "lead",
+            sends=[VoiceSend("delay", send_db=-3.0)],
+            automation=[
+                AutomationSpec(
+                    target=AutomationTarget(kind="control", name="pan"),
+                    segments=(
+                        AutomationSegment(
+                            start=0.0,
+                            end=6.0,
+                            shape="linear",
+                            start_value=-1.0,
+                            end_value=1.0,
+                        ),
+                    ),
+                )
+            ],
+        )
+        for i in range(12):
+            score.add_note(
+                "lead",
+                start=i * 0.5,
+                duration=0.45,
+                partial=2.0 + (i % 3),
+                amp_db=-6.0,
+            )
+        return score
+
+    full_score = build()
+    full_audio = full_score.render()
+
+    window_start, window_end = 2.0, 4.0
+    windowed_audio = (
+        build()
+        .extract_window(start_seconds=window_start, end_seconds=window_end)
+        .render()
+    )
+
+    sample_rate = full_score.sample_rate
+    interior_skip = 0.3
+    interior_span = window_end - window_start - interior_skip
+    full_start_idx = int(window_start * sample_rate) + int(interior_skip * sample_rate)
+    full_end_idx = int(window_start * sample_rate) + int(interior_span * sample_rate)
+    win_start_idx = int(interior_skip * sample_rate)
+    win_end_idx = int(interior_span * sample_rate)
+
+    full_slice = full_audio[..., full_start_idx:full_end_idx]
+    windowed_slice = windowed_audio[..., win_start_idx:win_end_idx]
+
+    diff_rms = float(np.sqrt(np.mean((full_slice - windowed_slice) ** 2)))
+    signal_rms = float(np.sqrt(np.mean(full_slice**2)))
+    assert diff_rms < 0.05 * signal_rms
+
+
 def test_true_peak_estimation_uses_loudest_stereo_channel() -> None:
     duration = synth.SAMPLE_RATE
     time = np.arange(duration, dtype=np.float64) / synth.SAMPLE_RATE
@@ -1644,6 +1769,130 @@ def test_finalize_master_boosts_to_true_peak_ceiling_when_headroom_remains(
         synth.db_to_amp(-0.5),
         abs=1e-3,
     )
+
+
+def test_finalize_master_lsp_path_does_not_renormalize_peak_every_iteration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test: the LSP path must not renormalize to the true-peak
+    ceiling on every loop iteration.
+
+    Doing so (the old bug) pins the signal's peak to the ceiling regardless
+    of `limiter_input_gain_db`, which makes measured LUFS nearly insensitive
+    to the gain the loop is adjusting — so the loop never converges toward
+    `target_lufs`. `normalize_true_peak` should only run in the final
+    true-peak safety pass (at most once), not once per iteration.
+    """
+    monkeypatch.setattr(synth, "has_external_plugin", lambda plugin_name: True)
+
+    normalize_calls: list[None] = []
+
+    def fake_normalize_true_peak(signal: np.ndarray, **_: object) -> np.ndarray:
+        normalize_calls.append(None)
+        return np.asarray(signal, dtype=np.float64)
+
+    def fake_apply_lsp_limiter(
+        signal: np.ndarray,
+        *,
+        threshold_db: float,
+        input_gain_db: float,
+        output_gain_db: float,
+    ) -> np.ndarray:
+        del threshold_db
+        return np.asarray(signal, dtype=np.float64) * synth.db_to_amp(
+            input_gain_db + output_gain_db
+        )
+
+    monkeypatch.setattr(synth, "normalize_true_peak", fake_normalize_true_peak)
+    monkeypatch.setattr(synth, "apply_lsp_limiter", fake_apply_lsp_limiter)
+
+    # Quiet signal far from target LUFS, forcing several loop iterations.
+    signal = 0.01 * np.sin(
+        np.linspace(0.0, 40.0 * np.pi, synth.SAMPLE_RATE * 2, endpoint=False)
+    )
+
+    synth.finalize_master(
+        signal,
+        sample_rate=synth.SAMPLE_RATE,
+        target_lufs=-18.0,
+        true_peak_ceiling_dbfs=-0.5,
+        max_iterations=6,
+    )
+
+    # Only the final true-peak safety pass may call normalize_true_peak.
+    assert len(normalize_calls) <= 1
+
+
+def test_finalize_master_lsp_path_converges_when_limiter_preserves_gain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the per-iteration renormalize removed, LUFS should track the
+    limiter's own (gain-dependent) output rather than staying pinned near a
+    fixed error, as observed in real renders (error stuck at -2.39 LU while
+    gain walked from +2.3 dB to -9.7 dB across 6 iterations)."""
+    monkeypatch.setattr(synth, "has_external_plugin", lambda plugin_name: True)
+    monkeypatch.setattr(
+        synth,
+        "normalize_true_peak",
+        lambda signal, **_: np.asarray(signal, dtype=np.float64),
+    )
+
+    def fake_apply_lsp_limiter(
+        signal: np.ndarray,
+        *,
+        threshold_db: float,
+        input_gain_db: float,
+        output_gain_db: float,
+    ) -> np.ndarray:
+        processed = np.asarray(signal, dtype=np.float64) * synth.db_to_amp(
+            input_gain_db + output_gain_db
+        )
+        ceiling = synth.db_to_amp(threshold_db)
+        return np.clip(processed, -ceiling, ceiling)
+
+    monkeypatch.setattr(synth, "apply_lsp_limiter", fake_apply_lsp_limiter)
+
+    signal = 0.02 * np.sin(
+        np.linspace(0.0, 40.0 * np.pi, synth.SAMPLE_RATE * 2, endpoint=False)
+    )
+
+    mastering_result = synth.finalize_master(
+        signal,
+        sample_rate=synth.SAMPLE_RATE,
+        target_lufs=-18.0,
+        true_peak_ceiling_dbfs=-0.5,
+        max_iterations=8,
+    )
+
+    assert mastering_result.integrated_lufs == pytest.approx(-18.0, abs=1.0)
+
+
+def test_finalize_master_native_path_converges_on_high_crest_signal() -> None:
+    """End-to-end convergence check on the native limiter path (no mocks)
+    using a synthetic high-crest-factor signal: sparse loud impulses over a
+    quiet floor. Guards against a naive fix that only removes the
+    renormalize but breaks convergence for peaky material."""
+    sample_rate = synth.SAMPLE_RATE
+    duration_seconds = 3.0
+    n_samples = int(sample_rate * duration_seconds)
+    rng = np.random.default_rng(42)
+
+    floor = 0.01 * rng.standard_normal(n_samples)
+    signal = floor.copy()
+    impulse_period = sample_rate // 4
+    for start in range(0, n_samples, impulse_period):
+        impulse_length = min(50, n_samples - start)
+        signal[start : start + impulse_length] += 0.9 * np.hanning(impulse_length)
+
+    mastering_result = synth.finalize_master(
+        signal,
+        sample_rate=sample_rate,
+        target_lufs=-18.0,
+        true_peak_ceiling_dbfs=-0.5,
+    )
+
+    assert mastering_result.integrated_lufs == pytest.approx(-18.0, abs=1.0)
+    assert mastering_result.true_peak_dbfs <= -0.5 + 0.1
 
 
 def test_voice_pan_promotes_mono_voice_to_stereo() -> None:
@@ -2054,6 +2303,49 @@ def test_render_piece_snippet_writes_separate_artifacts_and_metadata(
     assert render_request["render_end_seconds"] == pytest.approx(2.25)
     assert render_metadata["score_summary"]["note_count"] == 1
     assert "__snippet_" in render_metadata["artifacts"]["latest"]["audio_path"]
+
+
+def test_render_piece_snippet_trims_pre_master_mix_to_match_export_signals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test: for windowed/snippet renders, the pre-master mix
+    handed to analysis must be trimmed to the exact snippet bounds, same as
+    the exported audio. Before the fix, `pre_master_mix` stayed at
+    full untrimmed render-buffer length (silence-padded), so analysis
+    compared a mostly-silent pre-master signal against a fully trimmed
+    pre-export/export signal — producing spurious severe warnings (e.g.
+    bogus harmonic-distortion / export-brightness-jump) driven purely by
+    duration mismatch rather than a real mix problem.
+    """
+    import code_musics.render as render_module
+
+    captured_kwargs: dict[str, Any] = {}
+    real_save_analysis_artifacts = render_module.save_analysis_artifacts
+
+    def spy_save_analysis_artifacts(**kwargs: Any) -> Any:
+        captured_kwargs.update(kwargs)
+        return real_save_analysis_artifacts(**kwargs)
+
+    monkeypatch.setattr(
+        render_module, "save_analysis_artifacts", spy_save_analysis_artifacts
+    )
+
+    render_window = RenderWindow(start_seconds=0.5, duration_seconds=0.75)
+    render_piece(
+        "chord_4567",
+        output_dir=tmp_path,
+        save_plot=False,
+        render_window=render_window,
+    )
+
+    mix_signal = captured_kwargs["mix_signal"]
+    pre_master_mix_signal = captured_kwargs["pre_master_mix_signal"]
+    pre_export_mix_signal = captured_kwargs["pre_export_mix_signal"]
+
+    assert pre_master_mix_signal is not None
+    assert pre_master_mix_signal.shape[-1] == pre_export_mix_signal.shape[-1]
+    assert pre_master_mix_signal.shape[-1] == mix_signal.shape[-1]
 
 
 def test_render_piece_snippet_rejects_render_audio_piece(tmp_path: Path) -> None:

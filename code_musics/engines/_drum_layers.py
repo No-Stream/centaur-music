@@ -838,6 +838,8 @@ def _tone_pluck(
     if n_samples == 0:
         return np.zeros(0, dtype=np.float64)
 
+    # Keep duration for the API, but pass n_samples explicitly — the
+    # n_samples -> duration -> int() round-trip can lose a sample.
     duration = n_samples / float(sample_rate)
     hardness = float(params.get("tone_pluck_hardness", 0.5))
     damping = float(params.get("tone_pluck_damping", 0.3))
@@ -859,6 +861,7 @@ def _tone_pluck(
         drive=drive,
         seed=pluck_seed,
         freq_profile=freq_profile,
+        n_samples=n_samples,
     )
 
     # If the caller provided a distinct exciter layer, blend it in so the

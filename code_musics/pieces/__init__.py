@@ -70,6 +70,7 @@ from code_musics.pieces.va_showcase import PIECES as _VA_SHOWCASE_PIECES
 from code_musics.pieces.va_trance import PIECES as _VA_TRANCE_PIECES
 from code_musics.pieces.velvet_wall import PIECES as _VELVET_WALL_PIECES
 from code_musics.pieces.warming_up import PIECES as _WARMING_UP_PIECES
+from code_musics.pieces.weaving_room import PIECES as _WEAVING_ROOM_PIECES
 from code_musics.pieces.wtc_sketches import PIECES as _WTC_PIECES
 
 PIECES = merge_piece_maps(
@@ -135,6 +136,7 @@ PIECES = merge_piece_maps(
     _BOWED_GLASS_PIECES,
     _IAMBIC_GHOST_PIECES,
     _STILL_WINDOW_PIECES,
+    _WEAVING_ROOM_PIECES,
 )
 
 __all__ = ["PIECES"]

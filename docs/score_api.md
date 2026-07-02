@@ -699,9 +699,17 @@ Behavior:
 - keeps notes whose authored time range overlaps the requested window
 - shifts kept notes so the extracted window starts at local time `0`, clamping
   any earlier overlap to local time zero
+- clamps kept notes' `duration` to the window's end too, so a note that
+  outlasts the window (a sustained pad, a held drone) is truncated rather
+  than synthesized for its full original length — this is what keeps snippet
+  rendering cheap regardless of how long individual notes run
 - preserves the original global time context for timing humanization, envelope
   humanization, and voice automation
 - is the score-domain helper used by snippet rendering
+- callers that request an exact (non-padded) window and render/export it
+  directly — rather than going through `render_piece`'s hidden pre/post
+  margins plus a post-render trim — should expect a hard cutoff rather than
+  a natural decay for notes truncated at the window boundary
 
 ### `Score.render_stems()`
 

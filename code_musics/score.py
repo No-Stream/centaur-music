@@ -882,12 +882,23 @@ class Score:
 
         shifted_voices: dict[str, Voice] = {}
         for voice_name, voice in self.voices.items():
-            kept_notes = [
-                replace(note, start=max(0.0, note.start - start_seconds), amp_db=None)
-                for note in voice.notes
-                if (note.start + note.duration) > start_seconds
-                and note.start < end_seconds
-            ]
+            kept_notes: list[NoteEvent] = []
+            for note in voice.notes:
+                note_end = note.start + note.duration
+                if note_end <= start_seconds or note.start >= end_seconds:
+                    continue
+                # Notes that start before the window still play in full from
+                # local time 0 (unchanged legacy behavior). Notes that would
+                # otherwise sound past the window's end are truncated there,
+                # so a long-sustained note doesn't force synthesizing far
+                # beyond what the window actually needs.
+                new_start = max(0.0, note.start - start_seconds)
+                new_duration = min(
+                    note.duration, end_seconds - max(note.start, start_seconds)
+                )
+                kept_notes.append(
+                    replace(note, start=new_start, duration=new_duration, amp_db=None)
+                )
             if not kept_notes:
                 continue
             shifted_voices[voice_name] = replace(voice, notes=kept_notes)
@@ -1222,6 +1233,20 @@ class Score:
             ):
                 continue
             note = prepared_note.note
+            # Voice stealing may have shortened this note after its freq
+            # trajectory was built; trim to the effective length so engines
+            # see matching sizes (engines use int(sample_rate * duration)).
+            freq_trajectory = prepared_note.freq_trajectory
+            if freq_trajectory is not None:
+                effective_samples = int(
+                    self.sample_rate
+                    * (
+                        prepared_note.effective_hold_duration
+                        + prepared_note.effective_release
+                    )
+                )
+                if freq_trajectory.size > effective_samples:
+                    freq_trajectory = freq_trajectory[:effective_samples]
             note_signal = render_note_signal(
                 freq=prepared_note.note_freq,
                 duration=prepared_note.effective_hold_duration
@@ -1233,7 +1258,7 @@ class Score:
                 ),
                 sample_rate=self.sample_rate,
                 params=prepared_note.synth_params,
-                freq_trajectory=prepared_note.freq_trajectory,
+                freq_trajectory=freq_trajectory,
                 param_profiles=prepared_note.param_profiles or None,
                 voice_state=voice_state,
             )

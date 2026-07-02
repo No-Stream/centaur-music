@@ -77,3 +77,9 @@ exclude_also = [
     "raise NotImplementedError",
     "\\.\\.\\.",
 ]
+
+[tool.uv]
+# Pin dependency resolution to the era of the committed uv.lock.  The lock
+# was originally created with an UV_EXCLUDE_NEWER env cutoff; without this
+# setting uv discards the lockfile and re-resolves to latest on every run.
+exclude-newer = "2026-04-14T15:12:44.50289Z"
