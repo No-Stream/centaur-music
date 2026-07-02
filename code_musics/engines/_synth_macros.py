@@ -133,7 +133,7 @@ def _apply_dirt(params: dict[str, Any]) -> None:
     if t < 0.05:
         shaper_value: str | None = None
     elif t < 0.35:
-        shaper_value = "saturation"
+        shaper_value = "tube"
     elif t < 0.7:
         shaper_value = "preamp"
     else:

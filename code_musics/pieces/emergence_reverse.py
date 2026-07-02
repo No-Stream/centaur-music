@@ -109,8 +109,8 @@ def build_score() -> Score:
         master_effects=[
             # Master saturation — warm glue that thins over time
             EffectSpec(
-                "drive",
-                {"preset": "tube_warm", "drive": 1.2, "mix": 0.30},
+                "tube",
+                {"preset": "triode_glow", "drive": 1.2, "mix": 0.30},
                 automation=[
                     AutomationSpec(
                         target=AutomationTarget(kind="control", name="mix"),

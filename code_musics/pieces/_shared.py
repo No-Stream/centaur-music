@@ -45,8 +45,8 @@ DELAY_EFFECT = EffectSpec(
     {"delay_seconds": 0.32, "feedback": 0.22, "mix": 0.16},
 )
 WARM_SATURATION_EFFECT = EffectSpec(
-    "drive",
-    {"preset": "tube_warm"},
+    "tube",
+    {"preset": "triode_glow"},
 )
 
 

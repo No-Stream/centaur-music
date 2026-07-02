@@ -1,7 +1,7 @@
 """Per-note voice distortion helper for VA-family engines.
 
 This module provides :func:`apply_voice_dist` — a single entry point that
-dispatches across six distortion modes plus an ``off`` passthrough.  It is
+dispatches across several distortion modes plus an ``off`` passthrough.  It is
 intended to be called **inside** the per-note render loop of the
 ``polyblep`` / ``va`` / ``filtered_stack`` engines, after the VCA stage and
 before the note buffer is summed into the voice-output buffer.  Distorting
@@ -20,9 +20,8 @@ Design notes:
   through zero during automation, the wet/dry crossfade is driven by a
   smoothstep of ``drive`` in ``[0, epsilon]`` rather than a hard gate.
   This avoids stepping / click artifacts.
-* Deferred imports: ``saturation`` and ``preamp`` modes dispatch to
-  :func:`code_musics.synth.apply_drive` and
-  :func:`code_musics.synth.apply_preamp`.  These must be imported inside
+* Deferred imports: ``preamp`` / ``transistor`` / ``tube_*`` modes dispatch
+  to helpers in :mod:`code_musics.synth`.  These must be imported inside
   the function body — importing at module top triggers the
   ``synth.py -> engines/__init__.py`` cycle.  See
   :mod:`code_musics.engines.drum_voice` (``_apply_layer_shaper``) for the
@@ -30,8 +29,13 @@ Design notes:
 * Per-algorithm oversampling: the cheap shapers use first-order ADAA
   where available (``soft_clip`` / ``hard_clip``) and auto-upgrade to 2x
   for the digital algorithms (``corrode`` = bit_crush + rate_reduce).
-  ``saturation`` / ``preamp`` run with their own oversample_factor=2
-  override.  No extra oversampling is added on top.
+  ``transistor`` / ``preamp`` / ``tube_*`` run with their own
+  oversample_factor=2 override.  No extra oversampling is added on top.
+* Tube modes: ``tube_triode`` / ``tube_pentode`` / ``tube_hg2`` /
+  ``tube_culture`` dispatch to :func:`code_musics.synth.apply_tube` with
+  the matching ``character=`` arg.  Per-note dispatch preserves chord-
+  voice harmonic identity across the Koren softplus triode and sharp-
+  knee pentode shapers.
 """
 
 from __future__ import annotations
@@ -53,8 +57,28 @@ _DEFAULT_SAMPLE_RATE: int = 44_100
 
 # Supported modes.  Kept as a frozenset for cheap membership checks.
 _VALID_MODES: frozenset[str] = frozenset(
-    {"off", "soft_clip", "hard_clip", "foldback", "corrode", "saturation", "preamp"}
+    {
+        "off",
+        "soft_clip",
+        "hard_clip",
+        "foldback",
+        "corrode",
+        "transistor",
+        "preamp",
+        "tube_triode",
+        "tube_pentode",
+        "tube_hg2",
+        "tube_culture",
+    }
 )
+
+# Map ``tube_*`` modes to :func:`apply_tube` ``character`` values.
+_TUBE_MODE_TO_CHARACTER: dict[str, str] = {
+    "tube_triode": "triode",
+    "tube_pentode": "pentode",
+    "tube_hg2": "hg2",
+    "tube_culture": "culture",
+}
 
 # Waveshaper-algorithm mapping for the "cheap" modes.
 _MODE_TO_WAVESHAPER_ALGO: dict[str, str] = {
@@ -70,9 +94,7 @@ _MODE_TO_WAVESHAPER_ALGO: dict[str, str] = {
 # smaller values would expose FFT quantization in the continuity test.
 _BLEND_EPSILON: float = 1e-3
 
-# Tone-tilt corner frequencies (mirroring the ``_apply_drive_legacy``
-# idiom at synth.py:5162-5165 where the legacy path uses a 2.8 kHz one-pole
-# lowpass split).  Asymmetric corners keep the "bright" vs "dark" side
+# Tone-tilt corner frequencies.  Asymmetric corners keep "bright" vs "dark"
 # perceptually distinct.
 _TONE_HIGH_PIVOT_HZ: float = 1_000.0
 _TONE_LOW_PIVOT_HZ: float = 2_000.0
@@ -180,8 +202,9 @@ def apply_voice_dist(
     Args:
         signal: Mono per-note buffer, float64.  Shape is preserved.
         mode: One of ``{"off", "soft_clip", "hard_clip", "foldback",
-            "corrode", "saturation", "preamp"}``.  Unknown modes raise
-            ``ValueError``.
+            "corrode", "transistor", "preamp", "tube_triode",
+            "tube_pentode", "tube_hg2", "tube_culture"}``.  Unknown modes
+            raise ``ValueError``.
         drive: 0.0-2.0.  ``drive <= 0.0`` is a fast-path passthrough.
         mix: 0.0-1.0 wet/dry ratio.  0 returns dry, 1 returns fully wet.
         tone: -1.0..1.0 pre-stage 1-pole tilt.  0.0 is a no-op.
@@ -217,18 +240,31 @@ def apply_voice_dist(
         )
     elif mode == "corrode":
         wet = _apply_corrode(toned, internal_drive)
-    elif mode == "saturation":
+    elif mode == "transistor":
         # Deferred import breaks the synth.py <-> engines/__init__.py cycle.
         # See drum_voice.py:367-369 for the established pattern.
-        from code_musics.synth import apply_drive
+        from code_musics.synth import apply_transistor
 
-        wet_result = apply_drive(
+        wet_result = apply_transistor(
             toned,
             drive=internal_drive,
             mix=1.0,
             oversample_factor=2,
             compensation_mode="none",
-            return_analysis=False,
+        )
+        wet = np.asarray(wet_result, dtype=np.float64)
+    elif mode in _TUBE_MODE_TO_CHARACTER:
+        # Per-note tube shaping: chord voices keep their harmonic identity
+        # rather than collapsing into IMD mud through a bus-level shaper.
+        from code_musics.synth import apply_tube
+
+        wet_result = apply_tube(
+            toned,
+            character=_TUBE_MODE_TO_CHARACTER[mode],
+            drive=internal_drive,
+            mix=1.0,
+            oversample_factor=2,
+            compensation_mode="none",
         )
         wet = np.asarray(wet_result, dtype=np.float64)
     else:  # mode == "preamp"

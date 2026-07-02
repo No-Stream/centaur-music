@@ -10,7 +10,6 @@ import re
 import struct
 import sys
 import tempfile
-import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -41,7 +40,12 @@ from code_musics.engines._instrumentation import (
     intermodulation_ratio,
     per_hit_transient_metrics,
 )
-from code_musics.engines._waveshaper import _apply_adaa2_poly_knee
+from code_musics.engines._waveshaper import (
+    _apply_adaa2_poly_knee,
+    _biased_shape,
+    _koren_triode_shape,
+    _pentode_shape,
+)
 from code_musics.modulation import combine_connections_on_curve
 
 # Effect-level filter mode aliases.  The filter kernels use "lowpass"/"bandpass"/
@@ -2187,10 +2191,10 @@ def _build_effect_analysis_warnings(
 # nonlinear_stage_count) also qualifies a chain as potentially nonlinear.
 _NONLINEAR_EFFECT_KINDS: frozenset[str] = frozenset(
     {
-        "drive",
         "clipper",
         "preamp",
-        "saturation",  # legacy alias for drive
+        "tube",
+        "transistor",
         "airwindows",
         "byod",
         "chow_centaur",
@@ -5471,84 +5475,12 @@ _CHORUS_PRESETS: dict[str, dict[str, float]] = {
     },
 }
 
-_DRIVE_PRESETS: dict[str, dict[str, Any]] = {
-    "tube_warm": {
-        "algorithm": "modern",
-        "mode": "tube",
-        "drive": 0.7,
-        "mix": 0.34,
-        "tone": 0.08,
-        "fidelity": 0.76,
-        "oversample_factor": 4,
-        "highpass_hz": 30.0,
-        "preserve_lows_hz": 140.0,
-        "preserve_highs_hz": 6_500.0,
-        "compensation_mode": "auto",
-        "multiband": True,
-    },
-    "iron_soft": {
-        "algorithm": "modern",
-        "mode": "iron",
-        "drive": 0.55,
-        "mix": 0.35,
-        "tone": -0.06,
-        "fidelity": 0.88,
-        "oversample_factor": 4,
-        "highpass_hz": 26.0,
-        "preserve_lows_hz": 180.0,
-        "preserve_highs_hz": 5_200.0,
-        "compensation_mode": "auto",
-        "multiband": True,
-    },
-    "neve_gentle": {
-        "algorithm": "modern",
-        "mode": "triode",
-        "drive": 0.3,
-        "mix": 0.30,
-        "tone": 0.14,
-        "fidelity": 0.92,
-        "oversample_factor": 4,
-        "highpass_hz": 28.0,
-        "preserve_lows_hz": 120.0,
-        "preserve_highs_hz": 7_000.0,
-        "compensation_mode": "auto",
-        "multiband": True,
-    },
-    "kick_heavy": {
-        # Hardcore / aggressive character preset. Not a default — reach for
-        # this when you intentionally want 20%+ THD kick grit (industrial,
-        # hardcore techno). Formerly `kick_crunch`.
-        "algorithm": "modern",
-        "mode": "triode",
-        "drive": 1.8,
-        "mix": 0.62,
-        "tone": 0.10,
-        "fidelity": 0.26,
-        "oversample_factor": 8,
-        "highpass_hz": 28.0,
-        "preserve_lows_hz": 80.0,
-        "preserve_highs_hz": 3_600.0,
-        "compensation_mode": "rms",
-        "multiband": True,
-    },
-    "snare_bite": {
-        # Recalibrated: was drive=1.0/mix=0.35 (~7% THD, too hot as default).
-        # Now ~4% THD with a clear papery-band lift that reads as "bite"
-        # on snare content without collapsing transient character.
-        "algorithm": "modern",
-        "mode": "triode",
-        "drive": 0.7,
-        "mix": 0.30,
-        "tone": 0.06,
-        "fidelity": 0.45,
-        "oversample_factor": 4,
-        "highpass_hz": 30.0,
-        "preserve_lows_hz": 150.0,
-        "preserve_highs_hz": 5_000.0,
-        "compensation_mode": "rms",
-        "multiband": True,
-    },
-}
+# ``_DRIVE_PRESETS`` was retired in the tube-saturation redesign. Preset
+# intents migrated as follows: ``tube_warm`` -> ``apply_tube("triode_glow")``;
+# ``neve_gentle`` -> ``apply_preamp("neve_warmth")``; ``iron_soft`` ->
+# ``apply_preamp("iron_color")``; ``kick_heavy`` / ``snare_bite`` ->
+# ``apply_transistor`` presets of the same name (drum saturation is
+# op-amp / diode territory, not tube).
 
 _AIRWINDOWS_PRESETS: dict[str, dict[str, Any]] = {
     "density_glue": {
@@ -5783,8 +5715,6 @@ def _resolve_effect_params(
         preset_map = _CHORUS_PRESETS
     elif effect_kind == "bbd_chorus":
         preset_map = _BBD_CHORUS_PRESETS
-    elif effect_kind == "drive":
-        preset_map = _DRIVE_PRESETS
     elif effect_kind == "compressor":
         preset_map = _COMPRESSOR_PRESETS
     elif effect_kind == "phaser":
@@ -5799,6 +5729,10 @@ def _resolve_effect_params(
         preset_map = _CHOW_CENTAUR_PRESETS
     elif effect_kind == "preamp":
         preset_map = _PREAMP_PRESETS
+    elif effect_kind == "tube":
+        preset_map = _TUBE_PRESETS
+    elif effect_kind == "transistor":
+        preset_map = _TRANSISTOR_PRESETS
     else:
         raise ValueError(f"Unsupported preset-bearing effect kind: {effect_kind}")
 
@@ -6504,47 +6438,6 @@ def _dc_block(
     )
 
 
-def _saturation_curve(
-    signal: np.ndarray,
-    *,
-    drive: float,
-    curve: str,
-) -> np.ndarray:
-    shaped_input = drive * np.asarray(signal, dtype=np.float64)
-    if curve == "tube":
-        return np.tanh(shaped_input + (0.08 * np.power(shaped_input, 3)))
-    if curve == "triode":
-        return np.tanh(shaped_input + (0.16 * np.square(shaped_input)))
-    if curve == "iron":
-        return (2.0 / np.pi) * np.arctan((np.pi / 2.0) * shaped_input)
-    raise ValueError(f"Unsupported saturation curve: {curve!r}")
-
-
-def _asymmetric_saturation_curve(
-    signal: np.ndarray,
-    *,
-    drive: float,
-    curve: str,
-    asymmetry: float,
-    even_harmonics: float,
-) -> np.ndarray:
-    clipped_even_harmonics = float(np.clip(even_harmonics, 0.0, 1.0))
-    symmetric = _saturation_curve(signal, drive=drive, curve=curve)
-    if asymmetry == 0.0 or clipped_even_harmonics == 0.0:
-        return symmetric
-
-    asymmetric = _saturation_curve(signal + asymmetry, drive=drive, curve=curve)
-    asymmetric_zero = _saturation_curve(
-        np.zeros(1, dtype=np.float64) + asymmetry,
-        drive=drive,
-        curve=curve,
-    )[0]
-    asymmetric = asymmetric - asymmetric_zero
-    return ((1.0 - clipped_even_harmonics) * symmetric) + (
-        clipped_even_harmonics * asymmetric
-    )
-
-
 def _apply_drive_compensation(
     signal: np.ndarray,
     *,
@@ -6704,120 +6597,6 @@ def _solve_drive_for_target_thd(
     return float(best_drive), float(best_measured), iterations
 
 
-def _apply_drive_legacy(
-    signal: np.ndarray,
-    *,
-    drive: float,
-    mix: float,
-    bias: float,
-    even_harmonics: float,
-    oversample_factor: int,
-    highpass_hz: float,
-    tone_tilt: float,
-    output_lowpass_hz: float,
-    compensation_mode: str,
-    output_trim_db: float,
-    return_analysis: bool,
-) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
-    input_signal = np.asarray(signal, dtype=np.float64)
-    shaper_hot_sample_count = 0
-    total_wet_sample_count = 0
-
-    def _process_channel(channel: np.ndarray) -> np.ndarray:
-        nonlocal shaper_hot_sample_count, total_wet_sample_count
-        conditioned = highpass(
-            channel, cutoff_hz=highpass_hz, sample_rate=SAMPLE_RATE, order=2
-        )
-        if tone_tilt != 0.0:
-            emphasized = lowpass(
-                conditioned, cutoff_hz=2_800.0, sample_rate=SAMPLE_RATE, order=1
-            )
-            conditioned = conditioned + (tone_tilt * emphasized)
-
-        if oversample_factor > 1:
-            conditioned = resample_poly(conditioned, oversample_factor, 1)
-
-        biased_drive_signal = drive * (conditioned + bias)
-        symmetric_drive_signal = drive * conditioned
-        shaped = np.tanh(biased_drive_signal)
-        anti_symmetric = np.tanh(symmetric_drive_signal)
-        wet_channel = ((1.0 - even_harmonics) * anti_symmetric) + (
-            even_harmonics * shaped
-        )
-        shaper_hot_sample_count += int(
-            np.count_nonzero(
-                (np.abs(biased_drive_signal) >= 1.0)
-                | (np.abs(symmetric_drive_signal) >= 1.0)
-            )
-        )
-        total_wet_sample_count += int(wet_channel.size)
-
-        if oversample_factor > 1:
-            wet_channel = resample_poly(wet_channel, 1, oversample_factor)
-        wet_channel = wet_channel[: channel.shape[-1]]
-        if output_lowpass_hz > 0.0:
-            wet_channel = lowpass(
-                wet_channel,
-                cutoff_hz=output_lowpass_hz,
-                sample_rate=SAMPLE_RATE,
-                order=2,
-            )
-        return np.asarray(wet_channel, dtype=np.float64)
-
-    wet_signal = _apply_per_channel(input_signal, _process_channel)
-    blended = ((1.0 - mix) * input_signal) + (mix * wet_signal)
-    compensated_signal, compensation_mode_used, compensation_gain_db = (
-        _apply_drive_compensation(
-            blended,
-            reference_signal=input_signal,
-            sample_rate=SAMPLE_RATE,
-            compensation_mode=compensation_mode,
-        )
-    )
-    processed_signal = np.asarray(
-        compensated_signal * db_to_amp(output_trim_db),
-        dtype=np.float64,
-    )
-    if not return_analysis:
-        return processed_signal
-
-    thd_pct, thd_character = _saturation_thd(
-        lambda x: cast(
-            np.ndarray,
-            _apply_drive_legacy(
-                x,
-                drive=drive,
-                mix=1.0,
-                bias=bias,
-                even_harmonics=even_harmonics,
-                oversample_factor=oversample_factor,
-                highpass_hz=max(highpass_hz, 1.0),
-                tone_tilt=tone_tilt,
-                output_lowpass_hz=output_lowpass_hz,
-                compensation_mode="none",
-                output_trim_db=0.0,
-                return_analysis=False,
-            ),
-        )
-    )
-    analysis: dict[str, float | int | str] = {
-        "algorithm": "legacy",
-        "drive": round(float(drive), 2),
-        "mix": round(float(mix), 2),
-        "even_harmonics": round(float(even_harmonics), 2),
-        "shaper_hot_fraction": round(
-            float(shaper_hot_sample_count / max(total_wet_sample_count, 1)),
-            4,
-        ),
-        "dc_offset": round(float(np.mean(to_mono_reference(processed_signal))), 6),
-        "thd_pct": thd_pct,
-        "thd_character": thd_character,
-        "compensation_mode_used": compensation_mode_used,
-        "compensation_gain_db": round(float(compensation_gain_db), 2),
-    }
-    return processed_signal, analysis
-
-
 @numba.njit(cache=True)
 def _envelope_follower_loop(
     abs_signal: np.ndarray,
@@ -6846,841 +6625,6 @@ def _envelope_follower(
     release_coeff = _time_constant_to_coeff(release_ms, sample_rate)
     abs_signal = np.abs(np.asarray(signal, dtype=np.float64))
     return _envelope_follower_loop(abs_signal, attack_coeff, release_coeff)
-
-
-def _apply_drive_modern(
-    signal: np.ndarray,
-    *,
-    drive: float,
-    mix: float,
-    mode: str,
-    tone: float,
-    fidelity: float,
-    bias: float,
-    even_harmonics: float,
-    oversample_factor: int,
-    highpass_hz: float,
-    tone_tilt: float,
-    output_lowpass_hz: float,
-    preserve_lows_hz: float,
-    preserve_highs_hz: float,
-    compensation_mode: str,
-    output_trim_db: float,
-    return_analysis: bool,
-) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
-    if not 0.0 <= fidelity <= 1.0:
-        raise ValueError("fidelity must be between 0 and 1")
-
-    profile_map: dict[str, dict[str, float | str]] = {
-        "tube": {
-            "curve1": "tube",
-            "curve2": "tube",
-            "stage1_gain": 0.68,
-            "stage2_gain": 0.39,
-            "asymmetry": 0.035,
-            "even": 0.24,
-            "sag": 0.10,
-            "interstage_tilt_db": -0.6,
-            "low_blend": 0.28,
-            "high_blend": 0.52,
-        },
-        "triode": {
-            "curve1": "triode",
-            "curve2": "tube",
-            "stage1_gain": 0.60,
-            "stage2_gain": 0.46,
-            "asymmetry": 0.055,
-            "even": 0.30,
-            "sag": 0.14,
-            "interstage_tilt_db": 0.4,
-            "low_blend": 0.22,
-            "high_blend": 0.44,
-        },
-        "iron": {
-            "curve1": "iron",
-            "curve2": "tube",
-            "stage1_gain": 0.54,
-            "stage2_gain": 0.31,
-            "asymmetry": 0.022,
-            "even": 0.12,
-            "sag": 0.06,
-            "interstage_tilt_db": -1.0,
-            "low_blend": 0.52,
-            "high_blend": 0.64,
-        },
-    }
-    normalized_mode = mode.strip().lower()
-    if normalized_mode not in profile_map:
-        raise ValueError("mode must be 'tube', 'triode', or 'iron'")
-    profile = profile_map[normalized_mode]
-
-    input_signal = np.asarray(signal, dtype=np.float64)
-
-    # Unity-floor short-circuit: `drive=0` must be bit-exact identity at mix=1
-    # and a pure dry/wet crossfade (with wet=input) for mix<1, which is still
-    # identity. We also bypass always-on DSP (highpass, tilt EQ, DC block) here.
-    # Compensation and output_trim_db are still applied so the return path is
-    # semantically consistent with the driven path.
-    _drive_epsilon = 1.0e-6
-    if drive <= _drive_epsilon:
-        # True unity floor — bypass every DSP stage (highpass, pre-emphasis,
-        # shaper, compensation) so drive=0 is bit-exact identity modulo
-        # output_trim_db. Compensation would re-normalize RMS even against
-        # an identical reference, which can drift on non-constant signals;
-        # skipping it keeps the floor genuinely transparent.
-        processed_signal = np.asarray(
-            input_signal * db_to_amp(output_trim_db), dtype=np.float64
-        )
-        if not return_analysis:
-            return processed_signal
-        unity_analysis: dict[str, float | int | str] = {
-            "algorithm": "modern",
-            "mode": normalized_mode,
-            "drive": round(float(drive), 2),
-            "mix": round(float(mix), 2),
-            "fidelity": round(float(fidelity), 2),
-            "tone": round(float(tone), 2),
-            "shaper_hot_fraction": 0.0,
-            "dc_offset": round(float(np.mean(to_mono_reference(processed_signal))), 6),
-            "thd_pct": 0.0,
-            "thd_character": "clean",
-            "compensation_mode_used": "bypass",
-            "compensation_gain_db": 0.0,
-        }
-        return processed_signal, unity_analysis
-
-    # Internal rescaling: map the 0-1 user-facing drive range onto the
-    # internal coefficient range the underlying stages expect.  Previously
-    # drive=1 produced ~2.5% THD and drive=3 produced ~10% THD; calibration
-    # now targets drive=1 -> ~10-15% THD ("musical saturation") and
-    # drive=3 -> "fuzz territory".  A simple linear scale of 3.0 lands
-    # almost exactly on the CLAUDE.md target (see scratch/drive_unity_verify).
-    _INTERNAL_K = 3.0
-    internal_drive = float(drive) * _INTERNAL_K
-    # Gate always-on static color (bias, pre-emphasis) on drive, fading to
-    # zero at drive=0 so the floor stays truly unity and small values of
-    # drive (0.1-0.2) remain gentle rather than pre-colored.  Use min(drive,1)
-    # so above drive=1 these don't balloon — the shaper takes over above 1.
-    _drive_gate = float(min(max(float(drive), 0.0), 1.0))
-
-    resolved_oversample_factor = oversample_factor
-    if internal_drive >= 1.7 and resolved_oversample_factor < 8:
-        resolved_oversample_factor = 8
-
-    shaper_hot_sample_count = 0
-    total_wet_sample_count = 0
-
-    resolved_tone = float(np.clip(tone + (4.0 * tone_tilt), -1.0, 1.0))
-    resolved_even_harmonics = float(
-        np.clip((0.55 * float(profile["even"])) + (0.45 * even_harmonics), 0.0, 1.0)
-    )
-    # Bias (asymmetric offset) is gated by drive so drive=0 is DC-clean and
-    # small-drive values stay symmetrical.  The profile asymmetry is always
-    # on once the shaper is running, but the user-bias contribution fades.
-    resolved_asymmetry = float(profile["asymmetry"]) + (bias * _drive_gate)
-    oversampled_sample_rate = SAMPLE_RATE * resolved_oversample_factor
-
-    def _process_channel(channel: np.ndarray) -> np.ndarray:
-        nonlocal shaper_hot_sample_count, total_wet_sample_count
-        dry_channel = np.asarray(channel, dtype=np.float64)
-        conditioned = highpass(
-            dry_channel,
-            cutoff_hz=highpass_hz,
-            sample_rate=SAMPLE_RATE,
-            order=2,
-        )
-        # Pre-emphasis tilt is gated by drive so drive=0 and very low drive
-        # values stay spectrally neutral.
-        pre_tilt_db = (
-            (5.0 * resolved_tone) + float(profile["interstage_tilt_db"])
-        ) * _drive_gate
-        if pre_tilt_db != 0.0:
-            conditioned = _apply_tilt_eq(
-                conditioned,
-                sample_rate=SAMPLE_RATE,
-                tilt_db=pre_tilt_db,
-                pivot_hz=2_100.0,
-            )
-
-        if resolved_oversample_factor > 1:
-            conditioned = resample_poly(conditioned, resolved_oversample_factor, 1)
-
-        envelope = _envelope_follower(
-            conditioned,
-            sample_rate=oversampled_sample_rate,
-            attack_ms=6.0,
-            release_ms=90.0,
-        )
-        sag_amount = float(profile["sag"]) * (0.65 + (0.35 * internal_drive))
-        sag_gain = 1.0 / (1.0 + (sag_amount * envelope))
-
-        stage1_drive = 1.0 + (float(profile["stage1_gain"]) * internal_drive)
-        stage1_input = conditioned * stage1_drive * sag_gain
-        stage1 = _asymmetric_saturation_curve(
-            stage1_input,
-            drive=1.0,
-            curve=cast(str, profile["curve1"]),
-            asymmetry=resolved_asymmetry * (0.7 + (0.3 * internal_drive)),
-            even_harmonics=resolved_even_harmonics,
-        )
-        shaper_hot_sample_count += int(np.count_nonzero(np.abs(stage1_input) >= 1.0))
-        total_wet_sample_count += int(stage1_input.size)
-
-        interstage = _dc_block(
-            stage1,
-            sample_rate=oversampled_sample_rate,
-            cutoff_hz=8.0,
-        )
-        interstage = highpass(
-            interstage,
-            cutoff_hz=max(highpass_hz * 0.75, 10.0),
-            sample_rate=oversampled_sample_rate,
-            order=1,
-        )
-        interstage = lowpass(
-            interstage,
-            cutoff_hz=16_000.0 - (3_500.0 * (1.0 - fidelity)),
-            sample_rate=oversampled_sample_rate,
-            order=1,
-        )
-        # Interstage tilt EQ also gated by drive so low-drive values stay
-        # spectrally clean.
-        interstage_tilt_db = 2.5 * resolved_tone * _drive_gate
-        if interstage_tilt_db != 0.0:
-            interstage = _apply_tilt_eq(
-                interstage,
-                sample_rate=oversampled_sample_rate,
-                tilt_db=interstage_tilt_db,
-                pivot_hz=3_000.0,
-            )
-
-        stage2_drive = 1.0 + (float(profile["stage2_gain"]) * internal_drive)
-        stage2_input = interstage * stage2_drive
-        stage2 = _asymmetric_saturation_curve(
-            stage2_input,
-            drive=1.0,
-            curve=cast(str, profile["curve2"]),
-            asymmetry=resolved_asymmetry * 0.55,
-            even_harmonics=min(1.0, resolved_even_harmonics + 0.08),
-        )
-        shaper_hot_sample_count += int(np.count_nonzero(np.abs(stage2_input) >= 1.0))
-        total_wet_sample_count += int(stage2_input.size)
-
-        wet_channel = stage2
-        if resolved_oversample_factor > 1:
-            wet_channel = resample_poly(wet_channel, 1, resolved_oversample_factor)
-        wet_channel = np.asarray(wet_channel[: dry_channel.shape[-1]], dtype=np.float64)
-
-        if output_lowpass_hz > 0.0:
-            wet_channel = lowpass(
-                wet_channel,
-                cutoff_hz=output_lowpass_hz,
-                sample_rate=SAMPLE_RATE,
-                order=1,
-            )
-
-        wet_channel = _dc_block(wet_channel, sample_rate=SAMPLE_RATE, cutoff_hz=12.0)
-
-        low_blend = float(profile["low_blend"]) * fidelity
-        high_blend = float(profile["high_blend"]) * fidelity
-        if preserve_lows_hz > 0.0 and low_blend > 0.0:
-            dry_low = lowpass(
-                dry_channel,
-                cutoff_hz=preserve_lows_hz,
-                sample_rate=SAMPLE_RATE,
-                order=2,
-            )
-            wet_low = lowpass(
-                wet_channel,
-                cutoff_hz=preserve_lows_hz,
-                sample_rate=SAMPLE_RATE,
-                order=2,
-            )
-            wet_channel = wet_channel + (low_blend * (dry_low - wet_low))
-        if preserve_highs_hz > 0.0 and high_blend > 0.0:
-            dry_high = highpass(
-                dry_channel,
-                cutoff_hz=preserve_highs_hz,
-                sample_rate=SAMPLE_RATE,
-                order=2,
-            )
-            wet_high = highpass(
-                wet_channel,
-                cutoff_hz=preserve_highs_hz,
-                sample_rate=SAMPLE_RATE,
-                order=2,
-            )
-            wet_channel = wet_channel + (high_blend * (dry_high - wet_high))
-        return _dc_block(wet_channel, sample_rate=SAMPLE_RATE, cutoff_hz=12.0)
-
-    wet_signal = _apply_per_channel(input_signal, _process_channel)
-    blended = ((1.0 - mix) * input_signal) + (mix * wet_signal)
-    compensated_signal, compensation_mode_used, compensation_gain_db = (
-        _apply_drive_compensation(
-            blended,
-            reference_signal=input_signal,
-            sample_rate=SAMPLE_RATE,
-            compensation_mode=compensation_mode,
-        )
-    )
-    processed_signal = np.asarray(
-        compensated_signal * db_to_amp(output_trim_db),
-        dtype=np.float64,
-    )
-    if not return_analysis:
-        return processed_signal
-
-    thd_pct, thd_character = _saturation_thd(
-        lambda x: cast(
-            np.ndarray,
-            _apply_drive_modern(
-                x,
-                drive=drive,
-                mix=1.0,
-                mode=normalized_mode,
-                tone=tone,
-                fidelity=fidelity,
-                bias=bias,
-                even_harmonics=even_harmonics,
-                oversample_factor=resolved_oversample_factor,
-                highpass_hz=max(highpass_hz, 10.0),
-                tone_tilt=tone_tilt,
-                output_lowpass_hz=output_lowpass_hz,
-                preserve_lows_hz=0.0,
-                preserve_highs_hz=0.0,
-                compensation_mode="none",
-                output_trim_db=0.0,
-                return_analysis=False,
-            ),
-        )
-    )
-    analysis: dict[str, float | int | str] = {
-        "algorithm": "modern",
-        "mode": normalized_mode,
-        "drive": round(float(drive), 2),
-        "mix": round(float(mix), 2),
-        "fidelity": round(float(fidelity), 2),
-        "tone": round(float(tone), 2),
-        "shaper_hot_fraction": round(
-            float(shaper_hot_sample_count / max(total_wet_sample_count, 1)),
-            4,
-        ),
-        "dc_offset": round(float(np.mean(to_mono_reference(processed_signal))), 6),
-        "thd_pct": thd_pct,
-        "thd_character": thd_character,
-        "compensation_mode_used": compensation_mode_used,
-        "compensation_gain_db": round(float(compensation_gain_db), 2),
-    }
-    return processed_signal, analysis
-
-
-@overload
-def apply_drive(
-    signal: np.ndarray,
-    drive: float = ...,
-    mix: float = ...,
-    *,
-    algorithm: str = ...,
-    mode: str = ...,
-    tone: float = ...,
-    fidelity: float = ...,
-    bias: float = ...,
-    even_harmonics: float = ...,
-    oversample_factor: int = ...,
-    highpass_hz: float = ...,
-    tone_tilt: float = ...,
-    output_lowpass_hz: float = ...,
-    preserve_lows_hz: float = ...,
-    preserve_highs_hz: float = ...,
-    multiband: bool = ...,
-    low_crossover_hz: float = ...,
-    high_crossover_hz: float = ...,
-    compensation_mode: str = ...,
-    output_trim_db: float = ...,
-    target_thd_pct: float | None = ...,
-    return_analysis: Literal[False] = ...,
-) -> np.ndarray: ...
-
-
-@overload
-def apply_drive(
-    signal: np.ndarray,
-    drive: float = ...,
-    mix: float = ...,
-    *,
-    algorithm: str = ...,
-    mode: str = ...,
-    tone: float = ...,
-    fidelity: float = ...,
-    bias: float = ...,
-    even_harmonics: float = ...,
-    oversample_factor: int = ...,
-    highpass_hz: float = ...,
-    tone_tilt: float = ...,
-    output_lowpass_hz: float = ...,
-    preserve_lows_hz: float = ...,
-    preserve_highs_hz: float = ...,
-    multiband: bool = ...,
-    low_crossover_hz: float = ...,
-    high_crossover_hz: float = ...,
-    compensation_mode: str = ...,
-    output_trim_db: float = ...,
-    target_thd_pct: float | None = ...,
-    return_analysis: Literal[True],
-) -> tuple[np.ndarray, dict[str, float | int | str]]: ...
-
-
-def apply_drive(
-    signal: np.ndarray,
-    drive: float = 1.18,
-    mix: float = 0.34,
-    *,
-    algorithm: str = "modern",
-    mode: str = "tube",
-    tone: float = 0.0,
-    fidelity: float = 0.7,
-    bias: float = 0.11,
-    even_harmonics: float = 0.18,
-    oversample_factor: int = 4,
-    highpass_hz: float = 30.0,
-    tone_tilt: float = 0.10,
-    output_lowpass_hz: float = 0.0,
-    preserve_lows_hz: float = 120.0,
-    preserve_highs_hz: float = 6_000.0,
-    multiband: bool = True,
-    low_crossover_hz: float = 120.0,
-    high_crossover_hz: float = 5_000.0,
-    compensation_mode: str = "auto",
-    output_trim_db: float = 0.0,
-    target_thd_pct: float | None = None,
-    return_analysis: bool = False,
-) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
-    """Apply analog-style drive/overdrive to a mono or stereo signal.
-
-    When ``multiband=True`` (the default), the signal is split into three
-    bands via Linkwitz-Riley 4th-order crossovers and only the mid band is
-    routed through the nonlinearity.  The bass (below ``low_crossover_hz``)
-    and treble (above ``high_crossover_hz``) bypass the shaper entirely, so
-    the effect stops piling harmonics into sub-bass on kick content or
-    lifting 2-8 kHz on cymbals.  The three bands sum to flat magnitude at
-    unity, then the standard dry/wet ``mix`` blend is applied.
-
-    When ``multiband=False``, the function runs the legacy monolithic path
-    bit-exactly — useful for callers that relied on the pre-multiband
-    voicing.  In legacy mode, ``preserve_lows_hz`` / ``preserve_highs_hz``
-    still drive the older dry-path parallel crossover.
-
-    The ``preserve_lows_hz`` / ``preserve_highs_hz`` kwargs are **deprecated**
-    in multiband mode.  If either is non-zero and ``multiband=True``, a
-    ``DeprecationWarning`` fires and the value is forwarded to the
-    corresponding ``low_crossover_hz`` / ``high_crossover_hz`` if that kwarg
-    is still at its default.
-    """
-    if not 0.0 <= mix <= 1.0:
-        raise ValueError("mix must be between 0 and 1")
-    if drive < 0:
-        raise ValueError("drive must be non-negative")
-    if oversample_factor < 1:
-        raise ValueError("oversample_factor must be at least 1")
-    if highpass_hz < 0.0:
-        raise ValueError("highpass_hz must be non-negative")
-    if preserve_lows_hz < 0.0 or preserve_highs_hz < 0.0:
-        raise ValueError("preserve_lows_hz and preserve_highs_hz must be non-negative")
-    if low_crossover_hz < 0.0 or high_crossover_hz < 0.0:
-        raise ValueError("low_crossover_hz and high_crossover_hz must be non-negative")
-    if (
-        multiband
-        and low_crossover_hz > 0.0
-        and high_crossover_hz > 0.0
-        and low_crossover_hz >= high_crossover_hz
-    ):
-        raise ValueError(
-            "low_crossover_hz must be below high_crossover_hz when both are active"
-        )
-    if target_thd_pct is not None and target_thd_pct < 0.0:
-        raise ValueError("target_thd_pct must be non-negative")
-
-    # Piece-aware auto-calibration via target_thd_pct. Binary-search the
-    # shaper drive that produces the requested characteristic THD on a sine
-    # probe; sibling of apply_clipper's max_shave_db and apply_compressor's
-    # target_avg_gr_db.
-    auto_calibrated = target_thd_pct is not None
-    solved_drive: float | None = None
-    measured_thd_pct: float | None = None
-    solver_iterations: int | None = None
-    if auto_calibrated:
-        assert target_thd_pct is not None
-        if drive != 1.18:
-            logger.warning(
-                "Drive: both drive and target_thd_pct set — "
-                "target_thd_pct wins; drive ignored."
-            )
-        resolved_algorithm_for_probe = algorithm.strip().lower()
-
-        def _probe_factory(
-            candidate_drive: float,
-        ) -> Callable[[np.ndarray], np.ndarray]:
-            if resolved_algorithm_for_probe == "legacy":
-                return lambda x: cast(
-                    np.ndarray,
-                    _apply_drive_legacy(
-                        x,
-                        drive=candidate_drive,
-                        mix=1.0,
-                        bias=bias,
-                        even_harmonics=even_harmonics,
-                        oversample_factor=oversample_factor,
-                        highpass_hz=max(highpass_hz, 10.0),
-                        tone_tilt=tone_tilt,
-                        output_lowpass_hz=output_lowpass_hz,
-                        compensation_mode="none",
-                        output_trim_db=0.0,
-                        return_analysis=False,
-                    ),
-                )
-            return lambda x: cast(
-                np.ndarray,
-                _apply_drive_modern(
-                    x,
-                    drive=candidate_drive,
-                    mix=1.0,
-                    mode=mode,
-                    tone=tone,
-                    fidelity=fidelity,
-                    bias=bias,
-                    even_harmonics=even_harmonics,
-                    oversample_factor=oversample_factor,
-                    highpass_hz=max(highpass_hz, 10.0),
-                    tone_tilt=tone_tilt,
-                    output_lowpass_hz=output_lowpass_hz,
-                    preserve_lows_hz=0.0,
-                    preserve_highs_hz=0.0,
-                    compensation_mode="none",
-                    output_trim_db=0.0,
-                    return_analysis=False,
-                ),
-            )
-
-        solved_drive, measured_thd_pct, solver_iterations = _solve_drive_for_target_thd(
-            target_thd_pct=float(target_thd_pct),
-            probe_processor_factory=_probe_factory,
-        )
-        logger.info(
-            f"Drive: solved drive={solved_drive:.3f} for target THD "
-            f"{target_thd_pct:.2f}% (measured {measured_thd_pct:.2f}% in "
-            f"{solver_iterations} iters)"
-        )
-        drive = solved_drive
-
-    # Internal analysis flag: auto-mode needs the inner function's analysis
-    # dict so we can append calibration metadata. Run inner with
-    # return_analysis=True whenever auto-mode is active, then drop the dict
-    # on the way out if the caller didn't actually ask for it.
-    want_inner_analysis = return_analysis or auto_calibrated
-
-    def _finalize(
-        inner_result: np.ndarray | tuple[np.ndarray, dict[str, float | int | str]],
-    ) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
-        if not want_inner_analysis:
-            return cast(np.ndarray, inner_result)
-        out_signal, out_analysis = cast(
-            tuple[np.ndarray, dict[str, float | int | str]], inner_result
-        )
-        if auto_calibrated:
-            assert solved_drive is not None
-            assert measured_thd_pct is not None
-            assert solver_iterations is not None
-            out_analysis["solved_drive"] = round(float(solved_drive), 4)
-            out_analysis["target_thd_pct"] = round(
-                float(cast(float, target_thd_pct)), 2
-            )
-            out_analysis["measured_thd_pct"] = round(float(measured_thd_pct), 2)
-            out_analysis["solver_iterations"] = int(solver_iterations)
-        if not return_analysis:
-            return out_signal
-        return out_signal, out_analysis
-
-    # Top-level unity floor — drive=0 is true bypass regardless of
-    # algorithm/multiband/mode. This short-circuits before any DSP so the
-    # LR4 crossover + shaper + compensation chain can't contribute
-    # reconstruction delta or pre-emphasis residue.
-    if drive <= 1.0e-6:
-        input_signal = np.asarray(signal, dtype=np.float64)
-        processed_signal = input_signal * db_to_amp(output_trim_db)
-        bypass_analysis: dict[str, float | int | str] = {
-            "algorithm": algorithm,
-            "mode": mode,
-            "drive": 0.0,
-            "mix": round(float(mix), 2),
-            "shaper_hot_fraction": 0.0,
-            "dc_offset": 0.0,
-            "thd_pct": 0.0,
-            "thd_character": "clean",
-            "compensation_mode_used": "bypass",
-            "compensation_gain_db": 0.0,
-        }
-        return _finalize((processed_signal, bypass_analysis))
-
-    resolved_algorithm = algorithm.strip().lower()
-    if resolved_algorithm == "legacy":
-        # Legacy algorithm runs the original monolithic path unchanged.
-        return _finalize(
-            _apply_drive_legacy(
-                signal,
-                drive=drive,
-                mix=mix,
-                bias=bias,
-                even_harmonics=even_harmonics,
-                oversample_factor=oversample_factor,
-                highpass_hz=highpass_hz,
-                tone_tilt=tone_tilt,
-                output_lowpass_hz=output_lowpass_hz,
-                compensation_mode=compensation_mode,
-                output_trim_db=output_trim_db,
-                return_analysis=want_inner_analysis,
-            )
-        )
-    if resolved_algorithm != "modern":
-        raise ValueError("algorithm must be 'modern' or 'legacy'")
-
-    # Resolve preserve_* deprecation in multiband mode.
-    resolved_low_xo = low_crossover_hz
-    resolved_high_xo = high_crossover_hz
-    if multiband:
-        if preserve_lows_hz != 120.0:
-            warnings.warn(
-                "preserve_lows_hz is deprecated for apply_drive(multiband=True); "
-                "use low_crossover_hz instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if low_crossover_hz == 120.0:
-                resolved_low_xo = preserve_lows_hz
-        if preserve_highs_hz != 6_000.0:
-            warnings.warn(
-                "preserve_highs_hz is deprecated for apply_drive(multiband=True); "
-                "use high_crossover_hz instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if high_crossover_hz == 5_000.0:
-                resolved_high_xo = preserve_highs_hz
-
-    if not multiband:
-        return _finalize(
-            _apply_drive_modern(
-                signal,
-                drive=drive,
-                mix=mix,
-                mode=mode,
-                tone=tone,
-                fidelity=fidelity,
-                bias=bias,
-                even_harmonics=even_harmonics,
-                oversample_factor=oversample_factor,
-                highpass_hz=highpass_hz,
-                tone_tilt=tone_tilt,
-                output_lowpass_hz=output_lowpass_hz,
-                preserve_lows_hz=preserve_lows_hz,
-                preserve_highs_hz=preserve_highs_hz,
-                compensation_mode=compensation_mode,
-                output_trim_db=output_trim_db,
-                return_analysis=want_inner_analysis,
-            )
-        )
-
-    return _finalize(
-        _apply_drive_multiband(
-            signal,
-            drive=drive,
-            mix=mix,
-            mode=mode,
-            tone=tone,
-            fidelity=fidelity,
-            bias=bias,
-            even_harmonics=even_harmonics,
-            oversample_factor=oversample_factor,
-            highpass_hz=highpass_hz,
-            tone_tilt=tone_tilt,
-            output_lowpass_hz=output_lowpass_hz,
-            low_crossover_hz=resolved_low_xo,
-            high_crossover_hz=resolved_high_xo,
-            compensation_mode=compensation_mode,
-            output_trim_db=output_trim_db,
-            return_analysis=want_inner_analysis,
-        )
-    )
-
-
-def _apply_drive_multiband(
-    signal: np.ndarray,
-    *,
-    drive: float,
-    mix: float,
-    mode: str,
-    tone: float,
-    fidelity: float,
-    bias: float,
-    even_harmonics: float,
-    oversample_factor: int,
-    highpass_hz: float,
-    tone_tilt: float,
-    output_lowpass_hz: float,
-    low_crossover_hz: float,
-    high_crossover_hz: float,
-    compensation_mode: str,
-    output_trim_db: float,
-    return_analysis: bool,
-) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
-    """Multiband LR4 wrapper around the modern drive algorithm.
-
-    Signal flow per channel:
-      1.  LR4-split into low / mid / high bands.
-          - low  = LR4_LP(low_crossover_hz, x)
-          - high = LR4_HP(high_crossover_hz, x)
-          - mid  = LR4_LP(high_crossover_hz, LR4_HP(low_crossover_hz, x))
-          This parallel structure sums to flat magnitude at unity.
-      2.  Only the mid band goes through the modern drive nonlinearity
-          (with preserve_* disabled — the LR4 bypass replaces them).
-      3.  Sum wet_mid + low + high to form the full wet signal.
-      4.  Apply the standard dry/wet ``mix`` blend against the original
-          input, and run the output through the same loudness compensation
-          and output trim as the monolithic path.
-    """
-    input_signal = np.asarray(signal, dtype=np.float64)
-
-    low_fc = low_crossover_hz
-    high_fc = high_crossover_hz
-
-    def _split_band_mid(channel: np.ndarray) -> np.ndarray:
-        x = np.asarray(channel, dtype=np.float64)
-        # High-pass to strip bass, then low-pass to strip treble: true bandpass.
-        if low_fc > 0.0:
-            mid = _linkwitz_riley_highpass(x, low_fc, SAMPLE_RATE)
-        else:
-            mid = x.copy()
-        if high_fc > 0.0:
-            mid = _linkwitz_riley_lowpass(mid, high_fc, SAMPLE_RATE)
-        return mid
-
-    def _split_band_low(channel: np.ndarray) -> np.ndarray:
-        if low_fc <= 0.0:
-            return np.zeros_like(channel, dtype=np.float64)
-        return _linkwitz_riley_lowpass(
-            np.asarray(channel, dtype=np.float64), low_fc, SAMPLE_RATE
-        )
-
-    def _split_band_high(channel: np.ndarray) -> np.ndarray:
-        if high_fc <= 0.0:
-            return np.zeros_like(channel, dtype=np.float64)
-        return _linkwitz_riley_highpass(
-            np.asarray(channel, dtype=np.float64), high_fc, SAMPLE_RATE
-        )
-
-    low_band = _apply_per_channel(input_signal, _split_band_low)
-    high_band = _apply_per_channel(input_signal, _split_band_high)
-    mid_band = _apply_per_channel(input_signal, _split_band_mid)
-
-    # Process only the mid band through the monolithic nonlinearity at mix=1.0.
-    # We apply the overall dry/wet blend ourselves after summing the bands so
-    # the bypass bands don't get attenuated by mix and the wet side stays
-    # energy-consistent.  preserve_* are disabled here — the LR4 split is
-    # the bypass and we don't want double-routing.  Request analysis from
-    # the mid-band call when the caller wants it so we can surface
-    # shaper_hot_fraction in the outer analysis dict.
-    wet_mid_result = _apply_drive_modern(
-        mid_band,
-        drive=drive,
-        mix=1.0,
-        mode=mode,
-        tone=tone,
-        fidelity=fidelity,
-        bias=bias,
-        even_harmonics=even_harmonics,
-        oversample_factor=oversample_factor,
-        highpass_hz=highpass_hz,
-        tone_tilt=tone_tilt,
-        output_lowpass_hz=output_lowpass_hz,
-        preserve_lows_hz=0.0,
-        preserve_highs_hz=0.0,
-        compensation_mode="none",
-        output_trim_db=0.0,
-        return_analysis=return_analysis,
-    )
-    mid_analysis: dict[str, float | int | str]
-    if return_analysis:
-        wet_mid_array, mid_analysis = cast(
-            tuple[np.ndarray, dict[str, float | int | str]], wet_mid_result
-        )
-    else:
-        wet_mid_array = cast(np.ndarray, wet_mid_result)
-        mid_analysis = {}
-
-    # Sum bands back into full-range wet signal.  LR4 guarantees
-    # low + mid + high = input at unity (magnitude-flat reconstruction).
-    full_wet = low_band + wet_mid_array + high_band
-
-    # Standard dry/wet crossfade against the original signal.
-    blended = ((1.0 - mix) * input_signal) + (mix * full_wet)
-
-    compensated_signal, compensation_mode_used, compensation_gain_db = (
-        _apply_drive_compensation(
-            blended,
-            reference_signal=input_signal,
-            sample_rate=SAMPLE_RATE,
-            compensation_mode=compensation_mode,
-        )
-    )
-    processed_signal = np.asarray(
-        compensated_signal * db_to_amp(output_trim_db),
-        dtype=np.float64,
-    )
-
-    if not return_analysis:
-        return processed_signal
-
-    thd_pct, thd_character = _saturation_thd(
-        lambda x: cast(
-            np.ndarray,
-            _apply_drive_multiband(
-                x,
-                drive=drive,
-                mix=1.0,
-                mode=mode,
-                tone=tone,
-                fidelity=fidelity,
-                bias=bias,
-                even_harmonics=even_harmonics,
-                oversample_factor=oversample_factor,
-                highpass_hz=max(highpass_hz, 10.0),
-                tone_tilt=tone_tilt,
-                output_lowpass_hz=output_lowpass_hz,
-                low_crossover_hz=low_fc,
-                high_crossover_hz=high_fc,
-                compensation_mode="none",
-                output_trim_db=0.0,
-                return_analysis=False,
-            ),
-        )
-    )
-    analysis: dict[str, float | int | str] = {
-        "algorithm": "modern",
-        "mode": mode.strip().lower(),
-        "drive": round(float(drive), 2),
-        "mix": round(float(mix), 2),
-        "fidelity": round(float(fidelity), 2),
-        "tone": round(float(tone), 2),
-        "multiband": 1,
-        "low_crossover_hz": round(float(low_fc), 1),
-        "high_crossover_hz": round(float(high_fc), 1),
-        "shaper_hot_fraction": mid_analysis.get("shaper_hot_fraction", 0.0),
-        "dc_offset": round(float(np.mean(to_mono_reference(processed_signal))), 6),
-        "thd_pct": thd_pct,
-        "thd_character": thd_character,
-        "compensation_mode_used": compensation_mode_used,
-        "compensation_gain_db": round(float(compensation_gain_db), 2),
-    }
-    return processed_signal, analysis
 
 
 # ---------------------------------------------------------------------------
@@ -8047,6 +6991,835 @@ def apply_preamp(
         "compensation_gain_db": round(float(compensation_gain_db), 2),
     }
     return processed_signal, analysis
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers for apply_tube / apply_transistor.
+#
+# Honest, purpose-built versions of the LR4 multiband crossover, tone-tilt EQ,
+# highpass, DC-block, and LUFS/RMS compensation used by both effects.  Split
+# out from the per-effect bodies so both tube and transistor share the same
+# gain-staging / compensation surface.
+# ---------------------------------------------------------------------------
+
+
+def _drive_knob_gain(drive: float) -> float:
+    """Map the user-facing 0-1 drive knob to internal gain.
+
+    Mirrors ``code_musics.engines._waveshaper._drive_to_gain`` so the new
+    tube / transistor effects share a calibration with the shaper primitives:
+    ``drive=0 -> 1.0`` (bypass), ``drive=0.5 -> 13.25``, ``drive=1.0 -> 50.0``.
+    """
+    return 1.0 + 49.0 * float(drive) * float(drive)
+
+
+def _tube_multiband_split(
+    channel: np.ndarray,
+    *,
+    low_crossover_hz: float,
+    high_crossover_hz: float,
+    sample_rate: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """LR4 split a mono channel into (low, mid, high) bands that sum to the input."""
+    x = np.asarray(channel, dtype=np.float64)
+    low = (
+        _linkwitz_riley_lowpass(x, low_crossover_hz, sample_rate)
+        if low_crossover_hz > 0.0
+        else np.zeros_like(x)
+    )
+    high = (
+        _linkwitz_riley_highpass(x, high_crossover_hz, sample_rate)
+        if high_crossover_hz > 0.0
+        else np.zeros_like(x)
+    )
+    mid = x
+    if low_crossover_hz > 0.0:
+        mid = _linkwitz_riley_highpass(mid, low_crossover_hz, sample_rate)
+    if high_crossover_hz > 0.0:
+        mid = _linkwitz_riley_lowpass(mid, high_crossover_hz, sample_rate)
+    return low, mid, high
+
+
+def _chebyshev_harmonic_blend(
+    signal: np.ndarray,
+    *,
+    amount: float,
+    sample_rate: int,
+    even_odd: float = 0.7,
+) -> np.ndarray:
+    """Parallel Chebyshev harmonic injector (T2 / T3 / T4).
+
+    Lifted from ``apply_preamp`` so ``apply_tube`` can use the same
+    HG2-style 12AT7 parallel-color path without forking the math.
+    Each Chebyshev polynomial generates a single harmonic order cleanly,
+    avoiding the intermodulation cascade that plagues memoryless
+    waveshaping on polyphonic material.  DC offset from even-order
+    terms is blocked on the way out.
+    """
+    if amount <= 0.0:
+        return np.zeros_like(np.asarray(signal, dtype=np.float64))
+    dry = np.asarray(signal, dtype=np.float64)
+    envelope = _envelope_follower(
+        dry, sample_rate=sample_rate, attack_ms=8.0, release_ms=120.0
+    )
+    peak = float(np.max(np.abs(dry))) + 1e-12
+    x_norm = dry / peak
+    t2 = 2.0 * x_norm**2 - 1.0
+    t3 = 4.0 * x_norm**3 - 3.0 * x_norm
+    t4 = 8.0 * x_norm**4 - 8.0 * x_norm**2 + 1.0
+    h2_weight = even_odd * 0.6
+    h3_weight = (1.0 - even_odd) * 0.4
+    h4_weight = even_odd * 0.2
+    color = amount * envelope * (h2_weight * t2 + h3_weight * t3 + h4_weight * t4)
+    return _dc_block(color, sample_rate=sample_rate, cutoff_hz=15.0)
+
+
+def _transistor_diode_shape(signal: np.ndarray, asymmetry: float) -> np.ndarray:
+    """Vectorised asymmetric Shockley-like diode shaper.
+
+    Mirrors ``code_musics.engines._filters._diode_shape`` for memoryless
+    waveshaping use.  ``asymmetry ∈ [0, 1]``: at 0 the curve is a
+    near-symmetric log-soft-clip, at 1 the positive swing saturates
+    earlier than the negative (the MS-20 / TS "snarl" direction).
+    """
+    a = float(np.clip(asymmetry, 0.0, 1.0))
+    is_pos = 1.0 - 0.35 * a
+    is_neg = 1.0 + 0.5 * a
+    x = np.asarray(signal, dtype=np.float64)
+    ax = np.abs(x)
+    pos = np.log1p(ax / is_pos) / np.log1p(1.0 / is_pos)
+    neg = -np.log1p(ax / is_neg) / np.log1p(1.0 / is_neg)
+    return np.where(x >= 0.0, pos, neg)
+
+
+def _soft_clip_algebraic(x: np.ndarray) -> np.ndarray:
+    """Algebraic (non-tanh) soft clipper: ``x / (1 + |x|)``.
+
+    Output bounded to ``(-1, 1)``, smooth, symmetric.  The honest
+    replacement for tanh when we want op-amp soft-clip character
+    without pretending it's tube-flavoured.
+    """
+    xa = np.asarray(x, dtype=np.float64)
+    return xa / (1.0 + np.abs(xa))
+
+
+def _op_amp_soft_knee(x: np.ndarray, knee: float = 0.12) -> np.ndarray:
+    """Hard clip with a log-sum-exp soft knee around ±1.
+
+    ``knee`` controls the radius of the smoothed transition (in the
+    same units as ``x``); smaller = harder knee.  The approximation uses
+    ``softplus`` to round the corner at ``x=1`` and again at ``x=-1``.
+    """
+    xa = np.asarray(x, dtype=np.float64)
+    k = max(float(knee), 1.0e-3)
+    upper = 1.0 - k * np.logaddexp(0.0, (1.0 - xa) / k)
+    return -1.0 + k * np.logaddexp(0.0, (upper + 1.0) / k)
+
+
+def _fuzz_cascade(x: np.ndarray, bias: float) -> np.ndarray:
+    """Two cascaded hard-clips with a bias offset between them.
+
+    Fuzz-Face-adjacent: the interstage bias is what makes fuzz gated
+    and splattery rather than a clean square wave.  DC-block lives
+    downstream; we don't pre-compensate the bias here.
+    """
+    stage1 = np.clip(np.asarray(x, dtype=np.float64) + 0.5 * bias, -1.0, 1.0)
+    return np.clip(1.8 * stage1 + 0.5 * bias, -1.0, 1.0)
+
+
+# ---------------------------------------------------------------------------
+# apply_tube — Koren triode / pentode / HG2 cascade / Culture-Vulture
+# ---------------------------------------------------------------------------
+
+
+_TUBE_PRESETS: dict[str, dict[str, Any]] = {
+    "triode_glow": {
+        "character": "triode",
+        "drive": 0.35,
+        "bias": 0.15,
+        "mix": 0.35,
+    },
+    "triode_bloom": {
+        "character": "triode",
+        "drive": 0.6,
+        "bias": 0.25,
+        "mix": 0.5,
+    },
+    "pentode_bite": {
+        "character": "pentode",
+        "drive": 0.5,
+        "sharpness": 5.0,
+        "mix": 0.4,
+    },
+    "hg2_enhancer": {
+        "character": "hg2",
+        "pentode_drive": 0.25,
+        "triode_drive": 0.3,
+        "parallel_drive": 0.2,
+        "mix": 0.3,
+    },
+    "hg2_drive": {
+        "character": "hg2",
+        "pentode_drive": 0.6,
+        "triode_drive": 0.7,
+        "parallel_drive": 0.35,
+        "mix": 0.6,
+    },
+    "culture_warm": {
+        "character": "culture",
+        "drive": 0.5,
+        "bias": 0.4,
+        "mix": 0.5,
+    },
+    "culture_growl": {
+        "character": "culture",
+        "drive": 0.8,
+        "bias": 0.7,
+        "mix": 0.7,
+    },
+    "culture_starve": {
+        "character": "culture",
+        "drive": 1.0,
+        "bias": 0.95,
+        "mix": 0.8,
+    },
+}
+
+
+_TUBE_VALID_CHARACTERS: frozenset[str] = frozenset(
+    {"triode", "pentode", "hg2", "culture"}
+)
+
+
+def _tube_stage_triode(
+    x: np.ndarray,
+    *,
+    drive: float,
+    bias: float,
+    mu: float,
+    ex: float,
+) -> np.ndarray:
+    """Apply a Koren-triode stage at the given drive/bias.
+
+    No zero-correction: we rely on a downstream DC-block so that the
+    asymmetry signature survives to the audio output.  That is what
+    makes the Culture-Vulture starved-bias sound reachable.
+    """
+    gain = _drive_knob_gain(drive)
+    driven = gain * x
+    if bias == 0.0:
+        return _koren_triode_shape(driven, mu=mu, ex=ex)
+    return _biased_shape(driven, _koren_triode_shape, bias=bias, mu=mu, ex=ex)
+
+
+def _tube_stage_pentode(
+    x: np.ndarray,
+    *,
+    drive: float,
+    sharpness: float,
+) -> np.ndarray:
+    """Apply a sharp-knee pentode stage.  Symmetric by construction."""
+    gain = _drive_knob_gain(drive)
+    return _pentode_shape(gain * x, sharpness=sharpness)
+
+
+def apply_tube(
+    signal: np.ndarray,
+    *,
+    character: str = "hg2",
+    drive: float = 0.5,
+    pentode_drive: float | None = None,
+    triode_drive: float | None = None,
+    bias: float = 0.0,
+    parallel_drive: float = 0.0,
+    sharpness: float = 4.0,
+    mu: float = 100.0,
+    ex: float = 1.4,
+    tone: float = 0.0,
+    tone_tilt: float = 0.0,
+    highpass_hz: float = 30.0,
+    mix: float = 0.5,
+    compensation_mode: str = "auto",
+    oversample_factor: int = 4,
+    multiband: bool = True,
+    low_crossover_hz: float = 120.0,
+    high_crossover_hz: float = 5_000.0,
+    preset: str | None = None,
+    sample_rate: int = SAMPLE_RATE,
+) -> np.ndarray:
+    """Koren-ish softplus-triode / pentode / HG2-cascade / Culture-Vulture shaper.
+
+    Physics-flavoured tube saturation across four characters.  Each
+    character below has the harmonic signature the name implies (unlike
+    the retired tanh-family ``apply_drive``):
+
+    ``character="triode"``
+        Koren softplus triode alone.  H2-dominant, asymmetric, smooth.
+        Reach for this to add glow / warmth / "amp in the room" colour.
+    ``character="pentode"``
+        Sharp-knee pentode (``x / (1+|x|^n)^(1/n)``) alone.  Symmetric,
+        H3-dominant, mid-focused edge.  Reach for this for lead bite.
+    ``character="hg2"``
+        Series cascade pentode → triode + optional parallel Chebyshev
+        harmonic blend.  Per-stage drives ``pentode_drive`` and
+        ``triode_drive`` (both fall back to ``drive``).  Models the HG2
+        euphonic enhancer topology.
+    ``character="culture"``
+        Single triode with wide-range ``bias``.  No zero-correction —
+        the downstream DC-block is what lets the Culture-Vulture
+        "starvation" sound (one half-cycle collapsing) reach the
+        output.  ``|bias| > 0.8`` enters starvation territory.
+
+    Parameters
+    ----------
+    signal:
+        Mono ``(N,)`` or stereo ``(2, N)`` audio.
+    character:
+        One of ``"triode"`` / ``"pentode"`` / ``"hg2"`` / ``"culture"``.
+    drive:
+        User-facing 0-1 drive knob.  ``0.2`` = subtle warmth, ``0.5`` =
+        musical saturation, ``1.0`` = top of the musical range, ``>1.0``
+        into fuzz territory.  Ignored for ``character="hg2"`` when
+        both per-stage drives are provided.
+    pentode_drive, triode_drive:
+        Per-stage overrides for the HG2 cascade.  ``None`` falls back
+        to ``drive``.  Ignored for non-HG2 characters.
+    bias:
+        Asymmetric-offset for ``triode`` / ``culture`` / ``hg2``.
+        ``0`` = symmetric, ``±1`` = starved.  NOT DC-compensated in the
+        shaper — the output DC-block handles centering.  Warning:
+        ``|bias| > 0.8`` produces heavy asymmetry and is the intended
+        Culture-Vulture range.  Ignored for ``character="pentode"``
+        (pentode is symmetric by nature).
+    parallel_drive:
+        HG2-style 12AT7 parallel Chebyshev color amount (0-1).  Only
+        active for ``character="hg2"``; ignored elsewhere.
+    sharpness:
+        Pentode knee hardness, ``3..6``.  Higher = harder clip / more H3.
+    mu, ex:
+        Koren triode advanced parameters.  Leave at defaults unless you
+        know what you're doing.
+    tone, tone_tilt:
+        ``tone`` is a low/high balance knob (-1..1, positive = brighter);
+        ``tone_tilt`` adds a post-shaper tilt EQ in dB (-6..6).
+    highpass_hz:
+        Pre-shaper highpass corner in Hz.  ``0`` disables.
+    mix:
+        Wet/dry blend (0-1).  Default 0.5.
+    compensation_mode:
+        Loudness compensation: ``"auto"`` / ``"lufs"`` / ``"rms"`` / ``"none"``.
+    oversample_factor:
+        Internal oversampling.  Auto-upgrades to 8 at ``drive >= 1.5``.
+    multiband:
+        When ``True`` (default) a LR4 multiband split routes only the mid
+        band through the shaper; bass and air bypass cleanly.  Disable
+        to push the full-range signal through the nonlinearity.
+    low_crossover_hz, high_crossover_hz:
+        Multiband LR4 corner frequencies.  Default ``120 / 5000`` Hz.
+    preset:
+        Optional named preset.  Available:
+        ``triode_glow`` / ``triode_bloom`` — subtle-to-moderate H2 warmth;
+        ``pentode_bite`` — mid-focused edge;
+        ``hg2_enhancer`` / ``hg2_drive`` — HG2 euphonic to aggressive;
+        ``culture_warm`` / ``culture_growl`` / ``culture_starve`` —
+        Culture-Vulture from even-harmonic richness through full starvation.
+    sample_rate:
+        Audio sample rate.
+    """
+    if preset is not None:
+        resolved_preset = _resolve_effect_params("tube", {"preset": preset})
+        # Preset values win over Python kwargs only when the kwarg is at its
+        # default; explicit user kwargs otherwise override.
+        if character == "hg2" and "character" in resolved_preset:
+            character = str(resolved_preset["character"])
+        for key in (
+            "drive",
+            "pentode_drive",
+            "triode_drive",
+            "bias",
+            "parallel_drive",
+            "sharpness",
+            "mu",
+            "ex",
+            "tone",
+            "tone_tilt",
+            "highpass_hz",
+            "mix",
+            "compensation_mode",
+            "oversample_factor",
+            "multiband",
+            "low_crossover_hz",
+            "high_crossover_hz",
+        ):
+            if key in resolved_preset:
+                value = resolved_preset[key]
+                if key == "drive" and drive == 0.5:
+                    drive = float(value)
+                elif key == "pentode_drive" and pentode_drive is None:
+                    pentode_drive = float(value)
+                elif key == "triode_drive" and triode_drive is None:
+                    triode_drive = float(value)
+                elif key == "bias" and bias == 0.0:
+                    bias = float(value)
+                elif key == "parallel_drive" and parallel_drive == 0.0:
+                    parallel_drive = float(value)
+                elif key == "sharpness" and sharpness == 4.0:
+                    sharpness = float(value)
+                elif key == "mu" and mu == 100.0:
+                    mu = float(value)
+                elif key == "ex" and ex == 1.4:
+                    ex = float(value)
+                elif key == "tone" and tone == 0.0:
+                    tone = float(value)
+                elif key == "tone_tilt" and tone_tilt == 0.0:
+                    tone_tilt = float(value)
+                elif key == "highpass_hz" and highpass_hz == 30.0:
+                    highpass_hz = float(value)
+                elif key == "mix" and mix == 0.5:
+                    mix = float(value)
+                elif key == "compensation_mode" and compensation_mode == "auto":
+                    compensation_mode = str(value)
+                elif key == "oversample_factor" and oversample_factor == 4:
+                    oversample_factor = int(value)
+                elif key == "multiband" and multiband is True:
+                    multiband = bool(value)
+                elif key == "low_crossover_hz" and low_crossover_hz == 120.0:
+                    low_crossover_hz = float(value)
+                elif key == "high_crossover_hz" and high_crossover_hz == 5_000.0:
+                    high_crossover_hz = float(value)
+
+    if character not in _TUBE_VALID_CHARACTERS:
+        raise ValueError(
+            f"character must be one of {sorted(_TUBE_VALID_CHARACTERS)}, "
+            f"got {character!r}"
+        )
+    if not 0.0 <= mix <= 1.0:
+        raise ValueError("mix must be between 0 and 1")
+    if drive < 0.0:
+        raise ValueError("drive must be non-negative")
+    if not -1.0 <= bias <= 1.0:
+        raise ValueError("bias must be between -1 and 1")
+    if not 0.0 <= parallel_drive <= 1.0:
+        raise ValueError("parallel_drive must be between 0 and 1")
+    if not 2.5 <= sharpness <= 10.0:
+        raise ValueError("sharpness must be between 2.5 and 10")
+    if oversample_factor < 1:
+        raise ValueError("oversample_factor must be at least 1")
+    if highpass_hz < 0.0:
+        raise ValueError("highpass_hz must be non-negative")
+
+    resolved_oversample = oversample_factor
+    if drive >= 1.5 and resolved_oversample < 8:
+        resolved_oversample = 8
+
+    input_signal = np.asarray(signal, dtype=np.float64)
+
+    if mix <= 0.0:
+        return input_signal.copy()
+
+    resolved_pentode_drive = drive if pentode_drive is None else pentode_drive
+    resolved_triode_drive = drive if triode_drive is None else triode_drive
+
+    def _shape(channel: np.ndarray) -> np.ndarray:
+        x = np.asarray(channel, dtype=np.float64)
+        if resolved_oversample > 1:
+            x_os = resample_poly(x, resolved_oversample, 1)
+        else:
+            x_os = x
+        if character == "triode":
+            shaped = _tube_stage_triode(x_os, drive=drive, bias=bias, mu=mu, ex=ex)
+        elif character == "pentode":
+            shaped = _tube_stage_pentode(x_os, drive=drive, sharpness=sharpness)
+        elif character == "culture":
+            shaped = _tube_stage_triode(x_os, drive=drive, bias=bias, mu=mu, ex=ex)
+        else:  # "hg2"
+            pent = _tube_stage_pentode(
+                x_os, drive=resolved_pentode_drive, sharpness=sharpness
+            )
+            shaped = _tube_stage_triode(
+                pent, drive=resolved_triode_drive, bias=bias, mu=mu, ex=ex
+            )
+            if parallel_drive > 0.0:
+                os_sr = sample_rate * resolved_oversample
+                cheb = _chebyshev_harmonic_blend(
+                    x_os,
+                    amount=parallel_drive * 0.3,
+                    sample_rate=os_sr,
+                    even_odd=0.7,
+                )
+                shaped = shaped + cheb
+        if resolved_oversample > 1:
+            shaped = resample_poly(shaped, 1, resolved_oversample)
+        return np.asarray(shaped[: x.shape[-1]], dtype=np.float64)
+
+    def _process_channel(channel: np.ndarray) -> np.ndarray:
+        dry = np.asarray(channel, dtype=np.float64)
+        conditioned = dry
+        if highpass_hz > 0.0:
+            conditioned = highpass(
+                conditioned,
+                cutoff_hz=highpass_hz,
+                sample_rate=sample_rate,
+                order=2,
+            )
+        pre_tilt_db = 5.0 * float(tone)
+        if pre_tilt_db != 0.0:
+            conditioned = _apply_tilt_eq(
+                conditioned,
+                sample_rate=sample_rate,
+                tilt_db=pre_tilt_db,
+                pivot_hz=2_100.0,
+            )
+        if multiband:
+            low, mid, high = _tube_multiband_split(
+                conditioned,
+                low_crossover_hz=low_crossover_hz,
+                high_crossover_hz=high_crossover_hz,
+                sample_rate=sample_rate,
+            )
+            shaped_mid = _shape(mid)
+            wet = low + shaped_mid + high
+        else:
+            wet = _shape(conditioned)
+        # Second-order DC block — the new tube/transistor effects can produce
+        # substantial asymmetry (Culture-Vulture bias, diode shaper) and a
+        # first-order corner leaves measurable DC residue at sine-wave rates.
+        wet = highpass(wet, cutoff_hz=20.0, sample_rate=sample_rate, order=2)
+        if tone_tilt != 0.0:
+            wet = _apply_tilt_eq(
+                wet,
+                sample_rate=sample_rate,
+                tilt_db=float(tone_tilt),
+                pivot_hz=2_500.0,
+            )
+        return wet
+
+    wet_signal = _apply_per_channel(input_signal, _process_channel)
+    blended = (1.0 - mix) * input_signal + mix * wet_signal
+    compensated, _mode_used, _gain_db = _apply_drive_compensation(
+        blended,
+        reference_signal=input_signal,
+        sample_rate=sample_rate,
+        compensation_mode=compensation_mode,
+    )
+    return np.asarray(compensated, dtype=np.float64)
+
+
+# ---------------------------------------------------------------------------
+# apply_transistor — honest stompbox / op-amp memoryless waveshaper
+# ---------------------------------------------------------------------------
+
+
+_TRANSISTOR_PRESETS: dict[str, dict[str, Any]] = {
+    "op_amp_clean": {
+        "character": "soft_clip",
+        "drive": 0.2,
+        "mix": 0.25,
+    },
+    "tube_screamer": {
+        "character": "diode",
+        "drive": 0.5,
+        "bias": 0.1,
+        "mix": 0.5,
+    },
+    "rat_crunch": {
+        "character": "op_amp",
+        "drive": 0.8,
+        "mix": 0.7,
+    },
+    "fuzz_face": {
+        "character": "fuzz",
+        "drive": 1.0,
+        "bias": 0.2,
+        "mix": 0.8,
+    },
+    "neve_gentle": {
+        "character": "soft_clip",
+        "drive": 0.3,
+        "mix": 0.3,
+        "tone": 0.14,
+        "highpass_hz": 28.0,
+        "multiband": True,
+    },
+    "kick_heavy": {
+        "character": "op_amp",
+        "drive": 1.0,
+        "mix": 0.62,
+        "tone": 0.10,
+        "highpass_hz": 28.0,
+        "low_crossover_hz": 80.0,
+        "high_crossover_hz": 3_600.0,
+        "multiband": True,
+        "compensation_mode": "rms",
+    },
+    "snare_bite": {
+        "character": "diode",
+        "drive": 0.7,
+        "bias": 0.1,
+        "mix": 0.3,
+        "tone": 0.06,
+        "highpass_hz": 30.0,
+        "low_crossover_hz": 150.0,
+        "high_crossover_hz": 5_000.0,
+        "multiband": True,
+        "compensation_mode": "rms",
+    },
+}
+
+
+_TRANSISTOR_VALID_CHARACTERS: frozenset[str] = frozenset(
+    {"soft_clip", "diode", "op_amp", "fuzz"}
+)
+
+
+def _transistor_shape(
+    x: np.ndarray,
+    *,
+    character: str,
+    drive: float,
+    bias: float,
+) -> np.ndarray:
+    """Dispatch to the requested memoryless character shaper."""
+    gain = _drive_knob_gain(drive)
+    driven = gain * x + bias
+    if character == "soft_clip":
+        return _soft_clip_algebraic(driven)
+    if character == "diode":
+        return _transistor_diode_shape(driven, asymmetry=min(1.0, abs(bias) + 0.5))
+    if character == "op_amp":
+        return _op_amp_soft_knee(driven, knee=0.12)
+    if character == "fuzz":
+        return _fuzz_cascade(driven, bias=bias)
+    raise ValueError(
+        f"character must be one of {sorted(_TRANSISTOR_VALID_CHARACTERS)}, "
+        f"got {character!r}"
+    )
+
+
+def apply_transistor(
+    signal: np.ndarray,
+    *,
+    character: str = "soft_clip",
+    drive: float = 0.5,
+    bias: float = 0.0,
+    mix: float = 0.5,
+    tone: float = 0.0,
+    tone_tilt: float = 0.0,
+    highpass_hz: float = 30.0,
+    multiband: bool = True,
+    low_crossover_hz: float = 120.0,
+    high_crossover_hz: float = 5_000.0,
+    compensation_mode: str = "auto",
+    oversample_factor: int = 4,
+    target_thd_pct: float | None = None,
+    preset: str | None = None,
+    sample_rate: int = SAMPLE_RATE,
+) -> np.ndarray:
+    """Honest stompbox / op-amp memoryless waveshaper.
+
+    Four honest character shapes — no physics-cosplay.  This is the
+    effect to reach for when you want deliberate pedalboard / op-amp
+    colour; for actual tube character, use :func:`apply_tube`; for
+    iron-core / magnetics warmth, use :func:`apply_preamp`.
+
+    ``character="soft_clip"``
+        ``x / (1 + |x|)`` — algebraic clipper, not tanh.  Clean
+        op-amp feel.  Symmetric.
+    ``character="diode"``
+        Asymmetric Shockley log-soft-clip.  Tube-Screamer-ish.
+    ``character="op_amp"``
+        Hard clip with soft knee (log-sum-exp smoothing).  RAT territory.
+    ``character="fuzz"``
+        Two cascaded hard-clips with bias between them.  Fuzz-Face adjacent.
+        Most musical at ``drive >= 0.7``; still works at lower drive
+        as a gentle clipper.
+
+    Parameters
+    ----------
+    signal:
+        Mono ``(N,)`` or stereo ``(2, N)`` audio.
+    character:
+        One of ``"soft_clip"`` / ``"diode"`` / ``"op_amp"`` / ``"fuzz"``.
+    drive:
+        User-facing 0-1 drive knob (``>1`` enters fuzz territory).
+    bias:
+        Asymmetric DC offset into the shaper (``-1..1``).  The final
+        DC-block re-centers the output.
+    mix:
+        Wet/dry blend (``0..1``).
+    tone, tone_tilt:
+        Pre-shaper spectral tilt (``tone``, ``-1..1``) and post-shaper
+        tilt EQ (``tone_tilt``, dB).
+    highpass_hz:
+        Pre-shaper highpass corner, ``0`` disables.
+    multiband:
+        LR4 multiband bypass for bass and air bands.  Defaults to ``True``.
+    low_crossover_hz, high_crossover_hz:
+        Multiband corner frequencies.
+    compensation_mode:
+        Loudness compensation: ``"auto"`` / ``"lufs"`` / ``"rms"`` / ``"none"``.
+    oversample_factor:
+        Internal oversampling factor; auto-upgrades to 8 at ``drive >= 1.5``.
+    target_thd_pct:
+        When set, solve ``drive`` to hit the target shaper THD on a
+        440 Hz sine probe (binary search).  ``drive`` is ignored.
+    preset:
+        Optional named preset: ``op_amp_clean``, ``tube_screamer``,
+        ``rat_crunch``, ``fuzz_face``, ``neve_gentle``, ``kick_heavy``,
+        ``snare_bite``.
+    sample_rate:
+        Audio sample rate.
+    """
+    if preset is not None:
+        resolved_preset = _resolve_effect_params("transistor", {"preset": preset})
+        if character == "soft_clip" and "character" in resolved_preset:
+            character = str(resolved_preset["character"])
+        for key in (
+            "drive",
+            "bias",
+            "mix",
+            "tone",
+            "tone_tilt",
+            "highpass_hz",
+            "multiband",
+            "low_crossover_hz",
+            "high_crossover_hz",
+            "compensation_mode",
+            "oversample_factor",
+        ):
+            if key in resolved_preset:
+                value = resolved_preset[key]
+                if key == "drive" and drive == 0.5:
+                    drive = float(value)
+                elif key == "bias" and bias == 0.0:
+                    bias = float(value)
+                elif key == "mix" and mix == 0.5:
+                    mix = float(value)
+                elif key == "tone" and tone == 0.0:
+                    tone = float(value)
+                elif key == "tone_tilt" and tone_tilt == 0.0:
+                    tone_tilt = float(value)
+                elif key == "highpass_hz" and highpass_hz == 30.0:
+                    highpass_hz = float(value)
+                elif key == "multiband" and multiband is True:
+                    multiband = bool(value)
+                elif key == "low_crossover_hz" and low_crossover_hz == 120.0:
+                    low_crossover_hz = float(value)
+                elif key == "high_crossover_hz" and high_crossover_hz == 5_000.0:
+                    high_crossover_hz = float(value)
+                elif key == "compensation_mode" and compensation_mode == "auto":
+                    compensation_mode = str(value)
+                elif key == "oversample_factor" and oversample_factor == 4:
+                    oversample_factor = int(value)
+
+    if character not in _TRANSISTOR_VALID_CHARACTERS:
+        raise ValueError(
+            f"character must be one of {sorted(_TRANSISTOR_VALID_CHARACTERS)}, "
+            f"got {character!r}"
+        )
+    if not 0.0 <= mix <= 1.0:
+        raise ValueError("mix must be between 0 and 1")
+    if drive < 0.0:
+        raise ValueError("drive must be non-negative")
+    if not -1.0 <= bias <= 1.0:
+        raise ValueError("bias must be between -1 and 1")
+    if oversample_factor < 1:
+        raise ValueError("oversample_factor must be at least 1")
+    if highpass_hz < 0.0:
+        raise ValueError("highpass_hz must be non-negative")
+    if target_thd_pct is not None and target_thd_pct < 0.0:
+        raise ValueError("target_thd_pct must be non-negative")
+
+    if target_thd_pct is not None:
+        resolved_character = character
+        resolved_bias = bias
+
+        def _probe_factory(
+            candidate_drive: float,
+        ) -> Callable[[np.ndarray], np.ndarray]:
+            return lambda x: _transistor_shape(
+                x,
+                character=resolved_character,
+                drive=candidate_drive,
+                bias=resolved_bias,
+            )
+
+        solved_drive, _measured, _iters = _solve_drive_for_target_thd(
+            target_thd_pct=float(target_thd_pct),
+            probe_processor_factory=_probe_factory,
+        )
+        drive = float(solved_drive)
+
+    resolved_oversample = oversample_factor
+    if drive >= 1.5 and resolved_oversample < 8:
+        resolved_oversample = 8
+
+    input_signal = np.asarray(signal, dtype=np.float64)
+    if mix <= 0.0:
+        return input_signal.copy()
+
+    def _shape(channel: np.ndarray) -> np.ndarray:
+        x = np.asarray(channel, dtype=np.float64)
+        if resolved_oversample > 1:
+            x_os = resample_poly(x, resolved_oversample, 1)
+        else:
+            x_os = x
+        shaped = _transistor_shape(x_os, character=character, drive=drive, bias=bias)
+        if resolved_oversample > 1:
+            shaped = resample_poly(shaped, 1, resolved_oversample)
+        return np.asarray(shaped[: x.shape[-1]], dtype=np.float64)
+
+    def _process_channel(channel: np.ndarray) -> np.ndarray:
+        dry = np.asarray(channel, dtype=np.float64)
+        conditioned = dry
+        if highpass_hz > 0.0:
+            conditioned = highpass(
+                conditioned,
+                cutoff_hz=highpass_hz,
+                sample_rate=sample_rate,
+                order=2,
+            )
+        pre_tilt_db = 5.0 * float(tone)
+        if pre_tilt_db != 0.0:
+            conditioned = _apply_tilt_eq(
+                conditioned,
+                sample_rate=sample_rate,
+                tilt_db=pre_tilt_db,
+                pivot_hz=2_100.0,
+            )
+        if multiband:
+            low, mid, high = _tube_multiband_split(
+                conditioned,
+                low_crossover_hz=low_crossover_hz,
+                high_crossover_hz=high_crossover_hz,
+                sample_rate=sample_rate,
+            )
+            shaped_mid = _shape(mid)
+            wet = low + shaped_mid + high
+        else:
+            wet = _shape(conditioned)
+        # Second-order DC block — the new tube/transistor effects can produce
+        # substantial asymmetry (Culture-Vulture bias, diode shaper) and a
+        # first-order corner leaves measurable DC residue at sine-wave rates.
+        wet = highpass(wet, cutoff_hz=20.0, sample_rate=sample_rate, order=2)
+        if tone_tilt != 0.0:
+            wet = _apply_tilt_eq(
+                wet,
+                sample_rate=sample_rate,
+                tilt_db=float(tone_tilt),
+                pivot_hz=2_500.0,
+            )
+        return wet
+
+    wet_signal = _apply_per_channel(input_signal, _process_channel)
+    blended = (1.0 - mix) * input_signal + mix * wet_signal
+    compensated, _mode_used, _gain_db = _apply_drive_compensation(
+        blended,
+        reference_signal=input_signal,
+        sample_rate=sample_rate,
+        compensation_mode=compensation_mode,
+    )
+    return np.asarray(compensated, dtype=np.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -8659,6 +8432,8 @@ def apply_effect_chain(
             "phaser",
             "drive",
             "preamp",
+            "tube",
+            "transistor",
             "airwindows",
             "byod",
             "chow_centaur",
@@ -8709,31 +8484,14 @@ def apply_effect_chain(
                 params,
                 effect_amount_automation,
             )
-        elif effect.kind == "drive":
-            if effect_amount_automation is None and return_analysis:
-                processed_signal, drive_metrics = apply_drive(
-                    processed,
-                    **params,
-                    return_analysis=True,
-                )
-                processed = processed_signal
-                native_metrics = drive_metrics
-            elif effect_amount_automation is None:
-                processed = cast(np.ndarray, apply_drive(processed, **params))
-            else:
-                target_name, amount_curve = effect_amount_automation
-                wet_params = dict(params)
-                wet_params[target_name] = 1.0
-                if return_analysis:
-                    wet_signal, drive_metrics = apply_drive(
-                        processed,
-                        **wet_params,
-                        return_analysis=True,
-                    )
-                    native_metrics = drive_metrics
-                else:
-                    wet_signal = cast(np.ndarray, apply_drive(processed, **wet_params))
-                processed = _blend_signals(effect_input, wet_signal, amount_curve)
+        elif effect.kind in ("drive", "saturation"):
+            raise ValueError(
+                f"EffectSpec kind {effect.kind!r} was retired in the tube-"
+                "saturation redesign. Migrate to apply_tube (tube saturation), "
+                "apply_transistor (stompbox/op-amp), or apply_preamp "
+                "(transformer warmth). See docs/synth_api.md or the effect "
+                "docstrings."
+            )
         elif effect.kind == "preamp":
             if effect_amount_automation is None and return_analysis:
                 processed_signal, preamp_metrics = cast(
@@ -8764,6 +8522,24 @@ def apply_effect_chain(
                     native_metrics = preamp_metrics
                 else:
                     wet_signal = cast(np.ndarray, apply_preamp(processed, **wet_params))
+                processed = _blend_signals(effect_input, wet_signal, amount_curve)
+        elif effect.kind == "tube":
+            if effect_amount_automation is None:
+                processed = apply_tube(processed, **params)
+            else:
+                target_name, amount_curve = effect_amount_automation
+                wet_params = dict(params)
+                wet_params[target_name] = 1.0
+                wet_signal = apply_tube(processed, **wet_params)
+                processed = _blend_signals(effect_input, wet_signal, amount_curve)
+        elif effect.kind == "transistor":
+            if effect_amount_automation is None:
+                processed = apply_transistor(processed, **params)
+            else:
+                target_name, amount_curve = effect_amount_automation
+                wet_params = dict(params)
+                wet_params[target_name] = 1.0
+                wet_signal = apply_transistor(processed, **wet_params)
                 processed = _blend_signals(effect_input, wet_signal, amount_curve)
         elif effect.kind == "eq":
             processed = apply_eq(processed, **params)

@@ -240,7 +240,7 @@ def build_score() -> Score:
         send_db=-3.0,
         effects=[
             EffectSpec("compressor", {"preset": "snare_punch"}),
-            EffectSpec("drive", {"preset": "snare_bite"}),
+            EffectSpec("transistor", {"preset": "snare_bite"}),
         ],
         mix_db=-2.0,
     )

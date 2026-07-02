@@ -310,7 +310,7 @@ def test_freq_trajectory_wrong_length_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("shaper", ["tanh", "saturation", "preamp", "foldback"])
+@pytest.mark.parametrize("shaper", ["tanh", "tube", "preamp", "foldback"])
 def test_voice_shaper_dispatch(shaper: str) -> None:
     audio = _render_voice(
         osc_type="polyblep",

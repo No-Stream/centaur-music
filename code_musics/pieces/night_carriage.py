@@ -178,7 +178,7 @@ def _hall_warmth() -> EffectSpec:
     IMD-ratio growth instead, which correctly sees this stage as subtle
     warmth rather than heavy distortion.
     """
-    return EffectSpec("drive", {"preset": "tube_warm", "drive": 0.25, "mix": 0.20})
+    return EffectSpec("tube", {"preset": "triode_glow", "drive": 0.25, "mix": 0.20})
 
 
 def _piano_chorus() -> EffectSpec:
@@ -209,7 +209,7 @@ def _master_chain() -> list[EffectSpec]:
     """
     return [
         *DEFAULT_MASTER_EFFECTS,
-        EffectSpec("drive", {"preset": "tube_warm", "mix": 0.20}),
+        EffectSpec("tube", {"preset": "triode_glow", "mix": 0.20}),
     ]
 
 

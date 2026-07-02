@@ -391,6 +391,20 @@ def _apply_attack_release(
     return signal * env
 
 
+_TUBE_CHARACTER_ALIASES: dict[str, str] = {
+    "triode": "triode",
+    "pentode": "pentode",
+    "hg2": "hg2",
+    "culture": "culture",
+    # Backwards-compat aliases from the retired ``apply_drive`` ``mode``
+    # parameter.  The tanh-family ``"tube"`` / ``"iron"`` modes are best
+    # approximated by ``apply_tube(character="triode")`` — H2-dominant
+    # warmth, which was always the nearest honest match.
+    "tube": "triode",
+    "iron": "triode",
+}
+
+
 def _apply_layer_shaper(
     signal: np.ndarray,
     shaper: str | None,
@@ -403,25 +417,29 @@ def _apply_layer_shaper(
     bit_depth: float = 8.0,
     reduce_ratio: float = 2.0,
 ) -> np.ndarray:
-    """Apply waveshaper, saturation, or preamp to a signal.
+    """Apply a waveshaper, tube, or preamp effect to a signal.
 
     Identical dispatch surface to ``drum_voice._apply_layer_shaper``: any
-    registered waveshaper algorithm, the modern ``saturation`` effect, or
-    the flux-domain ``preamp`` effect.  ``shaper=None`` is a no-op.
+    registered waveshaper algorithm, :func:`code_musics.synth.apply_tube`
+    (via ``shaper="tube"``), or :func:`code_musics.synth.apply_preamp`
+    (via ``shaper="preamp"``).  ``shaper=None`` is a no-op.
     """
+    del fidelity  # legacy param reserved for future use
+
     if shaper is None:
         return signal
 
-    if shaper == "saturation":
+    if shaper == "tube":
         # Deferred import: synth.py -> engines/__init__.py -> synth_voice.py
-        from code_musics.synth import apply_drive
+        from code_musics.synth import apply_tube
 
-        result = apply_drive(
+        character = _TUBE_CHARACTER_ALIASES.get(mode, "triode")
+        result = apply_tube(
             signal,
+            character=character,
             drive=drive,
             mix=mix,
-            mode=mode,
-            fidelity=fidelity,
+            sample_rate=sample_rate,
         )
         return np.asarray(result, dtype=np.float64)
 
@@ -439,7 +457,7 @@ def _apply_layer_shaper(
 
     if shaper not in ALGORITHM_NAMES:
         raise ValueError(
-            f"shaper must be one of {sorted(ALGORITHM_NAMES)}, 'saturation', "
+            f"shaper must be one of {sorted(ALGORITHM_NAMES)}, 'tube', "
             f"'preamp', or None, got {shaper!r}"
         )
 

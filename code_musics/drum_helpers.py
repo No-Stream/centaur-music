@@ -16,10 +16,10 @@ _NO_EFFECTS: object = object()
 # ---------------------------------------------------------------------------
 # Drum bus style presets — default-on chains providing finished-kit glue.
 #
-# Order: compressor -> preamp/drive -> clipper (on heavier styles).
+# Order: compressor -> preamp/tube -> clipper (on heavier styles).
 # The compressor glues dynamics first so transients are shaped by raw
 # envelope; the middle stage adds harmonic color to the glued signal
-# (apply_drive for intentional drive, apply_preamp for flux-domain
+# (apply_tube for triode/pentode character, apply_preamp for flux-domain
 # transformer warmth with no papery treble buildup); the clipper shaves
 # the remaining kick peaks with a polynomial soft-knee, leaving the
 # master-bus limiter less absolute work to do.
@@ -80,7 +80,7 @@ _DRUM_BUS_STYLES: dict[str, list[EffectSpec]] = {
                 "mix": 0.7,
             },
         ),
-        EffectSpec("drive", {"mode": "triode", "drive": 1.4, "mix": 0.22}),
+        EffectSpec("tube", {"character": "triode", "drive": 1.4, "mix": 0.22}),
     ],
     "electronic": [
         # Default — modern electronic glue. target_avg_gr_db=5.0 — audible

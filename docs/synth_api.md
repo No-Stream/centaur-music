@@ -347,9 +347,10 @@ Params (same surface across the three engines):
 
 - `voice_dist_mode: str = "off"` — one of `"off"`, `"soft_clip"`,
   `"hard_clip"`, `"foldback"`, `"corrode"` (bitcrush + rate
-  reduction), `"saturation"` (dispatches through the modern
-  `apply_drive`), `"preamp"` (flux-domain transformer via
-  `apply_preamp`).
+  reduction), `"transistor"` (dispatches through `apply_transistor`),
+  `"preamp"` (flux-domain transformer via `apply_preamp`),
+  `"tube_triode"` / `"tube_pentode"` / `"tube_hg2"` / `"tube_culture"`
+  (dispatch through `apply_tube` with the matching character).
 - `voice_dist_drive: float = 0.5` — 0.0–2.0.  `drive <= 0` is a
   fast-path passthrough.  Modulation through zero uses a blend
   coefficient so there is no step at the threshold.
@@ -1075,235 +1076,76 @@ Notes:
   `apply_pan_automation` path — the static `pan` parameter is replaced
   by the automation curve.
 
-### `drive`
+### Three honest saturation tools: `tube` / `transistor` / `preamp`
 
-Implementation: [code_musics/synth.py](code_musics/synth.py) (`apply_drive`,
-formerly `apply_saturation`; `EffectSpec` kind `"drive"`, formerly
-`"saturation"`).
+The old `drive` / `saturation` effect was retired in the tube-saturation
+redesign — it named itself "tube" / "triode" / "iron" while internally running
+tanh-family memoryless shapers with no actual triode / pentode / transformer
+character. It has been replaced by three purpose-built effects, each with a
+physics-honest kernel and a clear use case:
 
-**Colored drive / overdrive effect.** This kernel is explicitly *not* a
-transparent hi-fi saturator: at any non-zero drive setting it lifts the
-2–8 kHz band (pre-emphasis plus bias asymmetry) and produces audible
-harmonic content. Reach for `drive` when you want deliberate character —
-tube / iron / stompbox-flavored color, papery presence lift, or audible
-harmonic content. For genuinely transparent bus sweetening and master-bus
-warmth, use `preamp` (flux-domain transformer) instead.
+| Effect            | Character            | Use for                                                   |
+|-------------------|----------------------|-----------------------------------------------------------|
+| `apply_tube`      | Tube (tubes!)        | Triode glow, pentode bite, HG2 cascade, Culture-Vulture   |
+| `apply_transistor`| Memoryless waveshaper| Stompbox / op-amp / diode / fuzz character                |
+| `apply_preamp`    | Flux-domain iron     | Hi-fi warmth, bus glue, transformer console, master sweeten|
 
-The default engine is a modern two-stage shaper with DC-safe asymmetry,
-bounded loudness compensation, and multiband crossover bypass (see below)
-so bass and air bands can stay out of the nonlinearity. The previous
-one-stage soft-clip path is still available via `algorithm="legacy"`.
+**Migration from the retired `drive` effect.** `EffectSpec("drive", ...)` and
+`EffectSpec("saturation", ...)` now raise at resolve time with a migration
+message pointing at the three tools below. The mapping the library ships:
 
-**Unity floor at `drive=0`.** `drive=0.0` is a bit-exact bypass — zero
-THD, no pre-emphasis, no compensation gain, no crossover color. Use it
-as a clean passthrough or as the musical "off" position for automation
-rides. Any `drive > 0` engages the nonlinearity.
+| Retired usage                                    | New call                                                         |
+|--------------------------------------------------|------------------------------------------------------------------|
+| `("drive", {"preset": "tube_warm", ...})`        | `("tube", {"preset": "triode_glow", ...})`                       |
+| `("drive", {"preset": "neve_gentle", ...})`      | `("preamp", {"preset": "neve_warmth", ...})` (iron, not tube)    |
+| `("drive", {"preset": "iron_soft", ...})`        | `("preamp", {"preset": "iron_color", ...})`                      |
+| `("drive", {"preset": "kick_heavy"})`            | `("transistor", {"preset": "kick_heavy"})` (op-amp, not tube)    |
+| `("drive", {"preset": "snare_bite"})`            | `("transistor", {"preset": "snare_bite"})`                       |
+| `("drive", {"mode": "tube"/"triode", ...})`      | `("tube", {"character": "triode", ...})`                         |
+| `("drive", {"drive": X, "multiband": True})`     | `("transistor", {"character": "soft_clip", "drive": X, ...})`    |
 
-**Calibration (0–1 is the musical range).** The `drive` scalar is
-calibrated to match the project-wide 0–1 knob convention: subtle through
-~0.33, musical by 0.5–0.7, strong-but-musical up to ~1.0, then fuzz /
-stompbox territory above that. Reference THD measurements from a 440 Hz
-sine at −12 dBFS through `tube_warm`:
+### `tube`
 
-| `drive` | THD | Character                                                |
-| ------- | --- | -------------------------------------------------------- |
-| `0.0`   | 0%  | Bit-exact bypass (unity floor)                           |
-| `0.2`   | ~1.7% | Gentle mix warmth                                      |
-| `0.3`   | ~2.6% | Harmony-compatible warmth                              |
-| `0.5`   | ~4.3% | Musical saturation                                     |
-| `0.7`   | ~5.5% | Warm character, strong but musical                     |
-| `1.0`   | ~8.8% | Musical saturation (upper end of the musical range)    |
-| `1.3`   | ~13.7% | Edge of distortion / overdrive                         |
-| `2.0+`  | >20% | Fuzz / stompbox territory — deliberate crunch          |
+Implementation: [code_musics/synth.py](code_musics/synth.py) (`apply_tube`;
+`EffectSpec` kind `"tube"`).
 
-Render analysis records drive-stage diagnostics in the analysis manifest.
-Metrics include the shared before/after density/clipping proxies plus:
+**Physics-flavoured tube saturation across the Culture-Vulture / HG2 span.**
+Four topologies let you reach for the right character directly by name; each
+character below has the harmonic signature the name implies.
 
-- `algorithm`: `"modern"` or `"legacy"`.
-- `mode`: qualitative voicing for the modern engine.
-- `shaper_hot_fraction`: fraction of samples where the internal drive signal exceeds
-  ±1.0 (clearly nonlinear region).
-- `dc_offset`: final mono-reference DC offset after processing.
-- `thd_pct`: characteristic THD% computed from a 440 Hz reference sine at −12 dBFS
-  processed through the same shaper curve. Reflects the shaper character, not the
-  actual audio content.
-- `thd_character`: qualitative label derived from `thd_pct` —
-  `"clean"` (< 0.5%), `"subtle_warmth"` (0.5–2%), `"warmth"` (2–5%),
-  `"saturation"` (5–15%), `"distortion"` (15–40%), `"fuzz"` (> 40%).
-- `compensation_mode_used`: final makeup mode after resolving `auto` or honoring an
-  explicit strict mode.
-- `compensation_gain_db`: bounded output gain applied after measurement matching.
+| `character` | Harmonic signature                   | Knee                         | Asymmetry                  | Use for                                   |
+|-------------|--------------------------------------|------------------------------|----------------------------|-------------------------------------------|
+| `"triode"`  | H2-dominant                          | Soft (Koren softplus)        | Asymmetric (softplus Koren)| Glow, amp-in-the-room warmth              |
+| `"pentode"` | H3-dominant                          | Sharp (`sharpness ∈ [3,6]`)  | Symmetric                  | Lead bite, mid-focused edge               |
+| `"hg2"`     | Mixed (pentode → triode + parallel)  | Mixed                        | Parametric                 | Euphonic enhancer (Black Box HG2)         |
+| `"culture"` | Heavy H2, DC-bias reachable          | Soft                         | Extreme (`bias ∈ [-1, 1]`) | Culture-Vulture starvation                |
 
-Parameters:
+**Parameters** (see the `apply_tube` docstring for the full surface):
 
-- `preset: str`
-  Supported presets: `tube_warm`, `iron_soft`, `neve_gentle`, `kick_heavy`,
-  `snare_bite`. (Drum body emphasis — formerly `kick_weight` / `tom_thicken` —
-  now lives on the `preamp` effect via the `kick_body` / `tom_body` presets;
-  flux-domain transformer saturation is the right tool for
-  body-without-brightness. `snare_bite` was recalibrated down from ~7% THD to
-  ~4% THD for a less-hot default. `kick_heavy` is the former `kick_crunch`,
-  renamed to signal "hardcore/aggressive character, not a default".)
-- `algorithm: str`
-  `modern` (default) or `legacy`.
-- `mode: str`
-  Modern-engine voicing: `tube`, `triode`, or `iron`.
-- `drive: float`
-  Amount of nonlinearity on the project-wide 0–1 knob scale. `0.0` is a
-  bit-exact unity bypass; `0.2`–`0.33` is subtle warmth; `0.5`–`0.7` is
-  musical saturation; `1.0` is the top of the musical range. Values above
-  `1.0` move into fuzz / stompbox territory. See the calibration table
-  above. Keep conservative (≤ 0.33) for bus sweetening.
-- `mix: float`
-  Dry/wet blend from `0` to `1`.
-- `tone: float`
-  Broad tonal push before/through the nonlinear stages. Positive values add a
-  little more bite and presence; negative values lean softer/thicker.
-- `fidelity: float`
-  `0`–`1` control for how much low/high clean-band preservation is allowed back
-  into the saturated result. Higher values keep the effect more open and hi-fi.
-- `bias: float`
-  Advanced asymmetry trim. Still supported, but the modern engine is voiced
-  primarily through `mode`, `tone`, and `fidelity`.
-- `even_harmonics: float`
-  Advanced blend between symmetric and asymmetric curves.
-- `oversample_factor: int`
-  Oversampling factor used around the nonlinear stage.
-- `highpass_hz: float`
-  Removes excessive sub/DC before saturation.
-- `tone_tilt: float`
-  Legacy-compatible extra tilt into the nonlinear path.
-- `output_lowpass_hz: float`
-  Optional extra post-drive smoothing. Default modern behavior does not rely
-  on a fixed lowpass to create warmth.
-- `multiband: bool` — default `True`. See "Multiband crossover" below.
-- `low_crossover_hz: float` — default `120.0`. Linkwitz-Riley bypass corner
-  for the low band. Set to `0.0` to disable low-band bypass.
-- `high_crossover_hz: float` — default `5000.0`. Linkwitz-Riley bypass corner
-  for the high band. Set to `0.0` to disable high-band bypass.
-- `preserve_lows_hz: float` — **DEPRECATED.** Dry-path parallel crossover. See
-  deprecation note below.
-- `preserve_highs_hz: float` — **DEPRECATED.** Dry-path parallel crossover. See
-  deprecation note below.
-- `compensation_mode: str`
-  `none`, `auto`, `rms`, or `lufs`. Default is `auto`: prefer LUFS for sustained
-  material and switch to RMS for short/sparse/transient material. If you explicitly
-  request `lufs` or `rms`, that mode is used strictly with no hidden fallback.
-- `output_trim_db: float`
-  Final manual trim after automatic compensation.
-- `target_thd_pct: float | None` — default `None`. See "Piece-aware
-  auto-calibration" below.
+- `character: str` — one of `"triode"` / `"pentode"` / `"hg2"` / `"culture"`. Default `"hg2"`.
+- `drive: float` (0..~1 musical, `> 1` fuzz) — user-facing 0–1 drive knob. `0.2` = subtle warmth, `0.5` = musical, `1.0` = top of musical range.
+- `pentode_drive: float | None`, `triode_drive: float | None` — per-stage overrides for `character="hg2"`. `None` falls back to `drive`.
+- `bias: float` (-1..1) — asymmetry for `triode` / `hg2` / `culture`. **NOT DC-compensated upstream.** At `|bias| > 0.8` one half-cycle of the signal collapses (Culture-Vulture starvation). A post-DC-block keeps the output offset-free, but the asymmetric shape is preserved.
+- `parallel_drive: float` (0..1) — HG2-style 12AT7 parallel Chebyshev color (only active for `character="hg2"`).
+- `sharpness: float` (3..6) — pentode knee hardness. Higher = harder clip / more H3.
+- `mu: float` (default 100.0), `ex: float` (default 1.4) — Koren triode advanced knobs. Leave at defaults unless you know what you're doing.
+- `tone: float` (-1..1), `tone_tilt: float` (-6..6 dB), `highpass_hz: float` — shared tone surface.
+- `mix: float` (0..1) — dry/wet blend. Default 0.5.
+- `compensation_mode: str` — `"auto"` / `"lufs"` / `"rms"` / `"none"`.
+- `oversample_factor: int` — default 4; auto-upgrades to 8 at `drive >= 1.5`.
+- `multiband: bool` (default `True`), `low_crossover_hz: float` (120), `high_crossover_hz: float` (5000) — LR4 multiband routing; the mid band alone goes through the shaper, bass and air bypass cleanly.
+- `preset: str | None` — named preset (see below).
 
-#### Piece-aware auto-calibration (`target_thd_pct`)
+**Presets** (`_TUBE_PRESETS`):
 
-Opt-in auto-mode for `apply_drive`, sibling of `apply_clipper`'s
-`max_shave_db` and `apply_compressor`'s `target_avg_gr_db`.
-
-- `target_thd_pct: float | None = None` — when set, binary-searches the
-  shaper `drive` that produces the requested characteristic THD on a
-  440 Hz sine probe. The project-wide `drive` knob produces different
-  THD at the same setting across shaper modes (`tube` / `triode` /
-  `iron`), so "0.5 drive = musical" isn't reliable across a piece.
-  Auto-mode makes the perceptual target a first-class knob:
-  `target_thd_pct=5.0` lands on musical saturation across all three
-  modes within ~1 pp of actual THD.
-- The probe is `_saturation_thd` (440 Hz sine, harmonics 2–10), the
-  same measurement that already feeds the `thd_pct` analysis field.
-  It characterises the *shaper curve* rather than the incoming signal.
-  The calibration table above maps `target_thd_pct` to perceptual
-  category (≤2% subtle, 2–5% warmth, 5–15% saturation, 15–40%
-  distortion, >40% fuzz).
-- **Why THD-sine and not IMD on content?** An IMD-based probe
-  (two-tone stimulus through the shaper, measured via
-  `intermodulation_ratio` in `engines/_instrumentation.py`) sounds
-  more faithful to "perceived distortion" — and IMD is the right
-  metric for the post-hoc `effect_introduced_distortion` warning
-  that fires on dense content. But IMD is **non-monotone in drive**
-  (measured: IMD peaks near drive≈1.8 then collapses as harmonic
-  energy dominates the ratio), which breaks bisection. THD-sine is
-  strictly monotone, and empirically a THD target lands on similar
-  IMD across modes (5% THD → IMD ≈ 21–25 across tube / triode /
-  iron), so it's a reliable proxy for the solver even though IMD is
-  the better lens for after-the-fact analysis.
-- When both `target_thd_pct` and a non-default `drive` are set, a
-  WARNING is logged and `target_thd_pct` wins.
-- The solver is 12-iteration bisection over `[1e-3, 10.0]` with a
-  0.25 pp absolute tolerance. If the target is below the achievable
-  floor (~0.5% at drive=1e-3) or above the achievable ceiling
-  (~35% at drive=10), the solver snaps to the nearest endpoint.
-- Works identically for `algorithm="modern"` and `algorithm="legacy"`;
-  the solved drive may differ because their shapers produce different
-  THD curves for the same drive.
-- `target_thd_pct` is decoupled from `multiband`: the solver always
-  probes the monolithic shaper to isolate the shaper's THD curve
-  from the LR4 split. In `multiband=True` mode the solved drive is
-  applied to the mid band only, so the perceived distortion on the
-  summed output may be softer than the target (the bass/treble
-  bypasses dilute the wet share of the mix).
-- Analysis metadata (`return_analysis=True`) adds `solved_drive`,
-  `target_thd_pct`, `measured_thd_pct`, and `solver_iterations`.
-
-Example:
-
-```python
-EffectSpec("drive", {"target_thd_pct": 5.0, "mode": "tube"})  # auto-musical
-```
-
-#### Multiband crossover
-
-Default `multiband=True` splits the input into low / mid / high bands with
-Linkwitz-Riley crossovers at `low_crossover_hz` and `high_crossover_hz`.
-Only the **mid band** is routed through the nonlinearity; the low and high
-bands bypass it and sum back in clean.
-
-- **Low bypass (`low_crossover_hz`, default `120.0` Hz).** Content below the
-  corner skips the shaper entirely, protecting bass from IM distortion and
-  keeping kick fundamentals intact. This is the surface you actually want
-  when the goal is "keep the bass clean".
-- **High bypass (`high_crossover_hz`, default `5000.0` Hz).** Content above
-  the corner skips the shaper, preventing wet harmonics from piling up in
-  the 2–8 kHz "papery" region that the kernel already emphasizes through
-  pre-emphasis.
-- Set `low_crossover_hz=0.0` or `high_crossover_hz=0.0` individually to
-  disable that band's bypass (e.g., keep low-band clean but let highs run
-  through the shaper).
-- `multiband=False` runs the legacy monolithic path (no crossover splits),
-  bit-exact with pre-rename behavior for reproducibility.
-
-#### `preserve_lows_hz` / `preserve_highs_hz` (deprecated)
-
-These were a dry-path parallel crossover: they route the *dry-signal* band
-around the nonlinearity, but wet-path harmonics generated within those bands
-still sum back in. That is **not** what the parameter name suggests — bass
-hitting the shaper still generates IM products that land below
-`preserve_lows_hz`, and the "preserved" high band sits on top of whatever
-harmonics the shaper dumped there. The only way to actually keep a band out
-of the nonlinearity is the multiband bypass above.
-
-Deprecated — use `low_crossover_hz` / `high_crossover_hz` instead. They will
-be removed in a future pass once existing presets and callers are audited.
-
-Notes:
-
-- default tuning is intentionally subtle enough for "always on" use on
-  voices where colored drive is desired (not master-bus glue — use `preamp`
-  for that)
-- the modern engine is now the default for existing `EffectSpec("drive", ...)`
-  call sites
-- `tube_warm` is the safest voice-level color default
-- `iron_soft` is the most transformer-like subtle thickener
-- kick and tom body emphasis lives on `apply_preamp` — reach for
-  `EffectSpec("preamp", {"preset": "kick_body"})` or `"tom_body"`; the
-  flux-domain model saturates bass more than highs, avoiding the
-  2-5 kHz papery lift that the previous drive-based `kick_weight`
-  introduced
-- `snare_bite` is a recalibrated triode-mode drive preset (~4% THD) for
-  adding audible grit to snare voices without dominating the transient
-- `kick_heavy` is the hardcore-character preset (~23% THD, drive=1.8) —
-  formerly `kick_crunch`, renamed so the name reads as "character slot,
-  not a default"
-- use `algorithm="legacy"` only when you explicitly want the older one-stage
-  soft-clip behavior
+- `triode_glow` — subtle H2 warmth, amp-style (`character="triode"`, `drive=0.35`, `bias=0.15`, `mix=0.35`).
+- `triode_bloom` — bass-bloom for pads and leads (`drive=0.6`, `bias=0.25`, `mix=0.5`).
+- `pentode_bite` — mid-focused H3 edge (`sharpness=5.0`, `mix=0.4`).
+- `hg2_enhancer` — Black-Box-style harmonic sweetener (`pentode_drive=0.25`, `triode_drive=0.3`, `parallel_drive=0.2`).
+- `hg2_drive` — more aggressive HG2 cascade (`pentode_drive=0.6`, `triode_drive=0.7`, `parallel_drive=0.35`).
+- `culture_warm` — even-harmonic richness, pre-starvation (`bias=0.4`).
+- `culture_growl` — aggressive Culture-Vulture (`drive=0.8`, `bias=0.7`).
+- `culture_starve` — full starvation, one half-cycle cut (`drive=1.0`, `bias=0.95`).
 
 Example:
 
@@ -1311,40 +1153,71 @@ Example:
 score = Score(
     f0=110.0,
     master_effects=[
-        EffectSpec(
-            "drive",
-            {"preset": "tube_warm", "mix": 0.24, "high_crossover_hz": 7000.0},
-        ),
+        EffectSpec("tube", {"preset": "triode_glow", "mix": 0.24}),
         EffectSpec("reverb", {"room_size": 0.65, "damping": 0.45, "wet_level": 0.22}),
     ],
 )
 ```
 
-### `preamp`
+### `transistor`
 
 Implementation: [code_musics/synth.py](code_musics/synth.py)
+(`apply_transistor`; `EffectSpec` kind `"transistor"`).
 
-Flux-domain transformer saturation modeling real iron-core physics. Unlike
-memoryless waveshaping, this operates in the magnetic flux domain where low
-frequencies naturally saturate more than highs (Faraday's law: V = N·dΦ/dt).
-The result is frequency-dependent harmonic generation with warm, analog
-character and minimal intermodulation on complex material.
+**Honest memoryless waveshaper for stompbox / op-amp / diode / fuzz
+character.** Use this when you want deliberate pedalboard or op-amp color —
+NOT tube character. For tube, reach for `apply_tube`.
 
-**`preamp` vs. `drive` — which one to reach for:**
+| `character`   | Shaper                              | Use for                                      |
+|---------------|-------------------------------------|----------------------------------------------|
+| `"soft_clip"` | `x / (1 + abs(x))` algebraic clipper | Clean op-amp feel, generic subtle color     |
+| `"diode"`     | Asymmetric Shockley shaper          | Tube-Screamer-style, asymmetric              |
+| `"op_amp"`    | Hard-clip with soft knee            | RAT-style aggressive op-amp clipping         |
+| `"fuzz"`      | Two cascaded hard-clips with bias   | Fuzz Face territory (`drive >= 0.7`)         |
+
+**Parameters:** mirrors `apply_tube`'s shared surface — `drive`, `bias`,
+`mix`, `tone`, `tone_tilt`, `highpass_hz`, `multiband`, `low_crossover_hz`,
+`high_crossover_hz`, `compensation_mode`, `oversample_factor`,
+`target_thd_pct`, `preset`. See the `apply_transistor` docstring for
+defaults.
+
+**Presets** (`_TRANSISTOR_PRESETS`):
+
+- `op_amp_clean` — subtle op-amp color (`drive=0.2`, `mix=0.25`).
+- `tube_screamer` — TS-style (`drive=0.5`, `bias=0.1`, `mix=0.5`).
+- `rat_crunch` — aggressive op-amp clipper (`drive=0.8`, `mix=0.7`).
+- `fuzz_face` — stompbox fuzz (`drive=1.0`, `bias=0.2`, `mix=0.8`).
+- `kick_heavy` — formerly `drive`'s `kick_heavy`; hardcore/aggressive kick grit via diode-style op-amp clipping.
+- `snare_bite` — formerly `drive`'s `snare_bite`; recalibrated diode snare-bite preset (~4% THD).
+
+### `preamp`
+
+Implementation: [code_musics/synth.py](code_musics/synth.py) (`apply_preamp`).
+
+**Flux-domain transformer saturation** modeling real iron-core physics.
+Unlike memoryless waveshaping, this operates in the magnetic flux domain
+where low frequencies naturally saturate more than highs (Faraday's law:
+V = N·dΦ/dt). The result is frequency-dependent harmonic generation with
+warm, analog character and minimal intermodulation on complex material.
+
+**This is iron-core magnetics, NOT tube.** For tube character, use
+`apply_tube`.
+
+**`preamp` vs `tube` vs `transistor` — which one to reach for:**
 
 - **`preamp`** — flux-domain transformer warmth. Stays under 1% THD at
-  moderate settings. Frequency-dependent: bass saturates more than highs,
-  and there is minimal 2–8 kHz harmonic buildup. **Use for hi-fi bus glue,
-  master-bus warmth, subtle voice coloration, drum-bus glue.** This is the
-  recommended default for "make it sound finished" character.
-- **`drive`** — broadband colored overdrive with bias asymmetry and
-  pre-emphasis. Never stays transparent: always lifts the 2–8 kHz band and
-  always clears 1% THD. **Use for deliberate character** — stompbox-style
-  drive, voice-level grit, or places where papery brightness is the intended
-  effect (e.g., snare bite, specific lead coloration).
-- If you need `drive` for its character but want bass/treble protection,
-  leave `multiband=True` (the default) and tune `low_crossover_hz` /
-  `high_crossover_hz` to taste.
+  moderate settings. Bass saturates more than highs with minimal 2–8 kHz
+  buildup. **Use for hi-fi bus glue, master-bus warmth, subtle voice
+  coloration, drum-bus glue.** The recommended default for "make it sound
+  finished" character.
+- **`tube`** — physics-flavoured tube kernels (Koren triode, pentode,
+  HG2 cascade, Culture-Vulture starvation). **Use for amp-in-the-room
+  glow, lead bite, euphonic enhancement, or deliberate starved-bias
+  character.**
+- **`transistor`** — memoryless stompbox / op-amp / diode / fuzz.
+  **Use for pedalboard color or when you explicitly want a
+  waveshaper-flavoured edge** (e.g., kick/snare drum bite, stompbox-style
+  color on leads).
 
 **Parameters:**
 
@@ -3148,8 +3021,9 @@ Parameters:
 - `noise_bandpass_hz: float`
   Center frequency of the noise burst shaping band.
 - `drive_ratio: float`
-  **Deprecated.** Use `EffectSpec("drive", ...)` on the voice instead.
-  Logs a warning if present; ignored by the engine.
+  **Deprecated.** Use `EffectSpec("tube", ...)` or
+  `EffectSpec("transistor", ...)` on the voice instead. Logs a warning
+  if present; ignored by the engine.
 - `post_lowpass_hz: float`
   **Deprecated.** Use `EffectSpec("eq", ...)` on the voice instead.
   Logs a warning if present; ignored by the engine.
@@ -4203,7 +4077,7 @@ Notes:
 - the comb filter tunes the wire resonance to the body pitch, so wire and body
   are harmonically related
 - pair with `EffectSpec("compressor", {"preset": "snare_punch"})` or
-  `EffectSpec("drive", {"preset": "snare_bite"})` for finished snare sounds
+  `EffectSpec("transistor", {"preset": "snare_bite"})` for finished snare sounds
 - uses Numba JIT for the comb filter inner loop
 
 Presets:
@@ -4231,7 +4105,7 @@ score.add_voice(
     normalize_peak_db=-6.0,
     effects=[
         EffectSpec("compressor", {"preset": "snare_punch"}),
-        EffectSpec("drive", {"preset": "snare_bite"}),
+        EffectSpec("transistor", {"preset": "snare_bite"}),
     ],
 )
 ```

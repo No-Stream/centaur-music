@@ -109,8 +109,12 @@ def test_defaults_bit_identical_reference_capture() -> None:
         "hard_clip",
         "foldback",
         "corrode",
-        "saturation",
+        "transistor",
         "preamp",
+        "tube_triode",
+        "tube_pentode",
+        "tube_hg2",
+        "tube_culture",
     ],
 )
 def test_voice_dist_each_mode_smoke(mode: str) -> None:

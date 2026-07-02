@@ -528,18 +528,18 @@ _TONE_ONLY_PARAMS: dict = {
 class TestSaturationShaperDispatch:
     """Verify that shaper='saturation' dispatches to the real saturation effect."""
 
-    def test_tone_shaper_saturation_renders_finite_nonzero(self) -> None:
+    def test_tone_shaper_tube_renders_finite_nonzero(self) -> None:
         audio = render(
             freq=60.0,
             duration=0.2,
             amp=0.8,
             sample_rate=SAMPLE_RATE,
-            params={**_TONE_ONLY_PARAMS, "tone_shaper": "saturation"},
+            params={**_TONE_ONLY_PARAMS, "tone_shaper": "tube"},
         )
         assert np.isfinite(audio).all()
         assert np.max(np.abs(audio)) > 0
 
-    def test_tone_shaper_saturation_differs_from_no_shaper(self) -> None:
+    def test_tone_shaper_tube_differs_from_no_shaper(self) -> None:
         plain = render(
             freq=60.0,
             duration=0.2,
@@ -554,48 +554,48 @@ class TestSaturationShaperDispatch:
             sample_rate=SAMPLE_RATE,
             params={
                 **_TONE_ONLY_PARAMS,
-                "tone_shaper": "saturation",
+                "tone_shaper": "tube",
                 "tone_shaper_drive": 1.5,
             },
         )
         assert not np.allclose(plain, shaped)
 
-    def test_tone_shaper_mode_tube_differs_from_iron(self) -> None:
-        tube = render(
+    def test_tone_shaper_mode_triode_differs_from_pentode(self) -> None:
+        triode = render(
             freq=60.0,
             duration=0.2,
             amp=0.8,
             sample_rate=SAMPLE_RATE,
             params={
                 **_TONE_ONLY_PARAMS,
-                "tone_shaper": "saturation",
+                "tone_shaper": "tube",
                 "tone_shaper_drive": 1.5,
-                "tone_shaper_mode": "tube",
+                "tone_shaper_mode": "triode",
             },
         )
-        iron = render(
+        pentode = render(
             freq=60.0,
             duration=0.2,
             amp=0.8,
             sample_rate=SAMPLE_RATE,
             params={
                 **_TONE_ONLY_PARAMS,
-                "tone_shaper": "saturation",
+                "tone_shaper": "tube",
                 "tone_shaper_drive": 1.5,
-                "tone_shaper_mode": "iron",
+                "tone_shaper_mode": "pentode",
             },
         )
-        assert np.isfinite(tube).all()
-        assert np.isfinite(iron).all()
-        assert not np.allclose(tube, iron)
+        assert np.isfinite(triode).all()
+        assert np.isfinite(pentode).all()
+        assert not np.allclose(triode, pentode)
 
-    def test_voice_shaper_saturation_renders_finite_nonzero(self) -> None:
+    def test_voice_shaper_tube_renders_finite_nonzero(self) -> None:
         audio = render(
             freq=60.0,
             duration=0.2,
             amp=0.8,
             sample_rate=SAMPLE_RATE,
-            params={**_TONE_ONLY_PARAMS, "shaper": "saturation", "shaper_drive": 1.5},
+            params={**_TONE_ONLY_PARAMS, "shaper": "tube", "shaper_drive": 1.5},
         )
         assert np.isfinite(audio).all()
         assert np.max(np.abs(audio)) > 0

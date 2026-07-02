@@ -513,7 +513,12 @@ class TestRenderVoiceStemDeltas:
         score.add_voice(
             "pad",
             synth_defaults={"engine": "synth_voice"},
-            effects=[EffectSpec("drive", {"drive": 1.5, "mix": 0.5})],
+            effects=[
+                EffectSpec(
+                    "transistor",
+                    {"character": "soft_clip", "drive": 1.5, "mix": 0.5},
+                ),
+            ],
         )
         score.voices["pad"].notes.append(
             NoteEvent(start=0.0, duration=0.5, partial=1.0, amp=0.3)

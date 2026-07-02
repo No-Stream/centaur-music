@@ -73,7 +73,7 @@ def build_score() -> Score:
             EffectSpec(
                 "reverb", {"room_size": 0.72, "damping": 0.50, "wet_level": 0.22}
             ),
-            EffectSpec("drive", {"preset": "tube_warm", "mix": 0.15, "drive": 0.27}),
+            EffectSpec("tube", {"preset": "triode_glow", "mix": 0.15, "drive": 0.27}),
         ],
     )
 

@@ -142,7 +142,7 @@ def _hall_mod_delay() -> EffectSpec:
 
 def _hall_saturation() -> EffectSpec:
     """Warm saturation on the send bus return — glues the reverb tail."""
-    return EffectSpec("drive", {"preset": "tube_warm", "mix": 0.22, "drive": 0.37})
+    return EffectSpec("tube", {"preset": "triode_glow", "mix": 0.22, "drive": 0.37})
 
 
 def _master_tape() -> EffectSpec:
@@ -152,7 +152,7 @@ def _master_tape() -> EffectSpec:
             "chow_tape",
             {"drive": 0.55, "saturation": 0.48, "bias": 0.50, "mix": 58.0},
         )
-    return EffectSpec("drive", {"preset": "tube_warm", "mix": 0.25, "drive": 0.42})
+    return EffectSpec("tube", {"preset": "triode_glow", "mix": 0.25, "drive": 0.42})
 
 
 def _melody_insert_delay() -> EffectSpec:

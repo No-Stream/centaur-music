@@ -849,8 +849,8 @@ def _add_bass(score: Score) -> None:
         },
         effects=[
             EffectSpec(
-                "drive",
-                {"mode": "tube", "drive": 0.55, "tone": 0.5, "mix": 0.7},
+                "tube",
+                {"character": "triode", "drive": 0.55, "tone": 0.5, "mix": 0.7},
             ),
             EffectSpec(
                 "compressor",

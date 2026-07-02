@@ -132,13 +132,12 @@ def render_effects_showcase_demo() -> np.ndarray:
             {
                 "master_effects": [
                     EffectSpec(
-                        "drive",
+                        "tube",
                         {
-                            "preset": "tube_warm",
+                            "preset": "triode_glow",
                             "mix": 0.62,
                             "drive": 1.62,
                             "bias": 0.16,
-                            "even_harmonics": 0.24,
                             "tone_tilt": 0.18,
                         },
                     )

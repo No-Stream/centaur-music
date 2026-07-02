@@ -464,11 +464,13 @@ See `FUTURE.md` for way more ideas.
   RePro-5-style per-note distortion slot applied *inside the engine's note
   loop, after the VCA and before the per-note buffers sum into the voice
   output*. Modes: `soft_clip` / `hard_clip` / `foldback` / `corrode` /
-  `saturation` (reuses `apply_drive`) / `preamp` (reuses
-  `apply_preamp`). Chord tones distort independently, preserving harmonic
-  identity instead of collapsing into the IMD mud that a post-mix shaper
-  produces. Default `off`; paired params `voice_dist_drive`,
-  `voice_dist_mix`, `voice_dist_tone`. See `docs/synth_api.md`.
+  `transistor` (reuses `apply_transistor`) / `preamp` (reuses
+  `apply_preamp`) / `tube_triode` / `tube_pentode` / `tube_hg2` /
+  `tube_culture` (reuse `apply_tube` with the matching `character`). Chord
+  tones distort independently, preserving harmonic identity instead of
+  collapsing into the IMD mud that a post-mix shaper produces. Default
+  `off`; paired params `voice_dist_drive`, `voice_dist_mix`,
+  `voice_dist_tone`. See `docs/synth_api.md`.
 - Audio-rate modulation coverage: `polyblep` accepts per-sample
   `pulse_width`, `osc2_detune_cents`, `osc2_freq_ratio` (in addition to
   `cutoff_hz`), and `va` accepts per-sample `osc_spread_cents`. Drive
@@ -498,32 +500,23 @@ See `FUTURE.md` for way more ideas.
 - The native effect chain includes a stereo-linked `compressor` effect with
   feedforward/feedback modes, detector-path EQ bands, and voice-to-voice
   sidechaining plus lookahead for ducking/glue workflows.
-- The native `drive` effect (`apply_drive`, `EffectSpec` kind `"drive"`;
-  formerly `apply_saturation` / `"saturation"`) is a **colored overdrive**
-  kernel — any non-zero drive lifts the 2–8 kHz band. The `drive` scalar
-  is calibrated to the project-wide 0–1 knob scale: `drive=0` is a
-  bit-exact **unity bypass** (true passthrough), `0.2`–`0.33` is subtle
-  warmth, `0.5`–`0.7` is musical saturation, `1.0` is the top of the
-  musical range, and `>1.0` moves into fuzz / stompbox territory. The
-  general effect-calibration guidance below (gentle 0.2, harmony-compatible
-  0.33, musical 0.5, strong-but-musical 0.66, distortion 0.8) is now the
-  actual measured behavior of `drive` post-rescale. Defaults to a
-  two-stage analog-style path with `multiband=True` crossover bypass so
-  bass (`low_crossover_hz=120.0`) and air (`high_crossover_hz=5000.0`)
-  bands skip the nonlinearity by default. The legacy `preserve_lows_hz` /
-  `preserve_highs_hz` params are a dry-path crossover (not an actual band
-  bypass) and are deprecated in favor of the multiband surface. See
-  `docs/synth_api.md` for the full parameter surface and the modern vs
-  legacy path.
-- The `preamp` effect provides flux-domain transformer saturation for
-  analog-style warmth. Unlike `drive` (memoryless waveshaping with
-  pre-emphasis), `preamp` operates in the magnetic flux domain where bass
-  naturally saturates more than treble, producing minimal intermodulation
-  and minimal 2–8 kHz buildup on harmonically rich material.
-  **Division of labor: `preamp` for hi-fi warmth / bus glue / master-bus
-  sweetening; `drive` for deliberate character / stompbox color / voice-level
-  grit.** Prefer `preamp` as the default finishing tool and reach for `drive`
-  only when you want audible coloration.
+- Saturation comes in three honest flavors: `apply_preamp`
+  (`EffectSpec("preamp", ...)`) for iron-core transformer warmth / bus
+  glue, `apply_tube` (`"tube"`) for actual tube character — Koren softplus
+  triode, sharp-knee pentode, HG2 cascade, Culture-Vulture starvation via
+  non-compensated `bias` — and `apply_transistor` (`"transistor"`) for
+  stompbox / op-amp / diode / fuzz character. The old `apply_drive`
+  effect was a tanh-family misnomer and has been retired; `EffectSpec("drive", ...)`
+  and `EffectSpec("saturation", ...)` both raise at resolve time with a
+  migration message. **Division of labor:** `preamp` for hi-fi finishing
+  (default master / drum-bus glue); `tube` when you want "amp in the room"
+  or Culture-Vulture starve; `transistor` when you want deliberate pedalboard
+  color (`soft_clip` / `diode` / `op_amp` / `fuzz`). All three share a
+  `drive` calibration — `0.0` bypass, `0.2`–`0.33` subtle warmth, `0.5`
+  musical, `1.0` top of musical range, `>1.0` fuzz territory — plus a
+  `multiband=True` LR4 split so bass (`low_crossover_hz=120.0`) and air
+  (`high_crossover_hz=5000.0`) bypass the nonlinearity by default. See
+  `docs/synth_api.md` for per-effect preset lists and parameter surfaces.
 - The native `bbd_chorus` effect is a Juno-faithful BBD-style stereo chorus
   with quadrature LFOs (true L/R decorrelation from mono input), cross-feedback,
   BBD-style pre/post bandlimiting, and an optional gentle compander. Presets:
@@ -655,8 +648,8 @@ See `FUTURE.md` for way more ideas.
   `style="electronic"` chain (compressor → preamp) tuned for finished
   modern-electronic kits. True-peak management lives on the master bus via
   `DEFAULT_MASTER_EFFECTS`, not on the drum bus. The `electronic` style uses
-  `apply_preamp` for hi-fi warmth rather than `apply_drive`, which previously
-  tended to pile papery 2–8 kHz harmonics onto kicks and transients. Four
+  `apply_preamp` for hi-fi warmth (rather than a waveshaper-based overdrive,
+  which tended to pile papery 2–8 kHz harmonics onto kicks and transients). Four
   styles are available via `style=...`: `"light"` (Four Tet / BoC clean glue),
   `"electronic"` (default), `"weighty"` (iron-preamp, kick-forward),
   `"berghain"` (peak-hour techno wall). Passing `effects=[...]` explicitly
@@ -817,8 +810,8 @@ See `FUTURE.md` for way more ideas.
   to have plausibly musical but not broken very strong effects from 0.8-1.0.
   For example, a saturation effect might offer gentle mix warmth at 0.2, harmony-compatible warmth at 0.33,
   musical saturation at 0.5, strong but still musical saturation at 0.66, and distortion at 0.8.
-  The native `drive` effect is now calibrated to exactly this spec post-rescale: `drive=0` is a
-  bit-exact unity bypass, 0.2–0.33 is subtle warmth, 0.5 is musical, 1.0 caps the musical range, and
+  The `apply_tube` and `apply_transistor` `drive` knobs are calibrated to exactly this spec: `drive=0` is a
+  near-bypass, 0.2–0.33 is subtle warmth, 0.5 is musical, 1.0 caps the musical range, and
   >1.0 is fuzz / stompbox territory.
 - Effects and voices should be designed considering musicality, not textbook designs.
   Don't cut corners to save time.

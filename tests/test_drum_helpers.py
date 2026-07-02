@@ -114,7 +114,7 @@ class TestDrumBusStyles:
         )
         kinds = [e.kind for e in bus_effects]
         assert kinds[0] == "compressor"
-        assert kinds[1] in {"drive", "preamp"}
+        assert kinds[1] in {"tube", "preamp"}
         # Heavier styles chain a clipper on the end; "light" stays clean.
         if len(bus_effects) == 3:
             assert kinds[2] == "clipper"
