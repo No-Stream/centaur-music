@@ -63,6 +63,9 @@ from code_musics.pieces.tape_hymn import PIECES as _TAPE_HYMN_PIECES
 from code_musics.pieces.techno_studies import PIECES as _TECHNO_PIECES
 from code_musics.pieces.texture_studies import PIECES as _TEXTURE_STUDY_PIECES
 from code_musics.pieces.trance_studies import PIECES as _TRANCE_PIECES
+from code_musics.pieces.tube_palette_study import (
+    PIECES as _TUBE_PALETTE_STUDY_PIECES,
+)
 from code_musics.pieces.va_showcase import PIECES as _VA_SHOWCASE_PIECES
 from code_musics.pieces.va_trance import PIECES as _VA_TRANCE_PIECES
 from code_musics.pieces.velvet_wall import PIECES as _VELVET_WALL_PIECES
@@ -102,6 +105,7 @@ PIECES = merge_piece_maps(
     _ORGAN_CHORALE_PIECES,
     _PHASE_GARDEN_PIECES,
     _TRANCE_PIECES,
+    _TUBE_PALETTE_STUDY_PIECES,
     _VELVET_WALL_PIECES,
     _BEATING_LIGHT_PIECES,
     _COMMA_PUMP_PIECES,

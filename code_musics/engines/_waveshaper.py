@@ -1,20 +1,26 @@
 """Per-oscillator waveshaping distortion algorithms for drum engines.
 
-Fourteen distortion algorithms inspired by Geonkick (analog-flavoured) and
-Machinedrum / SP-1200 (digital-flavoured), each implemented as a numba-compiled
-inner loop.  The public entry point is :func:`apply_waveshaper`, which handles
-drive mapping, optional per-sample drive envelopes, dry/wet mix, output-level
-compensation, and ADAA anti-aliasing.
+Seventeen distortion algorithms inspired by Geonkick (analog-flavoured),
+Machinedrum / SP-1200 (digital-flavoured), and physics-flavoured tube
+emulation (Koren triode, sharp-knee pentode, Dempwolf asymmetric exp), each
+implemented as a numba-compiled inner loop.  The public entry point is
+:func:`apply_waveshaper`, which handles drive mapping, optional per-sample
+drive envelopes, dry/wet mix, output-level compensation, and ADAA
+anti-aliasing.
 
 Algorithms with closed-form antiderivatives (tanh, atan, hard_clip, exponential,
-logarithmic, half_wave_rect, full_wave_rect) use analytical ADAA.  The
-``adaa_order`` parameter on :func:`apply_waveshaper` selects first-order (AD1,
-default, ~30 dB alias suppression) or second-order (AD2, adds another
-~30-40 dB on top of AD1 at the same oversampling cost).  AD2 uses the
-Bilbao/Esqueda three-sample form; for ``tanh`` the second antiderivative
-requires the dilogarithm Li2 and is provided via a module-load numerically
-integrated lookup table (asymptotic for |x| > 20).  For the other six
-algorithms F2 is closed-form cubic / log.
+logarithmic, half_wave_rect, full_wave_rect) use analytical ADAA.  The tube
+shapers (koren_triode, pentode, dempwolf_asym) use AD1 via precomputed LUTs
+because their antiderivatives are not elementary (Koren's softplus form, the
+incomplete beta of pentode's algebraic clipper, and the logaddexp of Dempwolf
+all integrate cleanly numerically).  The ``adaa_order`` parameter on
+:func:`apply_waveshaper` selects first-order (AD1, default, ~30 dB alias
+suppression) or second-order (AD2, adds another ~30-40 dB on top of AD1 at
+the same oversampling cost).  AD2 uses the Bilbao/Esqueda three-sample form;
+for ``tanh`` the second antiderivative requires the dilogarithm Li2 and is
+provided via a module-load numerically integrated lookup table (asymptotic
+for |x| > 20).  For the other six algorithms F2 is closed-form cubic / log.
+The three tube shapers are AD1-only for v1.
 
 Folding algorithms (foldback, linear_fold, sine_fold) rely on the
 ``oversample`` parameter for alias reduction.  The polynomial algorithm uses
@@ -66,6 +72,9 @@ _ID_SINE_FOLD: int = 10
 _ID_BIT_CRUSH: int = 11
 _ID_RATE_REDUCE: int = 12
 _ID_DIGITAL_CLIP: int = 13
+_ID_KOREN_TRIODE: int = 14
+_ID_PENTODE: int = 15
+_ID_DEMPWOLF_ASYM: int = 16
 
 # ---------------------------------------------------------------------------
 # Drive mapping: user-facing 0-1 -> internal gain
@@ -1220,6 +1229,574 @@ def _apply_with_envelope_adaa2(
 
 
 # ---------------------------------------------------------------------------
+# Tube-flavored shapers: Koren triode, sharp-knee pentode, Dempwolf asym.
+#
+# These are foundational primitives for a higher-level ``apply_tube`` effect
+# (landed in a later chunk).  Each is registered in :data:`_ALGORITHMS` with
+# fixed default params so it is callable via
+# ``apply_waveshaper(..., algorithm=...)``; the params exposed as per-sample
+# kwargs (mu, ex, kp, kvb, vp, sharpness, a, b) live on the underlying
+# module-level callables so ``apply_tube`` can drive them directly with
+# character knobs.
+#
+# ADAA.  Antiderivatives are not closed-form for any of the three:
+#   * Koren: ``logaddexp`` composed with a fractional power → no elementary form.
+#   * Pentode: ``x/(1+|x|^n)^(1/n)`` → incomplete beta.
+#   * Dempwolf: ``(e^(ax)-1)/(1+e^(bx))`` → dilogarithm-flavoured.
+# Each gets a module-load LUT built by cumulative-trapezoidal integration of
+# the shape function over a dense uniform grid in ``[-8, +8]`` (the driven-
+# input domain).  Beyond ±8 we extend linearly: the shapers saturate there
+# so F1 is linear with slope equal to the shape's edge value.
+# ---------------------------------------------------------------------------
+
+# Koren 12AX7-ish defaults used both inside the registered per-sample kernel
+# and for the AD1 LUT.
+_KOREN_MU: float = 100.0
+_KOREN_EX: float = 1.4
+_KOREN_KP: float = 600.0
+_KOREN_KVB: float = 300.0
+_KOREN_VP: float = 250.0
+
+# Pentode sharp-knee default.
+_PENTODE_SHARPNESS: float = 4.0
+
+# Dempwolf asymmetric exp defaults.  ``a`` drives the positive lobe, ``b`` the
+# negative-lobe softplus denominator.
+_DEMPWOLF_A: float = 1.5
+_DEMPWOLF_B: float = 0.7
+
+# LUT geometry for the tube shapers.  8.0 covers the driven-input range for
+# drive up to ~1.2 on unit-amplitude input.  Beyond ±8 we extend linearly.
+_TUBE_LUT_LIMIT: float = 8.0
+_TUBE_LUT_GRID: int = 4097
+
+# Soft-compress the tube shapers' outputs so drive monotonicity survives
+# heavy drive.  Koren grows as ``x^1.4`` and Dempwolf as ``e^(0.8x)`` on
+# the positive lobe without an explicit clamp.  ``_TUBE_OUT_SOFT_CAP``
+# defines the level around which ``x / (1 + |x|/cap)`` starts to compress;
+# the function is monotonic and C¹-smooth, so drive monotonicity and ADAA
+# both stay well-defined, unlike a hard clamp.  Chosen over ``tanh``
+# because ``tanh`` symmetrises both lobes at heavy drive, destroying the
+# asymmetry signature of the triode / Dempwolf shapers.
+_TUBE_OUT_SOFT_CAP: float = 4.0
+
+
+def _koren_triode_raw(
+    x: np.ndarray | float,
+    mu: float = _KOREN_MU,
+    ex: float = _KOREN_EX,
+    kp: float = _KOREN_KP,
+    kvb: float = _KOREN_KVB,
+    vp: float = _KOREN_VP,
+) -> np.ndarray:
+    """Raw Koren plate-current model (unbounded).  Used only at module load
+    to derive the normalisation constant; runtime paths use
+    :func:`_koren_triode_numpy` which adds normalisation + tanh output
+    soft-clip for bounded output.
+    """
+    denom = math.sqrt(kvb + vp * vp)
+    arg = kp * (1.0 / mu + np.asarray(x, dtype=np.float64) / denom)
+    e1 = np.logaddexp(0.0, arg) / kp
+    return np.sign(e1) * np.power(np.abs(e1), ex)
+
+
+def _koren_triode_numpy(
+    x: np.ndarray | float,
+    mu: float = _KOREN_MU,
+    ex: float = _KOREN_EX,
+    kp: float = _KOREN_KP,
+    kvb: float = _KOREN_KVB,
+    vp: float = _KOREN_VP,
+) -> np.ndarray:
+    """Normalised Koren plate-current model.
+
+    Output is normalised so unit input (x=1, default params) maps to ~1,
+    which lines up the tube shaper with the 0-1 drive knob staging used
+    by the rest of the registry.  The raw Koren output grows as ``x^ex``
+    on the positive lobe (slowly — ``^1.4 = ~x^1.4``, so at x=50 the
+    un-clipped output is ~33), but a downstream RMS-compensation pass
+    in :func:`apply_waveshaper` keeps output level in a musical range.
+    The primitive is intentionally NOT tanh-clipped: tanh-clipping
+    symmetrises both lobes at heavy drive, killing the asymmetry
+    signature that makes this a tube shaper and not a tanh clipper.
+    """
+    return _koren_triode_raw(x, mu=mu, ex=ex, kp=kp, kvb=kvb, vp=vp) * _KOREN_NORM
+
+
+# Normalize so that Koren (raw) at x=1 maps to ~1 before the tanh output
+# clip.  Without this, raw Koren at x=1 is ~3.4e-3, which would break the
+# 0-1 drive-knob staging the other algorithms follow and the tanh clip
+# would barely engage even at maximum drive.  ``tanh(1) ≈ 0.76`` gives
+# reasonable headroom at unit input.
+_KOREN_NORM: float = 1.0 / float(
+    _koren_triode_raw(np.array([1.0], dtype=np.float64))[0]
+)
+
+
+def _pentode_numpy(
+    x: np.ndarray | float, sharpness: float = _PENTODE_SHARPNESS
+) -> np.ndarray:
+    """Vectorised sharp-knee pentode ``x/(1+|x|^n)^(1/n)``.
+
+    Symmetric → H3-dominant.  At sharpness=4, x=1: y = 1/2^0.25 ≈ 0.841 —
+    already in the 0-1 range, no extra normalisation needed.
+    """
+    xa = np.asarray(x, dtype=np.float64)
+    ax = np.abs(xa)
+    return xa / np.power(1.0 + np.power(ax, sharpness), 1.0 / sharpness)
+
+
+def _dempwolf_raw(
+    x: np.ndarray | float,
+    a: float = _DEMPWOLF_A,
+    b: float = _DEMPWOLF_B,
+) -> np.ndarray:
+    """Raw Dempwolf asymmetric exp shaper (unbounded on the positive lobe).
+
+    Used only at module load to derive the normalisation constant.  The
+    runtime path in :func:`_dempwolf_numpy` applies normalisation + tanh
+    output soft-clip for bounded output.
+    """
+    xa = np.asarray(x, dtype=np.float64)
+    numer = np.expm1(a * xa)
+    log_denom = np.logaddexp(0.0, b * xa)
+    return numer * np.exp(-log_denom)
+
+
+# Normalize so raw Dempwolf at x=1 maps to ~1 before the tanh clip.
+_DEMPWOLF_NORM: float = 1.0 / float(_dempwolf_raw(np.array([1.0], dtype=np.float64))[0])
+
+
+def _dempwolf_numpy(
+    x: np.ndarray | float,
+    a: float = _DEMPWOLF_A,
+    b: float = _DEMPWOLF_B,
+) -> np.ndarray:
+    """Normalised Dempwolf asymmetric exp shaper.
+
+    Output grows as ``e^((a-b)x)`` on the positive lobe when ``a > b``.
+    With defaults ``a=1.5, b=0.7`` the growth rate is ``e^(0.8x)``, so
+    at x=8 the output is ~600 times the x=1 value.  That's unbounded
+    for waveshaper purposes, so the :func:`apply_waveshaper` dispatch
+    clamps driven input to ``[-8, +8]`` before evaluation to keep
+    output in a musical range.  The primitive itself is NOT clipped —
+    same reasoning as Koren: clipping would symmetrise the lobes and
+    lose the asymmetry signature.
+    """
+    return _dempwolf_raw(x, a=a, b=b) * _DEMPWOLF_NORM
+
+
+def _build_tube_f1_table(
+    shape_fn: Callable[[np.ndarray], np.ndarray],
+    scale: float = 1.0,
+) -> np.ndarray:
+    """Build F1(x) = ∫₀ˣ shape(u) du on the LUT grid via trapezoidal
+    integration outward from x=0, with ``scale`` baked in so the stored
+    antiderivative matches the normalised shape the runtime kernel sees.
+    """
+    grid = _TUBE_LUT_GRID
+    limit = _TUBE_LUT_LIMIT
+    xs = np.linspace(-limit, limit, grid, dtype=np.float64)
+    shape_vals = shape_fn(xs) * scale
+    dx = xs[1] - xs[0]
+    mid = (grid - 1) // 2
+    f1 = np.zeros(grid, dtype=np.float64)
+    for i in range(mid + 1, grid):
+        f1[i] = f1[i - 1] + 0.5 * (shape_vals[i - 1] + shape_vals[i]) * dx
+    for i in range(mid - 1, -1, -1):
+        f1[i] = f1[i + 1] - 0.5 * (shape_vals[i] + shape_vals[i + 1]) * dx
+    return f1
+
+
+_TUBE_LUT_STEP: float = 2.0 * _TUBE_LUT_LIMIT / (_TUBE_LUT_GRID - 1)
+
+
+# The LUT F1 must integrate the SAME shape the runtime path produces.
+# Apply ``_tube_soft_cap`` here so F1 matches ``_tube_soft_cap(shape(x))``,
+# which is what the per-sample kernels return.  Without this the ADAA
+# divided-difference form would see F1 for the un-capped shape while the
+# fallback midpoint dispatch uses the capped shape — a mismatch that
+# breaks the AD1 alias suppression guarantee on heavy-drive input.
+def _soft_cap_shape_vec(shape_vals: np.ndarray) -> np.ndarray:
+    return shape_vals / (1.0 + np.abs(shape_vals) / _TUBE_OUT_SOFT_CAP)
+
+
+_KOREN_F1_TABLE: np.ndarray = _build_tube_f1_table(
+    lambda xs: _soft_cap_shape_vec(_koren_triode_numpy(xs))
+)
+_PENTODE_F1_TABLE: np.ndarray = _build_tube_f1_table(
+    lambda xs: _soft_cap_shape_vec(_pentode_numpy(xs))
+)
+_DEMPWOLF_F1_TABLE: np.ndarray = _build_tube_f1_table(
+    lambda xs: _soft_cap_shape_vec(_dempwolf_numpy(xs))
+)
+
+# Edge values for linear-extrapolation of F1 outside ±limit.  Shape edge
+# values pass through ``_tube_soft_cap`` to match the LUT-baked shape.
+_KOREN_F1_POS_EDGE: float = float(_KOREN_F1_TABLE[-1])
+_KOREN_F1_NEG_EDGE: float = float(_KOREN_F1_TABLE[0])
+_KOREN_SHAPE_POS_EDGE: float = float(
+    _soft_cap_shape_vec(
+        _koren_triode_numpy(np.array([_TUBE_LUT_LIMIT], dtype=np.float64))
+    )[0]
+)
+_KOREN_SHAPE_NEG_EDGE: float = float(
+    _soft_cap_shape_vec(
+        _koren_triode_numpy(np.array([-_TUBE_LUT_LIMIT], dtype=np.float64))
+    )[0]
+)
+
+_PENTODE_F1_POS_EDGE: float = float(_PENTODE_F1_TABLE[-1])
+_PENTODE_F1_NEG_EDGE: float = float(_PENTODE_F1_TABLE[0])
+_PENTODE_SHAPE_POS_EDGE: float = float(
+    _soft_cap_shape_vec(_pentode_numpy(np.array([_TUBE_LUT_LIMIT], dtype=np.float64)))[
+        0
+    ]
+)
+_PENTODE_SHAPE_NEG_EDGE: float = float(
+    _soft_cap_shape_vec(_pentode_numpy(np.array([-_TUBE_LUT_LIMIT], dtype=np.float64)))[
+        0
+    ]
+)
+
+_DEMPWOLF_F1_POS_EDGE: float = float(_DEMPWOLF_F1_TABLE[-1])
+_DEMPWOLF_F1_NEG_EDGE: float = float(_DEMPWOLF_F1_TABLE[0])
+_DEMPWOLF_SHAPE_POS_EDGE: float = float(
+    _soft_cap_shape_vec(_dempwolf_numpy(np.array([_TUBE_LUT_LIMIT], dtype=np.float64)))[
+        0
+    ]
+)
+_DEMPWOLF_SHAPE_NEG_EDGE: float = float(
+    _soft_cap_shape_vec(
+        _dempwolf_numpy(np.array([-_TUBE_LUT_LIMIT], dtype=np.float64))
+    )[0]
+)
+
+
+@numba.njit(cache=True)
+def _tube_lut_lookup_f1(
+    x: float,
+    table: np.ndarray,
+    f1_pos_edge: float,
+    f1_neg_edge: float,
+    shape_pos_edge: float,
+    shape_neg_edge: float,
+) -> float:
+    """Linear interp inside the grid, linear extrapolation beyond."""
+    limit = _TUBE_LUT_LIMIT
+    if x >= limit:
+        return f1_pos_edge + shape_pos_edge * (x - limit)
+    if x <= -limit:
+        return f1_neg_edge + shape_neg_edge * (x + limit)
+    pos = (x + limit) / _TUBE_LUT_STEP
+    idx = int(pos)
+    frac = pos - idx
+    n = table.shape[0]
+    if idx >= n - 1:
+        return float(table[n - 1])
+    a = float(table[idx])
+    b = float(table[idx + 1])
+    return a + (b - a) * frac
+
+
+@numba.njit(cache=True)
+def _koren_triode_sample(
+    x: float, mu: float, ex: float, kp: float, kvb: float, vp: float, norm: float
+) -> float:
+    """Per-sample Koren plate-current model.
+
+    ``norm`` scales output to the 0-1 knob range.  Raw output grows as
+    ``x^ex`` on the positive lobe; no tanh output clip so asymmetry
+    between the two lobes is preserved at heavy drive.
+    Input driven into ``[-8, +8]`` by the caller keeps output in a
+    musical range (see ``apply_waveshaper`` dispatch).
+    """
+    denom = math.sqrt(kvb + vp * vp)
+    arg = kp * (1.0 / mu + x / denom)
+    e1 = (
+        (arg + math.log1p(math.exp(-arg))) / kp
+        if arg > 0.0
+        else math.log1p(math.exp(arg)) / kp
+    )
+    return norm * math.pow(e1, ex) if e1 >= 0.0 else -norm * math.pow(-e1, ex)
+
+
+@numba.njit(cache=True)
+def _pentode_sample(x: float, sharpness: float) -> float:
+    ax = math.fabs(x)
+    return x / math.pow(1.0 + math.pow(ax, sharpness), 1.0 / sharpness)
+
+
+@numba.njit(cache=True)
+def _dempwolf_sample(x: float, a: float, b: float, norm: float) -> float:
+    """Per-sample Dempwolf, stable ``1/(1+e^(bx)) = e^(-logaddexp(0, bx))``.
+
+    Raw output grows as ``e^((a-b)x)`` on the positive lobe.  Input
+    driven into ``[-8, +8]`` by the caller keeps output in a musical
+    range; no tanh clip since that would symmetrise the lobes.
+    """
+    numer = math.expm1(a * x)
+    bx = b * x
+    log_denom = bx + math.log1p(math.exp(-bx)) if bx > 0.0 else math.log1p(math.exp(bx))
+    return norm * numer * math.exp(-log_denom)
+
+
+@numba.njit(cache=True)
+def _tube_soft_cap(y: float) -> float:
+    """Per-sample numba equivalent of :func:`_soft_cap_shape_vec`.
+
+    Applied on every tube-shaper output path (array, ADAA loop fallback,
+    envelope).  See ``_TUBE_OUT_SOFT_CAP`` module-level constant for
+    the rationale and the vector form ``_soft_cap_shape_vec``.
+    """
+    return y / (1.0 + math.fabs(y) / _TUBE_OUT_SOFT_CAP)
+
+
+@numba.njit(cache=True)
+def _clamp_to_lut(x: float) -> float:
+    """Clamp driven input to the LUT range ``[-_TUBE_LUT_LIMIT, +_TUBE_LUT_LIMIT]``.
+
+    Dempwolf grows exponentially past the LUT edge; clamping here avoids
+    computing e^(huge) per sample.  Koren and pentode are well-behaved
+    past the edge but clamping is cheap.
+    """
+    if x > _TUBE_LUT_LIMIT:
+        return _TUBE_LUT_LIMIT
+    if x < -_TUBE_LUT_LIMIT:
+        return -_TUBE_LUT_LIMIT
+    return x
+
+
+@numba.njit(cache=True)
+def _koren_triode_array(signal: np.ndarray, drive_gain: float) -> np.ndarray:
+    """Whole-array Koren triode at default character params."""
+    n = signal.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        out[i] = _tube_soft_cap(
+            _koren_triode_sample(
+                _clamp_to_lut(signal[i] * drive_gain),
+                _KOREN_MU,
+                _KOREN_EX,
+                _KOREN_KP,
+                _KOREN_KVB,
+                _KOREN_VP,
+                _KOREN_NORM,
+            )
+        )
+    return out
+
+
+@numba.njit(cache=True)
+def _pentode_array(signal: np.ndarray, drive_gain: float) -> np.ndarray:
+    n = signal.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        out[i] = _tube_soft_cap(
+            _pentode_sample(_clamp_to_lut(signal[i] * drive_gain), _PENTODE_SHARPNESS)
+        )
+    return out
+
+
+@numba.njit(cache=True)
+def _dempwolf_array(signal: np.ndarray, drive_gain: float) -> np.ndarray:
+    n = signal.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        out[i] = _tube_soft_cap(
+            _dempwolf_sample(
+                _clamp_to_lut(signal[i] * drive_gain),
+                _DEMPWOLF_A,
+                _DEMPWOLF_B,
+                _DEMPWOLF_NORM,
+            )
+        )
+    return out
+
+
+@numba.njit(cache=True)
+def _ad1_koren_triode(x: float, table: np.ndarray) -> float:
+    return _tube_lut_lookup_f1(
+        x,
+        table,
+        _KOREN_F1_POS_EDGE,
+        _KOREN_F1_NEG_EDGE,
+        _KOREN_SHAPE_POS_EDGE,
+        _KOREN_SHAPE_NEG_EDGE,
+    )
+
+
+@numba.njit(cache=True)
+def _ad1_pentode(x: float, table: np.ndarray) -> float:
+    return _tube_lut_lookup_f1(
+        x,
+        table,
+        _PENTODE_F1_POS_EDGE,
+        _PENTODE_F1_NEG_EDGE,
+        _PENTODE_SHAPE_POS_EDGE,
+        _PENTODE_SHAPE_NEG_EDGE,
+    )
+
+
+@numba.njit(cache=True)
+def _ad1_dempwolf_asym(x: float, table: np.ndarray) -> float:
+    return _tube_lut_lookup_f1(
+        x,
+        table,
+        _DEMPWOLF_F1_POS_EDGE,
+        _DEMPWOLF_F1_NEG_EDGE,
+        _DEMPWOLF_SHAPE_POS_EDGE,
+        _DEMPWOLF_SHAPE_NEG_EDGE,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dedicated AD1 loops for the tube shapers.
+#
+# Each takes the appropriate F1 table + per-sample direct evaluator and
+# applies the standard (F1(x_n) - F1(x_{n-1})) / (x_n - x_{n-1}) AD1 form,
+# falling back to midpoint direct evaluation when the denominator is small.
+# ---------------------------------------------------------------------------
+
+
+@numba.njit(cache=True)
+def _apply_adaa_koren_triode(
+    signal: np.ndarray, drive_gain: float, table: np.ndarray
+) -> np.ndarray:
+    n = signal.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    prev = _clamp_to_lut(signal[0] * drive_gain) if n > 0 else 0.0
+    for i in range(n):
+        curr = _clamp_to_lut(signal[i] * drive_gain)
+        dx = curr - prev
+        if math.fabs(dx) > _ADAA_DX_THRESHOLD:
+            out[i] = (
+                _ad1_koren_triode(curr, table) - _ad1_koren_triode(prev, table)
+            ) / dx
+        else:
+            mid = 0.5 * (curr + prev)
+            out[i] = _tube_soft_cap(
+                _koren_triode_sample(
+                    mid,
+                    _KOREN_MU,
+                    _KOREN_EX,
+                    _KOREN_KP,
+                    _KOREN_KVB,
+                    _KOREN_VP,
+                    _KOREN_NORM,
+                )
+            )
+        prev = curr
+    return out
+
+
+@numba.njit(cache=True)
+def _apply_adaa_pentode(
+    signal: np.ndarray, drive_gain: float, table: np.ndarray
+) -> np.ndarray:
+    n = signal.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    prev = _clamp_to_lut(signal[0] * drive_gain) if n > 0 else 0.0
+    for i in range(n):
+        curr = _clamp_to_lut(signal[i] * drive_gain)
+        dx = curr - prev
+        if math.fabs(dx) > _ADAA_DX_THRESHOLD:
+            out[i] = (_ad1_pentode(curr, table) - _ad1_pentode(prev, table)) / dx
+        else:
+            out[i] = _tube_soft_cap(
+                _pentode_sample(0.5 * (curr + prev), _PENTODE_SHARPNESS)
+            )
+        prev = curr
+    return out
+
+
+@numba.njit(cache=True)
+def _apply_adaa_dempwolf_asym(
+    signal: np.ndarray, drive_gain: float, table: np.ndarray
+) -> np.ndarray:
+    n = signal.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    prev = _clamp_to_lut(signal[0] * drive_gain) if n > 0 else 0.0
+    for i in range(n):
+        curr = _clamp_to_lut(signal[i] * drive_gain)
+        dx = curr - prev
+        if math.fabs(dx) > _ADAA_DX_THRESHOLD:
+            out[i] = (
+                _ad1_dempwolf_asym(curr, table) - _ad1_dempwolf_asym(prev, table)
+            ) / dx
+        else:
+            out[i] = _tube_soft_cap(
+                _dempwolf_sample(
+                    0.5 * (curr + prev), _DEMPWOLF_A, _DEMPWOLF_B, _DEMPWOLF_NORM
+                )
+            )
+        prev = curr
+    return out
+
+
+# Dispatch set used by ``apply_waveshaper`` to route tube-shaper AD1 to the
+# dedicated LUT-backed loops rather than the generic ``_apply_adaa`` dispatch
+# (which has no slot for the per-shaper table arg).
+_TUBE_IDS: frozenset[int] = frozenset(
+    {_ID_KOREN_TRIODE, _ID_PENTODE, _ID_DEMPWOLF_ASYM}
+)
+
+
+# ---------------------------------------------------------------------------
+# Module-level shape callables exposed for ``apply_tube`` direct use.
+# Accept full character params (bypass the LUT path) so per-note tube
+# character tweaks stay cheap.
+# ---------------------------------------------------------------------------
+
+
+def _koren_triode_shape(
+    signal: np.ndarray,
+    mu: float = _KOREN_MU,
+    ex: float = _KOREN_EX,
+    kp: float = _KOREN_KP,
+    kvb: float = _KOREN_KVB,
+    vp: float = _KOREN_VP,
+) -> np.ndarray:
+    """Module-level Koren triode shaper (no drive_gain pre-scaling).
+
+    Output bounded to ``[-1, 1]`` via :func:`_koren_triode_numpy`.
+    """
+    return _koren_triode_numpy(signal, mu=mu, ex=ex, kp=kp, kvb=kvb, vp=vp)
+
+
+def _pentode_shape(
+    signal: np.ndarray, sharpness: float = _PENTODE_SHARPNESS
+) -> np.ndarray:
+    """Module-level sharp-knee pentode shaper."""
+    return _pentode_numpy(signal, sharpness=sharpness)
+
+
+def _dempwolf_asym_shape(
+    signal: np.ndarray, a: float = _DEMPWOLF_A, b: float = _DEMPWOLF_B
+) -> np.ndarray:
+    """Module-level Dempwolf asymmetric exp shaper.  Output bounded to ``[-1, 1]``."""
+    return _dempwolf_numpy(signal, a=a, b=b)
+
+
+def _biased_shape(
+    signal: np.ndarray,
+    shape_fn: Callable[..., np.ndarray],
+    bias: float,
+    **kwargs: float,
+) -> np.ndarray:
+    """Non-compensated bias wrapper: ``shape_fn(signal + bias, **kwargs)``.
+
+    No zero-correction on purpose.  ``apply_tube`` DC-blocks the output
+    downstream, which is what lets Culture-Vulture-style starvation (one
+    half-cycle collapsing) actually survive to the audio output.
+    Pre-compensating here would undo that behaviour — the bug in the
+    library's existing ``_asymmetric_saturation_curve`` that this wrapper
+    fixes structurally.
+    """
+    return shape_fn(np.asarray(signal, dtype=np.float64) + bias, **kwargs)
+
+
+# ---------------------------------------------------------------------------
 # Algorithm registry
 # ---------------------------------------------------------------------------
 
@@ -1238,6 +1815,9 @@ _ALGORITHMS: dict[str, Callable[..., np.ndarray]] = {
     "bit_crush": _bit_crush,
     "rate_reduce": _rate_reduce,
     "digital_clip": _digital_clip,
+    "koren_triode": _koren_triode_array,
+    "pentode": _pentode_array,
+    "dempwolf_asym": _dempwolf_array,
 }
 
 _NAME_TO_ID: dict[str, int] = {
@@ -1255,6 +1835,9 @@ _NAME_TO_ID: dict[str, int] = {
     "bit_crush": _ID_BIT_CRUSH,
     "rate_reduce": _ID_RATE_REDUCE,
     "digital_clip": _ID_DIGITAL_CLIP,
+    "koren_triode": _ID_KOREN_TRIODE,
+    "pentode": _ID_PENTODE,
+    "dempwolf_asym": _ID_DEMPWOLF_ASYM,
 }
 
 # Digital-character algorithms are not amenable to first-order ADAA (they are
@@ -1315,13 +1898,17 @@ def apply_waveshaper(
             to opt out of the auto-upgrade and keep the raw lo-fi character.
         adaa_order: 1 (default) selects first-order ADAA using the analytical
             antiderivative F1 — same behavior this module has shipped with
-            since ADAA was first added.  2 selects second-order ADAA
-            (Bilbao/Esqueda three-sample form) for the seven algorithms with
-            F2 support (tanh, atan, hard_clip, exponential, logarithmic,
-            half_wave_rect, full_wave_rect).  AD2 adds ~30-40 dB of extra
-            alias suppression at the same oversampling cost and is
-            recommended when drive is substantial.  Unsupported algorithms
-            silently fall back to AD1 / oversample / direct dispatch.
+            since ADAA was first added.  The tube shapers (``koren_triode``,
+            ``pentode``, ``dempwolf_asym``) use AD1 via precomputed LUTs
+            since their antiderivatives are not elementary.  2 selects
+            second-order ADAA (Bilbao/Esqueda three-sample form) for the
+            seven algorithms with F2 support (tanh, atan, hard_clip,
+            exponential, logarithmic, half_wave_rect, full_wave_rect); the
+            tube shapers stay on AD1 regardless of ``adaa_order``.  AD2 adds
+            ~30-40 dB of extra alias suppression at the same oversampling
+            cost and is recommended when drive is substantial.  Unsupported
+            algorithms silently fall back to AD1 / oversample / direct
+            dispatch.
         bit_depth: Effective bit-depth for ``bit_crush`` (1.0-16.0).  Ignored
             by other algorithms.
         reduce_ratio: Integer-ratio sample-and-hold factor for ``rate_reduce``
@@ -1393,6 +1980,29 @@ def apply_waveshaper(
             wet = _rate_reduce(sig_proc, drive_gain, float(reduce_ratio))
         else:  # _ID_DIGITAL_CLIP
             wet = _digital_clip(sig_proc, drive_gain)
+    elif algo_id in _TUBE_IDS:
+        # Tube shapers have AD1 LUT paths but no envelope/AD2 support in v1.
+        # For envelope modulation we fall back to direct per-sample eval at
+        # oversampled rate; callers that want envelope + alias suppression
+        # should use oversample=2 together with drive_envelope.
+        drive_gain = _drive_to_gain(drive)
+        if env_proc is not None:
+            # Direct per-sample eval with time-varying drive_gain.
+            scaled = sig_proc * (
+                1.0 + _DRIVE_SCALE_NB * (drive * env_proc) * (drive * env_proc)
+            )
+            if algo_id == _ID_KOREN_TRIODE:
+                wet = _koren_triode_array(scaled, 1.0)
+            elif algo_id == _ID_PENTODE:
+                wet = _pentode_array(scaled, 1.0)
+            else:  # _ID_DEMPWOLF_ASYM
+                wet = _dempwolf_array(scaled, 1.0)
+        elif algo_id == _ID_KOREN_TRIODE:
+            wet = _apply_adaa_koren_triode(sig_proc, drive_gain, _KOREN_F1_TABLE)
+        elif algo_id == _ID_PENTODE:
+            wet = _apply_adaa_pentode(sig_proc, drive_gain, _PENTODE_F1_TABLE)
+        else:  # _ID_DEMPWOLF_ASYM
+            wet = _apply_adaa_dempwolf_asym(sig_proc, drive_gain, _DEMPWOLF_F1_TABLE)
     elif env_proc is not None:
         if use_adaa2:
             wet = _apply_with_envelope_adaa2(

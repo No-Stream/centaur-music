@@ -615,7 +615,7 @@ def build_score() -> Score:
                     ]
                 },
             ),
-            EffectSpec("drive", {"preset": "snare_bite"}),
+            EffectSpec("transistor", {"preset": "snare_bite"}),
         ],
     )
     score.voices["snare"].sends.append(VoiceSend(target="plate", send_db=-14.0))

@@ -77,7 +77,7 @@ _KICK_HYBRID: dict[str, Any] = {
     "metallic_n_partials": 2,
     "metallic_brightness": 0.5,
     "metallic_decay_s": 0.12,
-    "tone_shaper": "saturation",
+    "tone_shaper": "tube",
     "tone_shaper_drive": 0.3,
     "tone_shaper_mix": 0.5,
     "tone_shaper_mode": "triode",

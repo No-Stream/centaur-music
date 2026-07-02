@@ -449,7 +449,13 @@ def build_score() -> Score:
                 },
             ),
             EffectSpec(
-                kind="drive", params={"drive": 0.03, "mix": 0.3, "multiband": True}
+                kind="transistor",
+                params={
+                    "character": "soft_clip",
+                    "drive": 0.03,
+                    "mix": 0.3,
+                    "multiband": True,
+                },
             ),
         ],
         timing_humanize=TimingHumanizeSpec(preset="chamber"),

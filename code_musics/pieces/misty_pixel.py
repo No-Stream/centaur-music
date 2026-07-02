@@ -1498,7 +1498,7 @@ def build_score() -> Score:
                 "compressor", {"preset": "kick_duck", "sidechain_source": "kick"}
             ),
             # Tube warmth downstream of the diode ladder — harmonics, not distortion.
-            EffectSpec("drive", {"preset": "tube_warm"}),
+            EffectSpec("tube", {"preset": "triode_glow"}),
             EffectSpec(
                 "eq",
                 {

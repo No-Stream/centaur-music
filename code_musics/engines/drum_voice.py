@@ -414,6 +414,19 @@ def _build_sustained_exciter_envelope(
     return envelope
 
 
+_DRUM_TUBE_CHARACTER_ALIASES: dict[str, str] = {
+    "triode": "triode",
+    "pentode": "pentode",
+    "hg2": "hg2",
+    "culture": "culture",
+    # Backwards-compat aliases from the retired ``apply_drive`` ``mode``
+    # parameter.  ``apply_tube(character="triode")`` is the nearest honest
+    # match for the old tanh-family ``"tube"`` / ``"iron"`` modes.
+    "tube": "triode",
+    "iron": "triode",
+}
+
+
 def _apply_layer_shaper(
     signal: np.ndarray,
     shaper: str | None,
@@ -426,20 +439,23 @@ def _apply_layer_shaper(
     bit_depth: float = 8.0,
     reduce_ratio: float = 2.0,
 ) -> np.ndarray:
-    """Apply waveshaper, saturation, or preamp to a layer signal."""
+    """Apply a waveshaper, tube, or preamp effect to a layer signal."""
+    del fidelity  # legacy param reserved for future use
+
     if shaper is None:
         return signal
 
-    if shaper == "saturation":
+    if shaper == "tube":
         # Deferred import: synth.py -> engines/__init__.py -> drum_voice.py cycle
-        from code_musics.synth import apply_drive
+        from code_musics.synth import apply_tube
 
-        result = apply_drive(
+        character = _DRUM_TUBE_CHARACTER_ALIASES.get(mode, "triode")
+        result = apply_tube(
             signal,
+            character=character,
             drive=drive,
             mix=mix,
-            mode=mode,
-            fidelity=fidelity,
+            sample_rate=sample_rate,
         )
         return np.asarray(result, dtype=np.float64)
 
@@ -457,7 +473,7 @@ def _apply_layer_shaper(
 
     if shaper not in ALGORITHM_NAMES:
         raise ValueError(
-            f"shaper must be one of {sorted(ALGORITHM_NAMES)}, 'saturation', "
+            f"shaper must be one of {sorted(ALGORITHM_NAMES)}, 'tube', "
             f"'preamp', or None, got {shaper!r}"
         )
 

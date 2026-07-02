@@ -41,7 +41,7 @@ def build_beating_light() -> Score:
         f0_hz=f0,
         master_effects=[
             EffectSpec("delay", {"delay_seconds": 0.75, "feedback": 0.18, "mix": 0.12}),
-            EffectSpec("drive", {"preset": "tube_warm", "mix": 0.15, "drive": 0.36}),
+            EffectSpec("tube", {"preset": "triode_glow", "mix": 0.15, "drive": 0.36}),
             EffectSpec(
                 "reverb", {"room_size": 0.82, "damping": 0.45, "wet_level": 0.28}
             ),

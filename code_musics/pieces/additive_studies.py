@@ -71,7 +71,15 @@ def build_vowel_cathedral() -> Score:
         f0_hz=110.0,
         master_effects=[
             SOFT_REVERB_EFFECT,
-            EffectSpec("drive", {"drive": 0.03, "mix": 0.2, "multiband": True}),
+            EffectSpec(
+                "transistor",
+                {
+                    "character": "soft_clip",
+                    "drive": 0.03,
+                    "mix": 0.2,
+                    "multiband": True,
+                },
+            ),
         ],
     )
 

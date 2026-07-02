@@ -140,7 +140,19 @@ def test_chord_imd_pre_sum_vs_post_sum() -> None:
 
 
 @pytest.mark.parametrize(
-    "mode", ["soft_clip", "hard_clip", "foldback", "corrode", "saturation", "preamp"]
+    "mode",
+    [
+        "soft_clip",
+        "hard_clip",
+        "foldback",
+        "corrode",
+        "transistor",
+        "preamp",
+        "tube_triode",
+        "tube_pentode",
+        "tube_hg2",
+        "tube_culture",
+    ],
 )
 def test_each_mode_smoke(mode: str) -> None:
     """Every non-off mode renders finite, non-silent audio."""

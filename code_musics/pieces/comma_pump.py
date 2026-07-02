@@ -72,7 +72,7 @@ def build_score() -> Score:
         f0_hz=110.0,
         master_effects=[
             EffectSpec("reverb", {"room_size": 0.7, "damping": 0.5, "wet_level": 0.25}),
-            EffectSpec("drive", {"preset": "tube_warm", "mix": 0.15, "drive": 0.36}),
+            EffectSpec("tube", {"preset": "triode_glow", "mix": 0.15, "drive": 0.36}),
         ],
         timing_humanize=TimingHumanizeSpec(preset="chamber", seed=81),
     )

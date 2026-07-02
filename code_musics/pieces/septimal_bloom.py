@@ -152,7 +152,7 @@ def _master_tape() -> EffectSpec:
             "chow_tape",
             {"drive": 0.58, "saturation": 0.52, "bias": 0.50, "mix": 62.0},
         )
-    return EffectSpec("drive", {"preset": "tube_warm", "mix": 0.30, "drive": 0.45})
+    return EffectSpec("tube", {"preset": "triode_glow", "mix": 0.30, "drive": 0.45})
 
 
 # ---------------------------------------------------------------------------
@@ -171,8 +171,8 @@ def build_score() -> Score:
                     _hall_reverb(),
                     _hall_delay(),
                     EffectSpec(
-                        "drive",
-                        {"preset": "tube_warm", "mix": 0.18, "drive": 0.36},
+                        "tube",
+                        {"preset": "triode_glow", "mix": 0.18, "drive": 0.36},
                     ),
                 ],
             ),

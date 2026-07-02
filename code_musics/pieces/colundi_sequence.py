@@ -146,7 +146,7 @@ def build_score() -> Score:
                     ],
                 },
             ),
-            EffectSpec("drive", {"preset": "tube_warm", "mix": 0.12, "drive": 0.23}),
+            EffectSpec("tube", {"preset": "triode_glow", "mix": 0.12, "drive": 0.23}),
         ],
     )
 
@@ -209,10 +209,11 @@ def build_score() -> Score:
         max_polyphony=1,
         velocity_humanize=None,
         effects=[
-            # Subtle bass drive color (was `kick_weight` with heavy overrides —
-            # `kick_weight` is being deprecated; `neve_gentle` is a better
-            # base here since the overrides match its defaults closely).
-            EffectSpec("drive", {"preset": "neve_gentle", "mix": 0.18, "drive": 0.30}),
+            # Subtle bass warmth — Neve is a transformer console, so this lives
+            # naturally on the flux-domain preamp (`apply_preamp`). The earlier
+            # `apply_drive` / `neve_gentle` pairing was a misnomer (tanh-family
+            # shaper, not magnetics).
+            EffectSpec("preamp", {"preset": "neve_warmth", "mix": 0.18, "drive": 0.30}),
             EffectSpec(
                 "compressor", {"preset": "kick_duck", "sidechain_source": "kick"}
             ),
@@ -255,7 +256,10 @@ def build_score() -> Score:
                 "eq",
                 {"bands": [{"kind": "high_shelf", "freq_hz": 8000.0, "gain_db": 3.0}]},
             ),
-            EffectSpec("drive", {"drive": 0.12, "multiband": True}),
+            EffectSpec(
+                "transistor",
+                {"character": "soft_clip", "drive": 0.12, "multiband": True},
+            ),
             EffectSpec("delay", {"delay_seconds": S16, "feedback": 0.28, "mix": 0.28}),
             EffectSpec(
                 "compressor", {"preset": "kick_duck", "sidechain_source": "kick"}
@@ -383,7 +387,7 @@ def build_score() -> Score:
                     ]
                 },
             ),
-            EffectSpec("drive", {"preset": "tube_warm", "mix": 0.18, "drive": 0.30}),
+            EffectSpec("tube", {"preset": "triode_glow", "mix": 0.18, "drive": 0.30}),
             EffectSpec(
                 "delay",
                 {"delay_seconds": 3.0 * S16, "feedback": 0.45, "mix": 0.35},

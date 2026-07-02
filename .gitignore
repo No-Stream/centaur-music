@@ -27,6 +27,7 @@ coverage.xml
 
 # Image diagnostics - useful but a bit large
 *.png
+!centaur-music-cover.png
 *.vst*
 # JSON diagnostics - need to git rm existing ones
 *.analysis.json

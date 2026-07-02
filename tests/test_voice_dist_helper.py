@@ -59,8 +59,12 @@ def test_drive_zero_returns_input_unchanged() -> None:
         "hard_clip",
         "foldback",
         "corrode",
-        "saturation",
+        "transistor",
         "preamp",
+        "tube_triode",
+        "tube_pentode",
+        "tube_hg2",
+        "tube_culture",
     ):
         out = apply_voice_dist(signal, mode=mode, drive=0.0, mix=1.0)
         np.testing.assert_allclose(
@@ -78,8 +82,12 @@ def test_each_mode_runs_without_nan() -> None:
         "hard_clip",
         "foldback",
         "corrode",
-        "saturation",
+        "transistor",
         "preamp",
+        "tube_triode",
+        "tube_pentode",
+        "tube_hg2",
+        "tube_culture",
     ):
         out = apply_voice_dist(signal, mode=mode, drive=0.5, mix=1.0)
         assert out.shape == signal.shape, f"{mode} shape mismatch"
@@ -198,8 +206,18 @@ def test_unknown_mode_raises() -> None:
         apply_voice_dist(signal, mode="not_a_mode", drive=0.5)
 
 
-@pytest.mark.parametrize("mode", ["saturation", "preamp"])
-def test_saturation_and_preamp_modes_smoke(mode: str) -> None:
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "transistor",
+        "preamp",
+        "tube_triode",
+        "tube_pentode",
+        "tube_hg2",
+        "tube_culture",
+    ],
+)
+def test_heavy_modes_smoke(mode: str) -> None:
     # Keep buffer tiny — these modes do heavy per-call processing.
     signal = _sine(duration=0.1, amp=0.3)
     out = apply_voice_dist(signal, mode=mode, drive=0.5, mix=1.0)

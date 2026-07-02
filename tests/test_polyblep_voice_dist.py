@@ -169,8 +169,12 @@ class TestVoiceDistModesSmoke:
             "hard_clip",
             "foldback",
             "corrode",
-            "saturation",
+            "transistor",
             "preamp",
+            "tube_triode",
+            "tube_pentode",
+            "tube_hg2",
+            "tube_culture",
         ):
             out = render(
                 freq=220.0,

@@ -535,7 +535,10 @@ def build_spectral_kick() -> Score:
                 {"bands": [{"kind": "high_shelf", "freq_hz": 8000.0, "gain_db": 3.5}]},
             ),
             # Light saturation — subtle harmonic grit for a crisp, slightly dirty chh
-            EffectSpec("drive", {"drive": 0.13, "multiband": True}),
+            EffectSpec(
+                "transistor",
+                {"character": "soft_clip", "drive": 0.13, "multiband": True},
+            ),
             # 16th-note echo — adds shimmer and rhythmic motion without smearing
             EffectSpec("delay", {"delay_seconds": S16, "feedback": 0.33, "mix": 0.33}),
             EffectSpec(
