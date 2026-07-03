@@ -1,1434 +1,297 @@
 # Future Work
 
-This file tracks what still feels highest-value from the current state of the
-project, and distinguishes that from capabilities that already exist.
+This file is a compact roadmap, not an implementation journal. Keep it focused
+on useful next work: musical direction, missing capabilities, testing gaps, and
+design bets that should not be forgotten. Completed feature details belong in
+`docs/score_api.md`, `docs/composition_api.md`, `docs/synth_api.md`, or a dated
+plan under `docs/plans/`.
 
-The repo is no longer at the "basic scaffolding" stage. We already have:
+## Baseline
 
-- a solid `Score` / `Voice` / `Phrase` / `NoteEvent` composition model
-- phrase-first composition helpers such as `line`, `ratio_line`, `concat`,
-  `overlay`, `echo`, `sequence`, `canon`, `voiced_ratio_chord`, and
-  `progression`
-- multiple synth engines with presets: additive, FM, filtered-stack, polyBLEP,
-  noise/percussion, organ, piano, harpsichord, kick_tom, and surge_xt
-- render-time expression surfaces including note `velocity`, note
-  `pitch_motion`, score-level timing humanization, voice-level envelope and
-  velocity humanization, velocity-to-parameter mapping, and score/note
-  automation
-- a declarative effect chain with native EQ, native compressor, saturation,
-  delay, algorithmic reverb, Bricasti convolution, stereo-aware routing, and a
-  working Linux plugin path through `pedalboard`
-- snippet rendering, exact-window rendering, timestamp inspection, timeline JSON
-  artifacts, analysis manifests, and drift/artifact-risk diagnostics
-- named pieces and studies substantial enough that the bottleneck is now more
-  often musical direction than missing infrastructure
+The repo is past basic scaffolding. It already has:
 
-So the main question is no longer "can this system render xenharmonic music at
-all?" It can. The question is how to turn the current toolkit into stronger
-music, faster iteration, and a broader but still coherent sonic language.
+- a real `Score` / `Voice` / `Phrase` / `NoteEvent` composition model
+- phrase-first helpers for lines, ratios, overlays, canon, progressions, grid
+  timing, grooves, tuplets, polyrhythm, and generative rhythm
+- additive, FM, filtered-stack, polyBLEP, VA, piano, harpsichord, organ,
+  drum/percussion, sample, and plugin-backed voices
+- expression surfaces for velocity, pitch motion, timing / envelope / velocity
+  humanization, score-time automation, and modulation matrix routing
+- native EQ, compression, limiting, clipping, preamp / tube / transistor color,
+  delay, chorus, reverb, Bricasti fallback routing, analog filters, send buses,
+  and plugin hosting through `pedalboard`
+- snippet / window rendering, timestamp inspection, piano-roll and analysis
+  artifacts, LLM evaluation, MIDI import/export, and stem export
 
-## High priority
+The main question is no longer whether the system can render xenharmonic music.
+It can. The highest-value work is making stronger pieces, reducing iteration
+friction, and broadening the sonic language without turning the library into a
+pile of special cases.
 
-### VST export: JUCE shell + off-thread Python render daemon
+## Highest Priority
 
-Expose `synth_voice`, `drum_voice`, and the native effect palette as
-Ableton-usable VST3/AU plugins without rewriting the DSP in C++. Two
-plugins: **`CentaurVoice`** (instrument) and **`CentaurFX`** (effect
-covering the 8 analog filter topologies, drive + preamp, compressor +
-clipper + limiter, BBD chorus + Bricasti + analog_filter).
-
-Approach: thin JUCE plugin hosts a Python worker *subprocess* (not
-embedded CPython on the audio thread — GIL + GC pauses break realtime).
-Audio thread schedules notes into a shmem ring; worker calls `render()`
-and writes buffers back; plugin plays them with a configurable
-lookahead (100–500 ms). Best fit for clip-playback in Ableton; live MIDI
-keyboard has unavoidable latency on long notes.
-
-Phase 0 is independently valuable regardless of whether the VST ships:
-refactor `render()` → `render_block(state, ..., note_off)` so engines
-become streamable, strip whole-buffer peak-normalization, add a typed
-param schema (also unblocks the auto-cal work above). ~2 weeks.
-
-Full design, phased plan (0 through 5, ~10–13 weeks total), latency
-model, IPC protocol, risks, alternatives considered and rejected
-(render-to-sampler, full C++ rewrite, Neutone, embedded CPython) live
-in [`docs/plans/2026-04-26-vst-export-design.md`](docs/plans/2026-04-26-vst-export-design.md).
-
-### More complete pieces
-
-This is still the top priority.
+### More Complete Pieces
 
 The central artistic question remains: can we make xenharmonic music that feels
-like full composition rather than only study, sketch, or demo?
+like full composition rather than a study, sketch, or demo?
 
 Most valuable directions:
 
-- stronger large-scale form
-- more memorable motifs and thematic return
-- clearer contrast, release, pacing, and arrival across sections
-- better balance between "pleasant" and "strange"
-- more deliberate orchestration so pieces feel arranged, not merely layered
-- more works that feel finished enough to revisit, compare, and refine rather
-  than discard after one experiment
+- stronger large-scale form, pacing, contrast, release, and arrival
+- memorable motifs with thematic return and transformation
+- clearer voice roles: bass/pedal, harmonic bed, lead, counterpoint, accent,
+  percussion, and atmosphere
+- more deliberate orchestration so pieces feel arranged rather than layered
+- a better balance between pleasant, strange, tender, chaotic, and alien
+- more pieces worth revisiting, comparing, evaluating, and refining
 
-### Four Tet-style arps + Colundi scale piece
+Concrete piece prompts:
 
-A concrete piece-shaped direction that has been sitting in the inspirations
-list: wandering, organic Four Tet-ish arpeggios in the Colundi scale.
-Colundi's 11-limit and septimal intervals (11/10, 19/16, 49/30, 7/4) pair
-naturally with the additive engine's JI / septimal / 11-limit presets and
-the FM bell/harp voices — tuning and timbre pull from the same ratio
-world, so the arp texture lands as coherent rather than "a normal arp,
-retuned."
+- **Generative Music that Sounds like Music**: not modular slop. real music. 
+  maybe using creative ideas or generative approaches that create more memorable patterns,
+  locking in patterns, mixing generative and traditional composition, etc.
+- **Loveless-adjacent smearing:** fragmented chords, global glide/tremolo-bar
+  bends, sus2/sus4/add9 ambiguity, octave duplication, chorus, saturation, and
+  polyrhythmic drift.
+- **More with Erv Wilson's CPS**: we have one piece with this, interesting.
+  Let's use it more. New directions?
+- **Utonal / subharmonic form:** darker undertone passages that contrast with
+  otonal material inside a coherent structure.
+- **Four Tet-ish Colundi arps:** warm, organic arpeggios using the Colundi-ish
+  11-limit / septimal world, with additive, FM bell, grain, and smear textures.
+- **Trance / progressive house:** slightly cheesy harmonic movement in alt
+  tunings, with real rhythm and mix confidence.
+- **Fake found sound:** sample-free synthetic field-recording / Burial-adjacent
+  atmospheres that can sit inside pieces.
 
-Sketch:
+### Better Composition Tools
 
-- 3–5 minute piece with an evolving arp as its spine. Lean into Four Tet's
-  warm, slightly blurry, pleasantly hypnotic feel rather than cold
-  sequencer tightness.
-- Pair the arp with one or two contrasting layers — a low additive drone,
-  a soft FM bell countermelody, or a granulated texture from the
-  `synth_voice` grain slot — so harmony emerges from partial
-  relationships, not just the arp notes.
-- Use `Groove` presets (`mpc_tight` for subtly-human grid feel) and
-  `thicken` / `pitch_wobble` from `smear.py` for the organic wobble that
-  keeps Four Tet-ish arps from sounding grid-locked.
-- See the "Colundi-ish Scale" subsection in Medium priority for the scale
-  reference (don't duplicate it here).
+The composition layer is useful, but writing finished music should be faster.
 
-Open question this piece can help answer: can we build xenharmonic arps
-that feel musical and memorable, not just exploratory?
+Useful next helpers:
 
-### Better piece-generation and phrase-writing tools
-
-The composition layer is now real and useful, but it can still become much
-faster and more musical.
-
-Most valuable next helpers:
-
-- richer phrase transformation helpers beyond the current set
-- more idiomatic generators for pedals, blooms, suspensions, staggered entries,
+- phrase transformations beyond the current core set
+- idiomatic builders for pedals, blooms, suspensions, staggered entries,
   harmonic-series gestures, and contrapuntal restatement
-- voice-leading helpers for otonal and utonal spaces that stay readable rather
-  than turning into tuning math soup
-- higher-level section builders that make it easier to restate material with new
-  orchestration, local tonic reinterpretation, or registral shift
-- overlap, beating, density, and register summaries that better flag when a
-  texture has become too static, too crowded, or too continuously drony
+- readable otonal / utonal voice-leading helpers that do not become tuning math
+- section builders for restating material with new orchestration, local-tonic
+  reinterpretation, or registral shift
+- summaries for overlap, beating, density, register, and static/crowded textures
+- Riemannian / neo-Riemannian helpers where they fit the tuning world
+
+### VST / DAW Export
 
-### Chord smearing and loveless-adjacent ideas
+Expose the strongest native voices and effects as Ableton-usable VST3/AU tools
+without rewriting everything in C++.
 
-- on loveless, shields uses repitching to create smearing, ambiguity, reaching, yearning. let's capture some of this.
-- so on a guitar, fragmented chords + global pitch bend (tremolo)
-- interfaces between multiple voices, layering, collaboration
-- relatively simple progressions
-- seconds, sus2/sus4 unresolving, add9, etc.
-- octave duplication of notes for size
-- stereo, chorus, etc., but as bonuses, the core is the score
-- possibly: out of sync, polyrhythmic, weird drums
-- stacked saturation and warmth
+Likely shape:
 
-### Creative composition helpers
-
-- riemann
-
-### Additive Synthesis Specifically
-
-  Additive lets us not assume traditional harmonic structure.
-  e.g. we can have harmonics of just intervals, not e.g. simple sawtooth harmonics
-  this should unlock some interesting creative opportunities.
-  for example -
-
-  1. Bell / mallet / metal / glass / struck-material sounds
-  These are already naturally inharmonic or quasi-inharmonic, so they pair beautifully with unusual tunings. Xenharmonic music often feels more convincing when the timbre does not keep insisting on a standard harmonic ladder.
-  2. Drones and spectral harmony
-  If you want harmony to emerge from partial relationships rather than chord symbols, additive is almost ideal. You can sculpt consonance directly in the spectrum.
-  3. Pads with “non-Western” or ambiguous tonal centers
-  A subtractive pad often still sounds like “a normal synth pad but retuned.” An additive pad can sound like it came from a different musical physics.
-  4. Timbre-harmony fusion
-  You can make a chord whose note frequencies and internal overtone structures are both drawn from the same ratio world.
-  We should consider how to do this with a clean, musical interface that encourages sane defaults and easy programming, and modularity.
-  Explicit spectral partial sets, onset-to-sustain spectral morphing, and the
-  first JI/septimal/11-limit/utonal role-oriented presets are all implemented.
-  Remaining work:
-
-- richer stereo-from-spectrum tools so different partial groups can occupy subtly different widths/positions
-- automatic register-aware darkening / brightness limiting so high notes do not get brittle and low notes do not get muddy
-- controlled inharmonic stretch and physical-object style detuning beyond the current gentle upper-partial drift
-- deeper programmable per-partial envelopes and modulation beyond the current onset/sustain morph
-- a broader role-oriented preset family expanding beyond the current JI / septimal / 11-limit / utonal set
-- **Vital-style spectral morphs on the existing partial bank** — frequency-domain
-  transforms applied to the additive engine's partials at render time: inharmonic
-  stretch (`pow(stretch, log2(partial_index))`), phase dispersion (quadratic
-  phase offset centered at harmonic 24), amplitude smear (running average across
-  harmonics), Shepard tone wrapping (octave-wrapped harmonic crossfade). These
-  operate on the existing partial data without requiring a wavetable — they're
-  orthogonal to and simpler than the wavetable engine's spectral morphs. Source:
-  Vital WavetableOscillator (the transforms are separable from the wavetable
-  frame machinery).
-- **Sigma-approximation (Lánczos σ-damping) for band-limited additive
-  tables** — multiply each Fourier coefficient by `sinc(K/(MaxK+1))`
-  before summing instead of hard-truncating. Removes Gibbs ringing at
-  near-zero CPU cost. Strictly better than our current hard truncation.
-  Source: MZ2SYNTH wavetable build (`SOURCE/wvecmp.f90`).
-- **Brush/Flow exciter as an additive-or-organ "breath" source** — rare-
-  event stochastic sample-and-hold. `threshold = 0.0001 + 0.125·param^4`;
-  flip state when `rand < threshold`; output = `state + (rand - 0.5 -
-  state)·param^4`. Ten lines. Produces organic/breathy character that
-  uniform noise and plain S&H can't. Pairs well as a note-onset exciter
-  for pad/breath voices. Source: Mutable Instruments `elements/dsp/
-  exciter.cc::ProcessFlow`.
-
----
-
-## Medium priority
-
-### A few concrete references to draw inspiration from in future pieces
-
-- "at les"
-- "aisatsana"
-
-(The "four tet-y arps + Colundi scale" idea has graduated to its own
-High-priority subsection above.)
-
-### MI modules
-
-rings, clouds etc - open source. get inspired
-
-### Fake found sounds and field recordings
-
-I'm trying to keep this repo relatively sample free. but i'd like to be able
-to synthesize "field recordings." these don't have to be perfectly realistic.
-but it could be fun to generate vibe-y found-sound-ish field recording bits.
-think burial's *untrue*.
-
-### Sample player
-
-both for drums (supported I think already) and for foley/atmospheric bits
-
-### 90s/00s VA Voice
-
-Let's build something inspired by the Virus C and TI, Waldorf Q, and Roland JP8k.  
-I'm looking for the sweetness, satisfyingly plasticky texture, maybe customizable aliasing, efficient supersaw, etc.  
-(We should research what's known about their code to produce something similar; the algos should be pretty basic.)
-Relatedly but not equivalently - a voice inspired by Spire, or a variation of the VA engine.
-Relatedly but not equivalently - a perfect VA voice - clean, mathematically accurate, not an analog emulation or 90s/00s VA.
-
-### Slop, swing, and drift extensions — Groove Implemented
-
-Timing, envelope, and velocity humanization were already in place.
-**Groove templates are now implemented** in `meter.py`: the `Groove`
-class replaces `SwingSpec` with per-step timing offsets + velocity
-weights, factory swing methods, and named presets (`mpc_tight`,
-`dilla_lazy`, `motown_pocket`, `bossa`, `tr808_swing`). `Timeline`
-accepts `groove=` for grid-aware feel. General `tuplet(n, m, value)`
-is also implemented for quintuplets, septuplets, etc.
-
-Remaining follow-up:
-
-- tempo maps and tempo automation (accelerando, ritardando)
-- metric modulation helpers (pivot between related tempi)
-- groove extraction from audio references (analyze a WAV, produce a
-  `Groove` template)
-- per-voice groove offsets (e.g. drums slightly ahead, bass slightly
-  behind)
-
-### Polyrhythm/polymeter — Partially Implemented
-
-`polyrhythm(a, b, span)` and `cross_rhythm(layers, span)` are
-implemented in `composition.py` for building interlocking rhythmic
-layers. Rhythmic phrase transforms (`augment`, `diminish`,
-`rhythmic_retrograde`, `displace`, `rotate`) are also implemented.
-Generative rhythm tools (`prob_rhythm`, `AksakPattern`, `ca_rhythm`,
-`mutate_rhythm`) extend this further.
-
-Remaining follow-up:
-
-- polymeter helpers where voices run in different time signatures
-  simultaneously (current tools handle polyrhythm within a shared
-  span, but not independent meters)
-- metric phasing helpers (Steve Reich-style gradual phase drift
-  between voices)
-
-### Autoresearch, for music — Evaluation Implemented
-
-  **Standalone evaluation is implemented** (`make evaluate PIECE=...`).
-  Four LLM judges (Opus 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5) run in
-  parallel via Claude Code headless, scoring each piece across five broad
-  dimensions (Musical Substance 25%, Structure & Form 20%, Texture &
-  Expression 15%, Completeness 10%, Open Subjective 30%).  Judges receive a
-  rich multimodal packet (score snapshot, timeline, analysis manifest,
-  piano-roll/spectrogram/density PNGs).  Scores are aggregated by median with
-  inter-judge agreement tracking.  Results are saved as `eval.json` per piece
-  and appended to `output/eval_log.jsonl` for longitudinal tracking.
-
-  Anti-reward-hacking design: generators receive only an aggregate score plus
-  a brief qualitative synthesis — never the rubric, per-dimension scores, or
-  individual judge responses.  See `code_musics/evaluate.py` and
-  `code_musics/eval_rubric.py`.
-
-  Remaining work toward full autonomous loop:
-
-- **Closed-loop orchestrator**: a composer agent modifies `build_score()`,
-    renders, evaluates, decides keep/discard (git-as-state-machine, inspired
-    by [karpathy/autoresearch](https://github.com/karpathy/autoresearch)),
-    and iterates with only the synthesized feedback.
-- **API judge backends**: Bedrock, OpenRouter, or direct Anthropic API
-    calls for faster invocation and access to non-Anthropic models.
-- **LLM-based feedback synthesis**: replace the current template-based
-    concatenation with a dedicated synthesis pass for more natural prose.
-- **Rubric calibration**: run evaluations on several pieces and tune
-    dimension descriptions, scale anchors, and weights against human taste.
-- **Ranking/comparison mode**: generate N variations of a section, judge
-    all, and rank them.
-- **Audio-capable judges**: feed actual audio (or spectrograms as images)
-    to omnimodal models (Gemini, Gemma4) for judges that can hear.
-
-### More voice engine unification
-
-The unified `synth_voice` engine shipped (see `docs/synth_api.md`). Four
-parallel slots — `osc` / `partials` / `fm` / `noise` — summed into a
-shared post-chain, with four perceptual macros and 15 curated
-cross-pollination presets. Deferred extensions, in priority order:
-
-- **(med) Modal / physical resonator as an operator slot.** Add a
-  `physical` or `resonator` slot type that exposes the modal-bank +
-  hammer/pluck primitives already in `piano.py` / `harpsichord.py` /
-  `_modal.py` as composable layers. End state: `physical_type="pluck"`
-  - `osc_type="supersaw"` + ladder filter as a single voice, instead of
-  having to choose between the `harpsichord` and `synth_voice` engines.
-  Biggest win in unification terms.
-- **(med) Hard-sync and per-slot cross-modulation.** `osc_hard_sync`
-  currently raises `NotImplementedError` when `osc2_level > 0` — the
-  full hard-sync path from `polyblep.py` needs porting. Also useful:
-  FM modulator feeding osc detune or filter cutoff without going
-  through the full `ModConnection` matrix.
-- **(low-med) 4-op / 6-op FM algorithm matrix.** Today's `fm_type="two_op"`
-  covers DX bells, Rhodes-ish tines, modulator-as-timbre. DX7-style
-  4-op / 6-op needs an algorithm-selection surface (carrier-modulator
-  graphs). Non-trivial UX design — defer until a piece actually wants it.
-- **(low) Full modular patching / routing matrix.** Named source nodes
-  routed through named filter/shaper nodes with arbitrary feedback, à
-  la Surge XT / Reaktor. The existing `ModConnection` matrix handles
-  slow-rate modulation; this would cover audio-rate cross-patching.
-  Explicitly out of v1 scope.
-- **(low) "Two of a kind" slots.** Stack two supersaws in one voice, or
-  two additive banks at different octaves. Today you'd use two voices;
-  a wildcard `extra_a` / `extra_b` slot would keep it in one voice. Only
-  worth it when a piece actually feels constrained by one-slot-per-type.
-- **(low) Organ full parity.** Drawbar spectra are covered by
-  `partials_type="drawbars"`; key-click, tonewheel crosstalk, and the
-  scanner vibrato would need explicit slots or preset bundling. Probably
-  better left to `organ.py` — flagged so we don't forget the scope call.
-
-### Timbre and mix automation
-
-  Automation now exists, but it is still an intentionally limited v1 surface.
-
-  Useful next steps:
-
-- extend automation beyond the current synth-param and `pitch_ratio` targets
-    into pan, gain, effect wetness, and plugin parameters
-- phrase-level timbre gestures so sounds can evolve musically without low-level
-    automation plumbing in every piece
-- more reusable automation idioms for opening, darkening, widening, blooming,
-    and settling
-- stronger analysis feedback so we can verify whether a sound actually opens,
-    softens, or narrows the way intended
-
-### Modulation architecture
-
-Ideas for the modulation wiring layer itself (not new sources — see below
-for those).
-
-- ~~**Per-connection modulation remap (Vital-style)**~~ — shipped in
-  `code_musics/modulation.py` as `ModSource` + `ModConnection`
-  (bipolar/stereo/power/breakpoints/mode) with `Voice.modulations`,
-  `Score.modulations`, and `Score.add_macro(...)`. See
-  `docs/score_api.md` for the surface.
-
-  **Deferred from the MVP (crisp list):**
-  - **Per-sample coverage of more synth destinations.** Only
-    `cutoff_hz` is lifted to per-sample in MVP via engine
-    `param_profiles`. All other synth destinations
-    (`filter_morph`, `resonance_q`, `hpf_cutoff_hz`,
-    `filter_env_amount`, `filter1/2_*`, `comb_*`,
-    `feedback_amount`, `drive_amount`, `vibrato_depth`,
-    `vibrato_chorus`, and the rest of
-    `_SUPPORTED_SYNTH_AUTOMATION_PARAMS`) are still sampled **once
-    at note onset**. Lifting these requires per-engine profile
-    plumbing in `polyblep` / `filtered_stack` / `va` / `organ` and
-    friends. The next wave should go after `filter_morph` and
-    `resonance_q` since they already ride alongside `cutoff_hz` in
-    the filter block.
-  - **Stereo for mono synth destinations.** `stereo=True` only
-    affects stereo-aware destinations (`pan`, stereo control
-    lanes). Mono engine params currently collapse to the mono sum.
-    Future work: engine support for stereo profiles (e.g., per-L/R
-    cutoff split, per-L/R detune) to make the `ConstantSource`
-    pan-split trick work for any destination.
-  - **Stereo sources for mono destinations — deferred.** The
-    current MVP workaround is to use two voices with opposite
-    `ConstantSource` `amount` signs (see
-    `code_musics/pieces/mod_matrix_study.py`). A native stereo
-    source layer would let a single voice fan out L/R
-    independently without doubling the voice count.
-  - **Unification of humanization into the matrix.** Humanization
-    (`TimingHumanizeSpec` / `EnvelopeHumanizeSpec` /
-    `VelocityHumanizeSpec`) keeps its existing surface; its
-    `DriftSpec` is exposed via `DriftAdapter` so the curve is
-    reusable, but humanization itself is not yet a matrix
-    connection. Deferred because the current humanization
-    ergonomics are good and a forced migration would churn every
-    existing piece.
-  - **`VelocityParamMap` -> matrix migration.** Kept as sugar.
-    Future work: auto-lower to a `VelocitySource` connection so
-    there's one preferred path.
-  - **Per-sample macros on note-local time.** Macros evaluate
-    against the absolute render time grid. If a future use case
-    wants a macro that retriggers per note or snaps to note-local
-    time, we need a dedicated "per-note macro" variant.
-  - **Beat-synced LFO rates.** `LFOSource.rate_hz` is free-run in
-    seconds. Beat-synced rates (e.g., `1/4`, `1/8T`) would need
-    meter/timeline integration — tracked against the broader
-    tempo-maps entry below.
-  - **Drawable curve editor UX.** `ModConnection.breakpoints`
-    accepts hand-authored `(x, y)` pairs but there's no graphical
-    editor or library of named curve shapes. Low priority until we
-    feel the pain.
-  - ~~**Effect wet/mix/wet_level matrix coverage.**~~ **Implemented.**
-    `synth.apply_effect_chain` now accepts `matrix_connections` and
-    `source_sampling_context`; `_resolve_effect_amount_automation`
-    combines matrix contributions with the existing `AutomationSpec`
-    curve via `combine_connections_on_curve`. Wired into the voice,
-    send-bus, and master effect chains in `score.py`. Voice-scoped
-    connections reach voice effects; score-scoped connections reach
-    send-bus effects and master effects. See
-    `TestEffectWetMatrixFold` in `tests/test_modulation.py`.
-
-  Source: Vital `ModulationConnectionProcessor`.
-- ~~**Diva-style global `accuracy` dial**~~ **Implemented.** Engine-level
-  `quality` parameter on polyblep and filtered_stack with tiers
-  `draft`/`fast`/`great`/`divine` controlling oversampling (1/2/2/4x) and
-  the ladder solver (ADAA vs Newton-iterated ZDF). See
-  `docs/synth_api.md` "Quality Modes".
-- ~~**Iterative Newton solver on external filter feedback loop.**~~
-  **Partially implemented.** `_filters.py` now closes the external
-  feedback loop implicitly for the eight analog topologies — linear
-  SVF, cascade, SEM, Sallen-Key, ladder-Newton, Jupiter-Newton, **K35**,
-  and **diode** (the last two added in the April 2026 analog-modeling
-  maturation pass). Uses a shared `_solve_ext_feedback_newton` helper
-  for pure-affine-body topologies and combined scalar Newton residuals
-  for topologies with additional internal nonlinear feedback. The
-  default `FilterParams.filter_solver` is `"newton"` so pieces get the
-  delay-free feedback path by default. Remaining unit-delay hold-outs:
-  - **Driven SVF path (`filter_drive > 0`).** The pre-filter `tanh(x)`
-    shape makes the instantaneous input-to-output map nonlinear in `x`,
-    so the affine-collapse derivation used for the clean linear path
-    does not apply. Drive + ext FB is a rare combination; if tackled,
-    consider a two-pass fixed-point iteration around the affine
-    linearisation instead of closed-form Newton.
-
-  Reuse `_solve_ext_feedback_newton(y_warm, affine_const, fb_scale,
-  fb_drive, max_iters, tol)` for pure-affine-body topologies. For
-  topologies with an additional internal tanh feedback (ladder, Jupiter,
-  diode), extend their existing scalar Newton residuals with the
-  outer-feedback term following the pattern in
-  `_apply_ladder_filter_newton_inner` (`outer_newton` branch).
-
-### Modulation sources and aliveness
-
-Ideas for richer, more organic modulation beyond the current humanization and
-automation surfaces.
-
-- **Lorenz attractor as modulation source** — 3 coupled ODEs (sigma=10, rho=28,
-  beta=8/3), Euler or RK4 integration at control rate (~100-500 Hz). Produces
-  chaotic but smooth 3-output modulation. Non-repeating, organic. Three outputs
-  can modulate different targets with natural correlation (e.g. filter cutoff,
-  pan, send level). Source: Vital's random LFO mode.
-- **Enhanced sample-and-hold with slew limiter** — Buchla 266 "Source of
-  Uncertainty" style. Clock-triggered random values with adjustable one-pole
-  slew for everything from stepped staircase to smooth organic curves.
-- **Envelope follower as general modulation source** — already exists inside
-  saturation and compressor effects but not exposed as a reusable modulation
-  routing target. Would enable sidechain-style cross-voice modulation of
-  filter, pan, send, etc.
-- **Ornstein-Uhlenbeck process as general modulation** — mean-reverting random
-  walk (`dx = theta*(mu-x)*dt + sigma*dW`) that naturally returns to center
-  without hard clamping. Better character than clamped random walk for filter
-  cutoff, pan, etc. (Note: our current `build_cutoff_drift` is sine-based, not
-  truly O-U, despite being documented as such.)
-- **Per-sample oscillator phase noise** — tiny random perturbation to phase
-  accumulator (distinct from pitch drift which is coherent). Simulates real
-  oscillator zero-crossing jitter. Subtler and higher-frequency than existing
-  drift.
-- **Helm-style smoothed-random LFO** — at each LFO period boundary, draw a new
-  uniform random `[-1, 1]`; between boundaries crossfade via
-  `t = (1 - cos(π·phase))/2`. Five lines. Sits alongside our existing
-  `random_walk`/`smooth_noise`/`lfo`/`sample_hold` styles in `DriftSpec` but
-  has a distinctive organic-wobble character that the others miss — neither
-  woolly like filtered noise nor blocky like S&H. Source: Helm `helm_lfo.cpp`.
-- **Shared drift bus with correlation knob** — our drift is per-voice
-  independent. A single slow (0.05–0.5 Hz) random-walk generator mixed into
-  every voice at configurable depth, with a `correlation ∈ [0, 1]` knob that
-  blends between "fully independent" and "fully shared," replicates the
-  modular-rack-patched-to-one-S&H feel. Complements `follow_strength` in
-  humanization (which correlates timing/velocity but not pitch/cutoff drift).
-  Sources: VCV Eurorack idiom + Surge DriftLFO.
-- **OB-Xd dual-layer voice variance** — we have stable per-voice card offsets
-  (slow) and per-note jitter (fresh per note). Missing: the OB-Xd fast-layer
-  per-sample CV dither (`pitch += dirt*noise` with `dirt≈0.05 semitones` on
-  pitch and `±3%` on cutoff), applied continuously on top of the stable
-  seed. Gives "the CV rail isn't clean" character — held chords breathe
-  subtly without the slow drift being cranked up. Source: OB-Xd
-  `ObxdOscillatorB.h::ProcessSample` and `ObxdVoice.h::ProcessSample`.
-
-### Utonal, subharmonic, and drift-based harmony
-
-  The helper layer exists, but there is still a lot of compositional ground left
-  to cover.
-
-  Most interesting directions:
-
-- darker subharmonic passages that feel structurally intentional, not just novel
-- stronger overtone / undertone contrasts inside a single form
-- phrase-level recontextualization helpers that make comma drift and local tonic
-    reinterpretation easier to write as normal music
-- voice-leading idioms that stay elegant while harmonic context shifts
-
-### Trance, progressive house
-
-  fun genres to explore alt tunings in, since they're so reliant on harmony
-  let's get slightly cheesy
-
-### Colundi-ish Scale
-
-See the Colundi scale definition in `AGENTS.md`. Interesting exploration
-territory for a piece — the 11-limit and septimal intervals (11/10, 49/30,
-7/4) pair well with the additive engine's xenharmonic presets.
-
-### Pianos
-
-  **Modal piano implemented.** The `piano` engine now uses modal synthesis with
-  physical hammer-string interaction: a nonlinear contact model
-  (`F = K * max(delta, 0)^p`) excites a bank of second-order resonators, so
-  velocity naturally shapes timbre through the hammer physics. Two-phase
-  rendering (Numba JIT contact + vectorized NumPy decay) keeps it tractable.
-  Supports unison strings with drift, soundboard coloring, body saturation,
-  damper noise, and custom partial ratios for xenharmonic timbre-harmony fusion.
-  Eight presets including a septimal variant.
-
-  The legacy additive piano is still available as `piano_additive`.
-
-  Architecture note: the contact simulation's audio output is NOT used directly
-  (its coherent peak creates extreme crest factors).  Instead, the simulation
-  initializes mode states and the entire audio output comes from the free decay
-  with an 8ms cosine fade-in.  Reintroducing contact audio properly would
-  require bridge/soundboard absorption modeling to tame the coherent peak.
-
-  Known calibration gaps:
-
-- Upper harmonic content is still low (~1.5% energy above 2 kHz vs 5-15% for a
-  real piano).  The 1/k output rolloff + felt filtering + natural 1/ω resonator
-  response triple-dips on high-frequency attenuation.  Fixing this properly
-  requires compensating for the resonator's frequency-dependent response.
-- Unison beating creates ~25 dB AM at ~5 Hz on individual voices.  Real pianos
-  have bridge-mediated coupling that dampens beating over time (double decay).
-  Adding bridge coupling would help.
-- Velocity-dependent timbral variation is subtle — the normalized waveforms
-  for soft vs loud hits are very similar.  The hammer contact does change the
-  mode excitation, but peak normalization partially masks the effect.
-
-  Follow-up ideas for the modal `piano` engine:
-
-- Bridge/soundboard absorption during contact (enables using contact audio
-  in the output for a more realistic attack transient)
-- Sympathetic string resonance (cross-note coupling; requires voice-level
-  awareness so undamped strings can ring in sympathy with active notes)
-- Double decay via bridge coupling (fast initial decay from energy transfer
-  to soundboard, slow secondary decay from residual string energy)
-- Sustain/una corda pedal modeling
-- Feedback delay network (FDN) body model replacing the resonator bank for
-  richer, more realistic soundboard response
-- Bass longitudinal mode enhancement (phantom partials from nonlinear
-  string-bridge coupling in the low register)
-- Register-dependent hammer mass/position (bass hammers are heavier and strike
-  further from the bridge than treble hammers)
-- Frequency compensation for resonator response rolloff (the modal resonators
-  naturally attenuate high-frequency modes by ~1/ω; compensating for this
-  in the input weights would let the felt filtering alone shape the spectrum)
-- Higher-order hammer contact models (wave-digital formulation for improved
-  numerical stability at high stiffness)
-- Soundboard PDE / measured IR convolution for more realistic body resonance
-- Duplex scaling (upper bridge treble resonance adding shimmer to high notes)
-- Multi-axis velocity response (velocity modulates decay, damping,
-  inharmonicity, hammer position simultaneously -- not just loudness and
-  hammer stiffness)
-- Prepared piano extensions (muting, objects on strings -- mute_position,
-  mute_amount, extra inharmonic partial layers from bolts/screws)
-- **Rings-style modal position via cosine-amplitude weighting** — if/when
-  we revisit the modal engine. Rather than post-filtering to simulate
-  pickup position (which flangers when modulated), encode position as
-  per-mode amplitude weighting: `amp[k] *= cos(2π·k·position)`. Moving
-  position is just re-weighting the mode sum — no delay, no flanger
-  artifact. Bonus: free odd/even stereo split (Out = sum of even modes,
-  Aux = sum of odd). Also adopt RT60 damping parameterization
-  (`rt60 = 0.07 * 2^(damping*8)` seconds) instead of raw feedback
-  coefficients — much more musical to reason about. Source: Mutable
-  Instruments `rings/dsp/resonator.cc`.
-
-  Follow-up ideas for `piano_additive` (legacy engine):
-
-- Register-dependent spectral templates (different partial profiles for
-  bass/mid/treble)
-- Pitch-scaled attack duration (higher notes get proportionally faster attacks)
-- Per-note soundboard coupling
-
-### Pianoteq
-
-  I have a Pianoteq license and the Linux package downloaded. We can try setting it up headless.
-  (Pianoteq is famous for microtonal support but we'll need to hack around a bit to hopefully get it running without a DAW.)
-  (Surge XT instrument hosting is now working via pedalboard — the VSTi
-  hosting path is proven. Pianoteq would use the same mechanism.)
-
-### Co-design scale + synth
-
-- Additive synthesis + scale. works great with non-octave scales, e.g. Colundi (since we can omit octave harmonics)
-- FM, similar story
-- Physical modeling: we can use physical models with *harmonics that are compatible with our scale*. e.g. Aleksi Perala does very cool xen bells
-- Granular (not necessarily *great* for xenharmonic but doesn't have the octave bias of subtractive synths)
-
-### Combination Product Set - Harmonic Lattice (Erv Wilson)
-
-- cool idea. let's try.
-
-### Some JI intervals I haven't used much, to try
-
-- 6:7:9 (septimal minor / subminor triad)
-- 11/9 neutral third triads
-- 9/7 (supermajor third)
-- Utonal tetrads (1/4:1/5:1/6:1/7) (we have already explored utonal a bit)
-As always, *musically* not just throwing weird intervals out there randomly.
-
-### Tuning-aware effects
-
-- **Tuning-aware chorus** — delay times relative to note period rather than
-  fixed ms, avoiding 12-TET comb filtering artifacts on pure JI intervals.
-  Conventional chorus at fixed delay times can smear or cancel partials
-  that should be clean in JI; scaling delay to the note's period preserves
-  interval purity.
-- **Consonance-shaped unison** — detune spread weighted toward harmonically
-  related intervals rather than symmetric cents. Instead of +/- N cents,
-  detune voices toward nearby ratios (e.g. 3/2, 5/4) so the beating
-  reinforces the harmonic series rather than fighting it.
-
-### Non-octave-privileged distortion
-
-  Traditional distortion/saturation relies on octave-based products.
-  Could we do something interesting with *other* multiples?! Aligned with our scale.
-
-### Better effect integration and routing
-
-The effect story is much better than it used to be, so this is no longer about
-basic availability. It is about making the mix path more deliberate and easier
-to shape.
-
-Most promising directions:
-
-- richer modulation and shaping such as tremolo, autopan, filtering, and
-  transient emphasis
-- role-based effect presets such as `glass_pad`, `sub_drone`, `reed_lead`, or
-  `dark_hall`
-- better dry/wet and send-style routing so ambience can be shaped more
-  intentionally
-- continued plugin-backed EQ / glue / color exploration with a bias toward
-  stable Linux-native VST3 or LV2 paths
-
-#### BBD ensemble chorus
-
-6 parallel delay lines with 120-degree LFO phase offsets (the Juno/Dimension D
-secret). Dual-LFO modulation at ~0.18 Hz and ~5.52 Hz. Anti-alias filter cutoff
-tracks clock rate. This is the classic thick-but-clear chorus character that
-plugin chorus approximates but rarely nails. Source: Surge BBDEnsembleEffect.
-
-Our current `apply_chorus` is a digital LFO chorus styled "Juno-inspired,"
-not a BBD model. A Juno-faithful rebuild (stereo quadrature LFOs + cross
-feedback + pre/post bandlimiting + optional soft compander per channel) is
-the biggest single effect gap. Mode defaults based on Juno service manual:
-
-- Mode I: base 3.2 ms, depth ±1.5 ms, rate 0.51 Hz, cross-fb 0.08
-- Mode II: base 4.4 ms, depth ±2.8 ms, rate 0.83 Hz, cross-fb 0.20
-
-Critical implementation details:
-
-- sum dry + wet (don't crossfade)
-- quadrature LFOs (π/2 offset between L and R delay times)
-- cross-feedback (L→R and R→L, not self-feedback) for airy stereo width
-- fractional-delay interpolation, ideally 3-point Lagrange
-- pre/post 6 kHz LPF + 120 Hz HPF for BBD bandlimiting
-- optional gentle per-channel soft compander or tanh for BBD character
-
-Sources: Juno-106 emulation (`stevengoldberg/juno106`) + general BBD
-knowledge + Surge `sst-effects/BBDEnsembleEffect.h`.
-
-#### Wavefolders
-
-Linear fold and sine fold as effect-chain waveshapers. `linear_fold:
-|mod(x*drive*0.25+0.75, 1)*-4+2| - 1`, `sine_fold: sin(x*drive*pi)`.
-Different character from saturation — adds harmonics by folding the waveform
-back on itself rather than clipping. Useful for aggressive timbral shaping
-and west-coast-style processing. Source: Vital.
-
-#### Filter drive and saturation
-
-The native saturation effect now uses a two-stage analog-style path with
-optional clean low/high-band preservation and higher-fidelity processing.
-The old fuzzy/aliased behavior is gone. Remaining area to explore: whether
-the current saturation character is musically ideal across all use cases
-(e.g. gentle mix warmth vs aggressive drive vs bass-specific grit), or
-whether additional saturation modes/curves would help.
-
-Research finding: Vital uses 7 distinct saturation functions by role —
-`algebraicSat` (barely-there state limiting), `quickTanh` (softer knee),
-`bumpSat` (linear longer, sharper knee), `hardTanh` (clamp with soft
-overflow), etc. Exposing selectable saturation curves/modes rather than a
-single tanh-family shape would let the same effect cover gentle mix warmth,
-musical drive, and aggressive clipping without separate effect types.
-
-#### Analog modeling
-
-Ideas for more convincing analog character across the signal path:
-
-- **Thermal noise injection at specific signal path points** — pre-filter
-  (shapes through filter character), in filter feedback (prevents periodic
-  ringing), in release tail (circuit noise audible as signal fades). Each
-  injection point has different sonic character.
-- **Cross-voice oscillator bleed/crosstalk** — tiny fraction of neighboring
-  voices mixed in, simulating PCB trace coupling in analog polysynths.
-  Subtle but contributes to perceived warmth and ensemble cohesion.
-- **Per-sample oscillator phase noise** — see "Modulation sources and
-  aliveness" above. Distinct from pitch drift; simulates zero-crossing
-  jitter.
-- **Bootstrap 1e-6 noise on feedback paths** — a specific case of thermal
-  noise that's ubiquitous in quality analog models. Without it, a pure
-  digital ladder/feedback path at max resonance won't oscillate on
-  silence. One line at the input of our ladder filter and post-filter
-  feedback summation: `input += 1e-6 * (2*rng.uniform() - 1)`. Source:
-  VCV Fundamental `VCF.cpp`.
-- **Envelope curve shaping** — our `adsr()` uses pure linear segments. Known
-  gap. Minimum viable upgrade: add `attack_power`, `decay_power`, and
-  `release_power` exponents (defaults 1.0 for backward-compat) applied via
-  `y = pow(position, power)` per stage. Also consider VCV's overshoot
-  target trick (attack ramps toward 1.2, clamps at 1.0 — keeps the curve
-  curvy at the top instead of flattening). Sources: Vital DAHDSR, OB-Xd
-  exponential coefficient ADSR, VCV Fundamental `ADSR.cpp:ATT_TARGET=1.2`.
-- **Saturation-blend coefficient idiom** — instead of a boolean "driven"
-  flag on filters/stages, always compute both the clean and driven paths
-  and blend via a 0-1 coefficient. Zero modulation stepping when drive
-  modulates across zero. Surge's K35 does this with three coefficients
-  (`saturation`, `saturation_blend`, `saturation_blend_inv`). Source:
-  Surge `sst-filters/K35Filter.h`.
-
-#### Plugin reliability follow-up
-
-The recent plugin work surfaced issues around cached state and repeatable
-render behavior. Some of that has been fixed, but reliability is still a real
-follow-up area.
-
-Most valuable next steps:
-
-- reproduce plugin-specific artifacts in minimal fixtures when they show up in
-  real pieces
-- define a tighter test strategy for repeated renders, reset behavior, and
-  on/off toggles
-- sharpen the debugging split between host bugs, plugin bugs, and our parameter
-  mapping bugs
-- decide more explicitly when native effects should be preferred over external
-  plugins for stability
-
-### Surge XT Parameter Automation
-
-The `surge_xt` engine is implemented and working for basic rendering (see
-`docs/synth_api.md`). This section describes the follow-up work for
-automating Surge XT's internal parameters over time.
-
-We explored three approaches for automating Surge XT's internal parameters
-(filter cutoff, resonance, etc.) over time during a render:
-
-1. **MIDI CC automation** (`cc_curves` in engine params) — The infrastructure
-   works and sends CC messages during render, but Surge XT's init patch has no
-   CC-to-parameter modulation routing configured. The CCs arrive and are
-   silently ignored. This would work if the loaded patch had modulation routing
-   set up (e.g. CC74 → filter cutoff).
-
-2. **Chunked rendering** (`param_curves` in engine params) — Breaks the render
-   into short segments, updates plugin parameters between chunks, concatenates
-   with crossfade. **Fundamentally broken**: creates clicking/popping artifacts
-   at chunk boundaries because the plugin's internal DSP state (IIR filter
-   feedback, oscillator phase) cannot smoothly transition when parameters change
-   as step functions. Tried crossfade overlap (128 samples) and aggressive chunk
-   reduction (0.5 s down to 0.05 s) — neither fixes it. The artifacts are
-   generated inside the plugin before the output, so output-level crossfading
-   cannot help.
-
-3. **Native post-processing filter** (current workaround) — Render Surge XT
-   with a fixed bright filter, then apply a native lowpass EQ as a voice insert
-   effect with score-time automation. Sample-accurate, zero artifacts. Works for
-   overall brightness control but cannot access the synth's internal filter
-   character (resonance, self-oscillation, nonlinear feedback, etc.).
-
-**Path forward — configure Surge XT's modulation matrix via `raw_state`:**
-
-- Save a preset with CC→cutoff (and other parameter) modulation routing
-  configured, load it via `raw_state`, then use `cc_curves` to drive the
-  parameters via MIDI CC. This keeps the modulation inside the synth where it
-  belongs and gives access to the full filter character.
-- Alternatively, configure a very slow internal LFO (period = piece duration)
-  routed to filter cutoff via the mod matrix. Same challenge of getting the
-  routing into the state blob.
-- Both approaches require either figuring out Surge XT's state format
-  programmatically or using the GUI to configure routing and capturing the
-  resulting state.
-- MTS-ESP (already mentioned elsewhere in this file) would also complement
-  this for dynamic tuning changes without pitch bend.
-
-**Global-glide chord mode** (`mpe=False`):
-
-The `_build_global_bend_messages()` implementation provides correct
-tremolo-bar-style chord glides where the whole harmonic structure slides as a
-unit. The bass note gets perfect pitch; upper voices have up to ~31 cent error
-from MIDI note quantization (musically desirable for a loveless/shoegaze
-aesthetic). Chord-to-chord transitions glide smoothly over a configurable
-duration (default 0.4 s).
-
-### Harpsichord follow-up
-
-Follow-up ideas for the implemented `harpsichord` engine (see `docs/synth_api.md`
-for the current surface):
-
-- Karplus-Strong / waveguide alternative synthesis path (different timbral
-  character, more natural pluck sustain, but harder to integrate custom
-  partial ratios — would need a hybrid approach)
-- Additive synthesis with pluck envelopes (lighter computation, full spectral
-  control, but less physically grounded than the modal approach)
-- Coupling / sympathetic resonance between registers (currently registers are
-  independent; bridge coupling would let them interact)
-- Extended register palette: 16' sub-octave, nasalized/reed-like fantasy stops
-- Buff stop physical modeling (currently approximated with decay/brightness
-  scaling)
-
-### DawDreamer
-
-DawDreamer is a Python DAW framework with full MIDI + instrument hosting,
-Faust DSP compilation, RubberBand time-stretch, and complex routing graphs.
-It is GPLv3 — same license family as pedalboard (already a dep) — but the
-project prefers MIT for its own code, so evaluate carefully before adopting.
-Main value-adds beyond current pedalboard usage: Faust DSP compilation for
-rapid synth/effect prototyping, and CLAP plugin hosting. Consider if/when
-we need capabilities pedalboard cannot provide.
-
-### Analysis and feedback tooling
-
-Analysis is now useful and part of the normal workflow. Future work here should
-stay focused on iteration speed, not on building an in-repo DAW.
+- `CentaurVoice`: instrument plugin for `synth_voice`, `drum_voice`, and core
+  engines
+- `CentaurFX`: effect plugin for analog filters, color, compression, clipping,
+  limiting, chorus, reverb, and related native processing
+- thin JUCE shell plus an off-thread Python render worker, using shared-memory
+  buffers and intentional lookahead rather than embedded CPython on the audio
+  thread
+- first milestone: refactor engines toward `render_block(state, ..., note_off)`,
+  remove whole-buffer assumptions, and add typed parameter schemas
+
+Full design: `docs/plans/2026-04-26-vst-export-design.md`.
+
+## Medium Priority
+
+### Additive / Spectral Composition
+
+Additive synthesis is the best place to make tuning and timbre feel like one
+system instead of "normal synth, retuned."
+
+Open directions:
+
+- richer stereo-from-spectrum tools, such as partial-group width and panning
+- register-aware darkening / brightness limiting
+- controlled inharmonic stretch and physical-object detuning
+- deeper per-partial envelopes and modulation
+- broader role-oriented presets beyond the current JI / septimal / 11-limit /
+  utonal family
+- brush / flow exciters for organic breath and onset texture
+- more co-designed scales + spectra, especially non-octave and Colundi-ish
+  materials
+
+### Voice Engines
+
+Useful engine additions or unifications:
+
+- modal / physical resonator slot inside `synth_voice`
+- hard-sync and per-slot cross-modulation in `synth_voice`
+- selective 4-op / 6-op FM algorithm support if a piece needs it
+- wavetable engine with FFT-domain antialiasing and frame morphing
+- phase-distortion engine for a lightweight FM-adjacent color
+- waveguide string engine for plucked, dulcimer, guitar, and bowed textures
+- particle / dust engine for resonant stochastic textures
+- sample player follow-up for foley and atmospheric bits
+- Pianoteq headless/plugin path if the Linux setup is worth the friction
+
+Lower-value unless a piece demands it:
+
+- full modular audio-rate patch graph
+- multiple same-type slots in one voice
+- organ parity beyond current drawbar coverage
+
+### Rhythm, Groove, and Tempo
+
+Implemented foundations: groove templates, tuplets, polyrhythm, cross-rhythm,
+rhythmic transforms, probability rhythms, aksak patterns, CA rhythms, and rhythm
+mutation.
+
+Still useful:
+
+- tempo maps and tempo automation
+- metric modulation helpers
+- independent polymeter helpers where voices run their own cycles
+- Reich-style phasing helpers
+- groove extraction from audio
+- per-voice groove offsets, such as drums ahead and bass behind
+- stronger drum and hybrid-percussion identities in actual pieces
+
+### Modulation and Aliveness
+
+The modulation matrix exists; future work should make it more expressive and
+more consistently audio-rate where it matters.
+
+Worth doing:
+
+- per-sample coverage for more synth destinations, starting with
+  `filter_morph`, `resonance_q`, `hpf_cutoff_hz`, and feedback / drive params
+- stereo modulation for currently mono synth destinations
+- beat-synced LFO rates through meter/timeline integration
+- `VelocityParamMap` lowering into matrix connections
+- envelope follower as a reusable modulation source
+- Lorenz, Ornstein-Uhlenbeck, enhanced sample-and-hold, and shared drift-bus
+  sources
+- phrase-level timbre gestures for opening, darkening, widening, blooming, and
+  settling
+
+Keep current humanization ergonomics unless a migration clearly improves the
+authoring surface.
+
+### Effects and Mixing
+
+The effect story is no longer about basic availability. The next wins are better
+character, clearer routing, and more trustworthy analysis.
+
+Open ideas:
+
+- role-based effect presets such as `glass_pad`, `sub_drone`, `reed_lead`,
+  `dark_hall`, and drum-bus variants
+- a more faithful Juno / Dimension-style BBD ensemble chorus
+- wavefolder effects: linear fold and sine fold
+- tuning-aware chorus and consonance-shaped unison
+- non-octave-privileged distortion products
+- selectable saturation / clip curves for gentle warmth, musical drive, and
+  aggressive clipping
+- formant filter and Buchla-style low-pass gate
+- plugin reliability fixtures for repeated renders, reset behavior, on/off
+  toggles, and host-vs-plugin-vs-mapping failures
+- paid Linux-capable plugins (`u-he Satin`, `u-he Presswerk`) once activation is
+  low-friction enough
+
+### Evaluation and Iteration
+
+Standalone LLM evaluation exists. The next step is making it useful in a
+closed-loop composition workflow without reward hacking.
 
 Useful additions:
 
-- richer render-to-render comparison views
-- clearer summaries for orchestration, density, register use, and spectral
-  balance
-- analysis outputs that are even easier for agents to consume directly
-- selective visual improvements when they materially speed up listening and
-  revision loops
-
-### Testing & robustness
-
-Coverage baseline is 77.9% as of 2026-04-21 (`.coverage-baseline`), and
-`tests/test_pieces_smoke.py` now actually renders a 2s window of 10
-representative pieces. The remaining integration seams below have thin
-or missing end-to-end tests. Listed roughly by value — each entry names
-the seam, why a real regression there would sting, and a sketch of what
-a durable test would look like. Favor audio-level assertions (finite,
-no-NaN, level-in-range, spectral property) over mock-based assertions.
-
-1. **Snippet / render-window equivalence with the full render.**
-   - **Risk:** `make snippet` and `make render-window` are part of the
-     documented iteration workflow, but existing tests only check "it
-     runs and writes files." If `extract_window` silently offsets a
-     send-bus's delay feedback history, re-seeds a drift bus, or clips
-     a partial note, the inspector/snippet output lies about the full
-     piece and agents will debug phantoms.
-   - **Proposed test:** render a small multi-voice score twice — once
-     fully, once via `extract_window(a, b).render()` — and compare the
-     mid-window interior (skip leading reverb pre-roll and trailing
-     tail) via RMS-of-difference < 5% of signal RMS. Cover a score with
-     at least one send bus with feedback and one voice with automation.
-
-2. **Stem sum vs. pre-master mix is only loosely bounded.**
-   - **Risk:** `tests/test_stem_export.py` asserts `diff_rms < 0.1 *
-     signal_rms` — 10% is loose enough that a 1 dB gain-staging
-     regression or a double-counted send bus would slip through. Stems
-     are a consumer-facing artifact; silent drift between "sum of
-     stems" and "the mix you hear" is exactly what DAW users discover,
-     not tests.
-   - **Proposed test:** build a score with 3 voices (mixed LUFS + peak
-     normalization), 2 send buses with different return levels and
-     pans. Verify `sum(wet_stems) + sum(send_returns)` matches
-     `render()` output within 1e-6 RMS when `auto_master_gain_stage=
-     False` and `master_effects=[]`. Run a variant with one voice
-     hard-left, one hard-right, to catch stereo summation bugs.
-
-3. **Shared send-bus gain math with >2 voices and non-zero `return_db`.**
-   - **Risk:** `AGENTS.md` gives specific guidance that `return_db=0.0`
-     should be the default and voice fader + `send_db` does the work.
-     No test verifies the math when `return_db != 0`. A regression
-     that swaps `send_db` and `return_db`, or double-applies either,
-     passes today.
-   - **Proposed test:** three voices feeding one bus at different
-     `send_db` values and non-zero `return_db`, with the bus using a
-     pure-wet 100% `delay` so returns are measurable in isolation.
-     Assert each voice's contribution scales as
-     `db_to_amp(send_db + return_db)` relative to its post-fader stem,
-     within a tight tolerance. Parametrize across pan.
-
-4. **Mixing LUFS-normalized and peak-normalized voices in one score.**
-   - **Risk:** `AGENTS.md` explicitly calls out that kicks/drums must
-     use `normalize_peak_db=-6.0` and tonal voices should use
-     `normalize_lufs`. Nothing renders a real mixed-normalization score
-     and asserts combined sanity. A regression in the mutual-exclusion
-     handling or the dispatch branch gives silent percussion or
-     blown-out drums, only surfacing on full pieces.
-   - **Proposed test:** score with one drum voice (`kick_tom`,
-     `normalize_peak_db=-6.0`) and one pad voice (`synth_voice`,
-     `normalize_lufs=-24.0`), identical loudness-relevant amp levels,
-     rendered through `DEFAULT_MASTER_EFFECTS`. Assert both voices
-     appear in `voice_stems` with expected `peak_dbfs` bands, no
-     clipping, integrated LUFS within an expected window.
-
-5. **Default master-bus chain with `DEFAULT_MASTER_EFFECTS` on a real score.**
-   - **Risk:** `tests/test_shared_master.py` covers fallback dispatch
-     but nothing renders a score through the full `DEFAULT_MASTER_
-     EFFECTS` chain and asserts the output is musical (finite,
-     sub-clip, LUFS in expected region). The plugin-vs-native fallback
-     is a live branch; if Chow plugins fail to load and the native
-     fallback misbehaves, pieces that "sound finished" via the default
-     stop sounding finished.
-   - **Proposed test:** render a two-voice score with
-     `master_effects=DEFAULT_MASTER_EFFECTS`, once under normal
-     conditions and once with plugin availability mocked to `False`.
-     Assert both produce finite audio, the fallback path measurably
-     compresses (RMS lower, peak-to-RMS ratio reduced), and neither
-     clips.
-
-6. **Choke groups combined with `max_polyphony` and `legato`.**
-   - **Risk:** choke groups, mono polyphony, and legato are tested in
-     isolation but not combined. A hi-hat or percussion voice with all
-     three active is a plausible real-world config; the
-     note-scheduling interactions could silently drop or double-trigger
-     notes.
-   - **Proposed test:** two voices in a choke group, one with
-     `max_polyphony=1` + `legato=True`, interleaved overlapping note
-     events. Assert finite output, no NaN, and that the note-count in
-     the rendered envelope (via onset detection on a high-gated signal)
-     matches the expected count after choke cuts.
-
-7. **MIDI import → Score → MIDI export round-trip.**
-   - **Risk:** `read_midi` has parse tests and a real Bach file is
-     parsed, but nothing builds a `Score` from imported MIDI and then
-     exports it. If the score builder drops ticks, velocities, or
-     per-track voice info, it's silent data loss for anyone using the
-     library as a MIDI pivot.
-   - **Proposed test:** round-trip a small synthetic MIDI (3 voices,
-     varying velocities, 32 notes) through import → `Score` →
-     `export_midi_bundle` → re-read the stem. Assert note counts,
-     midi_note, velocity, and start/duration match within one tick.
-
-8. **`OscillatorSource` / matrix driving per-sample synth params on a full voice render.**
-   - **Risk:** engine-level audio-rate modulation is tested with
-     hand-built `param_profiles` arrays. No test wires
-     `OscillatorSource` → `ModConnection` → `Voice` → `Score.render()`
-     at audio rate and verifies sidebands in the final mix. A
-     regression in how `modulation.py` samples and threads the source
-     into `param_profiles` (the integration seam between matrix and
-     engine) would produce silent no-ops.
-   - **Proposed test:** score with a polyblep voice, `OscillatorSource`
-     at 80 Hz driving `pulse_width` through the mod matrix, held note
-     at 220 Hz. FFT the output; assert energy at 140 Hz and 300 Hz
-     (square-wave sidebands at f0 ± f_mod) relative to the unmodulated
-     baseline.
-
-9. **Cross-engine coverage for "engine-agnostic" features.**
-   - **Risk:** `sympathetic_amount`, voice `effects`, and the mod
-     matrix are documented as engine-agnostic, but
-     `tests/test_sympathetic.py` only exercises `additive`. If a new
-     engine skips the post-mix sympathetic resonator hook, the test
-     suite won't notice.
-   - **Proposed test:** parametrize sympathetic-resonance tests over
-     `{additive, polyblep, synth_voice, piano, harpsichord}`, asserting
-     `energy_on > energy_off` for each. Same template could verify
-     per-voice `effects` land across engines.
-
-### Repo structure follow-up
-
-The repo is in better shape than before, but a few architectural cleanups still
-look worthwhile:
-
-- split `code_musics/render.py` further into render orchestration vs artifact
-  metadata helpers if it keeps growing
-- tighten package API boundaries so internal modules rely less on compatibility
-  surfaces
-- decide whether the repo-root `synth.py` compatibility wrapper should stay,
-  move, or go away
-- consider whether generated `output/` artifacts should keep living in the repo
-  root by default or move behind a clearer workspace/output boundary
-
-### Wavetable engine
-
-Allows unique timbres — somewhat complicated, needs to be done right
-(aliasing etc).
-
-Research findings from Vital's `WavetableOscillator`:
-
-- **FFT-domain antialiasing**: store wavetable frames as FFT; at render time,
-  zero bins above Nyquist/f0 before IFFT. This is the clean way to avoid
-  aliasing without oversampling.
-- **Catmull-Rom cubic interpolation** between samples within a frame (better
-  than linear, cheaper than sinc).
-- **Linear crossfade between frames** during morphing (simple, artifact-free).
-- **Spectral morphs operating on frequency-domain frames**: inharmonic stretch
-  (`pow(stretch, log2(partial_index))`), phase dispersion (quadratic phase
-  offset centered at harmonic 24), amplitude smear (running average across
-  harmonics), Shepard tone (octave-wrapped harmonic crossfade). These
-  transforms also apply to the existing additive engine's partial bank — see
-  "Spectral/additive extensions" below.
-
-Source: Vital WavetableOscillator.
-
-### Phase distortion synthesis
-
-Warp the phase trajectory of a sine rather than modulating frequency (like FM).
-Asymmetric triangle modulator shapes phase; distortion depth scales with
-`timbre^2` and inversely with harmonic ratio (self-limiting aliasing). Simpler
-than FM, less aliasing, different character. Good candidate for a lightweight
-engine with strong timbral range.
-
-Source: Mutable Instruments Plaits.
-
-### Waveguide string engine
-
-Recirculating delay line (length = SR/f0) with Hermite cubic fractional delay.
-Two-stage loop filter (FIR brightness + IIR SVF lowpass) for
-frequency-dependent damping. Allpass in series for dispersion (stretches upper
-partials like real stiff strings). Dual detuned strings for beating.
-
-Complementary to the existing modal piano/harpsichord — fundamentally different
-sound (plucked guitar, dulcimer, bowed textures). Waveguides are cheap to run
-and naturally produce rich, evolving sustain that modal synthesis approximates
-with many modes.
-
-Source: Surge StringOscillator + Mutable Instruments Rings.
-
-### Particle/dust engine
-
-Stochastic impulse trains filtered through a resonant bandpass. Between "noise"
-and "pitched." Per-sample: random float vs density threshold triggers impulse
-through resonant BPF. Frequency randomized per block. Good for textural layers,
-transitional material, and percussion-adjacent voices that don't fit conventional
-drum or noise engine models.
-
-Source: Mutable Instruments Plaits particle.h.
-
-#### Utonal pieces
-
-We've focused primarily on otonal composition and JI, utonal seems worth exploring.
-
-### Creative drum voices
-
-Weird, unique, strange, creative drum voices. Think utonic VST or Elektron's OG machinedrum.
-
-**Done this session (Machinedrum-inspired extension):** `drum_voice` now covers
-EFM 2-op FM bodies (`tone_type="efm"`), EFM cymbals
-(`metallic_type="efm_cymbal"`), PI modal resonator banks driven by
-`code_musics/spectra.py` mode tables (`tone_type="modal"` /
-`metallic_type="modal_bank"`), E12-style sample exciters
-(`exciter_type="sample"`), and digital-character voice shapers (`bit_crush`,
-`rate_reduce`, `digital_clip`), plus `pi_hardness` / `pi_tension` /
-`pi_damping` / `pi_damping_tilt` / `pi_position` macros. 15 new presets
-cover kicks / snares / toms / cowbells / cymbals / bells / glass / bowl / lo-fi
-digital variants. See `docs/synth_api.md` for the parameter surface.
-
-**Follow-ups still open:**
-
-- TRX-style perceptual kernel (explicitly skipped in this round).
-- Parameter-lock live macros for the PI kernel — per-step macro overrides
-  layered on top of the base preset.
-
----
-
-## Session-scoped deferred (drum bus instrumentation, 2026-04-21)
-
-Parked during the drum-bus instrumentation pass — revisit this session or
-delete once confirmed unneeded.
-
-### Recently landed (2026-04-21)
-
-- **`apply_drive` unity floor + rescaling — DONE.** `drive=0.0` is now a
-  bit-exact unity bypass (zero THD, no compensation, no crossover color),
-  and the internal drive scalar has been rescaled so the 0–1 range matches
-  the project-wide knob calibration spec (subtle at 0.2–0.33, musical at
-  0.5–0.7, musical ceiling at 1.0, fuzz above). See `docs/synth_api.md` for
-  the THD table and AGENTS.md for the high-level callout.
-- **`apply_drive` multiband crossover bypass — DONE.** Default
-  `multiband=True` with `low_crossover_hz=120` / `high_crossover_hz=5000`
-  Linkwitz-Riley bypasses keep bass and air bands out of the nonlinearity
-  by default. Replaces the `preserve_lows_hz` / `preserve_highs_hz`
-  dry-path crossover (now deprecated; cleanup still deferred below).
-- **`apply_saturation` → `apply_drive` rename — DONE.** `EffectSpec` kind
-  is now `"drive"`. Old kind `"saturation"` was renamed in the same pass.
-
-### Tier 3 — Kick-specific diagnostics on drum buses
-
-For buses tagged as percussive (auto-tagged by `setup_drum_bus`), add three
-metrics to the manifest and leveled warnings:
-
-- `kick_fundamental_preservation_db` — band energy in 40-100 Hz, input vs
-  output. Large negative = HP-sidechain / comp ate the sub. Catches
-  over-aggressive HP detectors on the bus compressor.
-- `transient_peak_preservation_db` — 99.9th percentile sample peak
-  preservation, input vs output. More sensitive than crest-factor delta
-  for attack flattening; directly catches "the clipper / limiter is
-  killing the click".
-- `click_band_lift_db` — energy in 2-5 kHz band, input vs output.
-  Positive = "papery" region lifting. Stacks with `high_band_delta_db`
-  but specifically localizes the brittle-kick frequency range.
-
-Trigger via `setup_drum_bus(..., percussive=True)` (default True) or by
-the bus name matching a heuristic (`drum_bus`, `kick_bus`, `perc_bus`).
-Wire into the chain summary so "chain_papery" can specifically cite
-kick-band lift when present.
-
-Why deferred: Tier 1 (native clipper/limiter metrics) and Tier 2 (cumulative
-chain summary) are now landed and running, alongside recalibrated preset
-chains. If the existing instrumentation + recalibration dodges the va_trance
-failure and future regressions, kick-specific diagnostics become
-nice-to-have rather than essential.
-
-### Tier 4 — Per-effect-kind calibrated warning thresholds
-
-Current warning thresholds in `_build_effect_analysis_warnings`
-(`synth.py:1701-1791`) are uniform across effect kinds. Refinements:
-
-- **Saturation THD thresholds by mode.** A 15% THD delta from `iron` mode
-  is expected; same delta from `tube` or `triode` is suspicious. Thresholds
-  should scale with the mode's baseline harmonic content. Same for the
-  waveshaper-backed effects (clipper in `soft_knee` territory vs
-  `hard_clip`).
-- **Clipper-specific "brittle" detector.** High `hardness` (≥0.9) plus
-  high `shaved_db` (≥3 dB) plus positive `high_band_delta_db` is the
-  signature of a brittle kick clip. Warn even when individual metrics
-  are below their own thresholds — the *combination* is the failure mode.
-- **Compressor-fighting-limiter detector.** Flag when comp
-  `active_gain_reduction_fraction > 0.5` AND limiter
-  `active_fraction > 0.5` in the same chain. This is the "everything is
-  pumping at once" signature that causes drum bus phase issues.
-- **Bus-level "too many nonlinearities" detector.** Flag when a single
-  chain has >2 stages each contributing >5% THD delta — indicates
-  cumulative harmonic buildup, distinct from any single stage being
-  over-driven.
-
-Why deferred: Tier 4 is calibration refinement, which needs more data
-across more pieces and styles to threshold correctly. Better done after
-Tier 1+2 (now landed) have been running long enough to see false-positive
-patterns.
-
-### `preserve_lows_hz` / `preserve_highs_hz` deprecation cleanup
-
-`apply_drive` now exposes `multiband` / `low_crossover_hz` /
-`high_crossover_hz` as the real "keep this band out of the nonlinearity"
-surface. The legacy `preserve_lows_hz` / `preserve_highs_hz` params still
-exist but are deprecated — they are a dry-path parallel crossover (wet-path
-harmonics within the "preserved" bands still sum back in), which is not
-what the name suggests.
-
-All seven entries in `_DRIVE_PRESETS` (`tube_warm`, `iron_soft`,
-`neve_gentle`, `kick_weight`, `kick_crunch`, `tom_thicken`, `snare_bite`)
-still set `preserve_lows_hz` / `preserve_highs_hz`, and the score test
-suite (`tests/test_score.py`) plus at least one scratch analysis script
-reference them as kwargs. Cleanup pass:
-
-1. Audit every preset and caller — decide whether each one wants the
-   new multiband bypass (most should), just the modern default, or a
-   non-default crossover.
-2. Port preset values onto `low_crossover_hz` / `high_crossover_hz`.
-3. Update tests to exercise the new surface; keep one legacy-param test
-   for the deprecation path until it's removed.
-4. Finally remove `preserve_lows_hz` / `preserve_highs_hz` entirely.
-
-Why deferred: needs an audit pass across presets + pieces + tests and a
-calibration check to make sure the new crossover defaults don't subtly
-change existing preset character.
-
-## Lower priority
-
-### Clipper quality refinement
-
-The current `apply_clipper` is already stereo-linked with OS=8 and a sharp
-Kaiser (β=14) resampler, and piece-aware calibration via `max_shave_db` +
-`calibration_percentile` bounds actual shave reliably. But at bus-level
-drum content, even 2-3 dB of peak shave produces a faint-but-audible
-character that commercial mastering clippers (KClip, StandardCLIP,
-Pro-L 2's clipper mode) don't at the same shave amount. Worth revisiting
-when a piece needs more than gentle peak management:
-
-- **Per-peak-event distortion shaping.** Commercial clippers apply a
-  shaped envelope around each over-threshold event rather than a pure
-  waveshaper nonlinearity — the distortion energy is modulated to match
-  the event's own envelope, reducing steady-state harmonic content.
-- **Selectable clip algorithms beyond hard/tanh.** A "mastering" mode
-  curve (e.g. polynomial soft knee with inflection tuned for +2 dB
-  musical shave, or the "oxford" style quadratic knee) might feel
-  cleaner at the 1-3 dB shave range we actually use than the
-  `hard_clip` ADAA2 + tanh crossfade. References: Vital's seven
-  saturation modes, StandardCLIP's "Hard"/"Soft"/"Warm"/"Extreme",
-  Pro-L 2's "Transparent" clipper.
-- **Look-ahead peak detection.** Current clipper is per-sample; a
-  short (~1 ms) look-ahead detector would let the clipper "prepare"
-  for an incoming peak and shape the attenuation curve more gently.
-  Borderline between clipper and limiter territory.
-- **Auto-threshold `headroom_db` mode.** Alternate to `max_shave_db` —
-  specify "keep 1 dB of headroom" and the clipper auto-thresholds so
-  the p99.9 peak lands at `ceiling - headroom`. Complements the
-  existing shave-target mode for pieces where the caller thinks in
-  ceiling terms rather than shave terms.
-
-Pragmatic near-term workaround: keep drum bus `max_shave_db` ≤ 1.5 dB
-on sections where transient character is doing the musical work, and
-rely on the compressor for glue + the limiter for the true-peak
-ceiling. Save the clipper for aggressive presets (berghain, weighty)
-where 2+ dB of shave is intentional character.
-
-### Modulation source base signature (ty compliance)
-
-`code_musics/modulation.py` defines `ModSource.sample(self, _times, _context)`
-with leading-underscore parameter names on the abstract base, but every
-concrete subclass (`LFOSource`, `OscillatorSource`, `EnvelopeSource`,
-`MacroSource`, `VelocitySource`, `RandomSource`, `ConstantSource`,
-`DriftAdapter`, `ChaoticSource`) overrides with `times` / `context`. ty's
-`invalid-method-override` rule reads this as a Liskov violation even
-though runtime behavior is correct. We silence the rule in `pyproject.toml`
-under `[tool.ty.rules]` as a placeholder — the clean fix is to rename the
-base-class parameters to `times` / `context` and add `# noqa: ARG002` or
-otherwise mark them unused, then remove the ty ignore. Low priority; the
-rule is off-by-one-line and affects no runtime behavior.
-
-### Rhythm and clearer voice roles
-
-Still worthwhile, but not blocked on infrastructure:
-
-- stronger rhythmic identity in more pieces
-- more drum-ish and hybrid percussion layers
-- clearer distinctions among harmonic bed, lead, bass/pedal, counterpoint, and
-  accent layers
-- more song-like or suite-like structures that still retain meaningful
-  xenharmonic character
-
-### Additional subtractive color
-
-The analog filter palette covers eight topologies now: `svf`, `ladder`,
-`sallen_key` (Diva Bite), `cascade` (Prophet/Juno), `sem` (Oberheim),
-`jupiter` (IR3109), `k35` (MS-20), and `diode` (TB-303). See
-`docs/synth_api.md` and `code_musics/pieces/filter_palette_study.py`.
-
-Still open:
-
-- **Formant filter** — 4x 12dB SVF bandpass in series, 2D bilinear vowel
-  interpolation (4 corner vowels on X/Y axes). Elegant and directly portable
-  to existing SVF infrastructure. Source: Vital.
-- **Buchla LPG (lowpass gate)** — vactrol-coupled combined VCA + LPF where
-  the same control voltage darkens *and* decays. Plucky/organic character
-  that's a different category than a pure filter topology — likely wants
-  a voice-level feature rather than a `filter_topology` entry.
-- **Prophet-5 SSM2040 / CEM3320** — distinct character from the existing
-  `cascade` (which is already Prophet-rev2-ish). Low marginal value since
-  `cascade` and `jupiter` already cover most of the ground, but a faithful
-  CEM3320 would be a clean extension. Reference: sst-filters CEM
-  implementation.
-
-Possible later additions:
-
-- ~~swing-oriented helpers where it actually serves the music~~ DONE
-  — `Groove` templates with named presets are implemented
-- more correlated ensemble behavior across voices for specific
-  groove feels
-- selective synth-parameter drift such as cutoff drift or mild
-  oscillator drift where it helps rather than muddies tuning
-  clarity
-
-### Deferred generative ideas
-
-Ideas discussed but deferred during the generative toolkit build:
-
-- Combination Product Sets (Erv Wilson) — hexanies, dekanies, eikosanies as
-  harmonic vocabularies feeding TonePool and other generators
-- Comma pump generator — auto-generate chord progressions that drift by a
-  specified comma per cycle
-- Phase process helpers — parameterized Steve Reich-style gradual phase shifting
-- L-systems — Lindenmayer systems mapped to pitch/rhythm for
-  fractal structures
-- Process pipelines — composable generator chaining for combining
-  generators
-- ~~Cellular automata — 1D CA rules mapped to musical parameters~~
-  DONE — `ca_rhythm` and `ca_rhythm_layers` are implemented
-
-### Sound-quality refinement
-
-The project already sounds good enough to make real musical decisions with.
-These items matter, but they should stay behind composition and tooling wins.
-
-Likely later directions:
-
-- further anti-aliasing and oversampling/downsampling improvements for brighter
-  subtractive material
-- more "warmth" and glue through either better native processing or carefully
-  chosen plugins
-- eventual use of paid Linux-capable effects already owned, such as `u-he
-  Satin` and `u-he Presswerk`, once the activation path is low-friction enough
-
-## Analog modeling — deferred ideas
-
-Captured from a pair of research surveys on virtual-analog DSP. These are ideas
-we consciously *did not* take on in the April 2026 "analog modeling maturation"
-pass (which shipped: engine parity `quality` dial across `va`/`synth_voice`/
-`drum_voice`, k35 + diode external-FB Newton kernels, analog filter as bus
-`EffectSpec`, second-order ADAA on the waveshaper AD1 set, and the
-`VoiceCardProfile` consolidation). Low priority — preserved here so a future
-session has context instead of re-deriving from scratch.
-
-### Circuit-faithful modeling
-
-- **Wave Digital Filter (WDF) block for a flagship pedal/preamp.** Bernardini
-  2021's Newton-Raphson-in-WDF robustness results make this tractable. Most
-  musical payoff: a Tube Screamer or RAT model on the effects bus,
-  complementary to (not competing with) the existing ChowDSP/Airwindows
-  plugin-host options. Deferred: no WDF infra exists — greenfield lift.
-- **MNA/state-space solver for a flagship voice block.** `apply_preamp`'s
-  flux-domain model is the closest thing we have to memory/state in a
-  non-linear effect; a small MNA solver around a single Fender tone stack or
-  diode clipper would push further. Deferred: ChowDSP plugins + pedalboard
-  hosting already cover the territory.
-
-### Oscillator and antialiasing refinements
-
-- **PolyBLAMP** for triangle and any slope-discontinuity waveform. BLEP
-  infrastructure already exists; BLAMP (Esqueda/Välimäki/Bilbao 2016) extends
-  to slope discontinuities. Relevant for folded waves and triangles with
-  audible corner energy.
-- **BLIT as an alternative to PolyBLEP** for extreme hard-sync / audio-rate
-  FM. Would sit alongside PolyBLEP rather than replace it — PolyBLEP's
-  small-support character is usually preferred.
-- **AD2 for the waveshaper fold-family algos** (`polynomial`, `foldback`,
-  `linear_fold`, `sine_fold`). Currently rely on caller-supplied OS. Closed
-  form AD2 is tractable for `linear_fold`/`sine_fold`, harder for
-  `polynomial`. Deferred from the April 2026 AD2 workstream.
-- **AD2 on `_filters.py` Newton paths.** Newton kernels are exact-per-sample
-  but don't ADAA the nonlinearity — the exact-tanh evaluation still aliases
-  above ~Nyquist/4 at high drive. Subtle-but-measurable improvement.
-- **Level-compensated ADAA.** Bilbao/Esqueda have a constant-gain ADAA variant
-  that avoids unity-gain drift under heavy modulation.
-
-### Subtractive color — additional topologies
-
-- **Formant filter topology.** Four parallel 12 dB SVF BP stages at vowel
-  formant frequencies, bilinear vowel interpolation. Biggest gap in
-  subtractive palette for vocal/talk-box character beyond additive formant
-  morphing in `spectra.py`.
-- **Buchla Low-Pass Gate (LPG)** — vactrol-coupled VCA+LPF. Better modeled as
-  a voice-level feature (VCA and LPF move together with a vactrol time
-  constant) than as a `filter_topology`. Would sit in the envelope/VCA layer.
-- **Prophet-5 SSM2040 / CEM3320 per-stage character.** Low marginal value
-  given existing `cascade` and `jupiter`; sst-filters CEM3320 is a reference
-  starting point. Skip unless a specific piece needs it.
-- **Steiner-Parker filter topology.** Alternate MS-20-era character distinct
-  from the existing K35. Low priority.
-
-### Conditioned / differentiable modeling
-
-- **Differentiable digital Moog filter (Gerat et al. 2023).** Keep a
-  physically meaningful structure with tractable gradients. Wrong tool for a
-  creative library right now; interesting for a "learn a target sound" flow.
-- **Conditioned black-box pedal modeling (Simionato/Fasciani 2023).** Causal
-  TCN/RNN on hardware I/O with control conditioning. Narrow device matching;
-  not synth-filter territory.
-
-### Waveguide and comb upgrades
-
-- **Waveguide string engine.** TPT-family loop replacing the current
-  `apply_comb`: Hermite cubic fractional delay (or Thiran allpass), FIR
-  brightness filter, IIR SVF loop filter, allpass chain for dispersion.
-  Plucked/bowed string textures the project currently can't make. Already
-  appears elsewhere in this document — cross-reference.
-- **TPT-family feedback comb replacement for `apply_comb`.** Thiran allpass
-  fractional delay + TPT damping pole. Would upgrade the `va` engine's comb
-  slot to topology-preserving; audible on karplus-strong-ish bells and acid
-  bass.
-
-### Voice-level aliveness (beyond `VoiceCardProfile`)
-
-- **Power-supply sag / rail modeling** (The Legend-style). Slow global
-  envelope on voice gain modulated by aggregate load. Relevant on heavy
-  polyphonic chords. Modulation-matrix territory.
-- **Per-voice-card component-tolerance drift** — separate fast-thermal and
-  slow-aging drift, per-component rather than per-parameter. Korg multi/poly
-  pushes toward this; `VoiceCardProfile` is a first-layer approximation.
-- **Unison voice-card variance.** When `unison_voices > 1` on
-  `va`/`supersaw`, apply voice-card heterogeneity *within* the unison stack
-  rather than just across polyphony.
-
-### Per-voice VCA and distortion (beyond the April 2026 basics)
-
-The April 2026 analog pass wires `VoiceCardProfile.sat_threshold_pct_std` into
-`voice_dist_drive` and `vca_nonlinearity` so unison/poly voices register as
-subtly different per-card, and ships a small default VCA nonlinearity as
-baseline analog warmth. These further moves stay deferred:
-
-- **VCA gain-cell asymmetry modeling.** Current `vca_nonlinearity` is a scalar
-  `tanh(drive * x) / tanh(drive)` shape — symmetric. Real OTA-based VCAs have
-  bias-point-dependent asymmetry and small DC offset at zero-envelope. Per-
-  card bias-point spread would push aliveness further. Modest effort.
-- **VCA control-voltage feedthrough.** Envelope shape bleeds into the audio
-  signal at low levels through CV coupling capacitors — adds a faint
-  envelope-shaped thump/click at note-on and release. Prophet-5 has this;
-  Rev Sergeant emulations model it. Very low priority; mostly audible on
-  percussive patches.
-- **Voice-level distortion placement enum** — `voice_dist_placement ∈
-  {post_vca, pre_filter, in_filter_drive}`. `post_vca` is the current
-  behavior; `pre_filter` would route drive to the engine-level `filter_drive`;
-  `in_filter_drive` is an alias for topologies that saturate in-loop
-  (ladder, k35, diode). Gives composers a voice-level location knob without
-  new DSP. Mostly plumbing.
-- **Cross-voice summing-bus bleed.** Real analog polysynths have low-level
-  voice-to-voice bleed through the shared summing bus that adds a faint
-  correlated "glue" across the poly stack. Modeling this would be a
-  summing-stage crosstalk matrix before the master fader. Research reports
-  flag this as part of analog aliveness; marginal creative payoff small.
-- **Flux-domain per-voice preamp.** The effect-side `apply_preamp` is flux-
-  domain (frequency-dependent saturation, memory); extending that model to
-  per-voice would give genuine analog warmth where `voice_dist_mode=preamp`
-  currently just routes to the shared effect function memorylessly.
-  Medium effort; biggest step up from current VCA distortion.
-- **WDF / differential-pair VCA emulation.** Full circuit-level emulation of
-  a 2180-style VCA would give bit-accurate character. Way out of scope for
-  a creative library; noted for completeness.
-
-### Selectable saturation and miscellany
-
-- **Vital's 7 selectable saturation curves** (`algebraicSat`, `quickTanh`,
-  `bumpSat`, `hardTanh`, and 3 more) as a `mode` enum on the modern
-  saturation effect. Already referenced elsewhere in this document — unify on
-  next pass.
-- **Persistent DC offset ("DC thump")** from Repro-5's component-level model.
-  Per-voice DC offset that fades over multiple seconds post-trigger — tiny
-  but "that's analog" tell. Very low priority.
-- **Oscillator sync crossover character.** Hard-sync transition character
-  varies between Moog/Roland/Oberheim implementations; currently all our sync
-  is algorithmically identical.
+- composer-agent loop: modify score, render, evaluate, keep/discard, iterate
+  with git as the state machine
+- API-backed judge calls for faster runs and model diversity
+- LLM synthesis pass for more natural feedback
+- calibration against human taste across representative pieces
+- ranking mode for comparing N variations of a section
+- audio-capable judges when omnimodal models are useful enough
+- render-to-render comparison views and more agent-readable analysis summaries
+
+### Testing and Robustness
+
+Highest-value test gaps:
+
+- snippet / render-window equivalence against full renders
+- wet stem sum plus send returns matching the pre-master mix under controlled
+  conditions
+- shared send-bus gain math with several voices and non-zero `return_db`
+- mixed LUFS-normalized tonal voices and peak-normalized percussion in one score
+- `DEFAULT_MASTER_EFFECTS` on a real score, including plugin fallback behavior
+- choke groups combined with `max_polyphony` and `legato`
+- MIDI import -> Score -> MIDI export round-trip
+- full `OscillatorSource` -> `ModConnection` -> `Voice` -> render integration
+- cross-engine coverage for documented engine-agnostic features
+
+### Repo Structure
+
+Worth revisiting when nearby:
+
+- split `code_musics/render.py` into orchestration vs artifact metadata if it
+  keeps growing
+- tighten package API boundaries and compatibility surfaces
+- decide the future of the repo-root `synth.py` compatibility wrapper
+- consider moving generated `output/` artifacts behind a clearer workspace
+  boundary
+- fix the `ModSource.sample(times, context)` base-signature ty ignore
+
+## Lower Priority / Research Parking Lot
+
+These are worth remembering but should not outrank composition, iteration speed,
+or obvious quality gaps.
+
+### Tuning and Harmony
+
+- Combination Product Sets / Erv Wilson harmonic lattice materials
+- comma-pump progression generator
+- 6:7:9 subminor triads, 11/9 neutral-third triads, 9/7 supermajor color,
+  utonal tetrads
+- stronger overtone / undertone contrasts inside single forms
+- local-tonic reinterpretation and comma drift as normal phrase operations
+
+### Physical Modeling
+
+- modal piano improvements: sympathetic resonance, double decay, sustain/una
+  corda, FDN body, register-dependent hammer behavior, duplex scaling, prepared
+  piano, and better high-frequency compensation
+- harpsichord follow-up: waveguide alternative, coupling, 16' / fantasy stops,
+  and buff-stop modeling
+- waveguide / comb upgrades with fractional delay, loop damping, dispersion, and
+  TPT-family feedback combs
+
+### Analog / VA DSP
+
+- WDF block for a flagship pedal or preamp
+- small MNA/state-space experiment for a tone stack or diode clipper
+- PolyBLAMP for slope-discontinuity waveforms
+- BLIT alternative for extreme sync or audio-rate FM
+- ADAA refinements for fold-family waveshapers and Newton filter paths
+- power-supply sag, component-tolerance drift, unison voice-card variance, VCA
+  asymmetry, CV feedthrough, and summing-bus bleed
+- cross-voice oscillator crosstalk and persistent DC-thump character
+- oscillator sync character variants
+
+### Drum and Bus Diagnostics
+
+- TRX-style drum/percussion kernel
+- per-step parameter-lock macros for drum voices
+- kick-specific bus diagnostics: sub preservation, transient preservation, and
+  click-band lift
+- per-effect warning thresholds for saturation, clipping, compressor/limiter
+  interaction, and too many nonlinear stages
+- `preserve_lows_hz` / `preserve_highs_hz` deprecation cleanup in favor of the
+  modern multiband crossover controls
+- clipper quality refinement for clean 1-3 dB mastering-style shave
+
+### External Tools
+
+- Mutable Instruments ideas worth mining: Rings, Clouds, Elements flow exciter,
+  Plaits phase distortion / particles
+- DawDreamer only if pedalboard cannot cover a needed routing or CLAP/Faust use
+  case; note GPLv3 implications before adopting
+- Surge XT internal parameter automation through preset state / CC routing if
+  native post-filter automation is insufficient; see
+  `docs/plans/surge_xt_parameter_automation_notes.md`

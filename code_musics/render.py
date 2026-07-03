@@ -35,6 +35,12 @@ from code_musics.synth import (
     gain_stage_for_master_bus,
     write_wav,
 )
+from code_musics.viz_export import (
+    VizExportResult,
+    VizExportSpec,
+    build_viz_payload,
+    export_viz_json,
+)
 
 logger = logging.getLogger(__name__)
 _EXPORT_TARGET_LUFS = -18.0
@@ -190,6 +196,61 @@ def export_piece_stems(
     return export_stem_bundle(score, bundle_dir, spec=spec)
 
 
+def export_piece_viz(
+    piece_name: str,
+    *,
+    output_dir: str | Path = "output",
+    envelope_hop_seconds: float = 0.025,
+) -> VizExportResult:
+    """Export a generic visualization-JSON payload for a registered piece.
+
+    Reads the already-rendered mix WAV rather than re-rendering audio, so
+    ``make render PIECE=...`` must be run first.
+    """
+    if piece_name not in PIECES:
+        raise ValueError(f"Unknown piece: {piece_name}")
+
+    definition = PIECES[piece_name]
+    if definition.build_score is None:
+        raise ValueError(
+            f"Piece {piece_name} does not support viz export because it uses "
+            "render_audio instead of build_score"
+        )
+
+    score = definition.build_score()
+
+    mix_wav_path = _build_output_path(
+        output_dir=output_dir,
+        output_name=definition.output_name,
+        piece_name=piece_name,
+        study=definition.study,
+        render_window=None,
+    )
+    viz_path = mix_wav_path.with_name(f"{definition.output_name}.viz.json")
+
+    annotations = (
+        definition.build_viz_annotations()
+        if definition.build_viz_annotations is not None
+        else None
+    )
+
+    spec = VizExportSpec(
+        piece_name=piece_name,
+        output_name=definition.output_name,
+        envelope_hop_seconds=envelope_hop_seconds,
+    )
+    payload = build_viz_payload(
+        score=score,
+        sections=definition.sections,
+        annotations=annotations,
+        mix_wav_path=mix_wav_path,
+        spec=spec,
+    )
+    result = export_viz_json(payload, viz_path)
+    logger.info("Saved viz JSON to %s (%d notes)", result.viz_path, result.note_count)
+    return result
+
+
 def render_piece(
     piece_name: str,
     *,
@@ -236,25 +297,31 @@ def render_piece(
                 start_seconds=render_window.render_start_seconds,
                 end_seconds=render_window.render_end_seconds,
             )
-        audio, rendered_stems, send_returns, effect_analysis = (
-            render_score.render_with_effect_analysis(
-                collect_effect_analysis=save_analysis,
+        if save_analysis:
+            audio, rendered_stems, send_returns, effect_analysis = (
+                render_score.render_with_effect_analysis(
+                    collect_effect_analysis=True,
+                )
             )
-        )
-        if rendered_stems:
-            pre_master_mix_inputs = [*rendered_stems.values(), *send_returns.values()]
-            pre_master_mix = render_score._stack_signals(pre_master_mix_inputs)
-            if render_score.auto_master_gain_stage:
-                pre_master_mix = gain_stage_for_master_bus(
-                    pre_master_mix,
-                    sample_rate=render_score.sample_rate,
-                    target_lufs=render_score.master_bus_target_lufs,
-                    max_true_peak_dbfs=render_score.master_bus_max_true_peak_dbfs,
-                )
-            if render_score.master_input_gain_db != 0.0:
-                pre_master_mix = pre_master_mix * db_to_amp(
-                    render_score.master_input_gain_db
-                )
+            if rendered_stems:
+                pre_master_mix_inputs = [
+                    *rendered_stems.values(),
+                    *send_returns.values(),
+                ]
+                pre_master_mix = render_score._stack_signals(pre_master_mix_inputs)
+                if render_score.auto_master_gain_stage:
+                    pre_master_mix = gain_stage_for_master_bus(
+                        pre_master_mix,
+                        sample_rate=render_score.sample_rate,
+                        target_lufs=render_score.master_bus_target_lufs,
+                        max_true_peak_dbfs=render_score.master_bus_max_true_peak_dbfs,
+                    )
+                if render_score.master_input_gain_db != 0.0:
+                    pre_master_mix = pre_master_mix * db_to_amp(
+                        render_score.master_input_gain_db
+                    )
+        else:
+            audio = render_score.render()
         if render_window is not None:
             audio = _trim_rendered_audio(
                 audio=audio,
@@ -262,6 +329,13 @@ def render_piece(
                 start_seconds=render_window.trim_start_seconds,
                 duration_seconds=render_window.duration_seconds,
             )
+            if pre_master_mix is not None:
+                pre_master_mix = _trim_rendered_audio(
+                    audio=pre_master_mix,
+                    sample_rate=render_score.sample_rate,
+                    start_seconds=render_window.trim_start_seconds,
+                    duration_seconds=render_window.duration_seconds,
+                )
         if save_plot:
             version_plot_path = version_output_path.with_suffix(".png")
             figure, _ = render_score.plot_piano_roll(version_plot_path)

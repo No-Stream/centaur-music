@@ -1,0 +1,85 @@
+{
+  "schema_version": 2,
+  "evaluated_at_utc": "2026-07-02T19:10:55Z",
+  "piece_name": "weaving_room",
+  "render_ref": {
+    "render_json_path": "output/weaving_room/weaving_room.render.json",
+    "git_commit": "9f0e6b4033a2607f39bd7454e7ea1c8ee9d662a4",
+    "rendered_at_utc": "20260702-185948"
+  },
+  "judges": [
+    {
+      "model": "haiku",
+      "backend": "headless",
+      "dimensions": {
+        "musical_substance": {
+          "score": 62,
+          "notes": "The piece features intentional harmonic material\u2014a carefully voiced additive pad with custom partials, two plucked arpeggios at different pitch ranges for textural weaving, and a sparse melodic thread. Tuning choices (harmonic-series partials) are audible and intentional, though the arpeggios follow relatively predictable rhythmic patterns without strong melodic contour or variation in thematic material."
+        },
+        "structure_form": {
+          "score": 64,
+          "notes": "Clear three-part arc: sparse opening (0-60s), densest middle section (100-140s with peak note density), and gradual fadeout toward the end. The pad holds a continuous harmonic foundation while rhythmic elements enter and recede, creating recognizable shape and direction. Transitions feel natural rather than abrupt, though the overall movement is subtle and contemplative rather than dramatically composed."
+        },
+        "texture_expression": {
+          "score": 68,
+          "notes": "The piece demonstrates deliberate orchestration\u2014two arpeggios pan slightly left and right (\u00b10.12 to \u00b10.28), delays on plucked voices add spatial depth, drum voices (brush, hats) add texture without dominating, and the low-frequency foundational pad sits solidly in the center. Automation is minimal (mostly effect presets), but the effect chains (delays, EQ, compressors) are musically chosen; the overall mix has intentional shaping and does not feel static."
+        },
+        "completeness": {
+          "score": 70,
+          "notes": "The piece has a clear beginning (pad entrance + sparse arp notes), a developed middle (rhythmic and textural densification), and a defined ending (fade to sparse activity and closure). It feels composed as a finished work rather than a sketch\u2014the 3:44 duration is substantial, voice counts and note density show deliberate arrangement, and the fade-out is compositional rather than abrupt. No sense of incompleteness, though the low-key nature may read as ambient study."
+        },
+        "open_subjective": {
+          "score": 61,
+          "notes": "The piece is meditative and well-crafted but quiet in emotional impact. It prioritizes sonic clarity and harmonic sophistication over memorable gesture or emotional arc. The low-frequency bias (heavy sub/bass with minimal highs) and subdued dynamics read as restrained and careful rather than engaging or moving. It rewards close listening for tuning quirks and textural detail, but may feel somewhat inert to passive listening\u2014pleasant to return to, not immediately striking."
+        }
+      },
+      "overall_notes": "A competent, carefully composed ambient study in just-intonation harmony with solid orchestration and form, yet restrained in emotional presence and lacking memorable melodic or rhythmic hooks. It demonstrates genuine musical craft and tuning intentionality, placing it firmly above sketch-level work, but doesn't quite reach the memorability or distinctive voice needed for a standout piece."
+    },
+    {
+      "model": "sonnet",
+      "backend": "headless",
+      "dimensions": {
+        "musical_substance": {
+          "score": 68,
+          "notes": "The JI/harmonic-series material is genuinely considered \u2014 septimal-flavored partial ratios in the arp/arp2/pad voices (1.1875, 1.3333, 1.75, non-integer partials up to 24) and a spectral pad running through a ladder filter give real harmonic color rather than generic triads. Six interlocking voices (arp, arp2, pad, thread, bass, dust) create a plausible contrapuntal weave, though the density plot suggests the arp lines lean on repetitive cellular motion more than developed melody."
+        },
+        "structure_form": {
+          "score": 76,
+          "notes": "Explicit six-section arc (S1 loom \u2192 S2 first weave \u2192 S3 opening \u2192 S4 breath \u2192 S5 second weave \u2192 S6 unravel) maps cleanly onto the score-density curve: a build through S1-S3, a real dropout/rest at S4 (attack density collapses to near-zero for ~25s), a second build in S5, and a tapering close in S6. This is clearly composed pacing with intentional contrast, not a flat generative loop."
+        },
+        "texture_expression": {
+          "score": 52,
+          "notes": "Orchestration is layered (plucked arps with delay, additive pad, formant-lead 'thread', granular 'dust' texture, and a full kick/hat/brush percussion layer) with sensible effect routing (compressor/preamp glue, EQ, delay sends). However the analysis flags severe, un-ignorable artifact risk on brush, hat_c, and hat_o \u2014 extreme brightness (10.7\u201312kHz centroids) and high-band dominance (up to +71dB emphasis) that likely reads as harsh/piercing percussion, undercutting the otherwise warm low-mid-heavy pad/bass bed."
+        },
+        "completeness": {
+          "score": 66,
+          "notes": "Duration (~3:44) with a clearly authored beginning ('loom'), two development waves, a breath/rest, and an 'unravel' ending gives it a real arc rather than a sketch or open-ended jam. The overall mix stays low/warm (band energy strongly favors sub/bass/low-mid, negative in high/air) which reads as a deliberately dark, textile-like sound world consistent with the title."
+        },
+        "open_subjective": {
+          "score": 60,
+          "notes": "The 'weaving room' concept comes through structurally \u2014 tension building, a breath, unraveling \u2014 and the JI pad/arp interplay is pleasant and considered. The harsh, over-bright hats and brush percussion are the clearest blemish; they risk puncturing an otherwise cohesive, warm texture with piercing transients."
+        }
+      },
+      "overall_notes": "A structurally well-composed, JI-literate piece with a genuine narrative arc, let down somewhat by severely over-bright percussion (hats/brush) that the analysis flags as harsh/piercing against an otherwise warm, low-heavy mix."
+    }
+  ],
+  "aggregate": {
+    "overall_score": 64.2,
+    "dimension_medians": {
+      "musical_substance": 65.0,
+      "structure_form": 70.0,
+      "texture_expression": 60.0,
+      "completeness": 68.0,
+      "open_subjective": 60.5
+    },
+    "dimension_spreads": {
+      "musical_substance": 6,
+      "structure_form": 12,
+      "texture_expression": 16,
+      "completeness": 4,
+      "open_subjective": 1
+    },
+    "confidence": "medium",
+    "synthesized_feedback": "A competent, carefully composed ambient study in just-intonation harmony with solid orchestration and form, yet restrained in emotional presence and lacking memorable melodic or rhythmic hooks. It demonstrates genuine musical craft and tuning intentionality, placing it firmly above sketch-level work, but doesn't quite reach the memorability or distinctive voice needed for a standout piece.  A structurally well-composed, JI-literate piece with a genuine narrative arc, let down somewhat by severely over-bright percussion (hats/brush) that the analysis flags as harsh/piercing against an otherwise warm, low-heavy mix."
+  }
+}

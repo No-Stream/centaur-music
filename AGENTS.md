@@ -16,7 +16,8 @@
 - `code_musics/engines/` contains the synth engine registry and per-engine renderers.
   `_mpe_utils.py` contains shared MPE/MIDI utility functions for instrument engines.
 - `code_musics/tuning.py` contains small just-intonation, harmonic-series, utonal,
-  and EDO helper functions.
+  and EDO helper functions, plus Erv Wilson Combination Product Set (CPS) /
+  hexany helpers (`cps`, `hexany`, `hexany_triads`).
 - `code_musics/generative/` contains algorithmic and stochastic composition
   tools: TonePool (weighted pitch pools), euclidean rhythms, probability gates,
   Markov chains, Turing machine sequencers, harmonic lattice walkers, and
@@ -46,6 +47,12 @@
 - `code_musics/stem_export.py` exports per-voice audio stem WAVs with send bus
   returns and optional mastered reference mix.
 - `code_musics/midi_import.py` imports MIDI files into the score model.
+- `code_musics/viz_export.py` exports a semantic visualization JSON (resolved
+  notes + velocity + parsed structured labels, voice metadata, piece
+  annotations, mix RMS envelope) that drives the `viz/` music-video pipeline:
+  deterministic three.js scenes captured headless into H.264 with the audio
+  muxed. See `docs/viz_api.md` for the exporter schema, structured-label
+  format, scene contract, and capture workflow.
 - `code_musics/meter.py` contains the optional high-level musical-time layer:
   `Timeline`, beat/bar helpers, rhythmic values, and bar-aware location math.
 - `code_musics/evaluate.py` is the LLM-based piece evaluation system.  Four
@@ -151,6 +158,12 @@
   can use `master_effects=DEFAULT_MASTER_EFFECTS` for a "sounds finished"
   baseline. Pieces that define their own `master_effects` fully replace the
   default — no layering.
+- Bricasti impulse responses are machine-local optional assets, and different
+  machines may have different subsets installed. For pieces and tests that must
+  render on fresh checkouts, prefer `bricasti_or_reverb(...)` from
+  `code_musics/pieces/_shared.py` instead of a direct `EffectSpec("bricasti",
+  ...)`. The low-level Bricasti effect should still fail fast when explicitly
+  requested with a missing IR.
 - Use note-level `velocity` for accents and phrasing. By default it affects loudness
   through `velocity_db_per_unit`, and it can also drive synth params through
   `VelocityParamMap`.
@@ -235,6 +248,9 @@ make stems PIECE=ji_chorale         # export per-voice audio stem WAVs
 make stems PIECE=ji_chorale DRY=1   # export dry (pre-effects) stems
 make stems-snippet PIECE=ji_chorale AT=2:10 WINDOW=12  # export stem snippet
 make stems-window PIECE=ji_chorale START=130 DUR=12    # export exact stem window
+make viz-setup                     # one-time viz tooling bootstrap (ffmpeg, three.js, playwright)
+make viz PIECE=hexany_garden       # export the semantic viz JSON (requires a rendered WAV)
+make viz-video PIECE=hexany_garden # capture the viz/<piece>/ scene to mp4 (VIZ_WIDTH/HEIGHT/FPS/WORKERS, START/END)
 make test                          # run the full test suite
 make test-selected TESTS=tests/test_score.py  # run a focused subset while iterating
 make test-selected TESTS="tests/test_a.py tests/test_b.py"  # multiple files
@@ -832,6 +848,12 @@ delegation-to-subagents pattern.
 - No need for trivial tests or testing each unexpected edge case. First and foremost, tests should validate that code runs properly, end to end, without major bugs; and they should prevent regressions.
 - Backward compatibility is not always required or expected; this is a local, creative library not a business one.
 - No fallbacks. Fail fast!
+- **A red test suite is never acceptable to leave behind, even when the
+  failures are pre-existing.** Confirming a failure predates your changes is
+  diagnosis, not resolution — a red baseline hides new regressions. Either
+  fix it in the same session or surface it with a concrete remediation plan
+  (e.g. a ready-to-run prompt for a follow-up session). Never simply note
+  "pre-existing, unrelated" and move on.
 - **Coverage is reported, not enforced.** `make all` prints a one-line
   coverage summary; `make coverage` gives the full per-file breakdown with
   uncovered line numbers. Deltas are computed against `.coverage-baseline`

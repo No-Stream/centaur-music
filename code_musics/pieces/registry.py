@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -44,6 +45,7 @@ class PieceDefinition:
     sections: tuple[PieceSection, ...] = field(default_factory=tuple)
     study: bool = False
     export_target_lufs: float | None = None
+    build_viz_annotations: Callable[[], dict[str, Any]] | None = None
 
 
 type PieceMap = Mapping[str, PieceDefinition]

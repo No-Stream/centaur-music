@@ -176,6 +176,7 @@ def render_pluck(
     drive: float,
     seed: int,
     freq_profile: np.ndarray | None = None,
+    n_samples: int | None = None,
 ) -> np.ndarray:
     """Render a Karplus-Strong++ pluck.
 
@@ -197,12 +198,18 @@ def render_pluck(
             = tanh saturation (warm → crunchy).
         seed: RNG seed (integer).  Same seed + params → bit-identical output.
         freq_profile: Optional per-sample fundamental frequency in Hz.
-            Length must equal ``int(duration * sample_rate)``.  Values must
-            be strictly positive and below the fractional-delay floor.
+            Length must equal the output length.  Values must be strictly
+            positive and below the fractional-delay floor.
+        n_samples: Optional explicit output length in samples.  Callers
+            that already know their sample count should pass it — the
+            ``n_samples -> duration -> int(duration * sample_rate)``
+            round-trip can lose a sample to float rounding.  Defaults to
+            ``int(duration * sample_rate)``.
 
     Returns:
-        Mono ``float64`` array of length ``int(duration * sample_rate)``,
-        peak-normalised to ~1.0.
+        Mono ``float64`` array of length ``n_samples`` (or
+        ``int(duration * sample_rate)`` when not given), peak-normalised
+        to ~1.0.
     """
     if freq <= 0.0:
         raise ValueError(f"freq must be positive, got {freq}")
@@ -211,7 +218,8 @@ def render_pluck(
     if sample_rate <= 0:
         raise ValueError(f"sample_rate must be positive, got {sample_rate}")
 
-    n_samples = int(duration * sample_rate)
+    if n_samples is None:
+        n_samples = int(duration * sample_rate)
     if n_samples == 0:
         return np.zeros(0, dtype=np.float64)
 

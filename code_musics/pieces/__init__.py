@@ -32,6 +32,7 @@ from code_musics.pieces.filter_palette_study import (
 from code_musics.pieces.forge import PIECES as _FORGE_PIECES
 from code_musics.pieces.grain_tides import PIECES as _GRAIN_TIDES_PIECES
 from code_musics.pieces.harmonic_studies import PIECES as _HARMONIC_STUDY_PIECES
+from code_musics.pieces.hexany_garden import PIECES as _HEXANY_GARDEN_PIECES
 from code_musics.pieces.iambic_ghost import PIECES as _IAMBIC_GHOST_PIECES
 from code_musics.pieces.iron_pulse import PIECES as _IRON_PULSE_PIECES
 from code_musics.pieces.iron_pulse_v2 import PIECES as _IRON_PULSE_V2_PIECES
@@ -70,6 +71,7 @@ from code_musics.pieces.va_showcase import PIECES as _VA_SHOWCASE_PIECES
 from code_musics.pieces.va_trance import PIECES as _VA_TRANCE_PIECES
 from code_musics.pieces.velvet_wall import PIECES as _VELVET_WALL_PIECES
 from code_musics.pieces.warming_up import PIECES as _WARMING_UP_PIECES
+from code_musics.pieces.weaving_room import PIECES as _WEAVING_ROOM_PIECES
 from code_musics.pieces.wtc_sketches import PIECES as _WTC_PIECES
 
 PIECES = merge_piece_maps(
@@ -81,6 +83,7 @@ PIECES = merge_piece_maps(
     _SEPTIMAL_BLOOM_PIECES,
     _COUNTERPOINT_PIECES,
     _HARMONIC_STUDY_PIECES,
+    _HEXANY_GARDEN_PIECES,
     _IRON_PULSE_PIECES,
     _IRON_PULSE_V2_PIECES,
     _TEXTURE_STUDY_PIECES,
@@ -135,6 +138,7 @@ PIECES = merge_piece_maps(
     _BOWED_GLASS_PIECES,
     _IAMBIC_GHOST_PIECES,
     _STILL_WINDOW_PIECES,
+    _WEAVING_ROOM_PIECES,
 )
 
 __all__ = ["PIECES"]

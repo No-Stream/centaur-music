@@ -1170,6 +1170,47 @@ def _apply_adaa2_poly_knee(
 
 
 @numba.njit(cache=True)
+def _apply_adaa2_poly_knee_scalar(
+    signal: np.ndarray,
+    threshold: float,
+    knee_half: float,
+    sample_rate_hz: float = 44100.0,
+) -> np.ndarray:
+    """Apply polynomial-knee clipping with scalar threshold/knee params."""
+    n = signal.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    effective_dx = _ADAA_DX_THRESHOLD * (44100.0 / sample_rate_hz)
+
+    prev = signal[0] if n > 0 else 0.0
+    prev2 = prev
+    for i in range(n):
+        curr = signal[i]
+        dx_outer = curr - prev2
+        dx_a = curr - prev
+        dx_b = prev - prev2
+        if math.fabs(dx_outer) <= effective_dx or math.fabs(dx_b) <= effective_dx:
+            if math.fabs(dx_a) > effective_dx:
+                out[i] = (
+                    _ad1_poly_knee(curr, threshold, knee_half)
+                    - _ad1_poly_knee(prev, threshold, knee_half)
+                ) / dx_a
+            else:
+                out[i] = _poly_knee(0.5 * (curr + prev), threshold, knee_half)
+        elif math.fabs(dx_a) <= effective_dx:
+            out[i] = _poly_knee(0.5 * (curr + prev2), threshold, knee_half)
+        else:
+            f2_c = _ad2_poly_knee(curr, threshold, knee_half)
+            f2_p = _ad2_poly_knee(prev, threshold, knee_half)
+            f2_p2 = _ad2_poly_knee(prev2, threshold, knee_half)
+            d1 = (f2_c - f2_p) / dx_a
+            d2 = (f2_p - f2_p2) / dx_b
+            out[i] = 2.0 * (d1 - d2) / dx_outer
+        prev2 = prev
+        prev = curr
+    return out
+
+
+@numba.njit(cache=True)
 def _apply_with_envelope_adaa2(
     signal: np.ndarray,
     algorithm_id: int,

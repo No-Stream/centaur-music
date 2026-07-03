@@ -42,6 +42,7 @@ from code_musics.engines._instrumentation import (
 )
 from code_musics.engines._waveshaper import (
     _apply_adaa2_poly_knee,
+    _apply_adaa2_poly_knee_scalar,
     _biased_shape,
     _koren_triode_shape,
     _pentode_shape,
@@ -1872,6 +1873,19 @@ def _build_effect_analysis_entry(
         "imd_ratio_output": round(output_imd.ratio, 4),
         "imd_ratio_delta": round(output_imd.ratio - input_imd.ratio, 4),
         "imd_detection": output_imd.detection,
+        # Fraction of the *input* signal's loudness-gated blocks that are
+        # audibly active (see measure_signal_levels / integrated_lufs).
+        # Used by _build_chain_summary to put an energy floor under the
+        # chain_papery / chain_brightness_creep / perceptual_brightness_lift
+        # warnings: a stage's relative centroid/high-band lift can look huge
+        # when its input is silent for most of the piece (e.g. a drum bus
+        # during a break), even though nothing audible happened.
+        "input_active_window_fraction": round(
+            measure_signal_levels(
+                input_signal, sample_rate=sample_rate
+            ).active_window_fraction,
+            4,
+        ),
     }
     if percussive:
         _populate_per_hit_effect_metrics(
@@ -2201,6 +2215,28 @@ _NONLINEAR_EFFECT_KINDS: frozenset[str] = frozenset(
     }
 )
 
+# Below this fraction of loudness-gated-active input blocks, cap the
+# chain_papery / chain_brightness_creep / perceptual_brightness_lift
+# severities at "warning" (never "severe"). A chain whose input is mostly
+# silence (e.g. a drum bus that drops out for whole sections) can rack up a
+# huge *relative* centroid/high-band lift number from a handful of active
+# blocks without anything audibly wrong happening across the piece.
+_CHAIN_SPARSE_INPUT_ACTIVE_FRACTION = 0.25
+
+
+def _cap_chain_brightness_severity(
+    severity: str,
+    *,
+    input_active_fraction: float,
+) -> str:
+    """Cap brightness-family chain severities when the input is mostly silent."""
+    if (
+        severity == "severe"
+        and input_active_fraction < _CHAIN_SPARSE_INPUT_ACTIVE_FRACTION
+    ):
+        return "warning"
+    return severity
+
 
 def build_chain_summary_from_dicts(
     entries: list[dict[str, Any]],
@@ -2253,6 +2289,13 @@ def _build_chain_summary(
     total_clipper_shave_db = 0.0
     nonlinear_stage_count = 0
     kinds: list[str] = []
+    # Reference the *original* chain input activity (first stage's input),
+    # not each stage's input, since we care whether the source material was
+    # sparse overall — not whether an intermediate stage happened to see a
+    # quiet moment.
+    chain_input_active_fraction = float(
+        entries[0].metrics.get("input_active_window_fraction", 1.0)
+    )
 
     for entry in entries:
         m = entry.metrics
@@ -2325,6 +2368,7 @@ def _build_chain_summary(
         "total_limiter_gr_db": round(total_limiter_gr_db, 2),
         "total_clipper_shave_db": round(total_clipper_shave_db, 2),
         "nonlinear_stage_count": nonlinear_stage_count,
+        "chain_input_active_fraction": round(chain_input_active_fraction, 4),
     }
 
     warnings: list[EffectAnalysisWarning] = []
@@ -2370,13 +2414,17 @@ def _build_chain_summary(
         kind in _NONLINEAR_EFFECT_KINDS for kind in kinds
     )
     if chain_has_nonlinear_stage and total_high_band_lift_db >= 8.0:
+        severity = _cap_chain_brightness_severity(
+            "severe", input_active_fraction=chain_input_active_fraction
+        )
         warnings.append(
             _build_effect_warning(
-                severity="severe",
+                severity=severity,
                 code="chain_papery",
                 message=f"{label_prefix}chain is adding brittle high-frequency content (>8 dB of 2-8 kHz lift)",
                 total_high_band_lift_db=round(total_high_band_lift_db, 2),
                 total_centroid_lift_hz=round(total_centroid_lift_hz, 1),
+                chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
     elif chain_has_nonlinear_stage and total_high_band_lift_db >= 4.0:
@@ -2387,16 +2435,21 @@ def _build_chain_summary(
                 message=f"{label_prefix}chain may be adding papery high-frequency character",
                 total_high_band_lift_db=round(total_high_band_lift_db, 2),
                 total_centroid_lift_hz=round(total_centroid_lift_hz, 1),
+                chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
 
     if total_centroid_lift_hz >= 1200.0:
+        severity = _cap_chain_brightness_severity(
+            "severe", input_active_fraction=chain_input_active_fraction
+        )
         warnings.append(
             _build_effect_warning(
-                severity="severe",
+                severity=severity,
                 code="chain_brightness_creep",
                 message=f"{label_prefix}cumulative spectral centroid lift is very high",
                 total_centroid_lift_hz=round(total_centroid_lift_hz, 1),
+                chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
     elif total_centroid_lift_hz >= 500.0:
@@ -2406,6 +2459,7 @@ def _build_chain_summary(
                 code="chain_brightness_creep",
                 message=f"{label_prefix}cumulative spectral centroid is drifting bright",
                 total_centroid_lift_hz=round(total_centroid_lift_hz, 1),
+                chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
 
@@ -2467,12 +2521,16 @@ def _build_chain_summary(
             total_a_weighted_lift_db += a_delta
     metrics["total_a_weighted_high_band_lift_db"] = round(total_a_weighted_lift_db, 2)
     if chain_has_nonlinear_stage and total_a_weighted_lift_db >= 8.0:
+        severity = _cap_chain_brightness_severity(
+            "severe", input_active_fraction=chain_input_active_fraction
+        )
         warnings.append(
             _build_effect_warning(
-                severity="severe",
+                severity=severity,
                 code="perceptual_brightness_lift",
                 message=f"{label_prefix}A-weighted high-band energy is rising sharply across the chain",
                 total_a_weighted_high_band_lift_db=round(total_a_weighted_lift_db, 2),
+                chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
     elif chain_has_nonlinear_stage and total_a_weighted_lift_db >= 4.0:
@@ -2482,6 +2540,7 @@ def _build_chain_summary(
                 code="perceptual_brightness_lift",
                 message=f"{label_prefix}A-weighted high-band energy is drifting upward across the chain",
                 total_a_weighted_high_band_lift_db=round(total_a_weighted_lift_db, 2),
+                chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
 
@@ -5070,12 +5129,12 @@ def apply_clipper(
 
     # --- Resolve threshold / knee / mix to scalar or per-sample arrays. ---
     #
-    # Per-sample arrays are accepted on these three params so downstream
-    # automation can ride the clipper without a second copy of this loop.
-    # Mix can be an array for dry/wet automation; its length must match
-    # ``original_length`` (pre-oversample domain).  Threshold and knee
-    # are used on the *oversampled* signal and are resampled up along
-    # with it below.
+    # Keep scalar controls scalar.  Long bus/master clippers are usually static,
+    # and expanding three scalar controls to full-length oversampled arrays can
+    # cost multiple GB before the audio arrays are even counted.
+    def _is_array_like(value: float | np.ndarray) -> bool:
+        return np.asarray(value).ndim > 0
+
     def _as_pre_os_array(value: float | np.ndarray, name: str) -> np.ndarray:
         arr = np.asarray(value, dtype=np.float64)
         if arr.ndim == 0:
@@ -5089,15 +5148,37 @@ def apply_clipper(
             )
         return arr
 
-    threshold_db_arr = _as_pre_os_array(threshold_db, "threshold_db")
-    knee_width_db_arr = _as_pre_os_array(knee_width_db, "knee_width_db")
-    mix_arr = _as_pre_os_array(mix, "mix")
-    mix_arr = np.clip(mix_arr, 0.0, 1.0)
-    knee_width_db_arr = np.maximum(knee_width_db_arr, 0.0)
+    threshold_is_array = _is_array_like(threshold_db)
+    knee_is_array = _is_array_like(knee_width_db)
+    mix_is_array = _is_array_like(mix)
 
-    threshold_is_array = (
-        not np.isscalar(threshold_db) and np.asarray(threshold_db).ndim > 0
-    )
+    threshold_db_scalar = 0.0
+    knee_width_db_scalar = 0.0
+    mix_scalar = 0.0
+    threshold_db_arr: np.ndarray | None = None
+    knee_width_db_arr: np.ndarray | None = None
+    mix_arr: np.ndarray | None = None
+
+    if threshold_is_array:
+        threshold_db_arr = _as_pre_os_array(threshold_db, "threshold_db")
+    else:
+        threshold_db_scalar = float(np.asarray(threshold_db, dtype=np.float64).item())
+
+    if knee_is_array:
+        knee_width_db_arr = np.maximum(
+            _as_pre_os_array(knee_width_db, "knee_width_db"), 0.0
+        )
+    else:
+        knee_width_db_scalar = max(
+            float(np.asarray(knee_width_db, dtype=np.float64).item()), 0.0
+        )
+
+    if mix_is_array:
+        mix_arr = np.clip(_as_pre_os_array(mix, "mix"), 0.0, 1.0)
+    else:
+        mix_scalar = float(
+            np.clip(float(np.asarray(mix, dtype=np.float64).item()), 0.0, 1.0)
+        )
 
     # --- Auto-calibration via max_shave_db (scalar threshold only). ---
     auto_calibrated = max_shave_db is not None
@@ -5110,7 +5191,6 @@ def apply_clipper(
                 "max_shave_db is incompatible with a per-sample threshold_db array; "
                 "pick one calibration mode"
             )
-        threshold_db_scalar = float(np.asarray(threshold_db).item())
         if threshold_db_scalar != -3.0:
             logger.warning(
                 "Clipper: both threshold_db and max_shave_db set — "
@@ -5131,7 +5211,7 @@ def apply_clipper(
         reference_peak = max(reference_peak, 1e-12)
         reference_peak_dbfs = float(20.0 * np.log10(reference_peak))
         calibrated_db = reference_peak_dbfs - float(max_shave_db)
-        threshold_db_arr = np.full(original_length, calibrated_db)
+        threshold_db_scalar = calibrated_db
         logger.info(
             f"Clipper: auto-calibrated threshold to {calibrated_db:.2f} dBFS "
             f"(p{effective_percentile:g} peak {reference_peak_dbfs:.2f} dBFS, "
@@ -5139,7 +5219,9 @@ def apply_clipper(
         )
 
     # Mix=0 at every sample is a pure bypass; skip the OS round-trip.
-    if np.all(mix_arr <= 0.0):
+    if (mix_arr is None and mix_scalar <= 0.0) or (
+        mix_arr is not None and np.all(mix_arr <= 0.0)
+    ):
         return sig[0].copy() if was_mono else sig.copy()
 
     makeup_lin = db_to_amp(makeup_gain_db)
@@ -5172,28 +5254,56 @@ def apply_clipper(
             return np.concatenate([out, np.zeros(target_length - out.shape[0])])
         return out
 
-    # Lift threshold / knee profiles into the OS domain.  We upsample them
-    # the same way we upsample the signal — this is a mild-Gibbs concern
-    # at sharp control-rate edges, but for the smooth control curves that
-    # AutomationSpec produces it's faithful.  Knee stays positive (negative
-    # clips below).
-    threshold_db_up = (
-        _upsample(threshold_db_arr) if oversample_factor > 1 else threshold_db_arr
+    use_scalar_shape_controls = threshold_db_arr is None and knee_width_db_arr is None
+    threshold_lin_scalar = db_to_amp(threshold_db_scalar)
+    knee_half_lin_scalar = threshold_lin_scalar * (
+        1.0 - 10.0 ** (-knee_width_db_scalar * 0.5 / 20.0)
     )
-    knee_width_db_up = (
-        _upsample(knee_width_db_arr) if oversample_factor > 1 else knee_width_db_arr
-    )
-    # Array-safe dB-to-linear (db_to_amp is scalar-only).
-    threshold_lin_up = np.power(10.0, threshold_db_up / 20.0)
-    # knee_width_db is total knee width; knee_half_lin is half-width in linear.
-    # knee_half_lin = threshold_lin * (1 - 10^(-knee_width_db/2 / 20))
-    # Guard the exponent: negative knee widths clip at zero (brickwall).
-    knee_half_lin_up = threshold_lin_up * (
-        1.0 - np.power(10.0, -np.maximum(knee_width_db_up, 0.0) * 0.5 / 20.0)
-    )
+
+    threshold_lin_up: np.ndarray | None = None
+    knee_half_lin_up: np.ndarray | None = None
+    if not use_scalar_shape_controls:
+        if threshold_db_arr is None:
+            threshold_db_arr = np.full(original_length, threshold_db_scalar)
+        if knee_width_db_arr is None:
+            knee_width_db_arr = np.full(original_length, knee_width_db_scalar)
+        threshold_db_profile = cast(np.ndarray, threshold_db_arr)
+        knee_width_db_profile = cast(np.ndarray, knee_width_db_arr)
+        # Lift threshold / knee profiles into the OS domain.  We upsample them
+        # the same way we upsample the signal — this is a mild-Gibbs concern
+        # at sharp control-rate edges, but for the smooth control curves that
+        # AutomationSpec produces it's faithful.  Knee stays positive.
+        threshold_db_up = (
+            _upsample(threshold_db_profile)
+            if oversample_factor > 1
+            else threshold_db_profile
+        )
+        knee_width_db_up = (
+            _upsample(knee_width_db_profile)
+            if oversample_factor > 1
+            else knee_width_db_profile
+        )
+        # Array-safe dB-to-linear (db_to_amp is scalar-only).
+        threshold_lin_up = np.power(10.0, threshold_db_up / 20.0)
+        # knee_width_db is total knee width; knee_half_lin is half-width in linear.
+        # knee_half_lin = threshold_lin * (1 - 10^(-knee_width_db/2 / 20))
+        knee_half_lin_up = threshold_lin_up * (
+            1.0 - np.power(10.0, -np.maximum(knee_width_db_up, 0.0) * 0.5 / 20.0)
+        )
 
     def _clip_signed(ch_up: np.ndarray) -> np.ndarray:
         """Apply the selected transfer to one oversampled signed channel."""
+        if use_scalar_shape_controls:
+            if algorithm == "hard":
+                return np.clip(ch_up, -threshold_lin_scalar, threshold_lin_scalar)
+            return _apply_adaa2_poly_knee_scalar(
+                ch_up,
+                threshold_lin_scalar,
+                knee_half_lin_scalar,
+                effective_sr_hz,
+            )
+        assert threshold_lin_up is not None
+        assert knee_half_lin_up is not None
         if algorithm == "hard":
             return np.clip(ch_up, -threshold_lin_up, threshold_lin_up)
         return _apply_adaa2_poly_knee(
@@ -5203,31 +5313,50 @@ def apply_clipper(
     # Per-channel shape at OS.  For stereo we build a common attenuation
     # gain curve and apply it to both — preserves phase, kills papery
     # widening from uncorrelated per-channel HF residue.
-    upsampled_channels = [_upsample(ch) for ch in sig]
-    clipped_channels = [_clip_signed(ch_up) for ch_up in upsampled_channels]
-
-    if len(upsampled_channels) == 1:
-        wet_channels = [_downsample_to_length(clipped_channels[0], sig.shape[1])]
+    if sig.shape[0] == 1:
+        ch_up = _upsample(sig[0])
+        clipped = _clip_signed(ch_up)
+        wet_channels = [_downsample_to_length(clipped, sig.shape[1])]
     else:
         # Silence floor tracks the current threshold per-sample.  At samples
         # where the input channel is well below threshold the clipper is a
         # no-op, so we force the linked gain to 1.0 there rather than
         # letting tiny divisions dominate.
-        silence_floor_up = threshold_lin_up * 1e-4
-        per_channel_gains: list[np.ndarray] = []
-        for ch_up, clipped_up in zip(upsampled_channels, clipped_channels, strict=True):
+        silence_floor_up: float | np.ndarray
+        if use_scalar_shape_controls:
+            silence_floor_up = threshold_lin_scalar * 1e-4
+        else:
+            assert threshold_lin_up is not None
+            silence_floor_up = threshold_lin_up * 1e-4
+        estimated_upsampled_samples = sig.shape[1] * oversample_factor
+        recompute_upsampled_channels = (
+            oversample_factor > 1
+            and estimated_upsampled_samples * sig.shape[0] >= 20_000_000
+        )
+        upsampled_channels = (
+            [] if recompute_upsampled_channels else [_upsample(ch) for ch in sig]
+        )
+        gain_curve: np.ndarray | None = None
+        gain_input_channels = (
+            sig if recompute_upsampled_channels else upsampled_channels
+        )
+        for channel in gain_input_channels:
+            ch_up = _upsample(channel) if recompute_upsampled_channels else channel
+            clipped_up = _clip_signed(ch_up)
             abs_in = np.abs(ch_up)
             safe_abs_in = np.maximum(abs_in, silence_floor_up)
             g = np.clip(np.abs(clipped_up) / safe_abs_in, 0.0, 1.0)
             g = np.where(abs_in < silence_floor_up, 1.0, g)
-            per_channel_gains.append(g)
+            if gain_curve is None:
+                gain_curve = g
+            else:
+                np.minimum(gain_curve, g, out=gain_curve)
 
-        gain_curve = per_channel_gains[0]
-        for g in per_channel_gains[1:]:
-            gain_curve = np.minimum(gain_curve, g)
-
+        assert gain_curve is not None
         wet_channels = []
-        for ch_up in upsampled_channels:
+        wet_input_channels = sig if recompute_upsampled_channels else upsampled_channels
+        for channel in wet_input_channels:
+            ch_up = _upsample(channel) if recompute_upsampled_channels else channel
             attenuated = ch_up * gain_curve
             wet_channels.append(_downsample_to_length(attenuated, sig.shape[1]))
 
@@ -5235,7 +5364,14 @@ def apply_clipper(
     wet = wet * makeup_lin
 
     # Dry/wet blend with per-sample mix.
-    result = wet if np.all(mix_arr >= 1.0) else (1.0 - mix_arr) * sig + mix_arr * wet
+    if mix_arr is None:
+        result = (
+            wet if mix_scalar >= 1.0 else (1.0 - mix_scalar) * sig + mix_scalar * wet
+        )
+    else:
+        result = (
+            wet if np.all(mix_arr >= 1.0) else (1.0 - mix_arr) * sig + mix_arr * wet
+        )
 
     if result.shape[1] != original_length:
         if result.shape[1] > original_length:
@@ -5247,19 +5383,27 @@ def apply_clipper(
     peak_before_db = float(20.0 * np.log10(max(np.max(np.abs(sig)), 1e-12)))
     peak_after_db = float(20.0 * np.log10(max(np.max(np.abs(result)), 1e-12)))
     shaved_db = peak_before_db - peak_after_db
-    active_fraction = (
-        float(
-            np.mean(
-                np.max(np.abs(sig), axis=0)
-                >= threshold_lin_up[::oversample_factor][:original_length]
-            )
+    if use_scalar_shape_controls:
+        active_fraction = float(
+            np.mean(np.max(np.abs(sig), axis=0) >= threshold_lin_scalar)
         )
-        if oversample_factor > 1
-        else float(np.mean(np.max(np.abs(sig), axis=0) >= threshold_lin_up))
-    )
-    threshold_summary_db = float(np.mean(threshold_db_arr))
-    knee_summary_db = float(np.mean(knee_width_db_arr))
-    mix_summary = float(np.mean(mix_arr))
+        threshold_summary_db = threshold_db_scalar
+        knee_summary_db = knee_width_db_scalar
+    else:
+        assert threshold_lin_up is not None
+        threshold_for_input_rate = (
+            threshold_lin_up[::oversample_factor][:original_length]
+            if oversample_factor > 1
+            else threshold_lin_up
+        )
+        active_fraction = float(
+            np.mean(np.max(np.abs(sig), axis=0) >= threshold_for_input_rate)
+        )
+        assert threshold_db_arr is not None
+        assert knee_width_db_arr is not None
+        threshold_summary_db = float(np.mean(threshold_db_arr))
+        knee_summary_db = float(np.mean(knee_width_db_arr))
+    mix_summary = mix_scalar if mix_arr is None else float(np.mean(mix_arr))
     logger.info(
         f"Clipper: algorithm={algorithm}, threshold {threshold_summary_db:.1f} dB, "
         f"knee {knee_summary_db:.2f} dB, OS {oversample_factor}x, "
@@ -5365,19 +5509,16 @@ def finalize_master(
 
     mastered = _dispatch_limiter(source_signal, limiter_input_gain_db)
 
+    previous_lufs: float | None = None
     for _ in range(max_iterations):
-        # The native limiter already guarantees peaks are at or below the
-        # ceiling, so normalize_true_peak is only needed for the LSP path
-        # (where the plugin's output might not land exactly at the ceiling)
-        # or as a safety net.  For the native path, skip it — it would boost
-        # a high-crest-factor signal back to the ceiling and defeat LUFS
-        # convergence.
-        if use_lsp_limiter:
-            mastered = normalize_true_peak(
-                mastered,
-                target_peak_dbfs=true_peak_ceiling_dbfs,
-                oversample_factor=oversample_factor,
-            )
+        # Measure LUFS directly on the limiter's own output — do NOT
+        # re-normalize to the true-peak ceiling here.  Re-normalizing every
+        # iteration (as the LSP path used to do) pins the signal's peak to
+        # the ceiling regardless of the limiter's input gain, which makes
+        # measured LUFS nearly insensitive to `limiter_input_gain_db` and
+        # prevents the loop from ever converging on `target_lufs`. The
+        # true-peak ceiling is still guaranteed by the final safety pass
+        # below, after the loop has converged on loudness.
         current_lufs, active_window_fraction = integrated_lufs(
             mastered,
             sample_rate=sample_rate,
@@ -5388,6 +5529,12 @@ def finalize_master(
         loudness_error = target_lufs - current_lufs
         if abs(loudness_error) <= loudness_tolerance_lufs:
             break
+        if previous_lufs is not None and abs(current_lufs - previous_lufs) < 1e-6:
+            # Gain changes are no longer moving measured LUFS (e.g. the
+            # limiter is fully saturating regardless of input gain) — stop
+            # iterating rather than walking gain indefinitely.
+            break
+        previous_lufs = current_lufs
 
         logger.info(
             f"Mastering iteration: LUFS error {loudness_error:+.2f} LU, "

@@ -75,6 +75,32 @@ class TestClipperLevels:
             out = apply_clipper(signal, oversample_factor=os)
             assert out.shape == signal.shape, f"length mismatch at OS={os}"
 
+    def test_scalar_params_match_constant_param_arrays(self) -> None:
+        signal = np.stack(
+            [
+                _sine(110.0, 0.08, amp=1.1),
+                _sine(220.0, 0.08, amp=0.7),
+            ]
+        )
+        n = signal.shape[-1]
+
+        scalar = apply_clipper(
+            signal,
+            threshold_db=-8.0,
+            knee_width_db=2.5,
+            mix=0.7,
+            oversample_factor=1,
+        )
+        arrays = apply_clipper(
+            signal,
+            threshold_db=np.full(n, -8.0),
+            knee_width_db=np.full(n, 2.5),
+            mix=np.full(n, 0.7),
+            oversample_factor=1,
+        )
+
+        np.testing.assert_allclose(scalar, arrays, atol=1e-10, rtol=1e-10)
+
 
 class TestClipperKnee:
     """knee_width_db controls soft/hard character monotonically."""
@@ -709,3 +735,105 @@ class TestChainSummary:
         summary = build_chain_summary_from_dicts(entries)
         assert summary is not None
         assert summary.warnings == []
+
+    def test_chain_brightness_creep_fires_severe_on_dense_input(self) -> None:
+        entries = [
+            {
+                "index": 0,
+                "kind": "preamp",
+                "display_name": "preamp",
+                "metrics": {
+                    "spectral_centroid_delta_hz": 700.0,
+                    "imd_detection": "two_tone",
+                    "imd_ratio_input": 1.0,
+                    "imd_ratio_output": 1.3,
+                    "input_active_window_fraction": 0.9,
+                },
+                "warnings": [],
+            },
+            {
+                "index": 1,
+                "kind": "clipper",
+                "display_name": "clipper",
+                "metrics": {"spectral_centroid_delta_hz": 600.0},
+                "warnings": [],
+            },
+        ]
+        summary = build_chain_summary_from_dicts(entries, chain_label="drum_bus")
+        assert summary is not None
+        codes = {w.code: w for w in summary.warnings}
+        assert "chain_brightness_creep" in codes
+        assert codes["chain_brightness_creep"].severity == "severe"
+        assert summary.metrics["chain_input_active_fraction"] == 0.9
+
+    def test_chain_brightness_creep_capped_to_warning_on_sparse_input(self) -> None:
+        """A drum bus that's silent most of the piece shouldn't escalate to severe.
+
+        Regression guard for a real render where drums dropped out for whole
+        sections: total_centroid_lift_hz landed at ~1240 (well past the 1200
+        severe threshold) purely because the handful of active blocks skewed
+        the relative measurement, not because anything was audibly wrong.
+        """
+        entries = [
+            {
+                "index": 0,
+                "kind": "preamp",
+                "display_name": "preamp",
+                "metrics": {
+                    "spectral_centroid_delta_hz": 700.0,
+                    "imd_detection": "two_tone",
+                    "imd_ratio_input": 1.0,
+                    "imd_ratio_output": 1.3,
+                    "input_active_window_fraction": 0.1,
+                },
+                "warnings": [],
+            },
+            {
+                "index": 1,
+                "kind": "clipper",
+                "display_name": "clipper",
+                "metrics": {"spectral_centroid_delta_hz": 600.0},
+                "warnings": [],
+            },
+        ]
+        summary = build_chain_summary_from_dicts(entries, chain_label="drum_bus")
+        assert summary is not None
+        codes = {w.code: w for w in summary.warnings}
+        assert "chain_brightness_creep" in codes, (
+            "warning should still fire, just capped"
+        )
+        assert codes["chain_brightness_creep"].severity == "warning"
+        assert summary.metrics["chain_input_active_fraction"] == 0.1
+        assert (
+            codes["chain_brightness_creep"].metrics["chain_input_active_fraction"]
+            == 0.1
+        )
+
+    def test_chain_papery_capped_to_warning_on_sparse_input(self) -> None:
+        entries = [
+            {
+                "index": 0,
+                "kind": "preamp",
+                "display_name": "preamp",
+                "metrics": {
+                    "high_band_delta_db": 5.0,
+                    "imd_detection": "two_tone",
+                    "imd_ratio_input": 1.0,
+                    "imd_ratio_output": 1.3,
+                    "input_active_window_fraction": 0.05,
+                },
+                "warnings": [],
+            },
+            {
+                "index": 1,
+                "kind": "clipper",
+                "display_name": "clipper",
+                "metrics": {"high_band_delta_db": 4.0},
+                "warnings": [],
+            },
+        ]
+        summary = build_chain_summary_from_dicts(entries, chain_label="drum_bus")
+        assert summary is not None
+        codes = {w.code: w for w in summary.warnings}
+        assert "chain_papery" in codes
+        assert codes["chain_papery"].severity == "warning"

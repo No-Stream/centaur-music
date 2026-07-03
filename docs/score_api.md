@@ -699,9 +699,17 @@ Behavior:
 - keeps notes whose authored time range overlaps the requested window
 - shifts kept notes so the extracted window starts at local time `0`, clamping
   any earlier overlap to local time zero
+- clamps kept notes' `duration` to the window's end too, so a note that
+  outlasts the window (a sustained pad, a held drone) is truncated rather
+  than synthesized for its full original length — this is what keeps snippet
+  rendering cheap regardless of how long individual notes run
 - preserves the original global time context for timing humanization, envelope
   humanization, and voice automation
 - is the score-domain helper used by snippet rendering
+- callers that request an exact (non-padded) window and render/export it
+  directly — rather than going through `render_piece`'s hidden pre/post
+  margins plus a post-render trim — should expect a hard cutoff rather than
+  a natural decay for notes truncated at the window boundary
 
 ### `Score.render_stems()`
 
@@ -1003,6 +1011,26 @@ Common failure mode:
   or brittle artifacts even when each parameter looks individually plausible
 - envelope humanization operates on the post-merge ADSR values
 - master effects do not affect the individual stem renders
+
+Some artifact-risk codes are contribution-aware rather than firing at full
+severity regardless of context:
+
+- Voice-stem brightness/harshness codes (`bright_spectral_centroid`,
+  `high_band_dominance`, `flat_or_bright_tilt`) are gated by the voice's RMS
+  level relative to the mix. A hi-hat or bright lead sitting well below the
+  mix level is inherently bright but barely audible in context; below
+  roughly mix RMS − 20 dB the severity is downgraded from severe to warning,
+  and below roughly mix RMS − 30 dB the warning is skipped entirely. The
+  gating decision (`voice_relative_level_db`) is recorded on any warning that
+  survives, so it stays auditable in the manifest.
+- Cumulative effect-chain brightness codes (`chain_papery`,
+  `chain_brightness_creep`, `perceptual_brightness_lift`) are capped at
+  "warning" (never "severe") when the chain's input was mostly silent across
+  the render (loudness-gated active-block fraction below ~25%, exposed as
+  `chain_input_active_fraction` on the summary/warning metrics). A drum bus
+  that drops out for whole sections can otherwise produce a huge *relative*
+  centroid/high-band lift from a handful of active blocks without anything
+  audibly wrong happening.
 
 ## Recommended Usage
 

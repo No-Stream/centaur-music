@@ -7,8 +7,11 @@ import pytest
 from code_musics.tuning import (
     TuningTable,
     cents_to_ratio,
+    cps,
     edo_scale,
     harmonic_series,
+    hexany,
+    hexany_triads,
     ji_chord,
     otonal,
     ratio_to_cents,
@@ -204,3 +207,118 @@ class TestTuningTableDifferentRoot:
         root = 57  # A3
         freq = table.resolve(64, f0, root_midi_note=root)
         assert math.isclose(freq, 330.0, rel_tol=1e-12)
+
+
+# --- Combination Product Set (CPS) / hexany tests ---
+
+
+class TestCps:
+    """Verify cps() combination products, octave reduction, and validation."""
+
+    def test_hexany_via_cps_matches_known_ratios(self) -> None:
+        """2-out-of-4 CPS on (1, 3, 5, 7) normalized by 3 is the classic hexany."""
+        result = cps((1, 3, 5, 7), 2, normalize=3.0)
+        expected = sorted({1.0, 7 / 6, 5 / 4, 35 / 24, 5 / 3, 7 / 4})
+        assert len(result) == len(expected)
+        for actual, exp in zip(result, expected, strict=True):
+            assert actual == pytest.approx(exp)
+
+    def test_results_are_octave_reduced(self) -> None:
+        result = cps((1, 3, 5, 7), 2, normalize=3.0)
+        for ratio in result:
+            assert 1.0 <= ratio < 2.0
+
+    def test_results_sorted_ascending_and_deduplicated(self) -> None:
+        result = cps((1, 3, 5, 7), 2, normalize=3.0)
+        assert result == sorted(result)
+        assert len(result) == len(set(result))
+
+    def test_choose_one_returns_octave_reduced_factors(self) -> None:
+        result = cps((1, 3, 5, 7), 1, normalize=1.0)
+        expected = sorted({1.0, 3 / 2, 5 / 4, 7 / 4})
+        assert len(result) == len(expected)
+        for actual, exp in zip(result, expected, strict=True):
+            assert actual == pytest.approx(exp)
+
+    def test_choose_all_returns_single_product(self) -> None:
+        result = cps((1, 3, 5), 3, normalize=1.0)
+        assert len(result) == 1
+        assert result[0] == pytest.approx(15 / 8)
+
+    def test_empty_factors_rejected(self) -> None:
+        with pytest.raises(ValueError, match="non-empty"):
+            cps((), 1)
+
+    def test_non_positive_factor_rejected(self) -> None:
+        with pytest.raises(ValueError, match="positive"):
+            cps((1, -3, 5), 2)
+
+    def test_non_integer_factor_rejected(self) -> None:
+        with pytest.raises(ValueError, match="int"):
+            cps((1, 3.5, 5), 2)  # type: ignore[arg-type]
+
+    def test_duplicate_factor_rejected(self) -> None:
+        with pytest.raises(ValueError, match="distinct"):
+            cps((1, 3, 3, 5), 2)
+
+    def test_choose_zero_rejected(self) -> None:
+        with pytest.raises(ValueError, match="choose"):
+            cps((1, 3, 5, 7), 0)
+
+    def test_choose_too_large_rejected(self) -> None:
+        with pytest.raises(ValueError, match="choose"):
+            cps((1, 3, 5, 7), 5)
+
+    def test_non_positive_normalize_rejected(self) -> None:
+        with pytest.raises(ValueError, match="normalize"):
+            cps((1, 3, 5, 7), 2, normalize=0.0)
+
+
+class TestHexany:
+    """Verify hexany() default normalization and known ratio set."""
+
+    def test_default_hexany_ratios(self) -> None:
+        result = hexany()
+        expected = sorted([1.0, 7 / 6, 5 / 4, 35 / 24, 5 / 3, 7 / 4])
+        assert len(result) == 6
+        for actual, exp in zip(result, expected, strict=True):
+            assert actual == pytest.approx(exp)
+
+    def test_hexany_requires_exactly_four_factors(self) -> None:
+        with pytest.raises(ValueError, match="4 factors"):
+            hexany((1, 3, 5))
+
+    def test_hexany_custom_normalize(self) -> None:
+        result_default = hexany((1, 3, 5, 7))
+        result_explicit = hexany((1, 3, 5, 7), normalize=3.0)
+        assert result_default == pytest.approx(result_explicit)
+
+
+class TestHexanyTriads:
+    """Verify hexany_triads() otonal/utonal triad structure."""
+
+    def test_returns_four_otonal_and_four_utonal_triads(self) -> None:
+        otonal_triads, utonal_triads = hexany_triads()
+        assert len(otonal_triads) == 4
+        assert len(utonal_triads) == 4
+
+    def test_all_triad_members_are_hexany_notes(self) -> None:
+        notes = set(hexany())
+        otonal_triads, utonal_triads = hexany_triads()
+        for triad in otonal_triads + utonal_triads:
+            assert len(triad) == 3
+            for member in triad:
+                assert any(member == pytest.approx(note) for note in notes)
+
+    def test_known_otonal_triad_fixing_factor_one(self) -> None:
+        """Fixing x=1 over (1, 3, 5, 7): products {3, 5, 7}/3 octave-reduced and sorted."""
+        otonal_triads, _ = hexany_triads()
+        expected = (1.0, 7 / 6, 5 / 3)
+        assert any(triad == pytest.approx(expected) for triad in otonal_triads), (
+            otonal_triads
+        )
+
+    def test_triads_are_sorted_ascending(self) -> None:
+        otonal_triads, utonal_triads = hexany_triads()
+        for triad in otonal_triads + utonal_triads:
+            assert list(triad) == sorted(triad)

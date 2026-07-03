@@ -30,6 +30,7 @@ from code_musics.engines._dsp_utils import (
 )
 from code_musics.engines._envelopes import render_envelope
 from code_musics.engines._filters import apply_zdf_svf
+from code_musics.engines._metallic_hat import render_hat_noise_metallic
 from code_musics.engines._modal import COUPLING_MAX, render_modal_bank
 from code_musics.engines._oscillators import polyblep_square as _polyblep_square
 from code_musics.engines._pluck import render_pluck
@@ -65,7 +66,7 @@ _VALID_TONE_TYPES = frozenset(
 )
 _VALID_NOISE_TYPES = frozenset({"white", "colored", "bandpass", "comb"})
 _VALID_METALLIC_TYPES = frozenset(
-    {"partials", "ring_mod", "fm_cluster", "efm_cymbal", "modal_bank"}
+    {"partials", "hat_noise", "ring_mod", "fm_cluster", "efm_cymbal", "modal_bank"}
 )
 
 # Named EFM cymbal operator-ratio sets for the metallic efm_cymbal renderer.
@@ -838,6 +839,8 @@ def _tone_pluck(
     if n_samples == 0:
         return np.zeros(0, dtype=np.float64)
 
+    # Keep duration for the API, but pass n_samples explicitly — the
+    # n_samples -> duration -> int() round-trip can lose a sample.
     duration = n_samples / float(sample_rate)
     hardness = float(params.get("tone_pluck_hardness", 0.5))
     damping = float(params.get("tone_pluck_damping", 0.3))
@@ -859,6 +862,7 @@ def _tone_pluck(
         drive=drive,
         seed=pluck_seed,
         freq_profile=freq_profile,
+        n_samples=n_samples,
     )
 
     # If the caller provided a distinct exciter layer, blend it in so the
@@ -1057,6 +1061,16 @@ def render_metallic(
             sample_rate=sample_rate,
             rng=rng,
             params=params,
+        )
+
+    if metallic_type == "hat_noise":
+        return render_hat_noise_metallic(
+            n_samples=n_samples,
+            freq_profile=freq_profile,
+            sample_rate=sample_rate,
+            rng=rng,
+            params=params,
+            prefix="metallic_",
         )
 
     if metallic_type == "ring_mod":

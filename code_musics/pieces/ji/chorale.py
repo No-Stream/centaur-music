@@ -12,6 +12,7 @@ from code_musics.humanize import (
     TimingHumanizeSpec,
     VelocityHumanizeSpec,
 )
+from code_musics.pieces._shared import bricasti_or_reverb
 from code_musics.pieces.registry import PieceDefinition, PieceSection
 from code_musics.score import EffectSpec, Score, VelocityParamMap
 
@@ -87,13 +88,10 @@ def build_ji_chorale_score() -> Score:
                 "chow_tape",
                 {"drive": 0.15, "saturation": 0.18, "bias": 0.5, "mix": 50.0},
             ),
-            EffectSpec(
-                "bricasti",
-                {
-                    "ir_name": "1 Halls 07 Large & Dark",
-                    "wet": 0.15,
-                    "highpass_hz": 150.0,
-                },
+            bricasti_or_reverb(
+                "1 Halls 07 Large & Dark",
+                0.15,
+                highpass_hz=150.0,
             ),
         ]
     )
@@ -270,15 +268,12 @@ def build_ji_chorale_score() -> Score:
                     "wet_lowpass_hz": 4_800.0,
                 },
             ),
-            EffectSpec(
-                "bricasti",
-                {
-                    "ir_name": "2 Plates 06 Vocal Plate",
-                    "wet": 0.16,
-                    "highpass_hz": 320.0,
-                    "lowpass_hz": 8_500.0,
-                    "tilt_db": -1.5,
-                },
+            bricasti_or_reverb(
+                "2 Plates 06 Vocal Plate",
+                0.16,
+                highpass_hz=320.0,
+                lowpass_hz=8_500.0,
+                tilt_db=-1.5,
             ),
         ],
         mix_db=-4.0,

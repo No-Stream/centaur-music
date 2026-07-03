@@ -378,6 +378,61 @@ def test_save_analysis_artifacts_records_artifact_risk_report(tmp_path: Path) ->
     assert safe_manifest["artifact_risk"]["parameter_surfaces"] == {}
 
 
+def test_save_analysis_artifacts_gates_bright_voice_risk_by_mix_contribution(
+    tmp_path: Path,
+) -> None:
+    """A hi-hat's raw brightness shouldn't fire at full severity when it's quiet.
+
+    Same isolated-stem spectral shape (a pure 8.5 kHz tone, well past the
+    bright_spectral_centroid severe threshold) at three mix levels: loud
+    (comparable to the rest of the mix -> full severity), quiet (~-25 dB
+    relative to the mix -> downgraded to warning), and near-silent (~-40 dB
+    relative -> skipped outright).
+    """
+    sample_rate = 44_100
+    duration_seconds = 2.0
+    time = (
+        np.arange(int(sample_rate * duration_seconds), dtype=np.float64) / sample_rate
+    )
+    bass = 0.5 * np.sin(2.0 * np.pi * 100.0 * time)
+    bright_shape = np.sin(2.0 * np.pi * 8_500.0 * time)
+
+    loud_hat = 0.45 * bright_shape
+    quiet_hat = 0.028 * bright_shape
+    silent_hat = 0.005 * bright_shape
+
+    mix_signal = bass + loud_hat + quiet_hat + silent_hat
+    stems = {
+        "bass": bass,
+        "loud_hat": loud_hat,
+        "quiet_hat": quiet_hat,
+        "silent_hat": silent_hat,
+    }
+
+    manifest = save_analysis_artifacts(
+        output_prefix=tmp_path / "gated_voice_piece",
+        mix_signal=mix_signal,
+        sample_rate=sample_rate,
+        stems=stems,
+    )
+
+    voice_risks = manifest["artifact_risk"]["voices"]
+
+    loud_risk = next(
+        r for r in voice_risks["loud_hat"] if r["code"] == "bright_spectral_centroid"
+    )
+    assert loud_risk["severity"] == "severe"
+
+    quiet_risk = next(
+        r for r in voice_risks["quiet_hat"] if r["code"] == "bright_spectral_centroid"
+    )
+    assert quiet_risk["severity"] == "warning"
+    assert "voice_relative_level_db" in quiet_risk["metrics"]
+
+    silent_codes = {r["code"] for r in voice_risks.get("silent_hat", [])}
+    assert "bright_spectral_centroid" not in silent_codes
+
+
 def test_save_analysis_artifacts_reports_implausibly_wide_velocity_filter_env_span(
     tmp_path: Path,
 ) -> None:

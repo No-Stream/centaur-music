@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from fractions import Fraction
+from itertools import combinations
 
 _NOTE_NAMES = ("C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B")
 
@@ -286,3 +288,87 @@ def enumerate_ji_ratios(
 
     results.sort()
     return results
+
+
+def _octave_reduce(ratio: float) -> float:
+    """Fold a positive ratio into [1, 2) by octave-shifting."""
+    while ratio < 1.0:
+        ratio *= 2.0
+    while ratio >= 2.0:
+        ratio /= 2.0
+    return ratio
+
+
+def cps(factors: Sequence[int], choose: int, *, normalize: float = 1.0) -> list[float]:
+    """Erv Wilson Combination Product Set: products of every `choose`-sized
+    combination of `factors`, each divided by `normalize` and octave-reduced
+    into [1, 2). Returns sorted, deduplicated ratios.
+    """
+    if len(factors) == 0:
+        raise ValueError("factors must be non-empty")
+    if any(not isinstance(f, int) for f in factors):
+        raise ValueError("all factors must be int")
+    if any(f <= 0 for f in factors):
+        raise ValueError("all factors must be positive")
+    if len(set(factors)) != len(factors):
+        raise ValueError("factors must be distinct")
+    if not (1 <= choose <= len(factors)):
+        raise ValueError(f"choose must be between 1 and {len(factors)}, got {choose}")
+    if normalize <= 0:
+        raise ValueError("normalize must be positive")
+
+    products = {
+        _octave_reduce(math.prod(combo) / normalize)
+        for combo in combinations(factors, choose)
+    }
+    return sorted(products)
+
+
+def hexany(
+    factors: Sequence[int] = (1, 3, 5, 7), *, normalize: float | None = None
+) -> list[float]:
+    """Erv Wilson Hexany: the 2-out-of-4 Combination Product Set.
+
+    Defaults to the classic 1-3-5-7 hexany, normalized by `factors[0] *
+    factors[1]` so the result comes out relative to the first dyad.
+    """
+    if len(factors) != 4:
+        raise ValueError(f"hexany requires exactly 4 factors, got {len(factors)}")
+    resolved_normalize = (
+        float(factors[0] * factors[1]) if normalize is None else normalize
+    )
+    return cps(factors, 2, normalize=resolved_normalize)
+
+
+def hexany_triads(
+    factors: Sequence[int] = (1, 3, 5, 7), *, normalize: float | None = None
+) -> tuple[list[tuple[float, float, float]], list[tuple[float, float, float]]]:
+    """Otonal and utonal triads of the hexany over `factors`.
+
+    For each factor x, the otonal triad is the three hexany notes containing
+    x (x*y, x*z, x*w for the other three factors); the utonal triad is the
+    three notes formed by the other three factors alone (y*z, y*w, z*w). Both
+    are octave-reduced/normalized the same way as `hexany(...)`. Returns
+    (otonal_triads, utonal_triads), four triads each.
+    """
+    if len(factors) != 4:
+        raise ValueError(f"hexany requires exactly 4 factors, got {len(factors)}")
+    resolved_normalize = (
+        float(factors[0] * factors[1]) if normalize is None else normalize
+    )
+
+    otonal_triads: list[tuple[float, float, float]] = []
+    utonal_triads: list[tuple[float, float, float]] = []
+    for excluded in factors:
+        others = [f for f in factors if f != excluded]
+        otonal_sorted = sorted(
+            _octave_reduce(excluded * other / resolved_normalize) for other in others
+        )
+        utonal_sorted = sorted(
+            _octave_reduce(a * b / resolved_normalize)
+            for a, b in combinations(others, 2)
+        )
+        otonal_triads.append((otonal_sorted[0], otonal_sorted[1], otonal_sorted[2]))
+        utonal_triads.append((utonal_sorted[0], utonal_sorted[1], utonal_sorted[2]))
+
+    return otonal_triads, utonal_triads
