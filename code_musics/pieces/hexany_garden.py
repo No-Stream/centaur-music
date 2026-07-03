@@ -31,14 +31,19 @@ Form:
   bars  17– 48  S2 First bloom   walker arp + soft beat; otonal regions
                                  only (4:5:7 home, 4:5:6 lift, 3:5:7
                                  bright); bass anchors the region roots
-  bars  49– 76  S3 The turn      same six notes, utonal triads — the
-                                 shadow garden.  Kick thins, a 7-eighth
-                                 thumb line starts phasing against 4/4,
-                                 polar leaps unlock in the walker
+  bars  49– 76  S3 The turn      bar 49 drops to bass + the utonally
+                                 mirrored motif — the first silence
+                                 since the beat.  The walker re-enters
+                                 low and half-time; a 7-eighth thumb
+                                 line starts phasing against 4/4; polar
+                                 leaps unlock
   bars  77–108  S4 Full garden   otonal and utonal regions interlock;
-                                 motif in canon (bell + thread); the
-                                 6:7:8 cluster chord blooms once, at the
-                                 golden-section slot; densest texture
+                                 motif in canon (bell + thread); glint
+                                 voice answers from above; the 6:7:8
+                                 cluster blooms at the golden section;
+                                 harmonic rhythm doubles to 2-bar slots
+                                 from 101; two held-breath bars at 99
+                                 before the slam
   bars 109–132  S5 Seed          drums fall away; walker slows to
                                  quarter-notes; ends on the bare 4:7
                                  dyad (1/1 + 7/4) — neither major nor
@@ -162,8 +167,10 @@ _CHORD_SLOTS: tuple[tuple[int, tuple[int, ...]], ...] = (
     (89, _U_SUB),
     (93, _CLUSTER),  # the one 6:7:8 bloom, near the golden section
     (97, _U_VEIL),
-    (101, _BRIGHT),
+    (101, _BRIGHT),  # from here the web spins faster: 2-bar slots
+    (103, _U_MINOR),
     (105, _HOME),
+    (107, _LIFT),
     (109, _HOME),  # S5: seed
     (113, _U_SUB),
     (117, _HOME),
@@ -257,12 +264,21 @@ class _WalkParams:
 def _walk_params_for_bar(bar: int) -> _WalkParams:
     if bar < S2_BAR:  # S1: sparse condensation out of the drone
         return _WalkParams(0.30, 0.0, 5.0, 0.0, 14, 22, 0.52, -13.0)
-    if bar < S3_BAR:  # S2: the bloom
+    if bar < 45:  # S2: the bloom
         return _WalkParams(0.72, 0.10, 4.0, 0.0, 12, 24, 0.62, -10.5)
-    if bar < S4_BAR:  # S3: darker, sparser, polar leaps unlocked
-        return _WalkParams(0.58, 0.06, 3.0, 0.30, 10, 22, 0.58, -11.5)
-    if bar < S5_BAR:  # S4: full garden
+    if bar < S3_BAR:  # S2 tail: the garden holds its breath
+        return _WalkParams(0.60, 0.06, 4.0, 0.0, 12, 22, 0.58, -11.0)
+    # S3: bars 49-52 are silent (the event) — handled in _place_walker.
+    if bar < 65:  # S3a: re-entry, low and half-time
+        return _WalkParams(0.45, 0.0, 3.0, 0.30, 6, 16, 0.54, -12.0)
+    if bar < S4_BAR:  # S3b: recovering its stride, still shadowed
+        return _WalkParams(0.62, 0.06, 3.0, 0.30, 8, 20, 0.58, -11.5)
+    if bar < 85:  # S4: full garden, register climbing section-long
+        return _WalkParams(0.80, 0.14, 3.5, 0.18, 12, 24, 0.64, -10.2)
+    if bar < 93:
         return _WalkParams(0.82, 0.16, 3.5, 0.18, 12, 26, 0.66, -10.0)
+    if bar < S5_BAR:  # the cluster bloom and the fast-spinning tail
+        return _WalkParams(0.85, 0.18, 3.5, 0.18, 14, 28, 0.68, -9.8)
     return _WalkParams(0.38, 0.0, 5.0, 0.0, 12, 21, 0.50, -13.5)  # S5
 
 
@@ -299,6 +315,12 @@ def _walker_step(
     return rng.choices(candidates, weights=weights, k=1)[0]
 
 
+# S4 slot-head bars where the walker adds a dyad hit on the downbeat.
+_DYAD_BARS: frozenset[int] = frozenset(
+    start for start, _ in _CHORD_SLOTS if S4_BAR <= start < S5_BAR
+)
+
+
 def _place_walker(score: Score) -> None:
     """The arp spine: an eighth-note walk over the hexany graph."""
     rng = random.Random(1357)  # the CPS factors, of course
@@ -307,22 +329,44 @@ def _place_walker(score: Score) -> None:
     for bar in range(1, TOTAL_BARS + 1):
         if bar < 9:
             continue  # walker condenses out of the drone at bar 9
+        if S3_BAR <= bar < 53:
+            continue  # the turn: four bars of real silence
         if bar >= 129:
             continue  # the last dyad is the pad's alone
         p = _walk_params_for_bar(bar)
         region = _region_at_bar(bar)
+        in_s4 = S4_BAR <= bar < S5_BAR
         in_s5 = bar >= S5_BAR
-        # S5 slows the walk to quarters — same walker, half the steps.
-        steps = range(0, 8, 2) if in_s5 else range(8)
+        # Half-time stretches: the S3 re-entry and the S5 unwinding.
+        slow = in_s5 or 53 <= bar < 65
+        steps = range(0, 8, 2) if slow else range(8)
+        # S4 swings harder, and each 4-bar phrase leans forward a touch.
+        swing_s = ARP_SWING_S * (1.35 if in_s4 else 1.0)
+        phrase_lift = 0.05 * ((bar - 1) % 4) / 4.0 if in_s4 else 0.0
         for step8 in steps:
             if rng.random() > p.density:
                 continue
             cur_pi = _walker_step(rng, cur_pi, region, p)
             degree, octave = _from_pi(cur_pi)
-            swing = ARP_SWING_S if step8 % 2 else 0.0
+            swing = swing_s if step8 % 2 else 0.0
             start = _pos(bar) + step8 * S8 + swing
             accent = 0.14 if step8 in (0, 4) else (0.06 if step8 in (2, 6) else 0.0)
-            vel = min(1.0, p.vel_base + accent + rng.uniform(-0.04, 0.04))
+            vel = min(1.0, p.vel_base + accent + phrase_lift + rng.uniform(-0.04, 0.04))
+            if in_s4 and bar in _DYAD_BARS and step8 == 0:
+                # Dyad hit on the slot head: a region-mate under the lead.
+                mate = (
+                    region[(region.index(degree) + 1) % len(region)]
+                    if degree in region
+                    else region[0]
+                )
+                score.add_note(
+                    "arp",
+                    start=start,
+                    duration=S8 * 0.88,
+                    partial=_partial(mate, max(1, octave - 1)),
+                    amp_db=p.amp_db - 3.0,
+                    velocity=max(0.3, vel - 0.1),
+                )
             burst = rng.random() < p.burst_prob
             if burst:
                 # split into two 16ths: current tone then a neighbor
@@ -345,7 +389,7 @@ def _place_walker(score: Score) -> None:
                     velocity=max(0.3, vel - 0.12),
                 )
             else:
-                dur = (BEAT if in_s5 else S8) * 0.88
+                dur = (BEAT if slow else S8) * 0.88
                 score.add_note(
                     "arp",
                     start=start,
@@ -355,7 +399,7 @@ def _place_walker(score: Score) -> None:
                     velocity=vel,
                     pitch_motion=(
                         PitchMotionSpec.vibrato(depth_ratio=0.004, rate_hz=4.6)
-                        if in_s5
+                        if slow
                         else None
                     ),
                 )
@@ -385,6 +429,8 @@ def _place_thumb(score: Score) -> None:
         degree = region[hit_rank % len(region)]
         octave = 2 if hit_rank else 1
         in_s4 = bar >= S4_BAR
+        if bar in (99, 100):
+            continue  # held breath before the slam
         if not in_s4 and rng.random() < 0.25:
             continue  # S3: the cycle is still finding itself
         score.add_note(
@@ -474,6 +520,7 @@ def _place_bass(score: Score) -> None:
         end_bar = slots[i + 1][0] if i + 1 < len(slots) else 121
         root = min(region)
         in_s4 = S4_BAR <= start_bar < S5_BAR
+        third = sorted(region)[1]
         for bar in range(start_bar, end_bar):
             if bar >= S5_BAR and bar >= 117:
                 break
@@ -481,6 +528,27 @@ def _place_bass(score: Score) -> None:
             # the and-of-4 into each new slot; octave pops in S4.
             # Bass lives in octave 0 (93–160 Hz) — the 46 Hz kick owns
             # the sub octave, and sharing it doubled master-limiter IMD.
+            bar_in_slot = bar - start_bar
+            slot_len = end_bar - start_bar
+            motif_bar = in_s4 and (
+                bar_in_slot == 2 if slot_len >= 4 else bar_in_slot == 1
+            )
+            if motif_bar and bar not in (99, 100):
+                # The seed motif's rhythm on root↔third — the ground
+                # floor finally speaks the theme.
+                t = _pos(bar)
+                for k, (_, beats) in enumerate(_MOTIF[:4]):
+                    pitch = root if k % 2 == 0 else third
+                    score.add_note(
+                        "bass",
+                        start=t,
+                        duration=beats * BEAT * 0.9,
+                        partial=_partial(pitch, 0),
+                        amp_db=-8.5,
+                        velocity=0.68 if k % 2 == 0 else 0.6,
+                    )
+                    t += beats * BEAT
+                continue
             score.add_note(
                 "bass",
                 start=_pos(bar),
@@ -525,10 +593,11 @@ def _place_bells(score: Score) -> None:
     # Seam statements at S2 and mid-S2, tempo primo.
     _place_motif(score, "bell", _pos(17), octave=2, amp_db=-11.0, vel=0.72)
     _place_motif(score, "bell", _pos(33), octave=3, amp_db=-12.5, vel=0.65)
-    # S3 gets the motif *utonally shadowed*: same contour, degrees mapped
-    # through the polar complement (0↔3, 1↔2, 4↔5).
+    # Bar 49 IS the turn: over bass alone, the motif returns *utonally
+    # shadowed* — same contour, degrees mapped through the polar
+    # complement (0↔3, 1↔2, 4↔5).  First real silence since the beat.
     polar = {0: 3, 1: 2, 2: 1, 3: 0, 4: 5, 5: 4}
-    t = _pos(61)
+    t = _pos(49)
     for degree, beats in _MOTIF:
         dur = beats * BEAT * 2.0
         score.add_note(
@@ -536,8 +605,8 @@ def _place_bells(score: Score) -> None:
             start=t,
             duration=dur * 2.0,
             partial=_partial(polar[degree], 2),
-            amp_db=-12.0,
-            velocity=0.6,
+            amp_db=-10.0,
+            velocity=0.66,
         )
         t += dur
     # S4: canon — bell leads, thread follows a bar later at the fifth-less
@@ -564,6 +633,30 @@ def _place_bells(score: Score) -> None:
             amp_db=-13.0,
             velocity=0.55,
         )
+
+
+def _place_glint(score: Score) -> None:
+    """S4's own color: high, sparse answers to the walker's phrases.
+
+    Two-to-three-note fragments in octave 4, landing mid-bar on slot
+    heads and ricocheting through a 5/16 delay — a sound no other
+    section owns.
+    """
+    rng = random.Random(93)
+    for slot_start in (78, 82, 86, 90, 94, 98, 102, 106):
+        region = _region_at_bar(slot_start)
+        n_notes = rng.choice((2, 3))
+        beat = rng.choice((2.5, 3.0, 3.5))
+        for k in range(n_notes):
+            degree = region[rng.randrange(len(region))]
+            score.add_note(
+                "glint",
+                start=_pos(slot_start, beat) + k * DOTTED_EIGHTH,
+                duration=S8,
+                partial=_partial(degree, 4),
+                amp_db=-16.0,
+                velocity=0.45 + 0.12 * rng.random(),
+            )
 
 
 def _place_haze(score: Score) -> None:
@@ -608,12 +701,14 @@ def _place_kick(score: Score) -> None:
     for bar in range(21, 45):  # head nod
         kick(bar, 1.0, -6.5, 0.9)
         kick(bar, 3.0, -7.0, 0.85)
-    # 45–48: kick out — the garden holds its breath into the turn
-    for bar in range(S3_BAR, S4_BAR):  # S3: heartbeat only
+    # 45–52: kick out — the breath, then the turn's bare event
+    for bar in range(53, S4_BAR):  # S3: heartbeat only
         kick(bar, 1.0, -8.0, 0.82)
-        if (bar - S3_BAR) % 4 == 2:
+        if (bar - 53) % 4 == 2:
             kick(bar, 3.75, -12.0, 0.5)  # ghost push
     for bar in range(S4_BAR, S5_BAR):  # S4: full nod + ghosts
+        if bar in (99, 100):
+            continue  # two bars of held breath before the slam at 101
         kick(bar, 1.0, -6.0, 0.92)
         kick(bar, 3.0, -6.5, 0.86)
         if (bar - S4_BAR) % 4 == 3:
@@ -637,8 +732,10 @@ def _place_hats(score: Score) -> None:
 
     # Offbeat-8th bed, S2 (from 21) through S4.
     for bar in range(21, S5_BAR):
-        if 45 <= bar < S3_BAR:
-            continue  # breath with the kick
+        if 45 <= bar < 53:
+            continue  # the breath and the turn's bare event
+        if bar in (99, 100):
+            continue  # held breath before the slam
         in_s4 = bar >= S4_BAR
         base = -10.0 if in_s4 else -12.0
         for step in (2, 6, 10, 14):
@@ -647,29 +744,29 @@ def _place_hats(score: Score) -> None:
             for step in (7, 15):  # 16th graces
                 hat("hat_c", bar, step, 0.38, base - 4.0)
 
-    # The 7-cycle accent: every 7th sixteenth from the start of S3,
-    # rotating against the grid — the hats phase with the thumb line.
-    origin_bar = S3_BAR
-    total_16ths = (S5_BAR - S3_BAR) * 16
+    # The 7-cycle accent: every 7th sixteenth from bar 57 (with the
+    # thumb line), rotating against the grid — hats phase with the thumb.
+    origin_bar = 57
+    total_16ths = (S5_BAR - origin_bar) * 16
     for k in range(0, total_16ths, 7):
         bar = origin_bar + k // 16
         step = k % 16
-        if 45 <= bar < S3_BAR:
+        if bar in (99, 100):
             continue
         in_s4 = bar >= S4_BAR
         hat("hat_c", bar, step, 0.78, -9.0 if in_s4 else -11.5)
 
     # Open hat at 4-bar phrase ends, choked by the next closed hat.
     for bar in range(24, S5_BAR, 4):
-        if 45 <= bar < 52:
+        if 45 <= bar < 56 or bar == 100:
             continue
         hat("hat_o", bar, 14, 0.66, -12.5, dur=0.5)
 
 
 def _place_shaker(score: Score) -> None:
-    """Soft brush backbeat in the bloom sections."""
+    """Soft brush backbeat in the bloom sections, plus the cluster riser."""
     for bar in range(25, S5_BAR):
-        if 45 <= bar < 61:
+        if 45 <= bar < 61 or bar in (99, 100):
             continue
         for step, vel in ((4, 0.55), (12, 0.66)):
             score.add_note(
@@ -680,6 +777,17 @@ def _place_shaker(score: Score) -> None:
                 amp_db=-13.0,
                 velocity=vel,
             )
+    # 16th-note roll rising through bar 92 into the 6:7:8 cluster bloom.
+    for k in range(8, 16):
+        rise = (k - 8) / 7.0
+        score.add_note(
+            "shaker",
+            start=_pos(92) + k * S16,
+            duration=0.12,
+            freq=900.0,
+            amp_db=-15.0 + 4.0 * rise,
+            velocity=0.35 + 0.45 * rise,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -750,8 +858,10 @@ def _arp_cutoff_arc() -> AutomationSpec:
         AutomationTarget(kind="synth", name="cutoff_hz"),
         [
             (S1_END, S1_END + 8 * BAR, 2100.0, "exp"),  # bloom opens
-            (S2_END - 4 * BAR, S2_END + 4 * BAR, 1500.0, "exp"),  # turn darkens
-            (S3_END - 4 * BAR, S3_END + 8 * BAR, 3000.0, "exp"),  # garden peak
+            (S2_END - 4 * BAR, S2_END + 4 * BAR, 1250.0, "exp"),  # turn darkens
+            (_pos(65), S3_END, 1900.0, "exp"),  # stride recovers
+            (S3_END, _pos(93), 2800.0, "exp"),  # garden opens
+            (_pos(101), S4_END, 3300.0, "exp"),  # fast-spinning peak
             (S4_END, S4_END + 8 * BAR, 1300.0, "exp"),  # seed closes down
         ],
         default=1600.0,
@@ -785,12 +895,14 @@ def _arp_hall_ride() -> AutomationSpec:
 
 
 def _arp_delay_throw() -> AutomationSpec:
-    """Delay blooms at the turn and runs away into the last section."""
+    """Delay blooms at the turn, again at the S4 seam, and as S5 opens."""
     return _ramp(
         AutomationTarget(kind="control", name="mix"),
         [
             (S2_END - 2 * BAR, S2_END + 2 * BAR, 0.40, "linear"),
-            (S2_END + 6 * BAR, S3_END, 0.20, "linear"),
+            (S2_END + 6 * BAR, _pos(73), 0.20, "linear"),
+            (_pos(75), S3_END, 0.44, "linear"),  # runaway into the garden
+            (S3_END + 2 * BAR, S3_END + 4 * BAR, 0.22, "linear"),
             (S4_END - 4 * BAR, S4_END, 0.46, "linear"),
             (S4_END + 4 * BAR, S4_END + 8 * BAR, 0.24, "linear"),
         ],
@@ -819,9 +931,24 @@ def _haze_mix_ride() -> AutomationSpec:
             (S2_END - 4 * BAR, S2_END + 4 * BAR, -15.0, "linear"),
             (S3_END - 4 * BAR, S3_END, -12.5, "linear"),  # riser into S4
             (S3_END, S3_END + 2 * BAR, -18.0, "linear"),
+            (_pos(91), _pos(93), -11.5, "linear"),  # swell into the cluster
+            (_pos(93), _pos(95), -18.5, "linear"),  # cut on the bloom
             (S4_END, TOTAL_DUR - 4 * BAR, -13.0, "linear"),  # haze inherits
         ],
         default=-18.0,
+    )
+
+
+def _pad_hall_ride() -> AutomationSpec:
+    """The shadow garden is wetter; the full garden pulls closer."""
+    return _ramp(
+        AutomationTarget(kind="control", name="send_db"),
+        [
+            (S2_END, S2_END + 4 * BAR, -4.5, "linear"),
+            (S3_END - 2 * BAR, S3_END + 2 * BAR, -6.5, "linear"),
+            (S4_END, S4_END + 4 * BAR, -4.5, "linear"),
+        ],
+        default=-6.0,
     )
 
 
@@ -923,7 +1050,7 @@ def build_score() -> Score:
                 },
             ),
         ],
-        sends=[VoiceSend(target="hall", send_db=-6.0)],
+        sends=[VoiceSend(target="hall", send_db=-6.0, automation=[_pad_hall_ride()])],
         pan=0.0,
         mix_db=-10.0,
         envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
@@ -994,6 +1121,31 @@ def build_score() -> Score:
         velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
         drift_bus="garden_drift",
         drift_bus_correlation=0.5,
+    )
+
+    # ---- Glint: S4's own color — high delayed answers ----
+    score.add_voice(
+        "glint",
+        synth_defaults={
+            "engine": "synth_voice",
+            "preset": "soft_pluck",
+            "release": 1.4,
+            "filter_mode": "lowpass",
+            "filter_cutoff_hz": 3800.0,
+        },
+        effects=[
+            EffectSpec(
+                "delay",
+                {"delay_seconds": 5.0 * S16, "feedback": 0.45, "mix": 0.38},
+            ),
+        ],
+        sends=[VoiceSend(target="hall", send_db=-3.0)],
+        pan=0.42,
+        mix_db=-9.0,
+        envelope_humanize=EnvelopeHumanizeSpec(preset="loose_pluck"),
+        velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
+        drift_bus="garden_drift",
+        drift_bus_correlation=0.4,
     )
 
     # ---- Haze: hexany-quantized grain dust ----
@@ -1070,6 +1222,7 @@ def build_score() -> Score:
     _place_thumb(score)
     _place_bass(score)
     _place_bells(score)
+    _place_glint(score)
     _place_haze(score)
     _place_kick(score)
     _place_hats(score)
