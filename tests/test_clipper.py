@@ -75,6 +75,32 @@ class TestClipperLevels:
             out = apply_clipper(signal, oversample_factor=os)
             assert out.shape == signal.shape, f"length mismatch at OS={os}"
 
+    def test_scalar_params_match_constant_param_arrays(self) -> None:
+        signal = np.stack(
+            [
+                _sine(110.0, 0.08, amp=1.1),
+                _sine(220.0, 0.08, amp=0.7),
+            ]
+        )
+        n = signal.shape[-1]
+
+        scalar = apply_clipper(
+            signal,
+            threshold_db=-8.0,
+            knee_width_db=2.5,
+            mix=0.7,
+            oversample_factor=1,
+        )
+        arrays = apply_clipper(
+            signal,
+            threshold_db=np.full(n, -8.0),
+            knee_width_db=np.full(n, 2.5),
+            mix=np.full(n, 0.7),
+            oversample_factor=1,
+        )
+
+        np.testing.assert_allclose(scalar, arrays, atol=1e-10, rtol=1e-10)
+
 
 class TestClipperKnee:
     """knee_width_db controls soft/hard character monotonically."""

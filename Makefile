@@ -176,6 +176,17 @@ ifndef PIECE
 endif
 	$(UV_RUN) python main.py $(PIECE) $(RENDER_PLOT_FLAG) $(RENDER_ANALYSIS_FLAG)
 
+.PHONY: profile-render-memory
+profile-render-memory:
+ifndef PIECE
+	$(error PIECE is required, for example `make profile-render-memory PIECE=hexany_garden`)
+endif
+ifeq ($(ANALYSIS),0)
+	$(UV_RUN) python scripts/profile_render_memory.py $(PIECE)
+else
+	$(UV_RUN) python scripts/profile_render_memory.py $(PIECE) --analysis
+endif
+
 .PHONY: inspect
 inspect:
 ifndef PIECE

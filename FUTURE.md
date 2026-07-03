@@ -47,13 +47,18 @@ Most valuable directions:
 
 Concrete piece prompts:
 
-- **Four Tet-ish Colundi arps:** warm, organic arpeggios using the Colundi-ish
-  11-limit / septimal world, with additive, FM bell, grain, and smear textures.
+- **Generative Music that Sounds like Music**: not modular slop. real music. 
+  maybe using creative ideas or generative approaches that create more memorable patterns,
+  locking in patterns, mixing generative and traditional composition, etc.
 - **Loveless-adjacent smearing:** fragmented chords, global glide/tremolo-bar
   bends, sus2/sus4/add9 ambiguity, octave duplication, chorus, saturation, and
   polyrhythmic drift.
+- **More with Erv Wilson's CPS**: we have one piece with this, interesting.
+  Let's use it more. New directions?
 - **Utonal / subharmonic form:** darker undertone passages that contrast with
   otonal material inside a coherent structure.
+- **Four Tet-ish Colundi arps:** warm, organic arpeggios using the Colundi-ish
+  11-limit / septimal world, with additive, FM bell, grain, and smear textures.
 - **Trance / progressive house:** slightly cheesy harmonic movement in alt
   tunings, with real rhythm and mix confidence.
 - **Fake found sound:** sample-free synthetic field-recording / Burial-adjacent
@@ -288,4 +293,5 @@ or obvious quality gaps.
 - DawDreamer only if pedalboard cannot cover a needed routing or CLAP/Faust use
   case; note GPLv3 implications before adopting
 - Surge XT internal parameter automation through preset state / CC routing if
-  native post-filter automation is insufficient
+  native post-filter automation is insufficient; see
+  `docs/plans/surge_xt_parameter_automation_notes.md`

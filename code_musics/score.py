@@ -788,17 +788,78 @@ class Score:
 
     def render(self) -> np.ndarray:
         """Render the score to mono or stereo audio."""
-        stems, send_returns, _, _, _ = self._render_mix_components_internal(
-            collect_effect_analysis=False
-        )
-        mix_inputs = [*stems.values(), *send_returns.values()]
-        if not mix_inputs:
+        mix = self._render_mix_low_memory()
+        if mix.size == 0:
             return np.zeros(0)
-        mix = self._stack_signals(mix_inputs)
         pre_peak = float(np.max(np.abs(mix))) if mix.size > 0 else 0.0
         pre_peak_db = 20.0 * np.log10(max(pre_peak, 1e-12))
         logger.info(f"Master bus pre-processing: peak {pre_peak_db:.2f} dBFS")
         return self._apply_master_bus_processing(mix)
+
+    def _render_mix_low_memory(self) -> np.ndarray:
+        """Render a pre-master mix without retaining raw stems."""
+        send_inputs: dict[str, np.ndarray | None] = {
+            send_bus.name: None for send_bus in self.send_buses
+        }
+        timing_offsets = self.resolve_timing_offsets()
+        velocity_multipliers = self._build_velocity_multiplier_map()
+        rendered_voice_bases: dict[str, np.ndarray] = {}
+        for voice_name, voice in self.voices.items():
+            self._validate_voice_sends(voice.sends)
+            rendered_voice_bases[voice_name] = self._render_voice_base(
+                voice_name=voice_name,
+                voice=voice,
+                timing_offsets=timing_offsets,
+                velocity_multipliers=velocity_multipliers,
+            )
+
+        self._apply_choke_groups(rendered_voice_bases, timing_offsets)
+
+        sidechain_remaining = self._sidechain_source_use_counts()
+        processed_voice_outputs: dict[str, np.ndarray] = {}
+        mix: np.ndarray | None = None
+        for voice_name in self._voice_processing_order():
+            voice = self.voices[voice_name]
+            voice_mix = rendered_voice_bases.pop(voice_name)
+            rendered_voice, rendered_send_inputs, _ = self._finalize_voice_output(
+                voice_name=voice_name,
+                voice=voice,
+                voice_mix=voice_mix,
+                processed_voice_outputs=processed_voice_outputs,
+                collect_effect_analysis=False,
+            )
+            mix = self._accumulate_signal(mix, rendered_voice)
+            for bus_name, bus_signal in rendered_send_inputs.items():
+                send_inputs[bus_name] = self._accumulate_signal(
+                    send_inputs.get(bus_name), bus_signal
+                )
+
+            if sidechain_remaining.get(voice_name, 0) > 0:
+                processed_voice_outputs[voice_name] = rendered_voice
+
+            for source_voice_name in self._voice_sidechain_sources(
+                voice_name=voice_name,
+                voice=voice,
+            ):
+                remaining = sidechain_remaining[source_voice_name] - 1
+                if remaining <= 0:
+                    sidechain_remaining.pop(source_voice_name, None)
+                    processed_voice_outputs.pop(source_voice_name, None)
+                else:
+                    sidechain_remaining[source_voice_name] = remaining
+
+        compact_send_inputs = {
+            bus_name: [bus_signal]
+            for bus_name, bus_signal in send_inputs.items()
+            if bus_signal is not None and bus_signal.size > 0
+        }
+        send_returns, _ = self._render_send_returns(
+            send_inputs=compact_send_inputs,
+            collect_effect_analysis=False,
+        )
+        for send_return in send_returns.values():
+            mix = self._accumulate_signal(mix, send_return)
+        return np.zeros(0) if mix is None else mix
 
     def render_with_effect_analysis(
         self,
@@ -1054,8 +1115,8 @@ class Score:
     ]:
         """Render dry stems, send returns, and optional effect diagnostics."""
         voice_effects: dict[str, list[synth.EffectAnalysisEntry]] = {}
-        send_inputs: dict[str, list[np.ndarray]] = {
-            send_bus.name: [] for send_bus in self.send_buses
+        send_inputs: dict[str, np.ndarray | None] = {
+            send_bus.name: None for send_bus in self.send_buses
         }
         timing_offsets = self.resolve_timing_offsets()
         velocity_multipliers = self._build_velocity_multiplier_map()
@@ -1085,7 +1146,9 @@ class Score:
             )
             processed_voice_outputs[voice_name] = rendered_voice
             for bus_name, bus_signal in rendered_send_inputs.items():
-                send_inputs.setdefault(bus_name, []).append(bus_signal)
+                send_inputs[bus_name] = self._accumulate_signal(
+                    send_inputs.get(bus_name), bus_signal
+                )
             if rendered_effect_analysis:
                 voice_effects[voice_name] = rendered_effect_analysis
 
@@ -1095,8 +1158,13 @@ class Score:
             if voice_name in processed_voice_outputs
             and processed_voice_outputs[voice_name].size > 0
         }
+        compact_send_inputs = {
+            bus_name: [bus_signal]
+            for bus_name, bus_signal in send_inputs.items()
+            if bus_signal is not None and bus_signal.size > 0
+        }
         send_returns, send_effects = self._render_send_returns(
-            send_inputs=send_inputs,
+            send_inputs=compact_send_inputs,
             collect_effect_analysis=collect_effect_analysis,
         )
         # dry_stems: post-normalization, post-choke, pre-effects/pan/fader
@@ -2328,6 +2396,16 @@ class Score:
             visit(voice_name)
         return ordered_voice_names
 
+    def _sidechain_source_use_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for voice_name, voice in self.voices.items():
+            for source_voice_name in self._voice_sidechain_sources(
+                voice_name=voice_name,
+                voice=voice,
+            ):
+                counts[source_voice_name] = counts.get(source_voice_name, 0) + 1
+        return counts
+
     def _apply_master_bus_processing(
         self,
         mix: np.ndarray,
@@ -2527,6 +2605,43 @@ class Score:
                 output[1, : signal.shape[-1]] += signal
             else:
                 output[:, : signal.shape[-1]] += signal
+        return output
+
+    @staticmethod
+    def _accumulate_signal(
+        accumulator: np.ndarray | None,
+        signal: np.ndarray,
+    ) -> np.ndarray | None:
+        if signal.size == 0:
+            return accumulator
+        incoming = np.asarray(signal, dtype=np.float64)
+        if accumulator is None:
+            return incoming.copy()
+
+        output = accumulator
+        if output.ndim != incoming.ndim:
+            if output.ndim == 1:
+                output = np.stack([output, output])
+            if incoming.ndim == 1:
+                incoming = np.stack([incoming, incoming])
+
+        required_len = max(output.shape[-1], incoming.shape[-1])
+        if output.shape[-1] < required_len:
+            if output.ndim == 1:
+                grown = np.zeros(required_len, dtype=np.float64)
+                grown[: output.shape[-1]] = output
+            else:
+                grown = np.zeros((2, required_len), dtype=np.float64)
+                grown[:, : output.shape[-1]] = output
+            output = grown
+
+        if output.ndim == 1:
+            output[: incoming.shape[-1]] += incoming
+        elif incoming.ndim == 1:
+            output[0, : incoming.shape[-1]] += incoming
+            output[1, : incoming.shape[-1]] += incoming
+        else:
+            output[:, : incoming.shape[-1]] += incoming
         return output
 
     @staticmethod

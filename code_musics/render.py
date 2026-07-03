@@ -297,25 +297,31 @@ def render_piece(
                 start_seconds=render_window.render_start_seconds,
                 end_seconds=render_window.render_end_seconds,
             )
-        audio, rendered_stems, send_returns, effect_analysis = (
-            render_score.render_with_effect_analysis(
-                collect_effect_analysis=save_analysis,
+        if save_analysis:
+            audio, rendered_stems, send_returns, effect_analysis = (
+                render_score.render_with_effect_analysis(
+                    collect_effect_analysis=True,
+                )
             )
-        )
-        if rendered_stems:
-            pre_master_mix_inputs = [*rendered_stems.values(), *send_returns.values()]
-            pre_master_mix = render_score._stack_signals(pre_master_mix_inputs)
-            if render_score.auto_master_gain_stage:
-                pre_master_mix = gain_stage_for_master_bus(
-                    pre_master_mix,
-                    sample_rate=render_score.sample_rate,
-                    target_lufs=render_score.master_bus_target_lufs,
-                    max_true_peak_dbfs=render_score.master_bus_max_true_peak_dbfs,
-                )
-            if render_score.master_input_gain_db != 0.0:
-                pre_master_mix = pre_master_mix * db_to_amp(
-                    render_score.master_input_gain_db
-                )
+            if rendered_stems:
+                pre_master_mix_inputs = [
+                    *rendered_stems.values(),
+                    *send_returns.values(),
+                ]
+                pre_master_mix = render_score._stack_signals(pre_master_mix_inputs)
+                if render_score.auto_master_gain_stage:
+                    pre_master_mix = gain_stage_for_master_bus(
+                        pre_master_mix,
+                        sample_rate=render_score.sample_rate,
+                        target_lufs=render_score.master_bus_target_lufs,
+                        max_true_peak_dbfs=render_score.master_bus_max_true_peak_dbfs,
+                    )
+                if render_score.master_input_gain_db != 0.0:
+                    pre_master_mix = pre_master_mix * db_to_amp(
+                        render_score.master_input_gain_db
+                    )
+        else:
+            audio = render_score.render()
         if render_window is not None:
             audio = _trim_rendered_audio(
                 audio=audio,
