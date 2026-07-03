@@ -47,6 +47,12 @@
 - `code_musics/stem_export.py` exports per-voice audio stem WAVs with send bus
   returns and optional mastered reference mix.
 - `code_musics/midi_import.py` imports MIDI files into the score model.
+- `code_musics/viz_export.py` exports a semantic visualization JSON (resolved
+  notes + velocity + parsed structured labels, voice metadata, piece
+  annotations, mix RMS envelope) that drives the `viz/` music-video pipeline:
+  deterministic three.js scenes captured headless into H.264 with the audio
+  muxed. See `docs/viz_api.md` for the exporter schema, structured-label
+  format, scene contract, and capture workflow.
 - `code_musics/meter.py` contains the optional high-level musical-time layer:
   `Timeline`, beat/bar helpers, rhythmic values, and bar-aware location math.
 - `code_musics/evaluate.py` is the LLM-based piece evaluation system.  Four
@@ -242,6 +248,9 @@ make stems PIECE=ji_chorale         # export per-voice audio stem WAVs
 make stems PIECE=ji_chorale DRY=1   # export dry (pre-effects) stems
 make stems-snippet PIECE=ji_chorale AT=2:10 WINDOW=12  # export stem snippet
 make stems-window PIECE=ji_chorale START=130 DUR=12    # export exact stem window
+make viz-setup                     # one-time viz tooling bootstrap (ffmpeg, three.js, playwright)
+make viz PIECE=hexany_garden       # export the semantic viz JSON (requires a rendered WAV)
+make viz-video PIECE=hexany_garden # capture the viz/<piece>/ scene to mp4 (VIZ_WIDTH/HEIGHT/FPS/WORKERS, START/END)
 make test                          # run the full test suite
 make test-selected TESTS=tests/test_score.py  # run a focused subset while iterating
 make test-selected TESTS="tests/test_a.py tests/test_b.py"  # multiple files
