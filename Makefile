@@ -269,6 +269,39 @@ ifndef DUR
 endif
 	$(UV_RUN) python main.py $(PIECE) --export-stems --stem-bit-depth $(BIT_DEPTH) $(STEMS_DRY_FLAG) $(STEMS_NO_MIX_FLAG) --window-start "$(START)" --window-dur $(DUR)
 
+.PHONY: viz
+viz:
+ifndef PIECE
+	$(error PIECE is required, for example `make viz PIECE=hexany_garden`)
+endif
+	$(UV_RUN) python main.py $(PIECE) --export-viz
+
+.PHONY: viz-setup
+viz-setup:
+	bash scripts/viz_setup.sh
+
+VIZ_WIDTH ?= 1920
+VIZ_HEIGHT ?= 1080
+VIZ_FPS ?= 30
+VIZ_WORKERS ?= 4
+VIZ_CRF ?= 17
+VIZ_START_FLAG = $(if $(START),--start-seconds $(START),)
+VIZ_END_FLAG = $(if $(END),--end-seconds $(END),)
+VIZ_OUT ?= output/$(PIECE)/$(PIECE)_$(VIZ_WIDTH)x$(VIZ_HEIGHT).mp4
+
+.PHONY: viz-video
+viz-video:
+ifndef PIECE
+	$(error PIECE is required, for example `make viz-video PIECE=hexany_garden VIZ_WIDTH=1920 VIZ_HEIGHT=1080`)
+endif
+	$(UV_RUN) python viz/capture.py --scene-dir viz/$(PIECE) \
+		--viz-json output/$(PIECE)/$(PIECE).viz.json \
+		--audio output/$(PIECE)/$(PIECE).wav \
+		--width $(VIZ_WIDTH) --height $(VIZ_HEIGHT) --fps $(VIZ_FPS) \
+		--workers $(VIZ_WORKERS) --crf $(VIZ_CRF) \
+		$(VIZ_START_FLAG) $(VIZ_END_FLAG) \
+		--output $(VIZ_OUT)
+
 .PHONY: render-sketches
 render-sketches:
 	$(UV_RUN) python main.py sketch_passacaglia $(RENDER_PLOT_FLAG)

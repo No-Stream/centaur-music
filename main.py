@@ -14,6 +14,7 @@ from code_musics.render import (
     RenderWindow,
     export_piece_midi,
     export_piece_stems,
+    export_piece_viz,
     list_pieces,
     render_piece,
 )
@@ -65,6 +66,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry",
         action="store_true",
         help="Export dry stems (post-normalization, pre-effects/pan).",
+    )
+    parser.add_argument(
+        "--export-viz",
+        action="store_true",
+        help="Export a visualization JSON payload instead of rendering audio.",
     )
     parser.add_argument(
         "--no-analysis",
@@ -192,6 +198,11 @@ def main() -> None:
                 dry=args.dry,
             )
             logging.info("Saved stems bundle to %s", stem_result.bundle_dir)
+            continue
+
+        if args.export_viz:
+            viz_result = export_piece_viz(piece_name)
+            logging.info("Saved viz JSON to %s", viz_result.viz_path)
             continue
 
         result = render_piece(

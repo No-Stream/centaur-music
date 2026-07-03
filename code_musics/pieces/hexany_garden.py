@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, replace
+from typing import Any
 
 from code_musics.automation import (
     AutomationSegment,
@@ -131,6 +132,10 @@ _DEGREE_FACTORS: tuple[frozenset[int], ...] = (
     frozenset({1, 5}),  # 5/3    = 1·5
     frozenset({3, 7}),  # 7/4    = 3·7
 )
+
+# Degree -> its antipode: the degree sharing no factor (octahedron vertex
+# antipodes; the three polar pairs are 0-3, 1-2, 4-5).
+_POLAR_COMPLEMENT: dict[int, int] = {0: 3, 1: 2, 2: 1, 3: 0, 4: 5, 5: 4}
 
 # The eight triad regions, as degree triples.  Otonal regions fix a
 # common factor; utonal regions exclude one.
@@ -221,9 +226,10 @@ def _place_motif(
     vel: float = 0.75,
     ring: float = 1.6,
     vibrato: bool = False,
+    stmt: str = "seam",
 ) -> None:
     t = start
-    for degree, beats in _MOTIF:
+    for idx, (degree, beats) in enumerate(_MOTIF):
         dur = beats * BEAT * time_scale
         score.add_note(
             voice,
@@ -237,6 +243,7 @@ def _place_motif(
                 if vibrato and beats >= 1.0
                 else None
             ),
+            label=f"motif;deg={degree};oct={octave};idx={idx};stmt={stmt}",
         )
         t += dur
 
@@ -355,6 +362,16 @@ class _ArpNote:
     degree: int
     octave: int
     accent: float
+    # Viz-only metadata (label output; no effect on generation or audio).
+    leap: str = "none"  # "none" | "edge" | "polar" — move type onto this note
+    quote: bool = False  # part of a seed-motif quote
+    grid: str = "straight"  # "straight" | "slow" | "tresillo" | "seven"
+
+
+def _leap_kind(prev_degree: int, degree: int) -> str:
+    if degree == prev_degree:
+        return "none"
+    return "edge" if _shares_factor(prev_degree, degree) else "polar"
 
 
 def _quote_notes(region: tuple[int, ...]) -> tuple[list[_ArpNote], int]:
@@ -370,9 +387,21 @@ def _quote_notes(region: tuple[int, ...]) -> tuple[list[_ArpNote], int]:
     degrees = [ranked[0], ranked[1], ranked[2], passing, ranked[1]]
     notes: list[_ArpNote] = []
     t_beats = 0.0
+    prev_degree = degrees[0]
     for (_, beats), degree in zip(_MOTIF, degrees, strict=True):
         accent = 0.12 if t_beats == 0.0 else 0.05
-        notes.append(_ArpNote(t_beats * BEAT, beats * BEAT * 0.9, degree, 3, accent))
+        notes.append(
+            _ArpNote(
+                t_beats * BEAT,
+                beats * BEAT * 0.9,
+                degree,
+                3,
+                accent,
+                leap=_leap_kind(prev_degree, degree),
+                quote=True,
+            )
+        )
+        prev_degree = degree
         t_beats += beats
     return notes, _pi(degrees[-1], 3)
 
@@ -408,13 +437,31 @@ def _gen_cell(
         in_s4 = S4_BAR <= bar < S5_BAR
         slow = bar >= S5_BAR or 53 <= bar < 65
         swing_s = ARP_SWING_S * (1.35 if in_s4 else 1.0)
+        if bar in _SEVEN_GRID_BARS:
+            grid = "seven"
+        elif 65 <= bar < S4_BAR:
+            grid = "tresillo"
+        else:
+            grid = "slow" if slow else "straight"
 
         def emit(offset_s: float, duration: float, accent: float) -> None:
             nonlocal cur_pi
+            prev_degree, _ = _from_pi(cur_pi)
             cur_pi = _walker_step(rng, cur_pi, region, p)  # noqa: B023
             degree, octave = _from_pi(cur_pi)
             rows.append(
-                (bar_off, _ArpNote(offset_s, duration, degree, octave, accent))  # noqa: B023
+                (
+                    bar_off,  # noqa: B023
+                    _ArpNote(
+                        offset_s,
+                        duration,
+                        degree,
+                        octave,
+                        accent,
+                        leap=_leap_kind(prev_degree, degree),
+                        grid=grid,  # noqa: B023
+                    ),
+                )
             )
 
         if bar in _SEVEN_GRID_BARS:
@@ -461,7 +508,7 @@ def _mutate_cell(
         return
     idx = rng.randrange(len(cell))
     bar_off, note = cell[idx]
-    cell[idx] = (bar_off, replace(note, degree=rng.choice(region)))
+    cell[idx] = (bar_off, replace(note, degree=rng.choice(region), leap="none"))
 
 
 def _place_walker(score: Score) -> dict[int, int]:
@@ -473,7 +520,7 @@ def _place_walker(score: Score) -> dict[int, int]:
     cell_end_pi = cur_pi
     last_degree: dict[int, int] = {}
 
-    def place(bar: int, notes: list[_ArpNote]) -> None:
+    def place(bar: int, notes: list[_ArpNote], phase: str) -> None:
         p = _walk_params_for_bar(bar)
         region = _region_at_bar(bar)
         in_s4 = S4_BAR <= bar < S5_BAR
@@ -483,6 +530,18 @@ def _place_walker(score: Score) -> dict[int, int]:
             "osc_pluck_damping": p.pluck_damping,
             "osc_pluck_position": p.pluck_position,
         }
+
+        def label(note: _ArpNote, *, degree: int, octave: int, dyad: bool) -> str:
+            parts = [
+                f"walker;deg={degree};oct={octave};phase={phase}",
+                f"leap={'none' if dyad else note.leap};grid={note.grid}",
+            ]
+            if note.quote:
+                parts.append("quote=1")
+            if dyad:
+                parts.append("dyad=1")
+            return ";".join(parts)
+
         for note in sorted(notes, key=lambda n: n.offset_s):
             start = _pos(bar) + note.offset_s
             vel = min(
@@ -499,14 +558,16 @@ def _place_walker(score: Score) -> dict[int, int]:
                     if note.degree in region
                     else region[0]
                 )
+                mate_octave = max(1, note.octave - 1)
                 score.add_note(
                     "arp",
                     start=start,
                     duration=note.duration,
-                    partial=_partial(mate, max(1, note.octave - 1)),
+                    partial=_partial(mate, mate_octave),
                     amp_db=p.amp_db - 3.0,
                     velocity=max(0.3, vel - 0.1),
                     synth=pluck,
+                    label=label(note, degree=mate, octave=mate_octave, dyad=True),
                 )
             score.add_note(
                 "arp",
@@ -521,6 +582,7 @@ def _place_walker(score: Score) -> dict[int, int]:
                     if note.duration >= BEAT * 0.8
                     else None
                 ),
+                label=label(note, degree=note.degree, octave=note.octave, dyad=False),
             )
             last_degree[bar] = note.degree
 
@@ -537,18 +599,18 @@ def _place_walker(score: Score) -> dict[int, int]:
             cell, cell_end_pi = _gen_cell(rng, bar, 2, cur_pi, quote=bar in _QUOTE_BARS)
             cur_pi = cell_end_pi
             for off in (0, 1):
-                place(bar + off, [n for o, n in cell if o == off])
+                place(bar + off, [n for o, n in cell if o == off], "record")
             bar += 2
         elif phrase_pos in (2, 4) and cell:
             # Replay the riff, one nudge per pass.
             _mutate_cell(rng, cell, _region_at_bar(bar))
             for off in (0, 1):
-                place(bar + off, [n for o, n in cell if o == off])
+                place(bar + off, [n for o, n in cell if o == off], "replay")
             cur_pi = cell_end_pi
             bar += 2
         else:
             rows, cur_pi = _gen_cell(rng, bar, 1, cur_pi)
-            place(bar, [n for _, n in rows])
+            place(bar, [n for _, n in rows], "free")
             bar += 1
     return last_degree
 
@@ -588,6 +650,7 @@ def _place_thumb(score: Score) -> None:
             partial=_partial(degree, octave),
             amp_db=-14.0 if in_s4 else -16.5,
             velocity=0.62 if hit_rank == 0 else 0.5,
+            label=f"thumb;deg={degree};oct={octave};step={eighth % 7};rank={hit_rank}",
         )
 
 
@@ -612,6 +675,7 @@ def _place_pad(score: Score) -> None:
         partial=1.0,
         amp_db=-10.0,
         velocity=0.6,
+        label="pad;deg=0;oct=0;role=drone",
     )
     score.add_note(
         "pad",
@@ -620,6 +684,7 @@ def _place_pad(score: Score) -> None:
         partial=2.0,
         amp_db=-15.0,
         velocity=0.5,
+        label="pad;deg=0;oct=1;role=drone",
     )
 
     # From S2 on: the region as slow chords with actual voice-leading.
@@ -672,6 +737,10 @@ def _place_pad(score: Score) -> None:
                 amp_db=-12.0 if is_root else -15.0,
                 velocity=0.6 if is_root else 0.5,
                 pitch_motion=glide,
+                label=(
+                    f"pad;deg={degree};oct={octave};lane={lane}"
+                    f";held={int(held)};slot_bar={start_bar}"
+                ),
             )
         prev_voicing = voicing
         # S4/S5 add the root an octave up for glow
@@ -683,6 +752,7 @@ def _place_pad(score: Score) -> None:
                 partial=_partial(ranked[0], 2),
                 amp_db=-18.0,
                 velocity=0.45,
+                label=f"pad;deg={ranked[0]};oct=2;role=glow;slot_bar={start_bar}",
             )
 
 
@@ -719,6 +789,7 @@ def _place_bass(score: Score, lead_degrees: dict[int, int]) -> None:
                         partial=_partial(pitch, 0),
                         amp_db=-8.5,
                         velocity=0.68 if k % 2 == 0 else 0.6,
+                        label=f"bass;deg={pitch};oct=0;role=motif;idx={k}",
                     )
                     t += beats * BEAT
                 continue
@@ -729,6 +800,7 @@ def _place_bass(score: Score, lead_degrees: dict[int, int]) -> None:
                 partial=_partial(root, 0),
                 amp_db=-8.0,
                 velocity=0.72,
+                label=f"bass;deg={root};oct=0;role=root",
             )
             if bar == end_bar - 1 and end_bar < 121:
                 # Approach tone chosen by listening to the lead: prefer
@@ -749,6 +821,7 @@ def _place_bass(score: Score, lead_degrees: dict[int, int]) -> None:
                     partial=_partial(pickup, 0),
                     amp_db=-9.5,
                     velocity=0.6,
+                    label=f"bass;deg={pickup};oct=0;role=pickup",
                 )
             if in_s4 and rng.random() < 0.35:
                 score.add_note(
@@ -758,6 +831,7 @@ def _place_bass(score: Score, lead_degrees: dict[int, int]) -> None:
                     partial=_partial(root, 1),
                     amp_db=-10.5,
                     velocity=0.58,
+                    label=f"bass;deg={root};oct=1;role=pop",
                 )
 
 
@@ -772,6 +846,7 @@ def _place_bells(score: Score) -> None:
         amp_db=-9.0,
         vel=0.7,
         ring=2.2,
+        stmt="dew",
     )
     # Seam statements at S2 and mid-S2, tempo primo.
     _place_motif(score, "bell", _pos(17), octave=2, amp_db=-11.0, vel=0.72)
@@ -779,23 +854,35 @@ def _place_bells(score: Score) -> None:
     # Bar 49 IS the turn: over bass alone, the motif returns *utonally
     # shadowed* — same contour, degrees mapped through the polar
     # complement (0↔3, 1↔2, 4↔5).  First real silence since the beat.
-    polar = {0: 3, 1: 2, 2: 1, 3: 0, 4: 5, 5: 4}
     t = _pos(49)
-    for degree, beats in _MOTIF:
+    for idx, (degree, beats) in enumerate(_MOTIF):
         dur = beats * BEAT * 2.0
+        mirrored = _POLAR_COMPLEMENT[degree]
         score.add_note(
             "bell",
             start=t,
             duration=dur * 2.0,
-            partial=_partial(polar[degree], 2),
+            partial=_partial(mirrored, 2),
             amp_db=-10.0,
             velocity=0.66,
+            label=(
+                f"motif;deg={mirrored};oct=2;idx={idx}"
+                f";stmt=polar_mirror;mirror_of={degree}"
+            ),
         )
         t += dur
     # S4: canon — bell leads, thread follows a bar later at the fifth-less
     # hexany "answer" (up a 7/6).
     for lead_bar in (85, 101):
-        _place_motif(score, "bell", _pos(lead_bar), octave=3, amp_db=-11.0, vel=0.7)
+        _place_motif(
+            score,
+            "bell",
+            _pos(lead_bar),
+            octave=3,
+            amp_db=-11.0,
+            vel=0.7,
+            stmt="canon_lead",
+        )
         _place_motif(
             score,
             "thread",
@@ -805,9 +892,10 @@ def _place_bells(score: Score) -> None:
             vel=0.62,
             ring=1.9,
             vibrato=True,
+            stmt="canon_answer",
         )
     # S5: the fragment — first two notes, then silence.
-    for degree, beats, when in ((0, 2.0, 121), (2, 4.0, 123)):
+    for idx, (degree, beats, when) in enumerate(((0, 2.0, 121), (2, 4.0, 123))):
         score.add_note(
             "bell",
             start=_pos(when),
@@ -815,6 +903,7 @@ def _place_bells(score: Score) -> None:
             partial=_partial(degree, 2),
             amp_db=-13.0,
             velocity=0.55,
+            label=f"motif;deg={degree};oct=2;idx={idx};stmt=fragment",
         )
 
 
@@ -839,6 +928,7 @@ def _place_glint(score: Score) -> None:
                 partial=_partial(degree, 4),
                 amp_db=-16.0,
                 velocity=0.45 + 0.12 * rng.random(),
+                label=f"glint;deg={degree};oct=4",
             )
 
 
@@ -865,6 +955,7 @@ def _place_haze(score: Score) -> None:
             partial=_partial(root, octave),
             amp_db=amp,
             velocity=0.5,
+            label=f"haze;deg={root};oct={octave}",
         )
 
 
@@ -879,6 +970,7 @@ def _place_bow(score: Score) -> None:
             partial=_partial(root, 1),
             amp_db=-14.0,
             velocity=0.55,
+            label=f"bow;deg={root};oct=1",
         )
 
 
@@ -1450,11 +1542,102 @@ def build_score() -> Score:
     return score
 
 
+# ---------------------------------------------------------------------------
+# Visualization annotations: the piece's structural geometry, exported for
+# the viz pipeline (make viz PIECE=hexany_garden).  Pure re-statement of the
+# constants above — nothing here affects audio.
+# ---------------------------------------------------------------------------
+
+_REGION_NAMES: dict[tuple[int, ...], str] = {
+    _HOME: "home",
+    _LIFT: "lift",
+    _BRIGHT: "bright",
+    _CLUSTER: "cluster",
+    _U_MINOR: "u_minor",
+    _U_SUB: "u_sub",
+    _U_SHADE: "u_shade",
+    _U_VEIL: "u_veil",
+    (0, 5): "dyad",
+}
+_OTONAL_REGIONS: frozenset[tuple[int, ...]] = frozenset(
+    (_HOME, _LIFT, _BRIGHT, _CLUSTER)
+)
+
+
+def build_viz_annotations() -> dict[str, Any]:
+    def region_entry(region: tuple[int, ...]) -> dict[str, Any]:
+        factor_sets = [_DEGREE_FACTORS[d] for d in region]
+        shared = frozenset.intersection(*factor_sets)
+        absent = frozenset({1, 3, 5, 7}) - frozenset.union(*factor_sets)
+        otonal = region in _OTONAL_REGIONS
+        return {
+            "name": _REGION_NAMES[region],
+            "degrees": list(region),
+            "otonal": otonal if len(region) == 3 else None,
+            "fixed_factor": min(shared) if otonal and shared else None,
+            "excluded_factor": min(absent) if absent else None,
+        }
+
+    slot_ends = [start for start, _ in _CHORD_SLOTS[1:]] + [END_BAR]
+    chord_slots = [
+        {
+            "start_bar": start_bar,
+            "end_bar": end_bar,
+            "start_seconds": round(_pos(start_bar), 4),
+            "end_seconds": round(_pos(end_bar), 4),
+            **region_entry(region),
+        }
+        for (start_bar, region), end_bar in zip(_CHORD_SLOTS, slot_ends, strict=True)
+    ]
+    section_bars = [1, S2_BAR, S3_BAR, S4_BAR, S5_BAR, END_BAR]
+    sections = [
+        {
+            "label": label,
+            "start_bar": start,
+            "end_bar": end,
+            "start_seconds": round(_pos(start), 4),
+            "end_seconds": round(_pos(end), 4),
+        }
+        for label, start, end in zip(
+            ("S1 dew", "S2 first bloom", "S3 the turn", "S4 full garden", "S5 seed"),
+            section_bars[:-1],
+            section_bars[1:],
+            strict=True,
+        )
+    ]
+    return {
+        "tuning": {
+            "f0_hz": F0,
+            "degree_ratios": list(_DEGREE_RATIOS),
+            "degree_factors": [sorted(f) for f in _DEGREE_FACTORS],
+        },
+        "polar_pairs": [[0, 3], [1, 2], [4, 5]],
+        "polar_complement": {str(k): v for k, v in _POLAR_COMPLEMENT.items()},
+        "regions": [region_entry(r) for r in _REGION_NAMES],
+        "chord_slots": chord_slots,
+        "time": {
+            "bpm": BPM,
+            "beat_seconds": BEAT,
+            "bar_seconds": BAR,
+            "total_bars": TOTAL_BARS,
+            "total_seconds": round(TOTAL_DUR, 4),
+        },
+        "sections": sections,
+        "riff_phrase_starts": list(_RIFF_PHRASE_STARTS),
+        "quote_bars": sorted(_QUOTE_BARS),
+        "seven_grid_bars": sorted(_SEVEN_GRID_BARS),
+        "dyad_bars": sorted(_DYAD_BARS),
+        "motif": [{"degree": d, "beats": b} for d, b in _MOTIF],
+        "bloom": {"bar": 93, "start_seconds": round(_pos(93), 4)},
+    }
+
+
 PIECES: dict[str, PieceDefinition] = {
     "hexany_garden": PieceDefinition(
         name="hexany_garden",
         output_name="hexany_garden",
         build_score=build_score,
+        build_viz_annotations=build_viz_annotations,
         sections=(
             PieceSection(label="S1 dew", start_seconds=0.0, end_seconds=S1_END),
             PieceSection(

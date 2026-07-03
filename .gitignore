@@ -33,6 +33,9 @@ coverage.xml
 *.analysis.json
 *.render.json
 *.timeline.json
+*.viz.json
+*.mp4
+tools/
 output/versions/comma_rain/mellow_02_comma_rain__20260319-033409
 output/versions/harmonic_arpeggios/mellow_03_harmonic_arpeggios__20260319-033431
 output/versions/septimal_lullaby/mellow_01_septimal_lullaby__20260319-033346
