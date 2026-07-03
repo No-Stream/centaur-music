@@ -13,7 +13,7 @@ const GRADE_SHADER = {
     tDiffuse: { value: null },
     time: { value: 0 },
     grainAmount: { value: 0.055 },
-    aberration: { value: 0.0005 },
+    aberration: { value: 0.0003 },
     vignette: { value: 0.42 },
     lift: { value: 0.012 },
     weave: { value: 0.0006 },
