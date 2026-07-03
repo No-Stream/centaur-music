@@ -32,6 +32,7 @@ from code_musics.pieces.filter_palette_study import (
 from code_musics.pieces.forge import PIECES as _FORGE_PIECES
 from code_musics.pieces.grain_tides import PIECES as _GRAIN_TIDES_PIECES
 from code_musics.pieces.harmonic_studies import PIECES as _HARMONIC_STUDY_PIECES
+from code_musics.pieces.hexany_garden import PIECES as _HEXANY_GARDEN_PIECES
 from code_musics.pieces.iambic_ghost import PIECES as _IAMBIC_GHOST_PIECES
 from code_musics.pieces.iron_pulse import PIECES as _IRON_PULSE_PIECES
 from code_musics.pieces.iron_pulse_v2 import PIECES as _IRON_PULSE_V2_PIECES
@@ -82,6 +83,7 @@ PIECES = merge_piece_maps(
     _SEPTIMAL_BLOOM_PIECES,
     _COUNTERPOINT_PIECES,
     _HARMONIC_STUDY_PIECES,
+    _HEXANY_GARDEN_PIECES,
     _IRON_PULSE_PIECES,
     _IRON_PULSE_V2_PIECES,
     _TEXTURE_STUDY_PIECES,

@@ -16,7 +16,8 @@
 - `code_musics/engines/` contains the synth engine registry and per-engine renderers.
   `_mpe_utils.py` contains shared MPE/MIDI utility functions for instrument engines.
 - `code_musics/tuning.py` contains small just-intonation, harmonic-series, utonal,
-  and EDO helper functions.
+  and EDO helper functions, plus Erv Wilson Combination Product Set (CPS) /
+  hexany helpers (`cps`, `hexany`, `hexany_triads`).
 - `code_musics/generative/` contains algorithmic and stochastic composition
   tools: TonePool (weighted pitch pools), euclidean rhythms, probability gates,
   Markov chains, Turing machine sequencers, harmonic lattice walkers, and
