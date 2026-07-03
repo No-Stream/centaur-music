@@ -709,3 +709,105 @@ class TestChainSummary:
         summary = build_chain_summary_from_dicts(entries)
         assert summary is not None
         assert summary.warnings == []
+
+    def test_chain_brightness_creep_fires_severe_on_dense_input(self) -> None:
+        entries = [
+            {
+                "index": 0,
+                "kind": "preamp",
+                "display_name": "preamp",
+                "metrics": {
+                    "spectral_centroid_delta_hz": 700.0,
+                    "imd_detection": "two_tone",
+                    "imd_ratio_input": 1.0,
+                    "imd_ratio_output": 1.3,
+                    "input_active_window_fraction": 0.9,
+                },
+                "warnings": [],
+            },
+            {
+                "index": 1,
+                "kind": "clipper",
+                "display_name": "clipper",
+                "metrics": {"spectral_centroid_delta_hz": 600.0},
+                "warnings": [],
+            },
+        ]
+        summary = build_chain_summary_from_dicts(entries, chain_label="drum_bus")
+        assert summary is not None
+        codes = {w.code: w for w in summary.warnings}
+        assert "chain_brightness_creep" in codes
+        assert codes["chain_brightness_creep"].severity == "severe"
+        assert summary.metrics["chain_input_active_fraction"] == 0.9
+
+    def test_chain_brightness_creep_capped_to_warning_on_sparse_input(self) -> None:
+        """A drum bus that's silent most of the piece shouldn't escalate to severe.
+
+        Regression guard for a real render where drums dropped out for whole
+        sections: total_centroid_lift_hz landed at ~1240 (well past the 1200
+        severe threshold) purely because the handful of active blocks skewed
+        the relative measurement, not because anything was audibly wrong.
+        """
+        entries = [
+            {
+                "index": 0,
+                "kind": "preamp",
+                "display_name": "preamp",
+                "metrics": {
+                    "spectral_centroid_delta_hz": 700.0,
+                    "imd_detection": "two_tone",
+                    "imd_ratio_input": 1.0,
+                    "imd_ratio_output": 1.3,
+                    "input_active_window_fraction": 0.1,
+                },
+                "warnings": [],
+            },
+            {
+                "index": 1,
+                "kind": "clipper",
+                "display_name": "clipper",
+                "metrics": {"spectral_centroid_delta_hz": 600.0},
+                "warnings": [],
+            },
+        ]
+        summary = build_chain_summary_from_dicts(entries, chain_label="drum_bus")
+        assert summary is not None
+        codes = {w.code: w for w in summary.warnings}
+        assert "chain_brightness_creep" in codes, (
+            "warning should still fire, just capped"
+        )
+        assert codes["chain_brightness_creep"].severity == "warning"
+        assert summary.metrics["chain_input_active_fraction"] == 0.1
+        assert (
+            codes["chain_brightness_creep"].metrics["chain_input_active_fraction"]
+            == 0.1
+        )
+
+    def test_chain_papery_capped_to_warning_on_sparse_input(self) -> None:
+        entries = [
+            {
+                "index": 0,
+                "kind": "preamp",
+                "display_name": "preamp",
+                "metrics": {
+                    "high_band_delta_db": 5.0,
+                    "imd_detection": "two_tone",
+                    "imd_ratio_input": 1.0,
+                    "imd_ratio_output": 1.3,
+                    "input_active_window_fraction": 0.05,
+                },
+                "warnings": [],
+            },
+            {
+                "index": 1,
+                "kind": "clipper",
+                "display_name": "clipper",
+                "metrics": {"high_band_delta_db": 4.0},
+                "warnings": [],
+            },
+        ]
+        summary = build_chain_summary_from_dicts(entries, chain_label="drum_bus")
+        assert summary is not None
+        codes = {w.code: w for w in summary.warnings}
+        assert "chain_papery" in codes
+        assert codes["chain_papery"].severity == "warning"

@@ -1012,6 +1012,26 @@ Common failure mode:
 - envelope humanization operates on the post-merge ADSR values
 - master effects do not affect the individual stem renders
 
+Some artifact-risk codes are contribution-aware rather than firing at full
+severity regardless of context:
+
+- Voice-stem brightness/harshness codes (`bright_spectral_centroid`,
+  `high_band_dominance`, `flat_or_bright_tilt`) are gated by the voice's RMS
+  level relative to the mix. A hi-hat or bright lead sitting well below the
+  mix level is inherently bright but barely audible in context; below
+  roughly mix RMS − 20 dB the severity is downgraded from severe to warning,
+  and below roughly mix RMS − 30 dB the warning is skipped entirely. The
+  gating decision (`voice_relative_level_db`) is recorded on any warning that
+  survives, so it stays auditable in the manifest.
+- Cumulative effect-chain brightness codes (`chain_papery`,
+  `chain_brightness_creep`, `perceptual_brightness_lift`) are capped at
+  "warning" (never "severe") when the chain's input was mostly silent across
+  the render (loudness-gated active-block fraction below ~25%, exposed as
+  `chain_input_active_fraction` on the summary/warning metrics). A drum bus
+  that drops out for whole sections can otherwise produce a huge *relative*
+  centroid/high-band lift from a handful of active blocks without anything
+  audibly wrong happening.
+
 ## Recommended Usage
 
 Prefer this split when composing:

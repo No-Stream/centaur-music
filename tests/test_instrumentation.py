@@ -501,6 +501,44 @@ class TestChainSummaryAWeighted:
         codes = {w.code for w in summary.warnings}
         assert "perceptual_brightness_lift" not in codes
 
+    def test_perceptual_brightness_lift_capped_to_warning_on_sparse_input(
+        self,
+    ) -> None:
+        """Same energy-floor gating as chain_papery/chain_brightness_creep.
+
+        A nonlinear stage with a big a_weighted lift, but the chain's input
+        was mostly silent across the render, should never escalate past
+        "warning" even though the raw delta clears the severe threshold.
+        """
+        entries = [
+            {
+                "index": 0,
+                "kind": "preamp",
+                "display_name": "preamp",
+                "metrics": {
+                    "a_weighted_high_band_delta_db": 5.0,
+                    "imd_detection": "two_tone",
+                    "imd_ratio_input": 1.0,
+                    "imd_ratio_output": 1.3,
+                    "input_active_window_fraction": 0.1,
+                },
+                "warnings": [],
+            },
+            {
+                "index": 1,
+                "kind": "clipper",
+                "display_name": "clipper",
+                "metrics": {"a_weighted_high_band_delta_db": 4.0},
+                "warnings": [],
+            },
+        ]
+        summary = synth.build_chain_summary_from_dicts(entries, chain_label="drum_bus")
+        assert summary is not None
+        codes = {w.code: w for w in summary.warnings}
+        assert "perceptual_brightness_lift" in codes
+        assert codes["perceptual_brightness_lift"].severity == "warning"
+        assert summary.metrics["chain_input_active_fraction"] == 0.1
+
 
 # ---------------------------------------------------------------------------
 # End-to-end: voice_stem_deltas present in render_with_effect_analysis output

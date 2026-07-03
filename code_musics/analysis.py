@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -37,6 +38,22 @@ SUPPRESSED_CODES: frozenset[str] = frozenset(
         "flat_or_bright_tilt",  # expected on hi-hats and high-register leads
     }
 )
+# Artifact-risk codes that measure raw spectral brightness/harshness of a
+# voice stem in isolation, ignoring how loud that voice actually sits in the
+# finished mix. A hi-hat mixed at -17 dB with spectral_centroid_hz~9000 is
+# inherently bright (percussion always is) but near-inaudible in context;
+# gate these codes by the voice's level relative to the mix rather than
+# flagging them at full severity regardless of level.
+_VOICE_CONTRIBUTION_GATED_CODES: frozenset[str] = frozenset(
+    {"bright_spectral_centroid", "high_band_dominance", "flat_or_bright_tilt"}
+)
+# Voice RMS >= mix RMS - this many dB: apply full severity (voice is a
+# meaningfully loud contributor to the mix).
+_VOICE_CONTRIBUTION_FULL_SEVERITY_RELATIVE_DB = -20.0
+# Voice RMS below mix RMS - this many dB: skip the warning outright (voice
+# is inaudible in context; even a "severe" spectral reading can't matter).
+_VOICE_CONTRIBUTION_SKIP_RELATIVE_DB = -30.0
+
 _DEFAULT_BANDS: tuple[tuple[str, float, float], ...] = (
     ("sub", 20.0, 60.0),
     ("bass", 60.0, 250.0),
@@ -526,6 +543,19 @@ def save_analysis_artifacts(
             stem_signal,
             sample_rate=sample_rate,
             reference_tilt_db_per_octave=reference_tilt_db_per_octave,
+        )
+        # Wet stems are rendered at their actual mix-fader level (they sum
+        # directly to the pre-master mix), so voice rms_dbfs and
+        # mix_analysis.rms_dbfs are directly comparable without any extra
+        # gain-staging math. Use that to gate brightness-family risks by how
+        # audible the voice actually is in context.
+        voice_relative_level_db = voice_analysis.rms_dbfs - mix_analysis.rms_dbfs
+        voice_analysis = replace(
+            voice_analysis,
+            artifact_risks=_gate_voice_artifact_risks_by_contribution(
+                voice_analysis.artifact_risks,
+                voice_relative_level_db=voice_relative_level_db,
+            ),
         )
         voice_analyses[voice_name] = voice_analysis
         safe_voice_name = _sanitize_name(voice_name)
@@ -1903,6 +1933,48 @@ def _artifact_risk(
         source=source,
         metrics=metrics,
     )
+
+
+def _gate_voice_artifact_risks_by_contribution(
+    risks: list[ArtifactRiskWarning],
+    *,
+    voice_relative_level_db: float,
+) -> list[ArtifactRiskWarning]:
+    """Downgrade/skip brightness-family risks for quiet voice stems.
+
+    Only applies to ``_VOICE_CONTRIBUTION_GATED_CODES``; all other risks pass
+    through unchanged. See the threshold constants above for the two-tier
+    behavior (full severity / downgraded / skipped). The decision is always
+    recorded in ``voice_relative_level_db`` on the (possibly kept) warning's
+    metrics so it is auditable in the manifest.
+    """
+    if not math.isfinite(voice_relative_level_db):
+        return risks
+    gated: list[ArtifactRiskWarning] = []
+    for risk in risks:
+        if risk.code not in _VOICE_CONTRIBUTION_GATED_CODES:
+            gated.append(risk)
+            continue
+        if voice_relative_level_db < _VOICE_CONTRIBUTION_SKIP_RELATIVE_DB:
+            continue
+        severity = risk.severity
+        if (
+            voice_relative_level_db < _VOICE_CONTRIBUTION_FULL_SEVERITY_RELATIVE_DB
+            and severity == "severe"
+        ):
+            severity = "warning"
+        metrics = dict(risk.metrics)
+        metrics["voice_relative_level_db"] = round(voice_relative_level_db, 2)
+        gated.append(
+            ArtifactRiskWarning(
+                severity=severity,
+                code=risk.code,
+                message=risk.message,
+                source=risk.source,
+                metrics=metrics,
+            )
+        )
+    return gated
 
 
 def _sort_risks(

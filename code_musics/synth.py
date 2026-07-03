@@ -1872,6 +1872,19 @@ def _build_effect_analysis_entry(
         "imd_ratio_output": round(output_imd.ratio, 4),
         "imd_ratio_delta": round(output_imd.ratio - input_imd.ratio, 4),
         "imd_detection": output_imd.detection,
+        # Fraction of the *input* signal's loudness-gated blocks that are
+        # audibly active (see measure_signal_levels / integrated_lufs).
+        # Used by _build_chain_summary to put an energy floor under the
+        # chain_papery / chain_brightness_creep / perceptual_brightness_lift
+        # warnings: a stage's relative centroid/high-band lift can look huge
+        # when its input is silent for most of the piece (e.g. a drum bus
+        # during a break), even though nothing audible happened.
+        "input_active_window_fraction": round(
+            measure_signal_levels(
+                input_signal, sample_rate=sample_rate
+            ).active_window_fraction,
+            4,
+        ),
     }
     if percussive:
         _populate_per_hit_effect_metrics(
@@ -2201,6 +2214,28 @@ _NONLINEAR_EFFECT_KINDS: frozenset[str] = frozenset(
     }
 )
 
+# Below this fraction of loudness-gated-active input blocks, cap the
+# chain_papery / chain_brightness_creep / perceptual_brightness_lift
+# severities at "warning" (never "severe"). A chain whose input is mostly
+# silence (e.g. a drum bus that drops out for whole sections) can rack up a
+# huge *relative* centroid/high-band lift number from a handful of active
+# blocks without anything audibly wrong happening across the piece.
+_CHAIN_SPARSE_INPUT_ACTIVE_FRACTION = 0.25
+
+
+def _cap_chain_brightness_severity(
+    severity: str,
+    *,
+    input_active_fraction: float,
+) -> str:
+    """Cap brightness-family chain severities when the input is mostly silent."""
+    if (
+        severity == "severe"
+        and input_active_fraction < _CHAIN_SPARSE_INPUT_ACTIVE_FRACTION
+    ):
+        return "warning"
+    return severity
+
 
 def build_chain_summary_from_dicts(
     entries: list[dict[str, Any]],
@@ -2253,6 +2288,13 @@ def _build_chain_summary(
     total_clipper_shave_db = 0.0
     nonlinear_stage_count = 0
     kinds: list[str] = []
+    # Reference the *original* chain input activity (first stage's input),
+    # not each stage's input, since we care whether the source material was
+    # sparse overall — not whether an intermediate stage happened to see a
+    # quiet moment.
+    chain_input_active_fraction = float(
+        entries[0].metrics.get("input_active_window_fraction", 1.0)
+    )
 
     for entry in entries:
         m = entry.metrics
@@ -2325,6 +2367,7 @@ def _build_chain_summary(
         "total_limiter_gr_db": round(total_limiter_gr_db, 2),
         "total_clipper_shave_db": round(total_clipper_shave_db, 2),
         "nonlinear_stage_count": nonlinear_stage_count,
+        "chain_input_active_fraction": round(chain_input_active_fraction, 4),
     }
 
     warnings: list[EffectAnalysisWarning] = []
@@ -2370,13 +2413,17 @@ def _build_chain_summary(
         kind in _NONLINEAR_EFFECT_KINDS for kind in kinds
     )
     if chain_has_nonlinear_stage and total_high_band_lift_db >= 8.0:
+        severity = _cap_chain_brightness_severity(
+            "severe", input_active_fraction=chain_input_active_fraction
+        )
         warnings.append(
             _build_effect_warning(
-                severity="severe",
+                severity=severity,
                 code="chain_papery",
                 message=f"{label_prefix}chain is adding brittle high-frequency content (>8 dB of 2-8 kHz lift)",
                 total_high_band_lift_db=round(total_high_band_lift_db, 2),
                 total_centroid_lift_hz=round(total_centroid_lift_hz, 1),
+                chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
     elif chain_has_nonlinear_stage and total_high_band_lift_db >= 4.0:
@@ -2387,16 +2434,21 @@ def _build_chain_summary(
                 message=f"{label_prefix}chain may be adding papery high-frequency character",
                 total_high_band_lift_db=round(total_high_band_lift_db, 2),
                 total_centroid_lift_hz=round(total_centroid_lift_hz, 1),
+                chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
 
     if total_centroid_lift_hz >= 1200.0:
+        severity = _cap_chain_brightness_severity(
+            "severe", input_active_fraction=chain_input_active_fraction
+        )
         warnings.append(
             _build_effect_warning(
-                severity="severe",
+                severity=severity,
                 code="chain_brightness_creep",
                 message=f"{label_prefix}cumulative spectral centroid lift is very high",
                 total_centroid_lift_hz=round(total_centroid_lift_hz, 1),
+                chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
     elif total_centroid_lift_hz >= 500.0:
@@ -2406,6 +2458,7 @@ def _build_chain_summary(
                 code="chain_brightness_creep",
                 message=f"{label_prefix}cumulative spectral centroid is drifting bright",
                 total_centroid_lift_hz=round(total_centroid_lift_hz, 1),
+                chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
 
@@ -2467,12 +2520,16 @@ def _build_chain_summary(
             total_a_weighted_lift_db += a_delta
     metrics["total_a_weighted_high_band_lift_db"] = round(total_a_weighted_lift_db, 2)
     if chain_has_nonlinear_stage and total_a_weighted_lift_db >= 8.0:
+        severity = _cap_chain_brightness_severity(
+            "severe", input_active_fraction=chain_input_active_fraction
+        )
         warnings.append(
             _build_effect_warning(
-                severity="severe",
+                severity=severity,
                 code="perceptual_brightness_lift",
                 message=f"{label_prefix}A-weighted high-band energy is rising sharply across the chain",
                 total_a_weighted_high_band_lift_db=round(total_a_weighted_lift_db, 2),
+                chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
     elif chain_has_nonlinear_stage and total_a_weighted_lift_db >= 4.0:
@@ -2482,6 +2539,7 @@ def _build_chain_summary(
                 code="perceptual_brightness_lift",
                 message=f"{label_prefix}A-weighted high-band energy is drifting upward across the chain",
                 total_a_weighted_high_band_lift_db=round(total_a_weighted_lift_db, 2),
+                chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
 
