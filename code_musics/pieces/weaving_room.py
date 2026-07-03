@@ -21,14 +21,19 @@ BPM = 104.  1 bar ≈ 2.308 s.  96 bars ≈ 3:42.
 Form (density arc, not verse/chorus):
   bars  1– 8   S1 Loom          pad + tape-dust grain; arp fades in at 5
   bars  9–32   S2 First weave   beat enters (sparse → full at 13), bass
-                                anchors R–P4–P5, low mutation rate
+                                anchors R–P4–P5; canon arp and formant
+                                choir slip in half-lit at 17; thread hums
+                                its first low phrase at 25
   bars 33–48   S3 Opening       mutation + spice rise, hats fill, filter
-                                opens, canon arp (P5 up, one window behind)
+                                opens, canon brightens, choir fuller,
+                                bell accents mark the seams
   bars 49–60   S4 Breath        drums thin then drop; arp augments to 2x
                                 note lengths; pad leans subdominant + 49/30
-                                — the strangest moment, framed
-  bars 61–84   S5 Second weave  full beat, both arps, brightest register
-  bars 85–96   S6 Unravel       elements peel off; arp thins to a whisper
+                                — the strangest moment, framed sparse
+  bars 61–84   S5 Second weave  full beat, both arps, choir at full sing,
+                                bass octave pops, brightest register
+  bars 85–96   S6 Unravel       elements peel off; thread sings farewell;
+                                arp thins to a whisper
 
 The mutation engine is deterministic (seeded ``random.Random``) so every
 render is identical; mutation intensity, spice probability, add-note
@@ -472,7 +477,12 @@ def _place_arps(score: Score, history: dict[int, list[CellNote]]) -> None:
         _place_cell(score, "arp", bar, cell, p.amp_base, min_velocity=min_vel)
 
     # Canon voice: previous window's cell a P5 up — an echo of memory.
-    # Half-lit in S3, brighter in S5.
+    # Whispered from bar 17 in S2, half-lit in S3, brighter in S5.
+    for bar in range(17, S3_BAR, 2):
+        prev = history[bar - 2]
+        _place_cell(
+            score, "arp2", bar, prev, _params_for_bar(bar).amp_base - 6.0, transpose=1.5
+        )
     for bar in range(S3_BAR, S4_BAR, 2):
         prev = history[bar - 2]
         _place_cell(
@@ -515,6 +525,10 @@ def _place_bass(score: Score) -> None:
             (d, 1, _BASS_P5, 3.0, 0.74),
             (d, 4, _BASS_H7, 1.0, 0.62),  # h7 turnaround pulls back to R
         ]
+        if S5_BAR <= loop_start < S6_BAR:
+            # Second weave: octave-up pops give the undertow a pulse
+            notes.append((a, 4, _BASS_R * 2.0, 1.0, 0.56))
+            notes.append((c, 4, _BASS_P4 * 2.0, 1.0, 0.54))
         for bar, beat, partial, dur_beats, vel in notes:
             score.add_note(
                 "bass",
@@ -609,6 +623,50 @@ def _place_pad(score: Score) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Choir — formant-vowel chords doubling the pad's harmonic rhythm an
+# octave-and-change above it (196–430 Hz).  Enters half-lit at bar 17
+# and swells through the form; tones stagger in 3/4-bar apart so each
+# chord blooms rather than switching on.  Silent through the Breath —
+# its absence is what makes S5's full sing land.
+# ---------------------------------------------------------------------------
+
+_CHOIR_CHORDS: dict[str, tuple[float, ...]] = {
+    "A": (4.0, 6.0, 7.0),  # R · P5 · h7 — home
+    "B": (16 / 3, 7.0, 8.0),  # P4 · h7 · R — sus lift
+    "C": (22 / 5, 6.0, 7.0),  # N2 color · P5 · h7
+}
+
+
+def _choir_level(start_bar: int) -> float:
+    """Section-relative choir level offset (dB)."""
+    if start_bar < S3_BAR:
+        return -6.0  # S2: half-lit
+    if start_bar < S4_BAR:
+        return -3.0  # S3: fuller
+    if start_bar < S6_BAR:
+        return 0.0  # S5: full sing
+    return -5.0  # S6: receding
+
+
+def _place_choir(score: Score) -> None:
+    for start_bar, n_bars, chord_name in _PAD_PROGRESSION:
+        if start_bar < 17:
+            continue
+        level = _choir_level(start_bar)
+        for k, partial in enumerate(_CHOIR_CHORDS[chord_name]):
+            stagger = k * 0.75 * BAR
+            score.add_note(
+                "choir",
+                start=_pos(start_bar) + stagger,
+                duration=n_bars * BAR - stagger,
+                partial=partial,
+                amp_db=-11.0 - 1.5 * k + level,
+                velocity=0.68 - 0.05 * k,
+                pitch_motion=PitchMotionSpec.vibrato(depth_ratio=0.004, rate_hz=3.8),
+            )
+
+
+# ---------------------------------------------------------------------------
 # Thread — a sparse vocal-ish lead that sings over the weave.
 #
 # Three appearances only: understated in S3's C-chord block, fuller at the
@@ -623,6 +681,15 @@ def _place_pad(score: Score) -> None:
 _THREAD_PHRASES: tuple[
     tuple[tuple[int, int, int, int, float, float, float], ...], ...
 ] = (
+    # Phrase 0 — S2, bars 25-30: a low hum under the first weave, the
+    # voice clearing its throat an octave below its later register
+    (
+        (25, 1, 4, 2, 4.0, 0.55, -3.0),  # P5 low entry
+        (26, 2, 6, 2, 3.0, 0.55, -3.0),  # h7
+        (27, 1, 0, 3, 5.0, 0.62, -2.0),  # R sings
+        (29, 2, 3, 3, 3.0, 0.55, -3.0),  # P4
+        (30, 1, 0, 3, 4.0, 0.58, -2.5),  # R settle
+    ),
     # Phrase A — S3, bars 41-46: enters with the C chord, low-key
     (
         (41, 2, 4, 3, 3.0, 0.60, -2.0),  # P5 entry
@@ -649,6 +716,13 @@ _THREAD_PHRASES: tuple[
         (79, 1, 1, 4, 2.0, 0.70, -1.0),  # N2 above the octave — peak spice
         (79, 3, 0, 4, 6.0, 0.75, -0.5),  # R4 resolution rings
         (81, 2, 4, 3, 6.0, 0.60, -2.0),  # P5 settles under the weave
+    ),
+    # Phrase D — S6 farewell, bars 89-94: back down the octave, a long
+    # R that fades with the loom
+    (
+        (89, 1, 6, 2, 4.0, 0.55, -3.0),  # h7 low
+        (90, 3, 4, 2, 4.0, 0.50, -3.5),  # P5
+        (91, 3, 0, 3, 8.0, 0.55, -3.0),  # R held to the end of the weave
     ),
 )
 
@@ -687,6 +761,36 @@ def _place_dust(score: Score) -> None:
             partial=partial,
             amp_db=-6.0,
             velocity=0.6,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Bells — septimal bell accents marking the section seams and 8-bar
+# chord changes in the open sections.  One quiet strike each, drowned
+# in the hall: ear candy, not a melody.
+# (bar, partial, amp_db, velocity)
+# ---------------------------------------------------------------------------
+
+_BELL_HITS: tuple[tuple[int, float, float, float], ...] = (
+    (33, 8.0, -15.0, 0.65),  # S3 opens — R4
+    (41, 7.0, -15.5, 0.60),  # C chord — h7
+    (49, 6.0, -17.0, 0.50),  # into the breath, distant P5
+    (61, 12.0, -14.0, 0.75),  # S5 opens — P5 bright
+    (69, 8.0, -15.0, 0.65),  # B chord — R4
+    (77, 14.0, -14.5, 0.72),  # peak block — h7 high
+    (85, 8.0, -16.5, 0.55),  # unravel begins, fading
+)
+
+
+def _place_bells(score: Score) -> None:
+    for bar, partial, amp_db, vel in _BELL_HITS:
+        score.add_note(
+            "bell",
+            start=_pos(bar),
+            duration=2.5,
+            partial=partial,
+            amp_db=amp_db,
+            velocity=vel,
         )
 
 
@@ -749,7 +853,7 @@ def _place_hats(score: Score) -> None:
             "hat_c",
             start=_pos(bar) + step * S16 + (HAT_SWING_S if step % 2 else 0.0),
             duration=0.05,
-            freq=7200.0,
+            freq=4600.0,
             amp_db=amp,
             velocity=vel,
         )
@@ -780,7 +884,7 @@ def _place_hats(score: Score) -> None:
             "hat_o",
             start=_pos(bar) + 14 * S16 + HAT_SWING_S,
             duration=0.4,
-            freq=7200.0,
+            freq=4600.0,
             amp_db=-11.0,
             velocity=0.7,
         )
@@ -946,14 +1050,40 @@ def _pad_brightness_arc() -> AutomationSpec:
 
 
 def _dust_mix_ride() -> AutomationSpec:
-    """Dust rises into the Breath's near-silence, recedes after."""
+    """Dust rises into the Breath, surges as a riser into S5, recedes."""
     return _ramp(
         AutomationTarget(kind="control", name="mix_db"),
         [
-            (S3_END - 2 * BAR, S3_END + 4 * BAR, -12.0, "linear"),
-            (S4_END - 2 * BAR, S4_END + 2 * BAR, -17.0, "linear"),
+            (S3_END - 2 * BAR, S3_END + 4 * BAR, -16.0, "linear"),
+            (S4_END - 4 * BAR, S4_END, -13.5, "linear"),  # riser into S5
+            (S4_END, S4_END + 2 * BAR, -21.0, "linear"),  # cut on the drop
         ],
-        default=-17.0,
+        default=-21.0,
+    )
+
+
+def _arp_delay_throw() -> AutomationSpec:
+    """Delay mix blooms as the drums fall away into the Breath."""
+    return _ramp(
+        AutomationTarget(kind="control", name="mix"),
+        [
+            (S3_END - 2 * BAR, S3_END + 2 * BAR, 0.42, "linear"),
+            (S3_END + 6 * BAR, S4_END, 0.22, "linear"),
+        ],
+        default=0.22,
+    )
+
+
+def _choir_cutoff_arc() -> AutomationSpec:
+    """Formant center rises with the form — the choir opens its mouth."""
+    return _ramp(
+        AutomationTarget(kind="synth", name="cutoff_hz"),
+        [
+            (S2_END, S3_END, 1450.0, "exp"),
+            (S4_END, S4_END + 8 * BAR, 1750.0, "exp"),  # S5 full sing
+            (S5_END, TOTAL_DUR, 1050.0, "exp"),
+        ],
+        default=1200.0,
     )
 
 
@@ -967,6 +1097,9 @@ def build_score() -> Score:
     score = Score(
         f0_hz=F0,
         master_effects=DEFAULT_MASTER_EFFECTS,
+        # The choir + pad sustain continuously from bar 17 on; without a
+        # trim the master vari-mu leans past 3 dB GR through all of S5.
+        master_input_gain_db=-1.5,
         send_buses=[_make_hall_bus()],
         timing_humanize=TimingHumanizeSpec(preset="chamber"),
     )
@@ -991,6 +1124,7 @@ def build_score() -> Score:
             EffectSpec(
                 "delay",
                 {"delay_seconds": DOTTED_EIGHTH, "feedback": 0.34, "mix": 0.22},
+                automation=[_arp_delay_throw()],
             ),
         ],
         sends=[VoiceSend(target="hall", send_db=-8.0, automation=[_arp_hall_ride()])],
@@ -1056,11 +1190,32 @@ def build_score() -> Score:
         },
         sends=[VoiceSend(target="hall", send_db=-6.0)],
         pan=0.0,
-        mix_db=-10.5,
+        mix_db=-9.5,
         envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
         drift_bus="weave_drift",
         drift_bus_correlation=0.75,
         automation=[_pad_brightness_arc()],
+    )
+
+    # ---- Choir: formant-vowel chords under the weave ----
+    score.add_voice(
+        "choir",
+        synth_defaults={
+            "engine": "synth_voice",
+            "preset": "formant_vowel_lead",
+            "attack": 2.2,
+            "release": 3.2,
+            "filter_cutoff_hz": 1200.0,
+            "resonance_q": 1.3,
+        },
+        sends=[VoiceSend(target="hall", send_db=-3.5)],
+        pan=-0.06,
+        mix_db=-9.0,
+        envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
+        velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
+        drift_bus="weave_drift",
+        drift_bus_correlation=0.7,
+        automation=[_choir_cutoff_arc()],
     )
 
     # ---- Thread: sparse vocal-ish lead over the weave ----
@@ -1098,16 +1253,30 @@ def build_score() -> Score:
         drift_bus_correlation=0.8,
     )
 
-    # ---- Dust: tape-grain air ----
+    # ---- Bell: septimal accents at the seams ----
+    score.add_voice(
+        "bell",
+        synth_defaults={
+            "engine": "drum_voice",
+            "preset": "septimal_bell",
+        },
+        normalize_peak_db=-6.0,
+        sends=[VoiceSend(target="hall", send_db=-1.5)],
+        pan=0.32,
+        mix_db=-16.0,
+        velocity_humanize=None,
+    )
+
+    # ---- Dust: tape-grain air — deep in the background, mostly hall ----
     score.add_voice(
         "dust",
         synth_defaults={
             "engine": "synth_voice",
             "preset": "grain_tape_dust",
         },
-        sends=[VoiceSend(target="hall", send_db=-6.0)],
+        sends=[VoiceSend(target="hall", send_db=-2.5)],
         pan=0.0,
-        mix_db=-17.0,
+        mix_db=-21.0,
         automation=[_dust_mix_ride()],
     )
 
@@ -1126,6 +1295,8 @@ def build_score() -> Score:
         },
         mix_db=-4.0,
     )
+    # Hats use the engine's noise-forward voicing; this piece only lowers the
+    # struck frequency for a darker shaker-adjacent register.
     add_drum_voice(
         score,
         "hat_c",
@@ -1134,7 +1305,7 @@ def build_score() -> Score:
         drum_bus=drum_bus,
         send_db=-6.0,
         choke_group="hats",
-        mix_db=-15.0,
+        mix_db=-16.0,
         pan=0.15,
     )
     add_drum_voice(
@@ -1145,7 +1316,7 @@ def build_score() -> Score:
         drum_bus=drum_bus,
         send_db=-6.0,
         choke_group="hats",
-        mix_db=-16.0,
+        mix_db=-17.0,
         pan=0.15,
     )
     add_drum_voice(
@@ -1166,7 +1337,9 @@ def build_score() -> Score:
     _place_arps(score, history)
     _place_bass(score)
     _place_pad(score)
+    _place_choir(score)
     _place_thread(score)
+    _place_bells(score)
     _place_dust(score)
     _place_kick(score)
     _place_hats(score)

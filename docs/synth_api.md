@@ -1787,6 +1787,14 @@ Stereo convolution reverb wrapper around the local Bricasti impulse responses.
 This is the repo's main IR reverb path for more realistic rooms/halls than the
 built-in algorithmic reverb.
 
+The Bricasti IR directory is intentionally machine-local: one checkout may have
+no impulses installed, and another may have only a subset of the Samplicity
+library. Direct `EffectSpec("bricasti", ...)` calls fail fast when either
+stereo IR file is missing. Piece code that needs to render reliably on fresh
+checkouts should use `bricasti_or_reverb(...)` from
+`code_musics/pieces/_shared.py`, which checks the exact `44K L/R.wav` pair and
+falls back to native algorithmic reverb.
+
 Parameters:
 
 - `ir_name: str`
@@ -2837,7 +2845,8 @@ Parameters:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `n_partials` | `int` | `6` | Number of additive partials |
+| `voicing` | `str` | `"partials"` | Metallic voicing: `"partials"` for resonant bell/cowbell/gamelan banks, `"hat_noise"` for dense noise-forward hi-hat metal wash |
+| `n_partials` | `int` | `6` | Number of additive partials; for `voicing="hat_noise"` this is the dense detuned partial-cloud size |
 | `partial_ratios` | `list[float]` | `None` | Custom partial frequency ratios; defaults to `sqrt(1), sqrt(2), ...` when omitted |
 | `brightness` | `float` | `0.7` | Upper-partial weighting (0–1); higher values keep upper partials louder |
 | `decay_ms` | `float` | `80.0` | Exponential decay time in ms |
@@ -2850,6 +2859,13 @@ Parameters:
 | `density` | `float` | `0.5` | Partial frequency jitter (0–1); adds randomness to partial tuning for thicker, less tonal results |
 | `oscillator_mode` | `str` | `"sine"` | Partial oscillator mode: `"sine"` for standard additive, `"square"` for bandlimited square partials (808-style digital metallic character) |
 | `noise_amount` | `float` | `0.0` | Level of a broadband noise layer mixed into the output (0–1); adds sizzle and air to the metallic sound |
+| `hat_noise_mix` | `float` | `0.72` | `hat_noise` voicing only: blend toward filtered broadband noise inside the metallic layer |
+| `hat_detune_cents` | `float` | `42.0` | `hat_noise` voicing only: detuned spread around each source ratio |
+| `hat_partial_decay_spread` | `float` | `0.78` | `hat_noise` voicing only: makes upper partial-cloud components decay faster than the noise bed |
+| `hat_bank_hp_hz` | `float` | `3600.0` | `hat_noise` voicing only: highpass applied to the metallic partial cloud before mixing with noise |
+| `hat_noise_hp_hz` | `float` | `3200.0` | `hat_noise` voicing only: highpass applied to the internal noise bed |
+| `hat_noise_bp_hz` | `float` | `7500.0` | `hat_noise` voicing only: broad bandpass center for the internal noise bed |
+| `hat_noise_bp_q` | `float` | `0.75` | `hat_noise` voicing only: broad bandpass Q for the internal noise bed |
 
 **Multi-point envelope params (optional):**
 
@@ -2864,8 +2880,13 @@ Notes:
 - `freq` sets the base frequency; partial ratios are relative to it. Typical
   hi-hat frequencies are 8000–12000 Hz; cowbell around 540–800 Hz; clave around
   2000–3000 Hz.
-- default partial ratios are `sqrt(n)` which gives the characteristic metallic
-  inharmonicity of real cymbals
+- default `partials` ratios are `sqrt(n)`, which gives clear inharmonic
+  resonances suitable for bells and metallic percussion but can read as too
+  pitched for hats
+- use `voicing="hat_noise"` for hi-hats: it renders a dense detuned square-ish
+  partial cloud with per-partial decay spread, highpassed metal energy, and a
+  broadband filtered noise bed so the tail reads as wash rather than a ringing
+  chord
 - `ring_mod_amount > 0` adds sidebands for a more complex, splashy character
   (useful for rides and crashes)
 - `oscillator_mode="square"` uses bandlimited PolyBLEP square waves instead of
@@ -2875,8 +2896,8 @@ Presets:
 
 | Preset | Character |
 |--------|-----------|
-| `closed_hat` | Tight, bright closed hi-hat (45 ms decay) |
-| `open_hat` | Longer open hi-hat (450 ms decay) |
+| `closed_hat` | Tight closed hi-hat using dense noise-forward hat voicing (60 ms decay) |
+| `open_hat` | Longer open hi-hat using dense noise-forward hat voicing (350 ms decay) |
 | `pedal_hat` | Medium pedal hi-hat between closed and open |
 | `ride_bell` | Focused ride bell with ring modulation |
 | `ride_bow` | Washy ride bow with many partials |
@@ -4236,7 +4257,8 @@ Key routing:
 
 | Type | Description | Key params |
 |------|-------------|------------|
-| `partials` | Additive inharmonic partials | `metallic_partial_ratios`, `metallic_n_partials`, `metallic_oscillator_mode` (sine/square), `metallic_brightness`, `metallic_density` |
+| `partials` | Additive inharmonic partials for resonant bells/cowbells/gamelan colors | `metallic_partial_ratios`, `metallic_n_partials`, `metallic_oscillator_mode` (sine/square), `metallic_brightness`, `metallic_density` |
+| `hat_noise` | Dense detuned square-ish partial cloud plus filtered broadband noise for hi-hats/cymbal wash | `metallic_partial_ratios`, `metallic_n_partials`, `metallic_oscillator_mode`, `metallic_brightness`, `metallic_density`, `metallic_hat_noise_mix`, `metallic_hat_detune_cents`, `metallic_hat_partial_decay_spread` |
 | `ring_mod` | Ring modulator on harmonic partial sum | `metallic_ring_mod_freq_ratio`, `metallic_ring_mod_amount`, `metallic_n_partials`, `metallic_brightness`, `metallic_density` |
 | `fm_cluster` | Multiple FM operators at inharmonic ratios | `metallic_n_operators`, `metallic_fm_ratios`, `metallic_fm_index`, `metallic_fm_feedback`, `metallic_brightness`, `metallic_density` |
 | `efm_cymbal` | N-op PM cymbal (Machinedrum EFM cymbal) | `cymbal_op_count`, `cymbal_ratio_set` (tr808 / tr909 / bar / plate), `cymbal_index`, `cymbal_feedback` |
@@ -4349,6 +4371,18 @@ Key routing:
 - `noise_envelope: list[dict]` -- replaces noise exponential decay
 - `metallic_envelope: list[dict]` -- replaces metallic exponential decay
 - `tone_pitch_envelope: list[dict]` -- replaces pitch sweep (values = freq multiplier)
+
+**Hat-noise metallic params** (consumed when `metallic_type="hat_noise"`):
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `metallic_hat_noise_mix` | `float` | `0.72` | Blend toward the internal filtered noise bed; higher values mask pitch centers |
+| `metallic_hat_detune_cents` | `float` | `42.0` | Detuned spread around each source ratio |
+| `metallic_hat_partial_decay_spread` | `float` | `0.78` | Upper partial-cloud components decay faster, leaving a noise-dominant tail |
+| `metallic_hat_bank_hp_hz` | `float` | `3600.0` | Highpass applied to the metallic partial cloud |
+| `metallic_hat_noise_hp_hz` | `float` | `3200.0` | Highpass applied to the internal noise bed |
+| `metallic_hat_noise_bp_hz` | `float` | `7500.0` | Broad bandpass center for the internal noise bed |
+| `metallic_hat_noise_bp_q` | `float` | `0.75` | Broad bandpass Q for the internal noise bed |
 
 ### Sustained exciters (drum_voice)
 
@@ -4649,8 +4683,8 @@ digital character):
 
 | Preset | Character |
 |--------|-----------|
-| `closed_hat` | Tight, bright closed hi-hat |
-| `open_hat` | Longer open hi-hat |
+| `closed_hat` | Tight closed hi-hat using dense noise-forward hat voicing |
+| `open_hat` | Longer open hi-hat using dense noise-forward hat voicing |
 | `pedal_hat` | Medium pedal hi-hat between closed and open |
 | `ride_bell` | Focused ride bell |
 | `ride_bow` | Washy ride bow with long decay and extra partial |

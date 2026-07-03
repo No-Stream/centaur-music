@@ -96,7 +96,11 @@ class TestBWV846Smoke:
 
     @pytest.fixture()
     def bwv846(self) -> MidiImportResult:
-        assert BWV_846_PATH.exists(), f"Reference MIDI not found: {BWV_846_PATH}"
+        assert BWV_846_PATH.exists(), (
+            f"Reference MIDI not found: {BWV_846_PATH}. "
+            "Run `make fetch-midi-references` to install the ignored Sankey MIDI "
+            "asset from the verified upstream archive."
+        )
         return read_midi(BWV_846_PATH)
 
     def test_parses_without_error(self, bwv846: MidiImportResult) -> None:

@@ -80,6 +80,10 @@ check: all
 list:
 	$(UV_RUN) python main.py --list
 
+.PHONY: fetch-midi-references
+fetch-midi-references:
+	$(UV_RUN) python scripts/fetch_midi_references.py
+
 .PHONY: lint
 lint: lint-py lint-md
 

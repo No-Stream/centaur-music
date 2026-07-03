@@ -30,12 +30,35 @@ def bwv_846_tuning() -> TuningTable:
     )
 
 
-def _make_reverb(wet: float) -> EffectSpec:
-    if BRICASTI_IR_DIR.exists():
+def has_bricasti_ir(ir_name: str) -> bool:
+    """Return whether the configured Bricasti directory has both stereo IR files."""
+    left = BRICASTI_IR_DIR / f"{ir_name}, 44K L.wav"
+    right = BRICASTI_IR_DIR / f"{ir_name}, 44K R.wav"
+    return left.exists() and right.exists()
+
+
+def bricasti_or_reverb(
+    ir_name: str,
+    wet: float,
+    *,
+    room_size: float = 0.75,
+    damping: float = 0.6,
+    **bricasti_params: float,
+) -> EffectSpec:
+    """Use an installed Bricasti IR, or a native reverb fallback."""
+    if has_bricasti_ir(ir_name):
         return EffectSpec(
-            "bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": wet}
+            "bricasti",
+            {"ir_name": ir_name, "wet": wet, **bricasti_params},
         )
-    return EffectSpec("reverb", {"room_size": 0.75, "damping": 0.6, "wet_level": wet})
+    return EffectSpec(
+        "reverb",
+        {"room_size": room_size, "damping": damping, "wet_level": wet},
+    )
+
+
+def _make_reverb(wet: float) -> EffectSpec:
+    return bricasti_or_reverb("1 Halls 07 Large & Dark", wet)
 
 
 REVERB_EFFECT = _make_reverb(0.32)

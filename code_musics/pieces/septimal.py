@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
+from code_musics.pieces._shared import bricasti_or_reverb
 from code_musics.pieces.registry import PieceDefinition
 from code_musics.score import EffectSpec, Phrase, Score
 from code_musics.synth import sequence
@@ -97,7 +98,7 @@ def build_harmonic_drift_score() -> Score:
         f0_hz=55.0,
         master_effects=[
             EffectSpec("delay", {"delay_seconds": 0.38, "feedback": 0.28, "mix": 0.22}),
-            EffectSpec("bricasti", {"ir_name": "1 Halls 07 Large & Dark", "wet": 0.35}),
+            bricasti_or_reverb("1 Halls 07 Large & Dark", 0.35),
         ],
     )
 

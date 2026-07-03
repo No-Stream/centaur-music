@@ -151,6 +151,12 @@
   can use `master_effects=DEFAULT_MASTER_EFFECTS` for a "sounds finished"
   baseline. Pieces that define their own `master_effects` fully replace the
   default — no layering.
+- Bricasti impulse responses are machine-local optional assets, and different
+  machines may have different subsets installed. For pieces and tests that must
+  render on fresh checkouts, prefer `bricasti_or_reverb(...)` from
+  `code_musics/pieces/_shared.py` instead of a direct `EffectSpec("bricasti",
+  ...)`. The low-level Bricasti effect should still fail fast when explicitly
+  requested with a missing IR.
 - Use note-level `velocity` for accents and phrasing. By default it affects loudness
   through `velocity_db_per_unit`, and it can also drive synth params through
   `VelocityParamMap`.
@@ -832,6 +838,12 @@ delegation-to-subagents pattern.
 - No need for trivial tests or testing each unexpected edge case. First and foremost, tests should validate that code runs properly, end to end, without major bugs; and they should prevent regressions.
 - Backward compatibility is not always required or expected; this is a local, creative library not a business one.
 - No fallbacks. Fail fast!
+- **A red test suite is never acceptable to leave behind, even when the
+  failures are pre-existing.** Confirming a failure predates your changes is
+  diagnosis, not resolution — a red baseline hides new regressions. Either
+  fix it in the same session or surface it with a concrete remediation plan
+  (e.g. a ready-to-run prompt for a follow-up session). Never simply note
+  "pre-existing, unrelated" and move on.
 - **Coverage is reported, not enforced.** `make all` prints a one-line
   coverage summary; `make coverage` gives the full per-file breakdown with
   uncovered line numbers. Deltas are computed against `.coverage-baseline`

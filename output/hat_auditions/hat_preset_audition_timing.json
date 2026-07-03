@@ -1,0 +1,134 @@
+[
+  {
+    "label": "drum_voice closed_hat stock, dark register",
+    "engine": "drum_voice",
+    "preset": "closed_hat",
+    "freq_hz": 4600.0,
+    "start_s": 0.0,
+    "end_s": 1.12,
+    "params": null
+  },
+  {
+    "label": "drum_voice open_hat stock, dark register",
+    "engine": "drum_voice",
+    "preset": "open_hat",
+    "freq_hz": 4600.0,
+    "start_s": 1.87,
+    "end_s": 3.93,
+    "params": null
+  },
+  {
+    "label": "drum_voice closed_hat stock, brighter register",
+    "engine": "drum_voice",
+    "preset": "closed_hat",
+    "freq_hz": 6400.0,
+    "start_s": 4.68,
+    "end_s": 5.8,
+    "params": null
+  },
+  {
+    "label": "drum_voice open_hat stock, brighter register",
+    "engine": "drum_voice",
+    "preset": "open_hat",
+    "freq_hz": 6400.0,
+    "start_s": 6.55,
+    "end_s": 8.61,
+    "params": null
+  },
+  {
+    "label": "metallic_perc closed_hat stock",
+    "engine": "metallic_perc",
+    "preset": "closed_hat",
+    "freq_hz": 4600.0,
+    "start_s": 9.36,
+    "end_s": 10.48,
+    "params": null
+  },
+  {
+    "label": "metallic_perc open_hat stock",
+    "engine": "metallic_perc",
+    "preset": "open_hat",
+    "freq_hz": 4600.0,
+    "start_s": 11.23,
+    "end_s": 13.29,
+    "params": null
+  },
+  {
+    "label": "drum_voice closed_hat extra noise mix",
+    "engine": "drum_voice",
+    "preset": "closed_hat",
+    "freq_hz": 4600.0,
+    "start_s": 14.04,
+    "end_s": 15.16,
+    "params": {
+      "metallic_hat_noise_mix": 0.9,
+      "noise_level": 0.52
+    }
+  },
+  {
+    "label": "drum_voice open_hat extra noise mix",
+    "engine": "drum_voice",
+    "preset": "open_hat",
+    "freq_hz": 4600.0,
+    "start_s": 15.91,
+    "end_s": 17.97,
+    "params": {
+      "metallic_hat_noise_mix": 0.92,
+      "noise_level": 0.7
+    }
+  },
+  {
+    "label": "drum_voice pedal_hat old partial voicing",
+    "engine": "drum_voice",
+    "preset": "pedal_hat",
+    "freq_hz": 6000.0,
+    "start_s": 18.72,
+    "end_s": 19.84,
+    "params": null
+  },
+  {
+    "label": "drum_voice swept_hat old partial voicing",
+    "engine": "drum_voice",
+    "preset": "swept_hat",
+    "freq_hz": 6000.0,
+    "start_s": 20.59,
+    "end_s": 21.79,
+    "params": null
+  },
+  {
+    "label": "drum_voice 808_closed_hat square partials",
+    "engine": "drum_voice",
+    "preset": "808_closed_hat",
+    "freq_hz": 6000.0,
+    "start_s": 22.54,
+    "end_s": 23.66,
+    "params": null
+  },
+  {
+    "label": "drum_voice 808_open_hat square partials",
+    "engine": "drum_voice",
+    "preset": "808_open_hat",
+    "freq_hz": 6000.0,
+    "start_s": 24.41,
+    "end_s": 26.47,
+    "params": null
+  },
+  {
+    "label": "drum_voice ride_bell tonal control",
+    "engine": "drum_voice",
+    "preset": "ride_bell",
+    "freq_hz": 4600.0,
+    "start_s": 27.22,
+    "end_s": 28.82,
+    "params": null
+  },
+  {
+    "label": "drum_voice cowbell tonal control",
+    "engine": "drum_voice",
+    "preset": "cowbell",
+    "freq_hz": 800.0,
+    "start_s": 29.57,
+    "end_s": 30.61,
+    "params": null
+  }
+]

@@ -15,6 +15,7 @@ from code_musics.engines._drum_utils import (
 )
 from code_musics.engines._envelopes import render_envelope
 from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, apply_filter
+from code_musics.engines._metallic_hat import render_hat_noise_metallic
 from code_musics.engines._oscillators import polyblep_square as _polyblep_square
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ _VALID_METALLIC_FILTER_MODES = _SUPPORTED_FILTER_MODES - {"notch"}
 _808_RATIOS: list[float] = [1.0, 1.3348, 1.4755, 1.6818, 1.9307, 2.5452]
 
 _VALID_OSCILLATOR_MODES = {"sine", "square"}
+_VALID_VOICINGS = {"partials", "hat_noise"}
 
 
 def render(
@@ -54,6 +56,7 @@ def render(
     # --- Parse and validate parameters ---
     n_partials = int(params.get("n_partials", 6))
     raw_ratios = params.get("partial_ratios")
+    voicing = str(params.get("voicing", "partials")).lower()
     oscillator_mode = str(params.get("oscillator_mode", "sine")).lower()
     brightness = float(params.get("brightness", 0.7))
     decay_ms = float(params.get("decay_ms", 80.0))
@@ -74,6 +77,10 @@ def render(
 
     if n_partials <= 0:
         raise ValueError("n_partials must be positive")
+    if voicing not in _VALID_VOICINGS:
+        raise ValueError(
+            f"voicing must be one of {sorted(_VALID_VOICINGS)}, got {voicing!r}"
+        )
     if oscillator_mode not in _VALID_OSCILLATOR_MODES:
         raise ValueError(
             f"oscillator_mode must be one of {sorted(_VALID_OSCILLATOR_MODES)}, "
@@ -112,14 +119,6 @@ def render(
     brightness = min(1.0, brightness * timbre.brightness_scale)
     ring_mod_amount = min(1.0, ring_mod_amount * timbre.harmonic_scale)
 
-    # --- Resolve partial ratios ---
-    if raw_ratios is not None:
-        partial_ratios = [float(r) for r in raw_ratios]
-        if any(r <= 0 for r in partial_ratios):
-            raise ValueError("all partial_ratios must be positive")
-    else:
-        partial_ratios = [math.sqrt(float(i + 1)) for i in range(n_partials)]
-
     n_samples = int(sample_rate * duration)
     if n_samples == 0:
         return np.zeros(0, dtype=np.float64)
@@ -131,36 +130,54 @@ def render(
         freq=freq, duration=duration, amp=amp, sample_rate=sample_rate, params=params
     )
 
-    # --- Apply density jitter to partial ratios ---
-    jittered_ratios = list(partial_ratios)
-    if density > 0:
-        for i in range(len(jittered_ratios)):
-            jitter = density * 0.03 * rng.uniform(-1.0, 1.0)
-            jittered_ratios[i] = jittered_ratios[i] * (1.0 + jitter)
-
-    # --- Additive partials with phase accumulation ---
-    nyquist = sample_rate / 2.0
-    num_partials = len(jittered_ratios)
-    partials_sum = np.zeros(n_samples, dtype=np.float64)
-    for i, ratio in enumerate(jittered_ratios):
-        partial_freq = freq * ratio
-        if partial_freq >= nyquist:
-            continue  # skip aliasing partials
-        weight = brightness ** (i / max(1, num_partials - 1)) if i > 0 else 1.0
-        if oscillator_mode == "square":
-            # PolyBLEP uses normalized [0,1) phase, not radians.
-            norm_phase_inc = np.full(
-                n_samples, partial_freq / sample_rate, dtype=np.float64
-            )
-            norm_cumphase = np.cumsum(norm_phase_inc)
-            norm_phase = norm_cumphase % 1.0
-            partials_sum += weight * _polyblep_square(
-                norm_phase, norm_phase_inc, norm_cumphase, pulse_width=0.5
-            )
+    if voicing == "hat_noise":
+        partials_sum = render_hat_noise_metallic(
+            n_samples=n_samples,
+            freq_profile=np.full(n_samples, freq, dtype=np.float64),
+            sample_rate=sample_rate,
+            rng=rng,
+            params=params,
+            prefix="",
+        )
+    else:
+        # --- Resolve partial ratios ---
+        if raw_ratios is not None:
+            partial_ratios = [float(r) for r in raw_ratios]
+            if any(r <= 0 for r in partial_ratios):
+                raise ValueError("all partial_ratios must be positive")
         else:
-            phase_inc = 2.0 * np.pi * partial_freq / sample_rate
-            phase = np.cumsum(np.full(n_samples, phase_inc, dtype=np.float64))
-            partials_sum += weight * np.sin(phase)
+            partial_ratios = [math.sqrt(float(i + 1)) for i in range(n_partials)]
+
+        # --- Apply density jitter to partial ratios ---
+        jittered_ratios = list(partial_ratios)
+        if density > 0:
+            for i in range(len(jittered_ratios)):
+                jitter = density * 0.03 * rng.uniform(-1.0, 1.0)
+                jittered_ratios[i] = jittered_ratios[i] * (1.0 + jitter)
+
+        # --- Additive partials with phase accumulation ---
+        nyquist = sample_rate / 2.0
+        num_partials = len(jittered_ratios)
+        partials_sum = np.zeros(n_samples, dtype=np.float64)
+        for i, ratio in enumerate(jittered_ratios):
+            partial_freq = freq * ratio
+            if partial_freq >= nyquist:
+                continue  # skip aliasing partials
+            weight = brightness ** (i / max(1, num_partials - 1)) if i > 0 else 1.0
+            if oscillator_mode == "square":
+                # PolyBLEP uses normalized [0,1) phase, not radians.
+                norm_phase_inc = np.full(
+                    n_samples, partial_freq / sample_rate, dtype=np.float64
+                )
+                norm_cumphase = np.cumsum(norm_phase_inc)
+                norm_phase = norm_cumphase % 1.0
+                partials_sum += weight * _polyblep_square(
+                    norm_phase, norm_phase_inc, norm_cumphase, pulse_width=0.5
+                )
+            else:
+                phase_inc = 2.0 * np.pi * partial_freq / sample_rate
+                phase = np.cumsum(np.full(n_samples, phase_inc, dtype=np.float64))
+                partials_sum += weight * np.sin(phase)
 
     # --- Optional ring modulation ---
     if ring_mod_amount > 0:
