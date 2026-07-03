@@ -55,7 +55,7 @@ Composed by Claude (Fable 5), July 2026.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from code_musics.automation import (
     AutomationSegment,
@@ -246,12 +246,20 @@ def _place_motif(
 # Movement prefers small steps, chord tones of the active region, and
 # factor-adjacent degrees; polar crossings are rare and only unlocked
 # in S3/S4.
+#
+# Structure over drift: the walk is organized into 8-bar riff phrases.
+# The first two bars of each phrase are generated fresh (opening with a
+# transposed quote of the seed motif at the S2 anchors) and *recorded*;
+# the next four replay that cell with one mutation per pass; the last
+# two walk free.  Repetition you can latch onto, produced by the same
+# walk so nothing sounds pasted in.  The pluck timbre also ages across
+# the form: wool in the dew, wire at the peak.
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class _WalkParams:
-    density: float  # probability a grid eighth sounds
+    density: float  # probability a grid step sounds
     burst_prob: float  # probability an eighth splits into two 16ths
     chord_pull: float  # weight multiplier for active-region tones
     polar_weight: float  # weight for polar (no shared factor) moves
@@ -259,27 +267,30 @@ class _WalkParams:
     pi_max: int  # highest pitch index
     vel_base: float
     amp_db: float
+    pluck_hardness: float  # excitation brightness: wool -> wire
+    pluck_damping: float  # KS loop darkness
+    pluck_position: float  # pick-position comb
 
 
 def _walk_params_for_bar(bar: int) -> _WalkParams:
     if bar < S2_BAR:  # S1: sparse condensation out of the drone
-        return _WalkParams(0.30, 0.0, 5.0, 0.0, 14, 22, 0.52, -13.0)
+        return _WalkParams(0.30, 0.0, 5.0, 0.0, 14, 22, 0.52, -13.0, 0.35, 0.45, 0.35)
     if bar < 45:  # S2: the bloom
-        return _WalkParams(0.72, 0.10, 4.0, 0.0, 12, 24, 0.62, -10.5)
+        return _WalkParams(0.72, 0.10, 4.0, 0.0, 12, 24, 0.62, -10.5, 0.45, 0.35, 0.30)
     if bar < S3_BAR:  # S2 tail: the garden holds its breath
-        return _WalkParams(0.60, 0.06, 4.0, 0.0, 12, 22, 0.58, -11.0)
+        return _WalkParams(0.60, 0.06, 4.0, 0.0, 12, 22, 0.58, -11.0, 0.45, 0.40, 0.32)
     # S3: bars 49-52 are silent (the event) — handled in _place_walker.
     if bar < 65:  # S3a: re-entry, low and half-time
-        return _WalkParams(0.45, 0.0, 3.0, 0.30, 6, 16, 0.54, -12.0)
+        return _WalkParams(0.45, 0.0, 3.0, 0.30, 6, 16, 0.54, -12.0, 0.40, 0.52, 0.40)
     if bar < S4_BAR:  # S3b: recovering its stride, still shadowed
-        return _WalkParams(0.62, 0.06, 3.0, 0.30, 8, 20, 0.58, -11.5)
+        return _WalkParams(0.62, 0.06, 3.0, 0.30, 8, 20, 0.58, -11.5, 0.50, 0.38, 0.32)
     if bar < 85:  # S4: full garden, register climbing section-long
-        return _WalkParams(0.80, 0.14, 3.5, 0.18, 12, 24, 0.64, -10.2)
+        return _WalkParams(0.80, 0.14, 3.5, 0.18, 12, 24, 0.64, -10.2, 0.55, 0.30, 0.25)
     if bar < 93:
-        return _WalkParams(0.82, 0.16, 3.5, 0.18, 12, 26, 0.66, -10.0)
+        return _WalkParams(0.82, 0.16, 3.5, 0.18, 12, 26, 0.66, -10.0, 0.60, 0.26, 0.22)
     if bar < S5_BAR:  # the cluster bloom and the fast-spinning tail
-        return _WalkParams(0.85, 0.18, 3.5, 0.18, 14, 28, 0.68, -9.8)
-    return _WalkParams(0.38, 0.0, 5.0, 0.0, 12, 21, 0.50, -13.5)  # S5
+        return _WalkParams(0.85, 0.18, 3.5, 0.18, 14, 28, 0.68, -9.8, 0.65, 0.22, 0.20)
+    return _WalkParams(0.38, 0.0, 5.0, 0.0, 12, 21, 0.50, -13.5, 0.35, 0.50, 0.40)
 
 
 def _pi(degree: int, octave: int) -> int:
@@ -320,89 +331,226 @@ _DYAD_BARS: frozenset[int] = frozenset(
     start for start, _ in _CHORD_SLOTS if S4_BAR <= start < S5_BAR
 )
 
+# 8-bar riff phrases: record 2 bars, replay-with-mutation 4, walk free 2.
+_RIFF_PHRASE_STARTS: tuple[int, ...] = (17, 25, 33, 41, 77, 85, 93, 101)
+# Phrases whose cell opens with the seed motif quoted into the region.
+_QUOTE_BARS: frozenset[int] = frozenset({17, 25, 33, 41})
+# Bars where the lead leaves 4/4 and joins the thumb's 7-eighth cycle.
+_SEVEN_GRID_BARS: frozenset[int] = frozenset({90, 91, 106, 107})
+# S3b recovery grid: tresillo (3+3+2) in sixteenths as (offset, held).
+_TRESILLO_STEPS: tuple[tuple[int, int], ...] = (
+    (0, 3),
+    (3, 3),
+    (6, 2),
+    (8, 3),
+    (11, 3),
+    (14, 2),
+)
 
-def _place_walker(score: Score) -> None:
-    """The arp spine: an eighth-note walk over the hexany graph."""
-    rng = random.Random(1357)  # the CPS factors, of course
-    cur_pi = _pi(0, 3)  # start on 1/1, octave 3
 
-    for bar in range(1, TOTAL_BARS + 1):
-        if bar < 9:
-            continue  # walker condenses out of the drone at bar 9
-        if S3_BAR <= bar < 53:
-            continue  # the turn: four bars of real silence
-        if bar >= 129:
-            continue  # the last dyad is the pad's alone
+@dataclass(frozen=True)
+class _ArpNote:
+    offset_s: float  # relative to its bar start (swing baked in)
+    duration: float
+    degree: int
+    octave: int
+    accent: float
+
+
+def _quote_notes(region: tuple[int, ...]) -> tuple[list[_ArpNote], int]:
+    """The seed motif transposed into a region: 6 beats of a riff cell.
+
+    Motif ranks map onto the region's ranked tones; the motif's one
+    non-chord tone becomes a factor-adjacent passing tone.
+    """
+    ranked = sorted(region)
+    passing = next(
+        d for d in range(_N_DEGREES) if d not in region and _shares_factor(d, ranked[1])
+    )
+    degrees = [ranked[0], ranked[1], ranked[2], passing, ranked[1]]
+    notes: list[_ArpNote] = []
+    t_beats = 0.0
+    for (_, beats), degree in zip(_MOTIF, degrees, strict=True):
+        accent = 0.12 if t_beats == 0.0 else 0.05
+        notes.append(_ArpNote(t_beats * BEAT, beats * BEAT * 0.9, degree, 3, accent))
+        t_beats += beats
+    return notes, _pi(degrees[-1], 3)
+
+
+def _gen_cell(
+    rng: random.Random,
+    first_bar: int,
+    n_bars: int,
+    cur_pi: int,
+    *,
+    quote: bool = False,
+) -> tuple[list[tuple[int, _ArpNote]], int]:
+    """Generate walker material as (bar_offset, note) rows.
+
+    Handles all four grids: straight eighths (with 16th bursts), the
+    half-time stretches, the S3b tresillo, and the S4 seven-grid joins.
+    """
+    rows: list[tuple[int, _ArpNote]] = []
+    start_eighth = 0
+    if quote:
+        quote_notes, cur_pi = _quote_notes(_region_at_bar(first_bar))
+        for note in quote_notes:
+            bar_off = int(note.offset_s // BAR)
+            rows.append(
+                (bar_off, replace(note, offset_s=note.offset_s - bar_off * BAR))
+            )
+        start_eighth = 12  # the quote spans six beats of the cell
+
+    for bar_off in range(n_bars):
+        bar = first_bar + bar_off
         p = _walk_params_for_bar(bar)
         region = _region_at_bar(bar)
         in_s4 = S4_BAR <= bar < S5_BAR
-        in_s5 = bar >= S5_BAR
-        # Half-time stretches: the S3 re-entry and the S5 unwinding.
-        slow = in_s5 or 53 <= bar < 65
-        steps = range(0, 8, 2) if slow else range(8)
-        # S4 swings harder, and each 4-bar phrase leans forward a touch.
+        slow = bar >= S5_BAR or 53 <= bar < 65
         swing_s = ARP_SWING_S * (1.35 if in_s4 else 1.0)
-        phrase_lift = 0.05 * ((bar - 1) % 4) / 4.0 if in_s4 else 0.0
-        for step8 in steps:
-            if rng.random() > p.density:
-                continue
-            cur_pi = _walker_step(rng, cur_pi, region, p)
+
+        def emit(offset_s: float, duration: float, accent: float) -> None:
+            nonlocal cur_pi
+            cur_pi = _walker_step(rng, cur_pi, region, p)  # noqa: B023
             degree, octave = _from_pi(cur_pi)
-            swing = swing_s if step8 % 2 else 0.0
-            start = _pos(bar) + step8 * S8 + swing
-            accent = 0.14 if step8 in (0, 4) else (0.06 if step8 in (2, 6) else 0.0)
-            vel = min(1.0, p.vel_base + accent + phrase_lift + rng.uniform(-0.04, 0.04))
-            if in_s4 and bar in _DYAD_BARS and step8 == 0:
+            rows.append(
+                (bar_off, _ArpNote(offset_s, duration, degree, octave, accent))  # noqa: B023
+            )
+
+        if bar in _SEVEN_GRID_BARS:
+            # Join the thumb's 7-cycle for a two-bar phasing stretch.
+            pair_start = 90 if bar in (90, 91) else 106
+            for k in range(8):
+                g = k + 8 * (bar - pair_start)
+                if g % 7 not in (0, 2, 5):
+                    continue
+                if rng.random() > p.density + 0.1:
+                    continue
+                swing = swing_s if k % 2 else 0.0
+                emit(k * S8 + swing, S8 * 0.88, 0.10 if g % 7 == 0 else 0.02)
+        elif 65 <= bar < S4_BAR:
+            # Tresillo (3+3+2): the walker recovers its stride sideways.
+            for offset16, held in _TRESILLO_STEPS:
+                if rng.random() > p.density + 0.15:
+                    continue
+                accent = 0.12 if offset16 in (0, 8) else 0.03
+                emit(offset16 * S16, held * S16 * 0.88, accent)
+        else:
+            steps = range(0, 8, 2) if slow else range(8)
+            for step8 in steps:
+                if bar_off * 8 + step8 < start_eighth:
+                    continue  # the quote owns these beats
+                if rng.random() > p.density:
+                    continue
+                swing = swing_s if step8 % 2 else 0.0
+                offset = step8 * S8 + swing
+                accent = 0.14 if step8 in (0, 4) else (0.06 if step8 in (2, 6) else 0.0)
+                if rng.random() < p.burst_prob:
+                    emit(offset, S16 * 0.9, accent)
+                    emit(offset + S16, S16 * 0.9, accent - 0.12)
+                else:
+                    emit(offset, (BEAT if slow else S8) * 0.88, accent)
+    return rows, cur_pi
+
+
+def _mutate_cell(
+    rng: random.Random, cell: list[tuple[int, _ArpNote]], region: tuple[int, ...]
+) -> None:
+    """Nudge one riff note toward the current region, in place."""
+    if not cell:
+        return
+    idx = rng.randrange(len(cell))
+    bar_off, note = cell[idx]
+    cell[idx] = (bar_off, replace(note, degree=rng.choice(region)))
+
+
+def _place_walker(score: Score) -> dict[int, int]:
+    """The arp spine.  Returns each bar's final walker degree so the
+    bass can choose its approach tones by listening to the lead."""
+    rng = random.Random(1357)  # the CPS factors, of course
+    cur_pi = _pi(0, 3)  # start on 1/1, octave 3
+    cell: list[tuple[int, _ArpNote]] = []
+    cell_end_pi = cur_pi
+    last_degree: dict[int, int] = {}
+
+    def place(bar: int, notes: list[_ArpNote]) -> None:
+        p = _walk_params_for_bar(bar)
+        region = _region_at_bar(bar)
+        in_s4 = S4_BAR <= bar < S5_BAR
+        phrase_lift = 0.05 * ((bar - 1) % 4) / 4.0 if in_s4 else 0.0
+        pluck = {
+            "osc_pluck_hardness": p.pluck_hardness,
+            "osc_pluck_damping": p.pluck_damping,
+            "osc_pluck_position": p.pluck_position,
+        }
+        for note in sorted(notes, key=lambda n: n.offset_s):
+            start = _pos(bar) + note.offset_s
+            vel = min(
+                1.0,
+                max(
+                    0.25,
+                    p.vel_base + note.accent + phrase_lift + rng.uniform(-0.04, 0.04),
+                ),
+            )
+            if in_s4 and bar in _DYAD_BARS and note.offset_s < S16:
                 # Dyad hit on the slot head: a region-mate under the lead.
                 mate = (
-                    region[(region.index(degree) + 1) % len(region)]
-                    if degree in region
+                    region[(region.index(note.degree) + 1) % len(region)]
+                    if note.degree in region
                     else region[0]
                 )
                 score.add_note(
                     "arp",
                     start=start,
-                    duration=S8 * 0.88,
-                    partial=_partial(mate, max(1, octave - 1)),
+                    duration=note.duration,
+                    partial=_partial(mate, max(1, note.octave - 1)),
                     amp_db=p.amp_db - 3.0,
                     velocity=max(0.3, vel - 0.1),
+                    synth=pluck,
                 )
-            burst = rng.random() < p.burst_prob
-            if burst:
-                # split into two 16ths: current tone then a neighbor
-                score.add_note(
-                    "arp",
-                    start=start,
-                    duration=S16 * 0.9,
-                    partial=_partial(degree, octave),
-                    amp_db=p.amp_db,
-                    velocity=vel,
-                )
-                cur_pi = _walker_step(rng, cur_pi, region, p)
-                degree, octave = _from_pi(cur_pi)
-                score.add_note(
-                    "arp",
-                    start=start + S16,
-                    duration=S16 * 0.9,
-                    partial=_partial(degree, octave),
-                    amp_db=p.amp_db,
-                    velocity=max(0.3, vel - 0.12),
-                )
-            else:
-                dur = (BEAT if slow else S8) * 0.88
-                score.add_note(
-                    "arp",
-                    start=start,
-                    duration=dur,
-                    partial=_partial(degree, octave),
-                    amp_db=p.amp_db,
-                    velocity=vel,
-                    pitch_motion=(
-                        PitchMotionSpec.vibrato(depth_ratio=0.004, rate_hz=4.6)
-                        if slow
-                        else None
-                    ),
-                )
+            score.add_note(
+                "arp",
+                start=start,
+                duration=note.duration,
+                partial=_partial(note.degree, note.octave),
+                amp_db=p.amp_db,
+                velocity=vel,
+                synth=pluck,
+                pitch_motion=(
+                    PitchMotionSpec.vibrato(depth_ratio=0.004, rate_hz=4.6)
+                    if note.duration >= BEAT * 0.8
+                    else None
+                ),
+            )
+            last_degree[bar] = note.degree
+
+    bar = 1
+    while bar <= TOTAL_BARS:
+        if bar < 9 or (S3_BAR <= bar < 53) or bar >= 129:
+            bar += 1  # pre-dew silence, the turn, and the final dyad
+            continue
+        phrase_pos = next(
+            (bar - s for s in _RIFF_PHRASE_STARTS if s <= bar < s + 8), None
+        )
+        if phrase_pos == 0:
+            # Record a fresh 2-bar cell (motif quote at the S2 anchors).
+            cell, cell_end_pi = _gen_cell(rng, bar, 2, cur_pi, quote=bar in _QUOTE_BARS)
+            cur_pi = cell_end_pi
+            for off in (0, 1):
+                place(bar + off, [n for o, n in cell if o == off])
+            bar += 2
+        elif phrase_pos in (2, 4) and cell:
+            # Replay the riff, one nudge per pass.
+            _mutate_cell(rng, cell, _region_at_bar(bar))
+            for off in (0, 1):
+                place(bar + off, [n for o, n in cell if o == off])
+            cur_pi = cell_end_pi
+            bar += 2
+        else:
+            rows, cur_pi = _gen_cell(rng, bar, 1, cur_pi)
+            place(bar, [n for _, n in rows])
+            bar += 1
+    return last_degree
 
 
 # ---------------------------------------------------------------------------
@@ -474,46 +622,71 @@ def _place_pad(score: Score) -> None:
         velocity=0.5,
     )
 
-    # From S2 on: the active region as slow chords, root + colors.
+    # From S2 on: the region as slow chords with actual voice-leading.
+    # Three lanes; at each slot change every lane moves to the nearest
+    # available region tone in pitch-index space, common tones simply
+    # hold, and moving voices enter one beat late (a suspension into
+    # its resolution).  The pad *does* harmony instead of stating it.
     slots = [(s, r) for s, r in _CHORD_SLOTS if s >= S2_BAR]
+    glide = PitchMotionSpec.ratio_glide(start_ratio=0.996, end_ratio=1.0)
+    prev_voicing: list[tuple[int, int]] | None = None  # (degree, octave)
     for i, (start_bar, region) in enumerate(slots):
         end_bar = slots[i + 1][0] if i + 1 < len(slots) else END_BAR
         start = _pos(start_bar)
         dur = _pos(end_bar) - start + 1.5
-        root, *colors = sorted(region)
-        glide = PitchMotionSpec.ratio_glide(start_ratio=0.996, end_ratio=1.0)
-        score.add_note(
-            "pad",
-            start=start,
-            duration=dur,
-            partial=_partial(root, 1),
-            amp_db=-12.0,
-            velocity=0.6,
-            pitch_motion=glide,
-        )
-        for j, color in enumerate(colors):
+        ranked = sorted(region)
+        if prev_voicing is None:
+            voicing = [(d, 1) for d in ranked]
+            if len(voicing) == 2:  # the closing dyad
+                voicing.append((ranked[0], 2))
+        else:
+            # Greedy nearest-tone assignment, each region degree used once
+            # (repeats allowed only for the 2-degree closing dyad).
+            available = list(region) * (2 if len(region) == 2 else 1)
+            voicing = []
+            for deg_prev, oct_prev in prev_voicing:
+                pi_prev = _pi(deg_prev, oct_prev)
+                best = min(
+                    (
+                        (abs(_pi(d, o) - pi_prev), d, o)
+                        for d in set(available)
+                        for o in (1, 2)  # octave 0 belongs to the bass
+                    ),
+                )
+                _, deg_new, oct_new = best
+                available.remove(deg_new)
+                voicing.append((deg_new, oct_new))
+        for lane, (degree, octave) in enumerate(voicing):
+            held = prev_voicing is not None and prev_voicing[lane] == (
+                degree,
+                octave,
+            )
+            # Suspension: moving voices arrive a beat after the slot.
+            lane_start = start if held or prev_voicing is None else start + BEAT
+            is_root = degree == ranked[0]
             score.add_note(
                 "pad",
-                start=start + 0.5 * (j + 1),
-                duration=dur - 0.5 * (j + 1),
-                partial=_partial(color, 1),
-                amp_db=-15.0,
-                velocity=0.5,
+                start=lane_start,
+                duration=dur - (lane_start - start),
+                partial=_partial(degree, octave),
+                amp_db=-12.0 if is_root else -15.0,
+                velocity=0.6 if is_root else 0.5,
                 pitch_motion=glide,
             )
+        prev_voicing = voicing
         # S4/S5 add the root an octave up for glow
         if start_bar >= S4_BAR:
             score.add_note(
                 "pad",
                 start=start,
                 duration=dur,
-                partial=_partial(root, 2),
+                partial=_partial(ranked[0], 2),
                 amp_db=-18.0,
                 velocity=0.45,
             )
 
 
-def _place_bass(score: Score) -> None:
+def _place_bass(score: Score, lead_degrees: dict[int, int]) -> None:
     slots = [(s, r) for s, r in _CHORD_SLOTS if S2_BAR <= s < 121]
     rng = random.Random(35)
     for i, (start_bar, region) in enumerate(slots):
@@ -558,12 +731,22 @@ def _place_bass(score: Score) -> None:
                 velocity=0.72,
             )
             if bar == end_bar - 1 and end_bar < 121:
-                nxt_root = min(_region_at_bar(end_bar))
+                # Approach tone chosen by listening to the lead: prefer
+                # a next-region tone factor-adjacent to the walker's
+                # last note this bar — counterpoint, not just a pickup.
+                next_region = _region_at_bar(end_bar)
+                lead_last = lead_degrees.get(bar, root)
+                linked = [d for d in next_region if _shares_factor(d, lead_last)]
+                pickup = (
+                    min(linked, key=lambda d: _DEGREE_RATIOS[d])
+                    if linked
+                    else min(next_region)
+                )
                 score.add_note(
                     "bass",
                     start=_pos(bar, 4.5),
                     duration=S8 * 0.9,
-                    partial=_partial(nxt_root, 0),
+                    partial=_partial(pickup, 0),
                     amp_db=-9.5,
                     velocity=0.6,
                 )
@@ -660,23 +843,42 @@ def _place_glint(score: Score) -> None:
 
 
 def _place_haze(score: Score) -> None:
-    """Grain cloud pinned to the hexany lattice; S3 onward."""
-    for start_bar, dur_bars, prt, amp in (
-        (45, 8, 2.0, -22.0),  # fades in under the turn
-        (53, 12, 3.5, -20.0),
-        (65, 12, 2.0, -20.0),
-        (77, 16, 4.0, -19.0),
-        (93, 16, 3.0, -19.0),
-        (109, 16, 2.0, -20.0),
-        (125, 7, 1.0, -22.0),
+    """Grain cloud pinned to the hexany lattice; S3 onward.
+
+    Each stretch sits on the *current region's root* so the cloud
+    harmonizes with the harmony instead of hovering nearby.
+    """
+    for start_bar, dur_bars, octave, amp in (
+        (45, 8, 1, -22.0),  # fades in under the turn
+        (53, 12, 2, -20.0),
+        (65, 12, 2, -20.0),  # octave 2: the bow owns octave 1 here
+        (77, 16, 2, -19.0),
+        (93, 16, 1, -19.0),
+        (109, 16, 1, -20.0),
+        (125, 7, 1, -22.0),
     ):
+        root = min(_region_at_bar(start_bar))
         score.add_note(
             "haze",
             start=_pos(start_bar),
             duration=dur_bars * BAR,
-            partial=prt,
+            partial=_partial(root, octave),
             amp_db=amp,
             velocity=0.5,
+        )
+
+
+def _place_bow(score: Score) -> None:
+    """A bowed body under the shadow garden: S3 only, region roots."""
+    for slot_start in (53, 57, 61, 65, 69, 73):
+        root = min(_region_at_bar(slot_start))
+        score.add_note(
+            "bow",
+            start=_pos(slot_start),
+            duration=4 * BAR * 0.96,
+            partial=_partial(root, 1),
+            amp_db=-14.0,
+            velocity=0.55,
         )
 
 
@@ -1123,6 +1325,22 @@ def build_score() -> Score:
         drift_bus_correlation=0.5,
     )
 
+    # ---- Bow: a live body under the shadow garden (S3 only) ----
+    score.add_voice(
+        "bow",
+        synth_defaults={
+            "engine": "drum_voice",
+            "preset": "bow_gentle",
+        },
+        normalize_peak_db=-6.0,
+        sends=[VoiceSend(target="hall", send_db=-4.0)],
+        pan=-0.15,
+        mix_db=-16.0,
+        velocity_humanize=None,
+        drift_bus="garden_drift",
+        drift_bus_correlation=0.7,
+    )
+
     # ---- Glint: S4's own color — high delayed answers ----
     score.add_voice(
         "glint",
@@ -1218,12 +1436,13 @@ def build_score() -> Score:
     # Notes
     # ==================================================================
     _place_pad(score)
-    _place_walker(score)
+    lead_degrees = _place_walker(score)
     _place_thumb(score)
-    _place_bass(score)
+    _place_bass(score, lead_degrees)
     _place_bells(score)
     _place_glint(score)
     _place_haze(score)
+    _place_bow(score)
     _place_kick(score)
     _place_hats(score)
     _place_shaker(score)
