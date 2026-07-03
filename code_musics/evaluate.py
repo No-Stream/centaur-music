@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import statistics
 import subprocess
 import tempfile
@@ -287,7 +288,15 @@ def parse_judge_response(raw_output: str, model: str) -> JudgeResponse:
     if start == -1 or end == -1:
         raise ValueError(f"No JSON object found in judge output from {model}")
 
-    data = json.loads(text[start : end + 1])
+    candidate = text[start : end + 1]
+    try:
+        data = json.loads(candidate)
+    except json.JSONDecodeError:
+        # Judges occasionally emit trailing commas before a closing brace/
+        # bracket, which is invalid JSON. Strip those and retry once before
+        # giving up.
+        cleaned = re.sub(r",\s*([}\]])", r"\1", candidate)
+        data = json.loads(cleaned)
 
     dimensions: dict[str, DimensionScore] = {}
     raw_dims = data.get("dimensions", {})

@@ -16,6 +16,7 @@ from code_musics.evaluate import (
     _eval_to_dict,
     _format_delta,
     aggregate_responses,
+    parse_judge_response,
     synthesize_feedback,
 )
 
@@ -40,6 +41,50 @@ def _make_judge_response(
         dimensions=dims,
         overall_notes=overall_notes,
     )
+
+
+def _judge_json_payload(dim_keys: list[str]) -> dict:
+    return {
+        "dimensions": {key: {"score": 70, "notes": f"{key} notes"} for key in dim_keys},
+        "overall_notes": "solid piece overall",
+    }
+
+
+class TestParseJudgeResponse:
+    def test_plain_valid_json(self, dim_keys: list[str]) -> None:
+        raw = json.dumps(_judge_json_payload(dim_keys))
+        response = parse_judge_response(raw, "test-model")
+        assert response.model == "test-model"
+        assert response.overall_notes == "solid piece overall"
+        assert response.dimensions[dim_keys[0]].score == 70
+
+    def test_json_in_markdown_fence(self, dim_keys: list[str]) -> None:
+        raw = "```json\n" + json.dumps(_judge_json_payload(dim_keys)) + "\n```"
+        response = parse_judge_response(raw, "test-model")
+        assert response.overall_notes == "solid piece overall"
+
+    def test_trailing_comma_before_closing_brace(self, dim_keys: list[str]) -> None:
+        payload = _judge_json_payload(dim_keys)
+        body = json.dumps(payload, indent=2)
+        # Inject a trailing comma before the final closing brace.
+        assert body.rstrip().endswith("}")
+        raw = body.rstrip()[:-1].rstrip() + ",\n}"
+        response = parse_judge_response(raw, "test-model")
+        assert response.overall_notes == "solid piece overall"
+
+    def test_trailing_comma_before_closing_bracket(self, dim_keys: list[str]) -> None:
+        raw = (
+            '{"dimensions": {'
+            + ", ".join(f'"{key}": {{"score": 70, "notes": "n"}}' for key in dim_keys)
+            + '}, "overall_notes": "ok", "extra_list": [1, 2, 3,]}'
+        )
+        response = parse_judge_response(raw, "test-model")
+        assert response.overall_notes == "ok"
+
+    def test_genuinely_malformed_json_raises(self) -> None:
+        raw = "{this is not json at all,,, }"
+        with pytest.raises(json.JSONDecodeError):
+            parse_judge_response(raw, "test-model")
 
 
 class TestFormatDelta:
