@@ -1205,7 +1205,16 @@ class Score:
                 engine_name=engine_name,
             )
 
-        voice_signals: list[np.ndarray] = []
+        # (offset_samples, note_signal) pairs rather than pre-padded
+        # full-length buffers: padding each note out to
+        # offset+duration before stacking made per-note memory scale with
+        # the note's position in the piece (a note at t=300s in a 345s
+        # piece cost ~121MB just for its silent prefix), which multiplied
+        # across hundreds of notes was the dominant contributor to
+        # multi-GB render memory. Keeping only the unpadded note signal
+        # plus its integer offset and summing into one preallocated
+        # buffer at the end avoids that blowup entirely.
+        voice_signals: list[tuple[int, np.ndarray]] = []
         prepared_notes = self._prepare_voice_notes(
             voice_name=voice_name,
             voice=voice,
@@ -1276,16 +1285,13 @@ class Score:
                 release_power=prepared_note.release_power,
                 attack_target=prepared_note.attack_target,
             )
-            voice_signals.append(
-                synth.at_sample_rate(
-                    note_signal, prepared_note.humanized_start, self.sample_rate
-                )
-            )
+            offset_samples = int(prepared_note.humanized_start * self.sample_rate)
+            voice_signals.append((offset_samples, note_signal))
 
         if not voice_signals:
             return np.zeros(0)
 
-        voice_mix = self._stack_signals(voice_signals)
+        voice_mix = self._stack_offset_signals(voice_signals)
         if voice.sympathetic_amount > 0:
             voice_mix = self._apply_sympathetic_resonance(
                 voice_mix, voice, prepared_notes
@@ -2521,6 +2527,33 @@ class Score:
                 output[1, : signal.shape[-1]] += signal
             else:
                 output[:, : signal.shape[-1]] += signal
+        return output
+
+    @staticmethod
+    def _stack_offset_signals(signals: list[tuple[int, np.ndarray]]) -> np.ndarray:
+        """Sum unpadded (offset_samples, signal) pairs into one buffer.
+
+        Equivalent to ``_stack_signals`` on the pre-padded (offset silence +
+        signal) buffers, but never materializes those full-length pads —
+        each input signal is only as long as its own note.
+        """
+        max_len = max(offset + signal.shape[-1] for offset, signal in signals)
+        if all(signal.ndim == 1 for _, signal in signals):
+            output = np.zeros(max_len)
+            for offset, signal in signals:
+                end = offset + signal.shape[-1]
+                output[offset:end] += signal
+            return output
+
+        channels = 2
+        output = np.zeros((channels, max_len))
+        for offset, signal in signals:
+            end = offset + signal.shape[-1]
+            if signal.ndim == 1:
+                output[0, offset:end] += signal
+                output[1, offset:end] += signal
+            else:
+                output[:, offset:end] += signal
         return output
 
 

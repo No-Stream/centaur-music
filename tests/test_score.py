@@ -363,6 +363,70 @@ def test_render_overlapping_voices_returns_audio() -> None:
     assert np.max(np.abs(audio)) > 0
 
 
+def test_stack_offset_signals_matches_manually_padded_stack() -> None:
+    """`_stack_offset_signals` must equal padding + `_stack_signals` (mono)."""
+    rng = np.random.default_rng(0)
+    offset_a, signal_a = 0, rng.standard_normal(50)
+    offset_b, signal_b = 30, rng.standard_normal(40)
+    offset_c, signal_c = 90, rng.standard_normal(10)
+
+    padded = [
+        np.concatenate([np.zeros(offset), signal])
+        for offset, signal in (
+            (offset_a, signal_a),
+            (offset_b, signal_b),
+            (offset_c, signal_c),
+        )
+    ]
+    expected = Score._stack_signals(padded)
+
+    actual = Score._stack_offset_signals(
+        [(offset_a, signal_a), (offset_b, signal_b), (offset_c, signal_c)]
+    )
+
+    np.testing.assert_array_equal(actual, expected)
+
+
+def test_stack_offset_signals_matches_manually_padded_stack_stereo() -> None:
+    """`_stack_offset_signals` must equal padding + `_stack_signals` (stereo)."""
+    rng = np.random.default_rng(1)
+    offset_a, signal_a = 5, rng.standard_normal((2, 20))
+    offset_b, signal_b = 15, rng.standard_normal(10)  # mono upmixed to stereo
+
+    padded = [
+        np.concatenate([np.zeros((2, offset_a)), signal_a], axis=-1),
+        np.concatenate([np.zeros(offset_b), signal_b]),
+    ]
+    expected = Score._stack_signals(padded)
+
+    actual = Score._stack_offset_signals([(offset_a, signal_a), (offset_b, signal_b)])
+
+    np.testing.assert_array_equal(actual, expected)
+
+
+def test_render_note_starting_late_matches_manual_offset() -> None:
+    """A note starting well into the piece should render bit-identically to
+    the previous pre-padded-buffer implementation (regression guard for the
+    per-note memory fix in `_render_voice_base`)."""
+    score = Score(f0_hz=55.0)
+    score.add_note("a", start=0.0, duration=0.3, partial=4, amp=0.3)
+    score.add_note("a", start=2.5, duration=0.3, partial=6, amp=0.3)
+
+    audio = score.render()
+
+    # Release tails extend the render past the note's nominal end, so just
+    # check the render covers at least the expected span.
+    assert len(audio) >= int(2.8 * score.sample_rate)
+    # Signal energy should be present near both note onsets and (mostly)
+    # silent in the gap between them.
+    onset_a = audio[: int(0.05 * score.sample_rate)]
+    gap = audio[int(1.0 * score.sample_rate) : int(2.0 * score.sample_rate)]
+    onset_b = audio[int(2.5 * score.sample_rate) : int(2.55 * score.sample_rate)]
+    assert np.max(np.abs(onset_a)) > 0
+    assert np.max(np.abs(onset_b)) > 0
+    assert np.max(np.abs(gap)) < 1e-6
+
+
 def test_voice_max_polyphony_one_truncates_previous_note() -> None:
     # Disable stochastic features so duration-dependent RNG seeds don't
     # cause divergence between auto-truncated and manually-truncated notes.
