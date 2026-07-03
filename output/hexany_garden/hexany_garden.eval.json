@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "evaluated_at_utc": "2026-07-03T01:56:32Z",
+  "evaluated_at_utc": "2026-07-03T03:08:25Z",
   "piece_name": "hexany_garden",
   "render_ref": {
     "render_json_path": "output/hexany_garden/hexany_garden.render.json",
-    "git_commit": "6fb63260f8dd09f1f2537f659bc223577423a2ce",
-    "rendered_at_utc": "20260703-013352"
+    "git_commit": "4bebe2ceb15b17947c2e0363f6ad15c43a7368c1",
+    "rendered_at_utc": "20260703-024107"
   },
   "judges": [
     {
@@ -13,73 +13,100 @@
       "backend": "headless",
       "dimensions": {
         "musical_substance": {
-          "score": 70,
-          "notes": "Clear harmonic intention with JI-aware voice design (partial ranges, septimal_bell preset), thoughtful synth choices (soft_pluck, harp_pluck, grain_breathing_cloud), and decent melodic interest through arp, thumb, and thread voices. The additive pad with custom partials and ladder filtering shows harmonic sophistication, though motif development is harder to assess from structure alone."
+          "score": 65,
+          "notes": "The piece demonstrates sophisticated harmonic thinking grounded in JI hexanies\u2014a complex Erv Wilson construction. Twelve voices with distinct roles (pad foundation, rhythmic arp fragments, melodic sparkles, percussion) show intentional voice leading. The synth preset choices (soft_pluck, grain_breathing_cloud, additive pad with custom partial shaping) suggest harmonic-synthesis co-design. Risk factor: JI material can sound abstract or harsh if balance is poor; hearing is required to confirm the harmonic language is musically effective."
         },
         "structure_form": {
-          "score": 74,
-          "notes": "Excellent formal arc visible in the density curve: clear introduction, gradual build from ~50s through peak complexity (200-280s), then intentional wind-down. Pacing is musically coherent rather than mechanical. Orchestration supports the journey, with percussion anchoring rhythmic structure and melodic voices entering/exiting strategically."
+          "score": 68,
+          "notes": "Clear three-part arc: sparse intro (~0\u201340s), dense development (~40\u2013280s), wind-down outro. The score density plot shows deliberate pacing with controlled intensity peaks around 200\u2013250s. Pad anchors continuously; bass/kick enter at ~41s; arp activity concentrates in the middle. This is composed, not generative\u2014shaped deliberately with transitions and directionality."
         },
         "texture_expression": {
-          "score": 73,
-          "notes": "Sophisticated orchestration with 11 distinct voices, detailed effects design (sidechain glue on bass/pad to kick, delay automation on arp with multiple segments), and careful gain staging visible in the warm, balanced spectrum. Pan values distributed for stereo imaging. Master chain shows finishing consideration (Neve preamp + glue compression)."
+          "score": 65,
+          "notes": "Thoughtful automation: the arp's delay wet level rides smoothly (0.2\u21920.46\u21920.2) over critical sections. Sidechain compression on bass ducks it from the kick. Humanization is evident (timing offsets ~\u201313 to \u201317 ms in note data suggest ensemble drift). Panning is careful (\u20130.28 to +0.42). Master chain adds preamp + glue compressor. Some voices are sparse (thread=10, haze=7 notes), suggesting either restraint or ornamentation."
         },
         "completeness": {
-          "score": 75,
-          "notes": "Fully realized composition with clear beginning, middle, and end. Substantial length (~346 seconds, 1876 notes) with polished orchestration, master effects, and varied voice types (drums, melodic, textural). The density curve and spectrum suggest this is a finished work, not a sketch or study."
+          "score": 70,
+          "notes": "This is a finished piece with clear beginning, development, and ending across 346 seconds. 1805 notes distributed across 12 voices with resolved pan, mix, and effect chain. Not a sketch or study\u2014it has formal arc and mastered finishing (Neve warmth preamp + master glue compressor). The garden metaphor suggests intentional cultivation."
         },
         "open_subjective": {
-          "score": 71,
-          "notes": "A competent, intentional JI composition that feels genuinely composed rather than generated. The warm, balanced spectrum and clear formal pacing show musical taste. However, without hearing the actual piece, it's difficult to assess whether it achieves emotional resonance or memorable moments. It reads as solid craft rather than transcendent artistry."
+          "score": 63,
+          "notes": "Ambitious hexany work shows serious compositional craft, but JI/microtonal material is high-risk: success depends critically on balance and tuning execution. The restraint (sparse ornamental voices alongside dense arp) is tasteful, but 346 seconds is a long commitment. Professional finishing visible; whether the piece sustains interest and whether the hexany harmonies cohere as beautiful rather than abstract remains to be heard."
         }
       },
-      "overall_notes": "A well-crafted JI composition demonstrating clear formal structure, thoughtful orchestration, and warm sonics. The piece shows solid compositional intent and technical execution across all dimensions."
+      "overall_notes": "A technically sophisticated xenharmonic composition with intentional orchestration and professional finishing. The hexany approach demonstrates serious harmonic knowledge, though the critical success factor\u2014whether the just-intonation material sounds musically cohesive rather than abstract\u2014requires listening to confirm."
     },
     {
       "model": "sonnet",
       "backend": "headless",
       "dimensions": {
         "musical_substance": {
-          "score": 68,
-          "notes": "Eleven voices built around a 92.5 Hz f0 with hexany/CPS-flavored partial ratios (septimal bell, fm_bell_over_supersaw, additive pad through ladder) give real harmonic variety rather than a single static drone; arp, thumb-pluck, and pad lines interlock with a sidechain-ducked bass and a light percussion kit for genuine interplay. The material is more textural-generative than strongly thematic \u2014 no single motif dominates \u2014 but the JI/CPS choices read as intentional rather than decorative."
+          "score": 66,
+          "notes": "Twelve interlocking voices built on hexany/harmonic-series partials (1-28) give a genuine JI harmonic palette rather than a token tuning gesture \u2014 arp, thumb, pad, and bass form a clear otonal lattice with bell/thread accents adding color. The material is more textural-generative than strongly thematic; motif development is present but understated compared to the harmonic richness."
         },
         "structure_form": {
-          "score": 72,
-          "notes": "The density plot shows a clean arc: solo arp opening, staggered entries (thumb ~140s, pad/bass early, haze pad ~115s, bell/thread accents), a sustained climax plateau around 200-270s (peak 26 simultaneous notes), then a sharp density drop after 280s into a spare tail ending on solo bell. Dropped in the middle you'd know roughly where you are \u2014 build vs. climax vs. wind-down are clearly differentiated."
+          "score": 70,
+          "notes": "The piano roll and density curve show real composed shape: a quiet pad-only opening, a steady climb in density and voice count through the middle, a sustained high-energy plateau around 200-260s with kick/hats/shaker fully active, and a clean thinning/fade after 280s back to sparse pad and bell. Dropped into the middle you'd know roughly where you are \u2014 this reads as intentional pacing, not a generative loop."
         },
         "texture_expression": {
-          "score": 62,
-          "notes": "Automation is present and musical (breathing delay-send rides on the arp, kick-sidechained bass compressor, per-voice compression), and timing-drift stats (mean ~6ms offset, sensible inter-voice spread) suggest tasteful humanization rather than either robotic or sloppy timing. However, five voices (hat_c, hat_o, shaker, bell, thread) trip severe brightness/high-band-dominance artifact warnings, and the overall mix skews bass/low-mid heavy with a quiet integrated LUFS (-27.7) and a flagged low/high imbalance, suggesting the top end may read as harsh in isolated moments while the overall balance leans dark and low-level."
+          "score": 58,
+          "notes": "Good voice variety (percussion, arp, sustained pads, bell/thread accents, drift automation on arp) and audible timing humanization/drift give it life. However, five voices (bell, hat_c, hat_o, shaker, thread) trip severe high-band-dominance/brightness warnings, suggesting harsh, piercing top end that likely fights the otherwise warm, bass-heavy mix balance."
         },
         "completeness": {
           "score": 68,
-          "notes": "The piece has a legible beginning (single voice), a developmental middle with full ensemble density, and a genuine denouement fading to a lone bell \u2014 it behaves like a finished piece rather than a loop or demo. At ~5.75 minutes with real dynamic arc, it's substantial enough to sit as a complete listen."
+          "notes": "Has a legible beginning (sparse pad entry), development (arp/bell/percussion layering into a dense plateau), and a real ending (thinning back to near-silence by ~340s) rather than an abrupt cutoff. Nearly 6 minutes with this arc reads as a finished piece rather than a sketch, though the harshness warnings suggest the mix isn't fully polished."
         },
         "open_subjective": {
-          "score": 65,
-          "notes": "The concept \u2014 a hexany-tuned harmonic 'garden' that blooms from a single arpeggio into a dense polyrhythmic ensemble and recedes again \u2014 is appealing and well-realized structurally. My main hesitation is mix-level: the flagged brightness/harshness risks and a notably quiet, bass-heavy overall balance suggest the finished render may not fully deliver on the compositional shape it clearly has."
+          "score": 63,
+          "notes": "The overall architecture \u2014 slow build, dense plateau, graceful decay \u2014 is satisfying and the hexany-derived harmony is a genuinely interesting JI choice rather than a gimmick. My main reservation is the cluster of severe brightness/harshness warnings on nearly half the voices, which raises real doubt about how pleasant the top end actually sounds against the otherwise tasteful, bass-forward tonal balance."
         }
       },
-      "overall_notes": "A structurally well-arced JI/hexany piece with genuine voice-leading and automation craft, somewhat undercut by mix-balance and brightness artifact warnings that suggest the final render doesn't yet match the quality of its composition."
+      "overall_notes": "A well-paced, structurally convincing hexany-based piece with a real arc and legitimate JI harmonic interest, undercut somewhat by several voices flagged for harsh/piercing high-frequency content that likely needs taming."
+    },
+    {
+      "model": "opus",
+      "backend": "headless",
+      "dimensions": {
+        "musical_substance": {
+          "score": 67,
+          "notes": "Built on a coherent 1-3-5-7 hexany/CPS palette (partials like 7, 5, 14/3, 20/3, 28/3, 40/3 recur across arp, bell, and thumb voices), with a sustained otonal pad harmony over a stable low tonic and kick-sidechained bass \u2014 the tuning choices are intentional and consonant rather than decorative. The 570-note arp provides most of the melodic motion and is idiomatic and pretty, though it leans more on flowing pattern-work than on strong, restatable themes. Harmonically satisfying and clearly deliberate, if not melodically arresting."
+        },
+        "structure_form": {
+          "score": 69,
+          "notes": "The density plot shows a genuine composed arc: sparse pad/arp intro, drums entering around 40s, a first swell near 80-110s, a clear climax between 200-270s (peaking ~27 active notes), then a deliberate thinning to a resolved tail by 345s. Entrances are staggered (haze drone ~115s, thread/glint accents at the peak) so you could orient yourself if dropped mid-piece. It feels shaped and directional rather than generative."
+        },
+        "texture_expression": {
+          "score": 68,
+          "notes": "Twelve voices with real orchestration variety \u2014 pluck arps, additive pad through ladder, grain cloud haze, drum kit \u2014 panned across the field and glued with a Neve/master-glue chain, a shared hall, a drum bus, a slow drift bus, chamber humanization, and extensive mix/send automation. It genuinely feels alive and shaped. The main blemish is the six severe brightness/high-band warnings on hats, shaker, thread, and bell, suggesting the top end can read as brittle even though the overall mix tilts bass-heavy."
+        },
+        "completeness": {
+          "score": 73,
+          "notes": "This is a finished ~5.8-minute piece with a clear beginning, development, climax, and ending, not a sketch or demo. Master bus, sends, humanization, and automation are all in place, and the arc resolves rather than simply stopping. It could be listened to as a standalone track."
+        },
+        "open_subjective": {
+          "score": 66,
+          "notes": "A pleasant, well-tended 'garden' of septimal JI \u2014 listenable, gently euphonic, and clearly the work of someone composing rather than proving a concept. It lands on the calm/pretty side and is a bit safe; the arp texture and pad wash carry a lot, and the harsh upper percussion is the one thing that pulls me out. Enjoyable and complete, if not quite surprising or moving."
+        }
+      },
+      "overall_notes": "A genuinely composed, complete septimal-JI ambient/electronic piece with a real arc and rich orchestration; euphonic and satisfying rather than daring, with some brittle high-end percussion as its main flaw."
     }
   ],
   "aggregate": {
-    "overall_score": 69.5,
+    "overall_score": 66.0,
     "dimension_medians": {
-      "musical_substance": 69.0,
-      "structure_form": 73.0,
-      "texture_expression": 67.5,
-      "completeness": 71.5,
-      "open_subjective": 68.0
+      "musical_substance": 66,
+      "structure_form": 69,
+      "texture_expression": 65,
+      "completeness": 70,
+      "open_subjective": 63
     },
     "dimension_spreads": {
       "musical_substance": 2,
       "structure_form": 2,
-      "texture_expression": 11,
-      "completeness": 7,
-      "open_subjective": 6
+      "texture_expression": 10,
+      "completeness": 5,
+      "open_subjective": 3
     },
     "confidence": "high",
-    "synthesized_feedback": "A well-crafted JI composition demonstrating clear formal structure, thoughtful orchestration, and warm sonics. The piece shows solid compositional intent and technical execution across all dimensions.  A structurally well-arced JI/hexany piece with genuine voice-leading and automation craft, somewhat undercut by mix-balance and brightness artifact warnings that suggest the final render doesn't yet match the quality of its composition."
+    "synthesized_feedback": "A technically sophisticated xenharmonic composition with intentional orchestration and professional finishing. The hexany approach demonstrates serious harmonic knowledge, though the critical success factor\u2014whether the just-intonation material sounds musically cohesive rather than abstract\u2014requires listening to confirm.  A well-paced, structurally convincing hexany-based piece with a real arc and legitimate JI harmonic interest, undercut somewhat by several voices flagged for harsh/piercing high-frequency content that likely needs taming.  A genuinely composed, complete septimal-JI ambient/electronic piece with a real arc and rich orchestration; euphonic and satisfying rather than daring, with some brittle high-end percussion as its main flaw."
   }
 }
