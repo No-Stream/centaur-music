@@ -16,8 +16,8 @@
 - `code_musics/engines/` contains the synth engine registry and per-engine renderers.
   `_mpe_utils.py` contains shared MPE/MIDI utility functions for instrument engines.
 - `code_musics/tuning.py` contains small just-intonation, harmonic-series, utonal,
-  and EDO helper functions, plus Erv Wilson Combination Product Set (CPS) /
-  hexany helpers (`cps`, `hexany`, `hexany_triads`).
+  and EDO helper functions, plus Erv Wilson Combination Product Set (CPS)
+  helpers (`cps`, `hexany`, `hexany_triads`, `dekany`, `dekany_chords`).
 - `code_musics/generative/` contains algorithmic and stochastic composition
   tools: TonePool (weighted pitch pools), euclidean rhythms, probability gates,
   Markov chains, Turing machine sequencers, harmonic lattice walkers, and
@@ -671,14 +671,15 @@ See `FUTURE.md` for way more ideas.
   `"berghain"` (peak-hour techno wall). Passing `effects=[...]` explicitly
   fully replaces the style chain.
 - The `clipper` effect (`apply_clipper` in `synth.py`) is a native peak
-  clipper with a monotone polynomial soft-knee, oversampling (Kaiser β=14
-  polyphase), and stereo linking. Knee width is the main character knob:
-  narrow (`0..1.5 dB`) for firm mastering-clipper edge, wide (`3..6 dB`)
-  for forgiving kick-forward glue. `algorithm="hard"` also available for
-  literal `np.clip` semantics. `threshold_db`, `knee_width_db`, and `mix`
-  all accept per-sample arrays for automation. Live on the default drum
-  bus for `electronic` / `weighty` / `berghain` styles; follow with
-  `limiter` on the master for a strict true-peak ceiling. See
+  clipper with hard and monotone polynomial soft-knee modes, oversampling
+  (Kaiser β=14 polyphase), and stereo linking. The default is
+  `algorithm="hard"` for transparent mastering-style peak shaving at OS=8.
+  Use `algorithm="poly_knee"` for drum glue, bus color, and softer clipping;
+  narrow (`0..1.5 dB`) is firm, wide (`3..6 dB`) is forgiving and
+  kick-forward. `threshold_db`, `knee_width_db`, and `mix` all accept
+  per-sample arrays for automation. Poly-knee lives explicitly on the
+  default drum bus for `electronic` / `weighty` / `berghain` styles; follow
+  with `limiter` on the master for a strict true-peak ceiling. See
   `docs/synth_api.md`.
 - The `bricasti` convolution wrapper supports basic wet-return tone shaping
   (`highpass_hz`, `lowpass_hz`, `tilt_db`) for cleaner, darker, or brighter tails.
@@ -886,6 +887,7 @@ delegation-to-subagents pattern.
 - four tet (pretty and euphonic but not cheesy, wandering arps, cool organic sounds)
 - autechre (creative, glitchy, weird, but still poppy at its core)
 - emotional journey side of techno, think carl craig's "at les"
+- drawing inspiration from more traditional techno is fine too, for drum and patch inspiration, though we'll want to include some melody  
 (for more ideas, use `make inspire`; this is an idea generator inspired by Eno's *Oblique Strategies*)
 
 some tuning schemes -
@@ -896,6 +898,7 @@ some tuning schemes -
 - colundi
 - otonal
 - meantone and other historical tunings (constraints are good)
+- CPS - hex, dek, eiko...
 
 ```text
 ! 7-limit JI.scl

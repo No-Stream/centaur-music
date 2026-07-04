@@ -3,7 +3,8 @@
 PYTHONPATH_PREFIX = PYTHONPATH=.
 UV_CACHE_DIR ?= $(CURDIR)/.uv-cache
 BRICASTI_IR_DIR ?= $(CURDIR)/irs/bricasti
-UV_RUN = UV_CACHE_DIR=$(UV_CACHE_DIR) BRICASTI_IR_DIR=$(BRICASTI_IR_DIR) MPLBACKEND=Agg $(PYTHONPATH_PREFIX) uv run
+MPLCONFIGDIR ?= /tmp/matplotlib-centaur-music
+UV_RUN = UV_CACHE_DIR=$(UV_CACHE_DIR) BRICASTI_IR_DIR=$(BRICASTI_IR_DIR) MPLBACKEND=Agg MPLCONFIGDIR=$(MPLCONFIGDIR) $(PYTHONPATH_PREFIX) uv run
 PIECE ?=
 PLOT ?= 1
 AT ?=
@@ -205,7 +206,7 @@ endif
 ifndef AT
 	$(error AT is required, for example `make snippet PIECE=ji_chorale AT=2:10 WINDOW=12`)
 endif
-	$(UV_RUN) python main.py $(PIECE) --snippet-at "$(AT)" --snippet-window $(WINDOW) $(RENDER_PLOT_FLAG)
+	$(UV_RUN) python main.py $(PIECE) --snippet-at "$(AT)" --snippet-window $(WINDOW) $(RENDER_PLOT_FLAG) $(RENDER_ANALYSIS_FLAG)
 
 .PHONY: render-window
 render-window:
@@ -218,7 +219,7 @@ endif
 ifndef DUR
 	$(error DUR is required, for example `make render-window PIECE=ji_chorale START=130 DUR=12`)
 endif
-	$(UV_RUN) python main.py $(PIECE) --window-start "$(START)" --window-dur $(DUR) $(RENDER_PLOT_FLAG)
+	$(UV_RUN) python main.py $(PIECE) --window-start "$(START)" --window-dur $(DUR) $(RENDER_PLOT_FLAG) $(RENDER_ANALYSIS_FLAG)
 
 .PHONY: midi
 midi:

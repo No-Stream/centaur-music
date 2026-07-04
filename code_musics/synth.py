@@ -4998,7 +4998,7 @@ def apply_clipper(
     signal: np.ndarray,
     *,
     threshold_db: float | np.ndarray = ...,
-    knee_width_db: float | np.ndarray = ...,
+    knee_width_db: float | np.ndarray | None = ...,
     algorithm: str = ...,
     oversample_factor: int = ...,
     mix: float | np.ndarray = ...,
@@ -5015,7 +5015,7 @@ def apply_clipper(
     signal: np.ndarray,
     *,
     threshold_db: float | np.ndarray = ...,
-    knee_width_db: float | np.ndarray = ...,
+    knee_width_db: float | np.ndarray | None = ...,
     algorithm: str = ...,
     oversample_factor: int = ...,
     mix: float | np.ndarray = ...,
@@ -5031,8 +5031,8 @@ def apply_clipper(
     signal: np.ndarray,
     *,
     threshold_db: float | np.ndarray = -3.0,
-    knee_width_db: float | np.ndarray = 2.0,
-    algorithm: str = "poly_knee",
+    knee_width_db: float | np.ndarray | None = None,
+    algorithm: str = "hard",
     oversample_factor: int = 8,
     mix: float | np.ndarray = 1.0,
     makeup_gain_db: float = 0.0,
@@ -5041,21 +5041,21 @@ def apply_clipper(
     calibration_window_ms: float = 10.0,
     return_analysis: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
-    """Oversampled, stereo-linked peak clipper with a monotone polynomial knee.
+    """Oversampled, stereo-linked peak clipper.
 
     Transfer function (per channel, after oversampling):
 
-    * ``algorithm="poly_knee"`` (default): monotone cubic-Hermite soft knee.
+    * ``algorithm="hard"`` (default): literal ``numpy.clip`` on the oversampled
+      signal. ``knee_width_db`` is ignored. This is the transparent mastering
+      / final peak-shave default.
+    * ``algorithm="poly_knee"``: monotone cubic-Hermite soft knee.
       ``|x|`` below ``threshold_db - knee_width_db/2`` passes through
       bit-exact; between ``threshold_db - knee_width_db/2`` and
       ``threshold_db + knee_width_db/2`` the transfer follows a C¹ cubic
       Hermite blend to a flat ceiling; above that it is clamped to
       ``threshold_db`` exactly.  ``knee_width_db=0`` collapses to a pure
-      brickwall.  AD2-antialiased.
-    * ``algorithm="hard"``: literal ``numpy.clip`` on the oversampled signal.
-      ``knee_width_db`` is ignored.  The AD2 hard-clip kernel was measured
-      to add <0.01% IMD over naive ``np.clip`` at OS=8 on transient content,
-      so we skip ADAA here for speed and predictable null-test behavior.
+      brickwall.  AD2-antialiased. If ``knee_width_db`` is left at ``None``,
+      poly-knee uses a 2.0 dB character knee.
 
     This replaces the previous ``hardness`` crossfade of
     ``hard * 0.85 + tanh * 0.15`` which, per the ``clipper_bisect``
@@ -5072,10 +5072,11 @@ def apply_clipper(
     phase-coherent across L/R.  Mono input bypasses the link and returns
     the per-channel shaped waveform directly.
 
-    Typical use: drum-bus / master-bus peak shaver doing 1-3 dB of real
-    work above ``threshold_db``.  Follow with :func:`apply_native_limiter`
-    if a strict true-peak ceiling matters — inter-sample peaks can still
-    exist after downsampling.
+    Typical use: hard mode for master-bus peak shaving doing 0.5-2 dB of
+    real work above ``threshold_db``; poly-knee for drum-bus glue and
+    saturation-like character. Follow with :func:`apply_native_limiter` if
+    a strict true-peak ceiling matters — inter-sample peaks can still exist
+    after downsampling.
 
     Parameters
     ----------
@@ -5083,13 +5084,14 @@ def apply_clipper(
         Ceiling in dBFS (default -3.0, typical range -12..0).  May be a
         per-sample array matching the input length for automated rides.
         Ignored when ``max_shave_db`` is set.
-    knee_width_db : float | np.ndarray
+    knee_width_db : float | np.ndarray | None
         Total knee width in dB.  ``0.0`` is a brickwall; ``2.0`` is a
         mild musical soft-clip; ``6.0`` becomes audibly gentle.  Default
-        2.0.  May also be a per-sample array.  Only used by
-        ``algorithm="poly_knee"``.
+        ``None`` resolves to ``0.0`` for ``algorithm="hard"`` and ``2.0``
+        for ``algorithm="poly_knee"``.  May also be a per-sample array.
+        Only used by ``algorithm="poly_knee"``.
     algorithm : str
-        ``"poly_knee"`` (default) or ``"hard"``.  See transfer-function
+        ``"hard"`` (default) or ``"poly_knee"``.  See transfer-function
         description above.
     oversample_factor : int
         1, 2, 4, 8, or 16.  Default 8.  Uses a sharp Kaiser (β=14) polyphase
@@ -5118,6 +5120,8 @@ def apply_clipper(
         raise ValueError(
             f"algorithm must be one of {sorted(_CLIPPER_ALGORITHMS)}; got {algorithm!r}"
         )
+    if knee_width_db is None:
+        knee_width_db = 2.0 if algorithm == "poly_knee" else 0.0
 
     sig = np.asarray(signal, dtype=np.float64)
     was_mono = sig.ndim == 1

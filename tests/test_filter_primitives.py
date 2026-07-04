@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 
-from code_musics.engines._filters import _adaa_tanh, _algebraic_sat, _log_cosh
+from code_musics.engines._filters import (
+    _adaa_tanh,
+    _algebraic_sat,
+    _log_cosh,
+    apply_zdf_svf,
+)
 
 # Access the Python fallback for numba-compiled functions.
 log_cosh = _log_cosh.py_func
@@ -130,3 +136,29 @@ class TestAlgebraicSat:
         values = [algebraic_sat(x) for x in xs]
         for i in range(len(values) - 1):
             assert values[i] < values[i + 1]
+
+
+class TestApplyZdfSvf:
+    def test_scalar_cutoff_matches_constant_profile(self) -> None:
+        rng = np.random.default_rng(123)
+        signal = rng.standard_normal(2048)
+        constant_profile = np.full(signal.size, 3_200.0, dtype=np.float64)
+
+        scalar = apply_zdf_svf(
+            signal,
+            cutoff_profile=3_200.0,
+            resonance_q=0.707,
+            sample_rate=44_100,
+            filter_mode="highpass",
+            filter_drive=0.0,
+        )
+        profiled = apply_zdf_svf(
+            signal,
+            cutoff_profile=constant_profile,
+            resonance_q=0.707,
+            sample_rate=44_100,
+            filter_mode="highpass",
+            filter_drive=0.0,
+        )
+
+        np.testing.assert_allclose(scalar, profiled, rtol=0.0, atol=0.0)

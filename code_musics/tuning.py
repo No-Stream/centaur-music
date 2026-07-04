@@ -372,3 +372,61 @@ def hexany_triads(
         utonal_triads.append((utonal_sorted[0], utonal_sorted[1], utonal_sorted[2]))
 
     return otonal_triads, utonal_triads
+
+
+def dekany(
+    factors: Sequence[int] = (1, 3, 5, 7, 9), *, normalize: float | None = None
+) -> list[float]:
+    """Erv Wilson Dekany: the 2-out-of-5 Combination Product Set.
+
+    Defaults to the 1-3-5-7-9 dekany, normalized by ``factors[0] * factors[1]``
+    so the result comes out relative to the first dyad (matching ``hexany``).
+    Dropping any one factor from a dekany leaves an embedded hexany over the
+    remaining four, so the default set contains the classic 1-3-5-7 hexany.
+    """
+    if len(factors) != 5:
+        raise ValueError(f"dekany requires exactly 5 factors, got {len(factors)}")
+    resolved_normalize = (
+        float(factors[0] * factors[1]) if normalize is None else normalize
+    )
+    return cps(factors, 2, normalize=resolved_normalize)
+
+
+def dekany_chords(
+    factors: Sequence[int] = (1, 3, 5, 7, 9), *, normalize: float | None = None
+) -> tuple[list[tuple[float, float, float, float]], list[tuple[float, float, float]]]:
+    """Otonal tetrads and utonal triads of the 2-of-5 dekany over `factors`.
+
+    For each factor x, the otonal tetrad is the four dekany notes containing
+    x (x*a, x*b, x*c, x*d for the other four factors), sounding as the otonal
+    chord a:b:c:d. The 2-of-5 dekany has no true utonal tetrads (those live
+    in the 3-of-5 CPS); its utonal sonorities are triads: for each 3-subset
+    {p, q, r}, the notes {q*r, p*r, p*q} sound as 1/p : 1/q : 1/r. Returns
+    (otonal_tetrads, utonal_triads) — five tetrads and ten triads, each
+    octave-reduced/normalized like ``dekany(...)`` and sorted ascending.
+    """
+    if len(factors) != 5:
+        raise ValueError(f"dekany requires exactly 5 factors, got {len(factors)}")
+    resolved_normalize = (
+        float(factors[0] * factors[1]) if normalize is None else normalize
+    )
+
+    otonal_tetrads: list[tuple[float, float, float, float]] = []
+    for shared in factors:
+        others = [f for f in factors if f != shared]
+        tetrad_sorted = sorted(
+            _octave_reduce(shared * other / resolved_normalize) for other in others
+        )
+        otonal_tetrads.append(
+            (tetrad_sorted[0], tetrad_sorted[1], tetrad_sorted[2], tetrad_sorted[3])
+        )
+
+    utonal_triads: list[tuple[float, float, float]] = []
+    for subset in combinations(factors, 3):
+        triad_sorted = sorted(
+            _octave_reduce(a * b / resolved_normalize)
+            for a, b in combinations(subset, 2)
+        )
+        utonal_triads.append((triad_sorted[0], triad_sorted[1], triad_sorted[2]))
+
+    return otonal_tetrads, utonal_triads

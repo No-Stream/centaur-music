@@ -1264,14 +1264,14 @@ score = Score(
 
 Implementation: `apply_clipper` in `code_musics/synth.py`.
 
-Native peak clipper with a monotone polynomial soft-knee, oversampling,
-and stereo linking.  Default algorithm is a cubic-Hermite knee that
-passes through linearly below threshold, smooths C¹ through the knee
-region, then clamps flat at threshold.  A literal `np.clip` hard algorithm
-is available via `algorithm="hard"` when you want bit-identical brickwall
-semantics.
+Native peak clipper with hard and monotone polynomial soft-knee modes,
+oversampling, and stereo linking.  The default algorithm is a hard
+oversampled clipper for transparent mastering-style peak shaving.  The
+`poly_knee` algorithm is the character mode: it passes through linearly
+below threshold, smooths C¹ through the knee region, then clamps flat at
+threshold.
 
-Signal flow: upsample -> clip (poly-knee AD2, or hard np.clip) ->
+Signal flow: upsample -> clip (hard np.clip, or poly-knee AD2) ->
 downsample -> makeup gain -> dry/wet mix, with a stereo-linked attenuation
 curve derived per-channel and applied jointly.
 
@@ -1282,15 +1282,16 @@ Parameters:
   Typical range `-12..0`.  **Per-sample arrays are accepted** for
   automated threshold rides (length must match input length).  Ignored
   when `max_shave_db` is set.
-- `knee_width_db: float | np.ndarray = 2.0` — total knee width in dB.
-  `0.0` is a pure brickwall; `2.0` is a mild musical soft-clip; `6.0+`
-  is audibly gentle saturation-into-ceiling.  **Per-sample arrays are
-  accepted.**  Only used by `algorithm="poly_knee"`.
-- `algorithm: str = "poly_knee"` — `"poly_knee"` (default, the monotone
-  cubic-Hermite knee described above) or `"hard"` (literal `np.clip`
-  on the oversampled signal).  The AD2 hard-clip kernel was measured to
-  add <0.01% IMD over naive `np.clip` at OS=8 on transient content, so
-  `"hard"` skips ADAA for speed and predictable null-test behavior.
+- `knee_width_db: float | np.ndarray | None = None` — total knee width in
+  dB.  `0.0` is a pure brickwall; `2.0` is a mild musical soft-clip;
+  `6.0+` is audibly gentle saturation-into-ceiling.  `None` resolves to
+  `0.0` for `algorithm="hard"` and `2.0` for `algorithm="poly_knee"`.
+  **Per-sample arrays are accepted.**  Only used by `algorithm="poly_knee"`.
+- `algorithm: str = "hard"` — `"hard"` (default, literal `np.clip` on the
+  oversampled signal) or `"poly_knee"` (the monotone cubic-Hermite knee
+  described above).  The AD2 hard-clip kernel was measured to add <0.01%
+  IMD over naive `np.clip` at OS=8 on transient content, so `"hard"`
+  skips ADAA for speed and predictable null-test behavior.
 - `oversample_factor: int = 8` — 1, 2, 4, 8, or 16.  Default 8.  OS=8
   cuts IMD on drum-bus content materially versus OS=4; OS=16 is
   available for master / critical drum buses where CPU budget is cheap.
@@ -1327,13 +1328,19 @@ Analysis extras when `max_shave_db` is set (added to the usual
 Usage examples:
 
 ```python
-# Mild musical soft-clip — the new default flavor.
-EffectSpec("clipper", {"threshold_db": -3.0, "knee_width_db": 2.0})
+# Transparent mastering-style peak shave — the default flavor.
+EffectSpec("clipper", {"threshold_db": -3.0})
+
+# Mild musical soft-clip / drum-bus character.
+EffectSpec(
+    "clipper",
+    {"algorithm": "poly_knee", "threshold_db": -3.0, "knee_width_db": 2.0},
+)
 
 # Piece-aware calibration with a narrow-knee edge (Berghain-style).
 EffectSpec(
     "clipper",
-    {"max_shave_db": 3.0, "knee_width_db": 1.5},
+    {"algorithm": "poly_knee", "max_shave_db": 3.0, "knee_width_db": 1.5},
 )
 
 # Pure brickwall for peak-shave-only stages.
@@ -1342,7 +1349,7 @@ EffectSpec("clipper", {"algorithm": "hard", "threshold_db": -1.0})
 # Automated threshold ride via AutomationSpec.
 EffectSpec(
     "clipper",
-    {"threshold_db": -3.0, "knee_width_db": 2.0},
+    {"algorithm": "poly_knee", "threshold_db": -3.0, "knee_width_db": 2.0},
     automation=[
         AutomationSpec(
             target=AutomationTarget(kind="control", name="threshold_db"),
@@ -1356,7 +1363,10 @@ EffectSpec(
 
 Character notes:
 
-- **Knee width is the main musical knob.**  Narrow knee (`0..1.5 dB`)
+- **Algorithm is the first intent knob.**  Use `algorithm="hard"` for
+  transparent final peak shaving; use `algorithm="poly_knee"` for drum
+  glue, bus color, and saturation-like clipping.
+- **In poly-knee mode, knee width is the main character knob.**  Narrow knee (`0..1.5 dB`)
   is closest to modern mastering clippers (Pro-L 2 in clipper mode /
   StandardCLIP / KClip at low soften) — generates harmonics, firm
   ceiling, crisp transient edge.  Wide knee (`3..6 dB`) reads as

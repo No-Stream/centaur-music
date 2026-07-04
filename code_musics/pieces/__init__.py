@@ -47,6 +47,7 @@ from code_musics.pieces.natural_steps import PIECES as _NATURAL_STEPS_PIECES
 from code_musics.pieces.newton_bloom import PIECES as _NEWTON_BLOOM_PIECES
 from code_musics.pieces.night_carriage import PIECES as _NIGHT_CARRIAGE_PIECES
 from code_musics.pieces.night_lattice import PIECES as _NIGHT_LATTICE_PIECES
+from code_musics.pieces.ninth_wave import PIECES as _NINTH_WAVE_PIECES
 from code_musics.pieces.organ_passacaglia import PIECES as _ORGAN_CHORALE_PIECES
 from code_musics.pieces.phase_garden import PIECES as _PHASE_GARDEN_PIECES
 from code_musics.pieces.registry import merge_piece_maps
@@ -130,6 +131,7 @@ PIECES = merge_piece_maps(
     _CLOCK_OF_7_PIECES,
     _MISTY_PIXEL_PIECES,
     _NIGHT_CARRIAGE_PIECES,
+    _NINTH_WAVE_PIECES,
     _ANALOG_FILTER_BUS_STUDY_PIECES,
     _SCANNED_GARDEN_PIECES,
     _COUPLED_BELLS_PIECES,

@@ -117,9 +117,24 @@ class TestClipperKnee:
             freqs = np.fft.rfftfreq(x.shape[0], d=1.0 / SAMPLE_RATE)
             return float(np.sum(spec[freqs > 2000.0] ** 2))
 
-        wide = apply_clipper(signal, threshold_db=threshold_db, knee_width_db=6.0)
-        mid = apply_clipper(signal, threshold_db=threshold_db, knee_width_db=2.0)
-        hard = apply_clipper(signal, threshold_db=threshold_db, knee_width_db=0.0)
+        wide = apply_clipper(
+            signal,
+            threshold_db=threshold_db,
+            knee_width_db=6.0,
+            algorithm="poly_knee",
+        )
+        mid = apply_clipper(
+            signal,
+            threshold_db=threshold_db,
+            knee_width_db=2.0,
+            algorithm="poly_knee",
+        )
+        hard = apply_clipper(
+            signal,
+            threshold_db=threshold_db,
+            knee_width_db=0.0,
+            algorithm="poly_knee",
+        )
         e_wide = hf_energy(wide)
         e_mid = hf_energy(mid)
         e_hard = hf_energy(hard)
@@ -184,7 +199,34 @@ class TestClipperKnee:
 
 
 class TestClipperAlgorithms:
-    """algorithm = 'poly_knee' (default) vs 'hard'."""
+    """algorithm = 'hard' (default) vs 'poly_knee'."""
+
+    def test_default_algorithm_is_hard_mastering_clip(self) -> None:
+        signal = _sine(440.0, 0.1, amp=1.0)
+        default_out, metrics = apply_clipper(
+            signal, threshold_db=-6.0, return_analysis=True
+        )
+        explicit_hard = apply_clipper(
+            signal,
+            threshold_db=-6.0,
+            knee_width_db=0.0,
+            algorithm="hard",
+            oversample_factor=8,
+        )
+        np.testing.assert_array_equal(default_out, explicit_hard)
+        assert metrics["algorithm"] == "hard"
+        assert metrics["knee_width_db"] == 0.0
+
+    def test_poly_knee_algorithm_gets_character_knee_default(self) -> None:
+        signal = _sine(440.0, 0.1, amp=1.0)
+        _, metrics = apply_clipper(
+            signal,
+            threshold_db=-6.0,
+            algorithm="poly_knee",
+            return_analysis=True,
+        )
+        assert metrics["algorithm"] == "poly_knee"
+        assert metrics["knee_width_db"] == 2.0
 
     def test_hard_algorithm_ignores_knee(self) -> None:
         # algorithm="hard" is a literal clamp; knee_width_db is silently

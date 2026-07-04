@@ -533,6 +533,39 @@ def test_mono_voice_with_drift_bus_renders_after_voice_stealing() -> None:
     assert np.all(np.isfinite(audio))
 
 
+def test_voice_stealing_inside_release_tail_keeps_trajectory_length() -> None:
+    """A steal landing within the final 5 ms of a dying note must not extend it.
+
+    Regression: the steal micro-release (5 ms) replaced the remaining release,
+    so a steal arriving inside the last 5 ms of a note's tail *lengthened* its
+    effective duration past the freq trajectory built for the original length,
+    crashing the engine with ``freq_trajectory length must match note
+    duration``.
+    """
+    score = Score(f0_hz=98.0, auto_master_gain_stage=False)
+    score.add_drift_bus("d", rate_hz=0.1, depth_cents=4.0, seed=1)
+    score.add_voice(
+        "lead",
+        synth_defaults={
+            "engine": "synth_voice",
+            "preset": "soft_bass",
+            "release": 0.2,
+        },
+        normalize_lufs=None,
+        max_polyphony=1,
+        drift_bus="d",
+        drift_bus_correlation=0.8,
+    )
+    # Note A rings until 0.5 + 0.2 = 0.7; note B lands 2 ms before that,
+    # inside A's final 5 ms.
+    score.add_note("lead", start=0.0, duration=0.5, partial=2.0, amp=0.2)
+    score.add_note("lead", start=0.698, duration=0.3, partial=3.0, amp=0.2)
+
+    audio = score.render()
+    assert audio.size > 0
+    assert np.all(np.isfinite(audio))
+
+
 def test_score_send_bus_adds_shared_return_to_mix() -> None:
     dry_reference = Score(f0_hz=55.0, auto_master_gain_stage=False)
     dry_reference.add_voice("lead", normalize_lufs=None)
@@ -887,6 +920,38 @@ def test_score_sidechain_processing_is_dependency_order_independent() -> None:
 
     rendered_stems = score.render_stems()
 
+    assert "pad" in rendered_stems
+    assert np.max(np.abs(rendered_stems["pad"])) > 0.0
+
+
+def test_extract_window_retains_empty_sidechain_source_voice() -> None:
+    score = Score(f0_hz=55.0, auto_master_gain_stage=False)
+    score.add_voice("kick", normalize_peak_db=-6.0, velocity_humanize=None)
+    score.add_voice(
+        "pad",
+        normalize_lufs=None,
+        velocity_humanize=None,
+        effects=[
+            EffectSpec(
+                "compressor",
+                {
+                    "threshold_db": -32.0,
+                    "ratio": 5.0,
+                    "attack_ms": 0.5,
+                    "release_ms": 160.0,
+                    "sidechain_source": "kick",
+                },
+            )
+        ],
+    )
+    score.add_note("kick", start=0.10, duration=0.10, freq=55.0, amp=1.0)
+    score.add_note("pad", start=2.0, duration=0.7, partial=3.0, amp=0.10)
+
+    window = score.extract_window(start_seconds=1.8, end_seconds=2.8)
+    rendered_stems = window.render_stems()
+
+    assert "kick" in window.voices
+    assert window.voices["kick"].notes == []
     assert "pad" in rendered_stems
     assert np.max(np.abs(rendered_stems["pad"])) > 0.0
 

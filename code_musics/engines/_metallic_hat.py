@@ -111,7 +111,7 @@ def render_hat_noise_metallic(
     noise = _highpass(raw_noise, sample_rate=sample_rate, cutoff_hz=noise_hp_hz)
     noise = apply_zdf_svf(
         noise,
-        cutoff_profile=np.full(n_samples, noise_bp_hz, dtype=np.float64),
+        cutoff_profile=noise_bp_hz,
         resonance_q=noise_bp_q,
         sample_rate=sample_rate,
         filter_mode="bandpass",
@@ -196,7 +196,7 @@ def _render_partial_cloud(
 def _highpass(signal: np.ndarray, *, sample_rate: int, cutoff_hz: float) -> np.ndarray:
     return apply_zdf_svf(
         signal,
-        cutoff_profile=np.full(signal.size, cutoff_hz, dtype=np.float64),
+        cutoff_profile=cutoff_hz,
         resonance_q=0.707,
         sample_rate=sample_rate,
         filter_mode="highpass",

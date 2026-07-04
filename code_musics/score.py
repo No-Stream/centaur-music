@@ -964,6 +964,34 @@ class Score:
                 continue
             shifted_voices[voice_name] = replace(voice, notes=kept_notes)
 
+        retained_voice_names = set(shifted_voices)
+        pending_voice_names = list(shifted_voices)
+        while pending_voice_names:
+            voice_name = pending_voice_names.pop()
+            voice = self.voices[voice_name]
+            for effect in voice.effects:
+                if effect.kind != "compressor":
+                    continue
+                sidechain_source = effect.params.get("sidechain_source")
+                if sidechain_source is None:
+                    continue
+                if (
+                    not isinstance(sidechain_source, str)
+                    or not sidechain_source.strip()
+                ):
+                    continue
+                source_name = sidechain_source.strip()
+                if source_name == voice_name or source_name not in self.voices:
+                    continue
+                if source_name in retained_voice_names:
+                    continue
+                shifted_voices[source_name] = replace(
+                    self.voices[source_name],
+                    notes=[],
+                )
+                retained_voice_names.add(source_name)
+                pending_voice_names.append(source_name)
+
         reference_total_dur = (
             self.time_reference_total_dur
             if self.time_reference_total_dur is not None
@@ -2127,10 +2155,20 @@ class Score:
                     + stolen_note.effective_release
                 ) > current_start
                 _STEAL_RELEASE_S = 0.005  # 5 ms micro-release prevents click
+                original_total = (
+                    stolen_note.effective_hold_duration + stolen_note.effective_release
+                )
                 stolen_note.effective_hold_duration = max(
                     0.0, current_start - stolen_note.humanized_start
                 )
-                stolen_note.effective_release = _STEAL_RELEASE_S
+                # Clamp so the steal never *extends* the note past its
+                # original envelope: freq trajectories were built for the
+                # original length, and a steal landing inside the final 5 ms
+                # would otherwise push the engine past the trajectory end.
+                stolen_note.effective_release = min(
+                    _STEAL_RELEASE_S,
+                    max(0.0, original_total - stolen_note.effective_hold_duration),
+                )
                 active_notes.remove(stolen_note)
                 if legato and max_polyphony == 1 and overlap:
                     prepared_note.effective_attack = 0.0
@@ -2499,24 +2537,34 @@ class Score:
     ) -> np.ndarray:
         if signal.size == 0:
             return np.asarray(signal, dtype=np.float64)
+        has_db_automation = any(
+            spec.target.kind == "control" and spec.target.name == target_name
+            for spec in automation_specs
+        )
+        matrix_connections = (
+            iter_connections_for_target(modulations, kind="control", name=target_name)
+            if modulations
+            else []
+        )
+        if not has_db_automation and not matrix_connections:
+            if base_db == 0.0:
+                return np.asarray(signal, dtype=np.float64)
+            return np.asarray(signal * synth.db_to_amp(base_db), dtype=np.float64)
+
         db_curve = apply_control_automation(
             base_value=base_db,
             specs=automation_specs,
             target_name=target_name,
             times=signal_times,
         )
-        if modulations:
-            matrix_connections = iter_connections_for_target(
-                modulations, kind="control", name=target_name
+        if matrix_connections:
+            context = self._build_source_context(times=signal_times)
+            db_curve = combine_connections_on_curve(
+                base=db_curve,
+                connections=matrix_connections,
+                times=signal_times,
+                context=context,
             )
-            if matrix_connections:
-                context = self._build_source_context(times=signal_times)
-                db_curve = combine_connections_on_curve(
-                    base=db_curve,
-                    connections=matrix_connections,
-                    times=signal_times,
-                    context=context,
-                )
         gain_curve = np.power(10.0, db_curve / 20.0)
         if signal.ndim == 1:
             return np.asarray(signal * gain_curve, dtype=np.float64)

@@ -55,6 +55,11 @@ Concrete piece prompts:
   polyrhythmic drift.
 - **More with Erv Wilson's CPS**: we have one piece with this, interesting.
   Let's use it more. New directions?
+- **Focusing on Sine, Additive, (and modal/physical/karplus)**: Aleksi Perala
+  is an example of a producer who blends synthesis with scale. E.g. can construct
+  additive sounds that omit the octave with a scale that omits the octave, can reduce
+  the clash of sounds "wanting the octave" or not adapting well to alt tunings.
+  (Note: octave just an example here, relevant w/ other intervals.)
 - **Utonal / subharmonic form:** darker undertone passages that contrast with
   otonal material inside a coherent structure.
 - **Four Tet-ish Colundi arps:** warm, organic arpeggios using the Colundi-ish

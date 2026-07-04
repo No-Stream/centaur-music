@@ -690,7 +690,7 @@ def _apply_driven_zdf_svf(
 def apply_zdf_svf(
     signal: np.ndarray,
     *,
-    cutoff_profile: np.ndarray,
+    cutoff_profile: np.ndarray | float,
     resonance_q: float = 0.707,
     sample_rate: int,
     filter_mode: str,
@@ -724,15 +724,19 @@ def apply_zdf_svf(
     mode_int = _MODE_STR_TO_INT.get(filter_mode, _LP)
 
     sig = np.asarray(signal, dtype=np.float64)
-    cutoff = np.asarray(cutoff_profile, dtype=np.float64)
-
     nyquist_limit = sample_rate * _NYQUIST_CLAMP_RATIO
-    if cutoff.size > 0 and np.all(cutoff == cutoff[0]):
-        clamped_fc = min(float(cutoff[0]), nyquist_limit)
-        precomputed_g = math.tan(math.pi * clamped_fc / sample_rate)
+    if isinstance(cutoff_profile, np.ndarray):
+        cutoff = np.asarray(cutoff_profile, dtype=np.float64)
+        if cutoff.size > 0 and np.all(cutoff == cutoff[0]):
+            clamped_fc = min(float(cutoff[0]), nyquist_limit)
+            precomputed_g = math.tan(math.pi * clamped_fc / sample_rate)
+        else:
+            cutoff = np.minimum(cutoff, nyquist_limit)
+            precomputed_g = -1.0
     else:
-        cutoff = np.minimum(cutoff, nyquist_limit)
-        precomputed_g = -1.0
+        cutoff = np.zeros(0, dtype=np.float64)
+        clamped_fc = min(float(cutoff_profile), nyquist_limit)
+        precomputed_g = math.tan(math.pi * clamped_fc / sample_rate)
 
     fb_amt = max(0.0, float(feedback_amount))
     fb_sat = max(0.0, float(feedback_saturation))

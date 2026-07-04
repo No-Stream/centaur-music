@@ -1,0 +1,112 @@
+{
+  "schema_version": 2,
+  "evaluated_at_utc": "2026-07-04T06:27:13Z",
+  "piece_name": "ninth_wave",
+  "render_ref": {
+    "render_json_path": "output/ninth_wave/ninth_wave.render.json",
+    "git_commit": "732c5dc679905008d396318a0f835aac4e33ba35",
+    "rendered_at_utc": "20260704-060039"
+  },
+  "judges": [
+    {
+      "model": "haiku",
+      "backend": "headless",
+      "dimensions": {
+        "musical_substance": {
+          "score": 68,
+          "notes": "Clear harmonic language built on dekany and harmonic series relationships, with intentionally tuned 49 Hz kick anchoring the system. Named motifs (garden_memory, ninth_wave, first_wave) appear in transposition, suggesting deliberate thematic development; however, the musical effectiveness of xenharmonic choices is difficult to assess purely from analysis artifacts without hearing consonance/dissonance relationships."
+        },
+        "structure_form": {
+          "score": 70,
+          "notes": "Strong arc with distinct sections: intro build (0-50s), main section (50-200s), deliberate break/transition (200-220s), rebuild (220-300s), and climax fade (300-442s). The density plot shows intentional gestural peaks and valleys. Voice labels suggest thematic coherence, though harmonic motion quality cannot be verified without playback."
+        },
+        "texture_expression": {
+          "score": 71,
+          "notes": "13-voice layering with sophisticated orchestration: sidechained compression on bass/arp (responding to kick), time-varying delay automation on arp (mix 0.16\u21920.34\u21920.16), stereo panning strategy (+0.38 glimmer, -0.12 arp), and careful spectral balance. Mix spectrum shows intentional high-end roll-off and professional gain staging. Texture feels deliberately shaped rather than generated."
+        },
+        "completeness": {
+          "score": 74,
+          "notes": "Finished 442-second composition with clean fade, consistent master chain (Neve preamp + glue compressor), and no unfinished sections. Spectral density and form suggest deliberate composition across full duration. Production quality is polished and intentional throughout\u2014this is rendered as a complete work, not a sketch."
+        },
+        "open_subjective": {
+          "score": 71,
+          "notes": "Ambitious hybrid: xenharmonic harmony (dekany tuning) meets techno/dance framework with serious production craft. The commit to uncompromising harmonic vision is admirable. Strong formal design and mixing show maturity. Uncertainty arises from 7.4-minute span dominated by arpeggiator patterns\u2014whether the repetitive structure and harmonic complexity sustain interest or feel academic/mechanical depends on playback. Clear artistic vision and technical execution; musical satisfaction requires hearing the actual consonance relationships."
+        }
+      },
+      "overall_notes": "A finished, ambitious xenharmonic techno piece with strong formal structure, sophisticated mixing, and genuine compositional craft. The piece commits fully to its artistic vision without compromise, though the marriage of experimental tuning and repetitive dance patterns presents both artistic boldness and the risk of academic remoteness."
+    },
+    {
+      "model": "sonnet",
+      "backend": "headless",
+      "dimensions": {
+        "musical_substance": {
+          "score": 68,
+          "notes": "13 voices interlock around a JI/otonal harmonic-series lattice (chord labels like home/subminor/tide/undertone, dekany-adjacent step degrees), with real melodic and arp motion rather than static pads; density and simultaneous-note curves show genuine contrapuntal buildup rather than a flat drone. The harmony is clearly intentional (custom partial ratios, JI-tuned pad/lead/arp voices) though the mix's low-end dominance (sub/bass ~+27 to +28 dB vs air at -11 dB) somewhat buries the harmonic detail that would reward close listening."
+        },
+        "structure_form": {
+          "score": 78,
+          "notes": "Explicit six-section arc (S1 ebb \u2192 S2 first wave \u2192 S3 open water \u2192 S4 undertow \u2192 S5 ninth wave \u2192 S6 slack water) maps directly onto the score density curve's rise, mid-piece dip, second surge, and long tail-off \u2014 a real compositional arc with a clear climax and denouement rather than generative sameness. Dropped anywhere in the middle you'd be able to tell roughly where you are from density/register alone."
+        },
+        "texture_expression": {
+          "score": 66,
+          "notes": "Good voice variety (stab/bass/pad/lead/arp/glimmer/haze plus a full drum kit) with automation on delay mix, sidechain compression keyed to kick, and additive/formant synth presets giving timbral distinction; per-voice timing humanization is present and musically plausible. Texture is let down somewhat by a persistently bright/harsh hat_c flag and a mix that stays heavily bottom-weighted throughout, limiting the sense of shimmer or air the 'ninth wave/glimmer' naming implies."
+        },
+        "completeness": {
+          "score": 72,
+          "notes": "Full ~7.5-minute arc with clear beginning (sparse haze/pad), development through two wave crests, and a settling final section, plus a mastered chain (preamp + glue compressor) \u2014 this reads as a finished piece, not a sketch. Some rough mix edges (near-continuous gain reduction on the drum bus, persistent low-end mass) keep it from feeling fully polished."
+        },
+        "open_subjective": {
+          "score": 67,
+          "notes": "The oceanic conceit (ebb/wave/undertow/slack water) is a nice organizing metaphor that's actually realized in the density and section data, not just cosmetic labeling, and the underlying otonal/utonal harmonic material is ambitious. It's held back from being memorable by a mix that leans dark and bass-heavy for its whole runtime, muting some of the brightness and contrast the concept promises."
+        }
+      },
+      "overall_notes": "A structurally well-conceived, harmonically ambitious JI piece with a genuine narrative arc, somewhat undercut by a persistently bass-heavy, slightly congested mix that dulls its high-frequency character."
+    },
+    {
+      "model": "opus",
+      "backend": "headless",
+      "dimensions": {
+        "musical_substance": {
+          "score": 74,
+          "notes": "Genuinely composed 7-limit/dekany JI material with a rich, intentional chord vocabulary (subminor, sept_lift, undertone/utonal colors) rather than a static drone. Real motivic writing \u2014 named statements develop and recapitulate (garden_memory \u2192 garden_return), and canon_lead/canon_answer give actual counterpoint. The septimal harmony feels chosen, not decorative."
+        },
+        "structure_form": {
+          "score": 78,
+          "notes": "The density curve reveals a confident techno arc: ambient JI intro, staged build, a breakdown around 190s, a re-entry, a sustained climax, and a clean outro drop. Sections, transitions, and arrival are all legible \u2014 dropped into the middle you'd know where you are. Strongly shaped for a xenharmonic piece."
+        },
+        "texture_expression": {
+          "score": 67,
+          "notes": "Thirteen voices with sidechained arp, a proper drum bus, reverb send, JI drift-bus breathing, and per-voice automation make it feel alive and deliberately produced. The main drawback is a very dark, bass-heavy balance (low band ~33 dB over high, \u22125.5 dB/oct tilt) plus a quiet \u221226.5 LUFS level, which risks reading as muddy or dull rather than warm. Dynamic range and voice interaction are otherwise strong."
+        },
+        "completeness": {
+          "score": 78,
+          "notes": "This is a finished ~7.4-minute piece, not a sketch: it has an intro, multiple developed sections, a breakdown, a climax, and a resolved ending (final_seven cadence, outro drop). It could be listened to as a complete track."
+        },
+        "open_subjective": {
+          "score": 71,
+          "notes": "An ambitious, coherent, and legitimately musical piece of JI techno \u2014 the combination of septimal/utonal harmony with breakdown-and-drop form and canonic development is more than most xenharmonic work attempts, and it largely lands. My main reservation is the murky, top-rolled-off mix, which could sap impact from an otherwise emotionally and structurally engaging arc."
+        }
+      },
+      "overall_notes": "A rare xenharmonic piece that actually commits to being a full composition \u2014 septimal/dekany JI harmony with real motivic development and canon, wrapped in a confident techno arc \u2014 held back mainly by a dark, bass-heavy, somewhat quiet mix."
+    }
+  ],
+  "aggregate": {
+    "overall_score": 71.3,
+    "dimension_medians": {
+      "musical_substance": 68,
+      "structure_form": 78,
+      "texture_expression": 67,
+      "completeness": 74,
+      "open_subjective": 71
+    },
+    "dimension_spreads": {
+      "musical_substance": 6,
+      "structure_form": 8,
+      "texture_expression": 5,
+      "completeness": 6,
+      "open_subjective": 4
+    },
+    "confidence": "high",
+    "synthesized_feedback": "A finished, ambitious xenharmonic techno piece with strong formal structure, sophisticated mixing, and genuine compositional craft. The piece commits fully to its artistic vision without compromise, though the marriage of experimental tuning and repetitive dance patterns presents both artistic boldness and the risk of academic remoteness.  A structurally well-conceived, harmonically ambitious JI piece with a genuine narrative arc, somewhat undercut by a persistently bass-heavy, slightly congested mix that dulls its high-frequency character.  A rare xenharmonic piece that actually commits to being a full composition \u2014 septimal/dekany JI harmony with real motivic development and canon, wrapped in a confident techno arc \u2014 held back mainly by a dark, bass-heavy, somewhat quiet mix."
+  }
+}

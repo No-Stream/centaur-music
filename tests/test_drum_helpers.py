@@ -119,6 +119,8 @@ class TestDrumBusStyles:
         if len(bus_effects) == 3:
             assert kinds[2] == "clipper"
             assert style != "light", "light style should remain clipper-free"
+            assert bus_effects[2].params["algorithm"] == "poly_knee"
+            assert bus_effects[2].params["oversample_factor"] == 8
 
     def test_explicit_effects_replaces_style(self) -> None:
         score = _make_score()
