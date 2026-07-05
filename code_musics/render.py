@@ -16,7 +16,7 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
-from code_musics.analysis import save_analysis_artifacts
+from code_musics.analysis import AnalysisMode, save_analysis_artifacts
 from code_musics.midi_export import (
     ALL_STEM_FORMATS,
     MidiBundleExportResult,
@@ -257,6 +257,8 @@ def render_piece(
     output_dir: str | Path = "output",
     save_plot: bool = False,
     save_analysis: bool = True,
+    analysis_mode: AnalysisMode = "full",
+    fast_preview: bool = False,
     render_window: RenderWindow | None = None,
 ) -> RenderResult:
     """Render a registered piece by name."""
@@ -297,7 +299,7 @@ def render_piece(
                 start_seconds=render_window.render_start_seconds,
                 end_seconds=render_window.render_end_seconds,
             )
-        if save_analysis:
+        if save_analysis and analysis_mode != "fast":
             audio, rendered_stems, send_returns, effect_analysis = (
                 render_score.render_with_effect_analysis(
                     collect_effect_analysis=True,
@@ -362,6 +364,8 @@ def render_piece(
         else SAMPLE_RATE,
         target_lufs=export_target_lufs,
         true_peak_ceiling_dbfs=_EXPORT_TRUE_PEAK_CEILING_DBFS,
+        limiter_backend="native" if fast_preview else "auto",
+        max_iterations=3 if fast_preview else 6,
     )
     export_audio = mastering_result.signal
 
@@ -378,12 +382,13 @@ def render_piece(
             effect_analysis=effect_analysis,
             score=render_score,
             piece_sections=definition.sections,
+            analysis_mode=analysis_mode,
         )
         version_analysis_manifest_path = Path(
             str(version_analysis_artifacts["manifest_path"])
         )
 
-    write_wav(version_output_path, export_audio)
+    write_wav(version_output_path, export_audio, warn_low_peak=not fast_preview)
     shutil.copy2(version_output_path, output_path)
 
     if version_plot_path is not None:
@@ -418,6 +423,8 @@ def render_piece(
         version_timestamp=version_timestamp,
         save_plot=save_plot,
         save_analysis=save_analysis,
+        analysis_mode=analysis_mode,
+        fast_preview=fast_preview,
         score=render_score,
         render_window=render_window,
         latest_artifacts=latest_artifacts,
@@ -647,6 +654,8 @@ def _build_render_metadata(
     version_timestamp: str,
     save_plot: bool,
     save_analysis: bool,
+    analysis_mode: AnalysisMode,
+    fast_preview: bool,
     score: Score | None,
     render_window: RenderWindow | None,
     latest_artifacts: dict[str, str],
@@ -664,6 +673,8 @@ def _build_render_metadata(
             "output_dir": str(output_dir),
             "save_plot": save_plot,
             "save_analysis": save_analysis,
+            "analysis_mode": analysis_mode if save_analysis else None,
+            "fast_preview": fast_preview,
             "export_target_lufs": (
                 definition.export_target_lufs
                 if definition.export_target_lufs is not None

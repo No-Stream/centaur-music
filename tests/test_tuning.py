@@ -11,6 +11,8 @@ from code_musics.tuning import (
     dekany,
     dekany_chords,
     edo_scale,
+    eikosany,
+    eikosany_tetrads,
     harmonic_series,
     hexany,
     hexany_triads,
@@ -404,3 +406,103 @@ class TestDekanyChords:
             assert len(tetrad) == 4
         for triad in utonal_triads:
             assert len(triad) == 3
+
+
+class TestEikosany:
+    """Verify eikosany() default normalization and known ratio set."""
+
+    def test_default_eikosany_ratios(self) -> None:
+        """3-of-6 CPS on (1, 3, 5, 7, 9, 11) normalized by 1*3*5 = 15."""
+        result = eikosany()
+        expected = sorted(
+            [
+                1.0,
+                33 / 32,
+                21 / 20,
+                11 / 10,
+                9 / 8,
+                7 / 6,
+                99 / 80,
+                77 / 60,
+                21 / 16,
+                11 / 8,
+                7 / 5,
+                231 / 160,
+                3 / 2,
+                63 / 40,
+                77 / 48,
+                33 / 20,
+                7 / 4,
+                9 / 5,
+                11 / 6,
+                77 / 40,
+            ]
+        )
+        assert len(result) == 20
+        for actual, exp in zip(result, expected, strict=True):
+            assert actual == pytest.approx(exp)
+
+    def test_eikosany_requires_exactly_six_factors(self) -> None:
+        with pytest.raises(ValueError, match="6 factors"):
+            eikosany((1, 3, 5, 7, 9))
+
+    def test_eikosany_custom_normalize(self) -> None:
+        result_default = eikosany((1, 3, 5, 7, 9, 11))
+        result_explicit = eikosany((1, 3, 5, 7, 9, 11), normalize=15.0)
+        assert result_default == pytest.approx(result_explicit)
+
+
+class TestEikosanyTetrads:
+    """Verify eikosany_tetrads() otonal/utonal tetrad structure."""
+
+    def test_returns_fifteen_otonal_and_fifteen_utonal_tetrads(self) -> None:
+        otonal_tetrads, utonal_tetrads = eikosany_tetrads()
+        assert len(otonal_tetrads) == 15
+        assert len(utonal_tetrads) == 15
+
+    def test_all_tetrad_members_are_eikosany_notes(self) -> None:
+        notes = eikosany()
+        otonal_tetrads, utonal_tetrads = eikosany_tetrads()
+        for tetrad in list(otonal_tetrads) + list(utonal_tetrads):
+            assert len(tetrad) == 4
+            for member in tetrad:
+                assert any(member == pytest.approx(note) for note in notes), member
+
+    def test_known_otonal_tetrad_for_pair_nine_eleven(self) -> None:
+        """Pair {9, 11}: sounds as the otonal chord of {1, 3, 5, 7}."""
+        otonal_tetrads, _ = eikosany_tetrads()
+        expected = (33 / 32, 99 / 80, 231 / 160, 33 / 20)
+        assert any(tetrad == pytest.approx(expected) for tetrad in otonal_tetrads), (
+            otonal_tetrads
+        )
+
+    def test_known_otonal_tetrad_for_pair_one_three(self) -> None:
+        """Pair {1, 3}: sounds as the otonal chord of {5, 7, 9, 11}."""
+        otonal_tetrads, _ = eikosany_tetrads()
+        expected = (1.0, 11 / 10, 7 / 5, 9 / 5)
+        assert any(tetrad == pytest.approx(expected) for tetrad in otonal_tetrads), (
+            otonal_tetrads
+        )
+
+    def test_known_utonal_tetrad_for_subset_one_three_five_nine(self) -> None:
+        otonal_tetrads, utonal_tetrads = eikosany_tetrads()
+        expected = (1.0, 9 / 8, 3 / 2, 9 / 5)
+        assert any(tetrad == pytest.approx(expected) for tetrad in utonal_tetrads), (
+            utonal_tetrads
+        )
+
+    def test_known_utonal_tetrad_for_subset_five_seven_nine_eleven(self) -> None:
+        _, utonal_tetrads = eikosany_tetrads()
+        expected = (33 / 32, 21 / 16, 231 / 160, 77 / 48)
+        assert any(tetrad == pytest.approx(expected) for tetrad in utonal_tetrads), (
+            utonal_tetrads
+        )
+
+    def test_tetrads_are_sorted_ascending(self) -> None:
+        otonal_tetrads, utonal_tetrads = eikosany_tetrads()
+        for tetrad in list(otonal_tetrads) + list(utonal_tetrads):
+            assert list(tetrad) == sorted(tetrad)
+
+    def test_eikosany_tetrads_requires_exactly_six_factors(self) -> None:
+        with pytest.raises(ValueError, match="6 factors"):
+            eikosany_tetrads((1, 3, 5, 7, 9))

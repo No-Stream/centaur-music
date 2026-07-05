@@ -8,7 +8,7 @@ import math
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -27,6 +27,7 @@ from code_musics.score import Score
 
 _EPSILON = 1e-12
 logger = logging.getLogger(__name__)
+AnalysisMode = Literal["full", "summary", "fast"]
 
 # Artifact risk codes suppressed from log output (still written to JSON manifest).
 # These are legitimate checks for melodic voices but are structural false positives
@@ -447,8 +448,16 @@ def save_analysis_artifacts(
     score: Score | None = None,
     piece_sections: tuple[PieceSection, ...] = (),
     reference_tilt_db_per_octave: float = -3.0,
+    analysis_mode: AnalysisMode = "full",
 ) -> dict[str, Any]:
     """Write plots and a JSON manifest for a render."""
+    if analysis_mode not in {"full", "summary", "fast"}:
+        raise ValueError("analysis_mode must be one of: full, summary, fast")
+
+    write_plots = analysis_mode == "full"
+    include_voice_summaries = analysis_mode in {"full", "summary"}
+    include_score_summary = analysis_mode in {"full", "summary"}
+
     prefix_path = Path(output_prefix)
     prefix_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -461,23 +470,24 @@ def save_analysis_artifacts(
     pre_export_analysis: AudioAnalysis | None = None
     manifest: dict[str, Any] = {
         "reference_tilt_db_per_octave": reference_tilt_db_per_octave,
+        "analysis_mode": analysis_mode,
         "mix": {
             "summary": mix_analysis.to_dict(),
             "artifacts": {},
         },
         "voices": {},
         "effect_analysis": effect_analysis
-        if effect_analysis is not None
+        if effect_analysis is not None and analysis_mode != "fast"
         else {"mix_effects": [], "voice_effects": {}, "send_effects": {}},
     }
-    if pre_master_mix_signal is not None:
+    if analysis_mode != "fast" and pre_master_mix_signal is not None:
         pre_master_analysis = analyze_audio(
             pre_master_mix_signal,
             sample_rate=sample_rate,
             reference_tilt_db_per_octave=reference_tilt_db_per_octave,
         )
         manifest["mix"]["pre_master_summary"] = pre_master_analysis.to_dict()
-    if pre_export_mix_signal is not None:
+    if analysis_mode != "fast" and pre_export_mix_signal is not None:
         pre_export_analysis = analyze_audio(
             pre_export_mix_signal,
             sample_rate=sample_rate,
@@ -485,43 +495,42 @@ def save_analysis_artifacts(
         )
         manifest["mix"]["pre_export_summary"] = pre_export_analysis.to_dict()
 
-    mix_spectrum_path = prefix_path.with_name(f"{prefix_path.name}.mix_spectrum.png")
-    _save_spectrum_plot(
-        signal=mix_signal,
-        sample_rate=sample_rate,
-        path=mix_spectrum_path,
-        title="Mix Spectrum",
-        reference_tilt_db_per_octave=reference_tilt_db_per_octave,
-    )
-    mix_spectrogram_path = prefix_path.with_name(
-        f"{prefix_path.name}.mix_spectrogram.png"
-    )
-    _save_spectrogram_plot(
-        signal=mix_signal,
-        sample_rate=sample_rate,
-        path=mix_spectrogram_path,
-        title="Mix Spectrogram",
-    )
-    mix_band_energy_path = prefix_path.with_name(
-        f"{prefix_path.name}.mix_band_energy.png"
-    )
-    _save_band_energy_plot(
-        band_energy_db=mix_analysis.band_energy_db,
-        path=mix_band_energy_path,
-        title="Mix Band Energy",
-    )
-    manifest["mix"]["artifacts"] = {
-        "spectrum": str(mix_spectrum_path),
-        "spectrogram": str(mix_spectrogram_path),
-        "band_energy": str(mix_band_energy_path),
-    }
-
-    if score is not None:
-        score_analysis = analyze_score(score)
-        score_density_path = prefix_path.with_name(
-            f"{prefix_path.name}.score_density.png"
+    if write_plots:
+        mix_spectrum_path = prefix_path.with_name(
+            f"{prefix_path.name}.mix_spectrum.png"
         )
-        _save_score_density_plot(score=score, path=score_density_path)
+        _save_spectrum_plot(
+            signal=mix_signal,
+            sample_rate=sample_rate,
+            path=mix_spectrum_path,
+            title="Mix Spectrum",
+            reference_tilt_db_per_octave=reference_tilt_db_per_octave,
+        )
+        mix_spectrogram_path = prefix_path.with_name(
+            f"{prefix_path.name}.mix_spectrogram.png"
+        )
+        _save_spectrogram_plot(
+            signal=mix_signal,
+            sample_rate=sample_rate,
+            path=mix_spectrogram_path,
+            title="Mix Spectrogram",
+        )
+        mix_band_energy_path = prefix_path.with_name(
+            f"{prefix_path.name}.mix_band_energy.png"
+        )
+        _save_band_energy_plot(
+            band_energy_db=mix_analysis.band_energy_db,
+            path=mix_band_energy_path,
+            title="Mix Band Energy",
+        )
+        manifest["mix"]["artifacts"] = {
+            "spectrum": str(mix_spectrum_path),
+            "spectrogram": str(mix_spectrogram_path),
+            "band_energy": str(mix_band_energy_path),
+        }
+
+    if include_score_summary and score is not None:
+        score_analysis = analyze_score(score)
         timeline = build_score_timeline(
             score=score,
             sections=piece_sections,
@@ -529,16 +538,21 @@ def save_analysis_artifacts(
         )
         timeline_path = prefix_path.with_name(f"{prefix_path.name}.timeline.json")
         timeline_path.write_text(_json_dump(timeline), encoding="utf-8")
+        score_artifacts = {"timeline": str(timeline_path)}
+        if write_plots:
+            score_density_path = prefix_path.with_name(
+                f"{prefix_path.name}.score_density.png"
+            )
+            _save_score_density_plot(score=score, path=score_density_path)
+            score_artifacts["density"] = str(score_density_path)
         manifest["score"] = {
             "summary": score_analysis.to_dict(),
-            "artifacts": {
-                "density": str(score_density_path),
-                "timeline": str(timeline_path),
-            },
+            "artifacts": score_artifacts,
         }
 
     voice_analyses: dict[str, AudioAnalysis] = {}
-    for voice_name, stem_signal in (stems or {}).items():
+    stem_items = (stems or {}).items() if include_voice_summaries else []
+    for voice_name, stem_signal in stem_items:
         voice_analysis = analyze_audio(
             stem_signal,
             sample_rate=sample_rate,
@@ -558,22 +572,23 @@ def save_analysis_artifacts(
             ),
         )
         voice_analyses[voice_name] = voice_analysis
-        safe_voice_name = _sanitize_name(voice_name)
-        voice_spectrum_path = prefix_path.with_name(
-            f"{prefix_path.name}.voice_{safe_voice_name}_spectrum.png"
-        )
-        _save_spectrum_plot(
-            signal=stem_signal,
-            sample_rate=sample_rate,
-            path=voice_spectrum_path,
-            title=f"Voice Spectrum: {voice_name}",
-            reference_tilt_db_per_octave=reference_tilt_db_per_octave,
-        )
+        voice_artifacts: dict[str, str] = {}
+        if write_plots:
+            safe_voice_name = _sanitize_name(voice_name)
+            voice_spectrum_path = prefix_path.with_name(
+                f"{prefix_path.name}.voice_{safe_voice_name}_spectrum.png"
+            )
+            _save_spectrum_plot(
+                signal=stem_signal,
+                sample_rate=sample_rate,
+                path=voice_spectrum_path,
+                title=f"Voice Spectrum: {voice_name}",
+                reference_tilt_db_per_octave=reference_tilt_db_per_octave,
+            )
+            voice_artifacts["spectrum"] = str(voice_spectrum_path)
         manifest["voices"][voice_name] = {
             "summary": voice_analysis.to_dict(),
-            "artifacts": {
-                "spectrum": str(voice_spectrum_path),
-            },
+            "artifacts": voice_artifacts,
         }
 
     artifact_risk_report = _build_artifact_risk_report(

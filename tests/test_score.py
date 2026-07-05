@@ -1770,6 +1770,46 @@ def test_finalize_master_falls_back_when_lsp_limiter_is_unavailable(
     assert np.isfinite(result.true_peak_dbfs)
 
 
+def test_finalize_master_native_backend_skips_lsp_limiter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(synth, "has_external_plugin", lambda plugin_name: True)
+
+    def fail_lsp_limiter(*args: object, **kwargs: object) -> np.ndarray:
+        raise AssertionError("LSP limiter should not be used")
+
+    monkeypatch.setattr(synth, "apply_lsp_limiter", fail_lsp_limiter)
+    signal = 0.2 * np.sin(
+        np.linspace(0.0, 4.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
+    )
+
+    result = synth.finalize_master(
+        signal,
+        sample_rate=synth.SAMPLE_RATE,
+        limiter_backend="native",
+        max_iterations=2,
+    )
+
+    assert np.isfinite(result.integrated_lufs)
+    assert np.isfinite(result.true_peak_dbfs)
+
+
+def test_finalize_master_lsp_backend_requires_lsp_limiter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(synth, "has_external_plugin", lambda plugin_name: False)
+    signal = 0.2 * np.sin(
+        np.linspace(0.0, 4.0 * np.pi, synth.SAMPLE_RATE, endpoint=False)
+    )
+
+    with pytest.raises(RuntimeError, match="requires lsp_limiter_stereo"):
+        synth.finalize_master(
+            signal,
+            sample_rate=synth.SAMPLE_RATE,
+            limiter_backend="lsp",
+        )
+
+
 def test_finalize_master_targets_lufs_and_true_peak_with_limiter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

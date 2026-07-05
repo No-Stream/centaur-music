@@ -49,6 +49,7 @@ from code_musics.pieces.night_carriage import PIECES as _NIGHT_CARRIAGE_PIECES
 from code_musics.pieces.night_lattice import PIECES as _NIGHT_LATTICE_PIECES
 from code_musics.pieces.ninth_wave import PIECES as _NINTH_WAVE_PIECES
 from code_musics.pieces.organ_passacaglia import PIECES as _ORGAN_CHORALE_PIECES
+from code_musics.pieces.sodium_hymn import PIECES as _SODIUM_HYMN_PIECES
 from code_musics.pieces.phase_garden import PIECES as _PHASE_GARDEN_PIECES
 from code_musics.pieces.registry import merge_piece_maps
 from code_musics.pieces.scanned_garden import PIECES as _SCANNED_GARDEN_PIECES
@@ -68,6 +69,7 @@ from code_musics.pieces.trance_studies import PIECES as _TRANCE_PIECES
 from code_musics.pieces.tube_palette_study import (
     PIECES as _TUBE_PALETTE_STUDY_PIECES,
 )
+from code_musics.pieces.undertow_canon import PIECES as _UNDERTOW_CANON_PIECES
 from code_musics.pieces.va_showcase import PIECES as _VA_SHOWCASE_PIECES
 from code_musics.pieces.va_trance import PIECES as _VA_TRANCE_PIECES
 from code_musics.pieces.velvet_wall import PIECES as _VELVET_WALL_PIECES
@@ -141,6 +143,8 @@ PIECES = merge_piece_maps(
     _IAMBIC_GHOST_PIECES,
     _STILL_WINDOW_PIECES,
     _WEAVING_ROOM_PIECES,
+    _UNDERTOW_CANON_PIECES,
+    _SODIUM_HYMN_PIECES,
 )
 
 __all__ = ["PIECES"]

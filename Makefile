@@ -16,6 +16,7 @@ BIT_DEPTH ?= 24
 DRY ?= 0
 NO_MIX ?= 0
 ANALYSIS ?= 1
+FAST ?= 0
 TESTS ?= tests
 OBLIQUE ?= 0
 MUSICAL ?= 0
@@ -26,6 +27,11 @@ N ?=
 MODELS ?=
 COV ?= 1
 SLOW ?= 0
+BENCH_PIECES ?=
+BENCH_MODES ?=
+BENCH_REPEATS ?= 3
+BENCH_WARMUPS ?= 1
+BENCH_OUTPUT_DIR ?= /tmp/centaur-render-bench
 
 ifeq ($(COV),1)
 COV_FLAGS = --cov=code_musics --cov=main
@@ -49,8 +55,16 @@ endif
 
 ifeq ($(ANALYSIS),0)
 RENDER_ANALYSIS_FLAG = --no-analysis
-else
+else ifeq ($(ANALYSIS),1)
 RENDER_ANALYSIS_FLAG =
+else
+RENDER_ANALYSIS_FLAG = --analysis-mode $(ANALYSIS)
+endif
+
+ifeq ($(FAST),1)
+RENDER_FAST_FLAG = --fast-preview
+else
+RENDER_FAST_FLAG =
 endif
 
 ifneq ($(strip $(MIDI_FORMATS)),)
@@ -175,7 +189,7 @@ render:
 ifndef PIECE
 	$(error PIECE is required, for example `make render PIECE=harmonic_window`)
 endif
-	$(UV_RUN) python main.py $(PIECE) $(RENDER_PLOT_FLAG) $(RENDER_ANALYSIS_FLAG)
+	$(UV_RUN) python main.py $(PIECE) $(RENDER_PLOT_FLAG) $(RENDER_ANALYSIS_FLAG) $(RENDER_FAST_FLAG)
 
 .PHONY: profile-render-memory
 profile-render-memory:
@@ -187,6 +201,10 @@ ifeq ($(ANALYSIS),0)
 else
 	$(UV_RUN) python scripts/profile_render_memory.py $(PIECE) --analysis
 endif
+
+.PHONY: benchmark-render-modes
+benchmark-render-modes:
+	OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 $(UV_RUN) python scripts/benchmark_render_modes.py $(if $(strip $(BENCH_PIECES)),--pieces $(BENCH_PIECES),) $(if $(strip $(BENCH_MODES)),--modes $(BENCH_MODES),) --repeats $(BENCH_REPEATS) --warmups $(BENCH_WARMUPS) --output-dir $(BENCH_OUTPUT_DIR)
 
 .PHONY: inspect
 inspect:
@@ -206,7 +224,7 @@ endif
 ifndef AT
 	$(error AT is required, for example `make snippet PIECE=ji_chorale AT=2:10 WINDOW=12`)
 endif
-	$(UV_RUN) python main.py $(PIECE) --snippet-at "$(AT)" --snippet-window $(WINDOW) $(RENDER_PLOT_FLAG) $(RENDER_ANALYSIS_FLAG)
+	$(UV_RUN) python main.py $(PIECE) --snippet-at "$(AT)" --snippet-window $(WINDOW) $(RENDER_PLOT_FLAG) $(RENDER_ANALYSIS_FLAG) $(RENDER_FAST_FLAG)
 
 .PHONY: render-window
 render-window:
@@ -219,7 +237,7 @@ endif
 ifndef DUR
 	$(error DUR is required, for example `make render-window PIECE=ji_chorale START=130 DUR=12`)
 endif
-	$(UV_RUN) python main.py $(PIECE) --window-start "$(START)" --window-dur $(DUR) $(RENDER_PLOT_FLAG) $(RENDER_ANALYSIS_FLAG)
+	$(UV_RUN) python main.py $(PIECE) --window-start "$(START)" --window-dur $(DUR) $(RENDER_PLOT_FLAG) $(RENDER_ANALYSIS_FLAG) $(RENDER_FAST_FLAG)
 
 .PHONY: midi
 midi:

@@ -357,6 +357,13 @@ def _mean_band_energy_db(
 
 def _spectral_centroid_hz(signal: np.ndarray, *, sample_rate: int) -> float:
     freqs, magnitude_db = _average_spectrum_db(signal, sample_rate=sample_rate)
+    return _spectral_centroid_from_spectrum(freqs, magnitude_db)
+
+
+def _spectral_centroid_from_spectrum(
+    freqs: np.ndarray,
+    magnitude_db: np.ndarray,
+) -> float:
     if freqs.size == 0:
         return 0.0
     magnitudes = np.power(10.0, magnitude_db / 20.0)
@@ -1803,12 +1810,12 @@ def _build_effect_analysis_entry(
         low_hz=2_000.0,
         high_hz=8_000.0,
     )
-    spectral_centroid_delta_hz = _spectral_centroid_hz(
-        output_signal,
-        sample_rate=sample_rate,
-    ) - _spectral_centroid_hz(
-        input_signal,
-        sample_rate=sample_rate,
+    spectral_centroid_delta_hz = _spectral_centroid_from_spectrum(
+        output_freqs,
+        output_magnitude_db,
+    ) - _spectral_centroid_from_spectrum(
+        input_freqs,
+        input_magnitude_db,
     )
 
     input_imd = intermodulation_ratio(input_freqs, input_magnitude_db)
@@ -5449,10 +5456,13 @@ def finalize_master(
     oversample_factor: int = 4,
     max_iterations: int = 6,
     loudness_tolerance_lufs: float = 0.2,
+    limiter_backend: Literal["auto", "native", "lsp"] = "auto",
 ) -> MasteringResult:
     """Finalize a mix to a LUFS target with an LSP true-peak limiter ceiling."""
     if max_iterations < 1:
         raise ValueError("max_iterations must be at least 1")
+    if limiter_backend not in {"auto", "native", "lsp"}:
+        raise ValueError("limiter_backend must be one of: auto, native, lsp")
 
     source_signal = np.asarray(signal, dtype=np.float64)
     mastered = source_signal
@@ -5463,11 +5473,18 @@ def finalize_master(
             true_peak_dbfs=float("-inf"),
         )
 
-    use_lsp_limiter = has_external_plugin("lsp_limiter_stereo")
-    if not use_lsp_limiter:
+    lsp_available = has_external_plugin("lsp_limiter_stereo")
+    if limiter_backend == "lsp" and not lsp_available:
+        raise RuntimeError("limiter_backend='lsp' requires lsp_limiter_stereo")
+    use_lsp_limiter = limiter_backend == "lsp" or (
+        limiter_backend == "auto" and lsp_available
+    )
+    if not use_lsp_limiter and limiter_backend == "auto":
         logger.info(
             "LSP limiter unavailable — using native lookahead limiter fallback."
         )
+    elif limiter_backend == "native":
+        logger.info("Using native lookahead limiter for preview mastering.")
 
     current_lufs, active_window_fraction = integrated_lufs(
         mastered,

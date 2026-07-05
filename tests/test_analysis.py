@@ -234,6 +234,64 @@ def test_save_analysis_artifacts_records_pre_export_mix_summary(tmp_path: Path) 
     )
 
 
+def test_save_analysis_artifacts_summary_mode_skips_png_artifacts(
+    tmp_path: Path,
+) -> None:
+    score = Score(f0_hz=55.0)
+    score.add_note("bass", start=0.0, duration=0.25, partial=2.0, amp=0.2)
+    mix = score.render()
+
+    manifest = save_analysis_artifacts(
+        output_prefix=tmp_path / "summary_piece",
+        mix_signal=mix,
+        sample_rate=score.sample_rate,
+        stems=score.render_stems(),
+        score=score,
+        analysis_mode="summary",
+    )
+
+    saved_manifest = json.loads(
+        Path(manifest["manifest_path"]).read_text(encoding="utf-8")
+    )
+    assert saved_manifest["analysis_mode"] == "summary"
+    assert saved_manifest["mix"]["artifacts"] == {}
+    assert saved_manifest["voices"]["bass"]["artifacts"] == {}
+    assert "density" not in saved_manifest["score"]["artifacts"]
+    assert Path(saved_manifest["score"]["artifacts"]["timeline"]).exists()
+    assert not list(tmp_path.glob("*.png"))
+
+
+def test_save_analysis_artifacts_fast_mode_is_mix_only(tmp_path: Path) -> None:
+    score = Score(f0_hz=55.0)
+    score.add_note("bass", start=0.0, duration=0.25, partial=2.0, amp=0.2)
+    mix = score.render()
+
+    manifest = save_analysis_artifacts(
+        output_prefix=tmp_path / "fast_piece",
+        mix_signal=mix,
+        pre_export_mix_signal=mix * 0.5,
+        sample_rate=score.sample_rate,
+        stems=score.render_stems(),
+        effect_analysis={"mix_effects": [{"kind": "dummy"}]},
+        score=score,
+        analysis_mode="fast",
+    )
+
+    saved_manifest = json.loads(
+        Path(manifest["manifest_path"]).read_text(encoding="utf-8")
+    )
+    assert saved_manifest["analysis_mode"] == "fast"
+    assert saved_manifest["mix"]["artifacts"] == {}
+    assert "pre_export_summary" not in saved_manifest["mix"]
+    assert saved_manifest["voices"] == {}
+    assert "score" not in saved_manifest
+    assert saved_manifest["effect_analysis"] == {
+        "mix_effects": [],
+        "voice_effects": {},
+        "send_effects": {},
+    }
+
+
 def test_save_analysis_artifacts_does_not_flag_intentional_export_normalization(
     tmp_path: Path,
 ) -> None:

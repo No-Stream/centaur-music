@@ -430,3 +430,71 @@ def dekany_chords(
         utonal_triads.append((triad_sorted[0], triad_sorted[1], triad_sorted[2]))
 
     return otonal_tetrads, utonal_triads
+
+
+def eikosany(
+    factors: Sequence[int] = (1, 3, 5, 7, 9, 11), *, normalize: float | None = None
+) -> list[float]:
+    """Erv Wilson Eikosany: the 3-out-of-6 Combination Product Set.
+
+    Defaults to the 1-3-5-7-9-11 eikosany, normalized by ``factors[0] *
+    factors[1] * factors[2]`` so the first-three-factors product note comes
+    out as 1/1. The 3-of-6 CPS is the unique self-dual CPS: it has 15 otonal
+    and 15 utonal tetrads (see ``eikosany_tetrads``), where an otonal tetrad
+    over pair {x, y} and a utonal tetrad over 4-subset S share exactly two
+    common tones iff {x, y} is a subset of S.
+    """
+    if len(factors) != 6:
+        raise ValueError(f"eikosany requires exactly 6 factors, got {len(factors)}")
+    resolved_normalize = (
+        float(factors[0] * factors[1] * factors[2]) if normalize is None else normalize
+    )
+    return cps(factors, 3, normalize=resolved_normalize)
+
+
+def eikosany_tetrads(
+    factors: Sequence[int] = (1, 3, 5, 7, 9, 11), *, normalize: float | None = None
+) -> tuple[
+    list[tuple[float, float, float, float]], list[tuple[float, float, float, float]]
+]:
+    """Otonal and utonal tetrads of the 3-of-6 eikosany over `factors`.
+
+    For each 2-subset {x, y} of factors, the otonal tetrad is the four
+    eikosany notes x*y*z for z in the other four factors, sounding as the
+    otonal chord of the complementary four factors. For each 4-subset S of
+    factors, the utonal tetrad is the four notes prod(S)/a for a in S,
+    sounding as 1/a : 1/b : 1/c : 1/d. Both are octave-reduced/normalized
+    the same way as ``eikosany(...)``. Returns (otonal_tetrads,
+    utonal_tetrads), fifteen tetrads each, each sorted ascending.
+
+    This is the unique self-dual CPS: an otonal tetrad O{x,y} and a utonal
+    tetrad U{S} share exactly two common tones iff {x, y} is a subset of S.
+    """
+    if len(factors) != 6:
+        raise ValueError(f"eikosany requires exactly 6 factors, got {len(factors)}")
+    resolved_normalize = (
+        float(factors[0] * factors[1] * factors[2]) if normalize is None else normalize
+    )
+
+    otonal_tetrads: list[tuple[float, float, float, float]] = []
+    for pair in combinations(factors, 2):
+        others = [f for f in factors if f not in pair]
+        tetrad_sorted = sorted(
+            _octave_reduce(pair[0] * pair[1] * other / resolved_normalize)
+            for other in others
+        )
+        otonal_tetrads.append(
+            (tetrad_sorted[0], tetrad_sorted[1], tetrad_sorted[2], tetrad_sorted[3])
+        )
+
+    utonal_tetrads: list[tuple[float, float, float, float]] = []
+    for subset in combinations(factors, 4):
+        product = math.prod(subset)
+        tetrad_sorted = sorted(
+            _octave_reduce(product / member / resolved_normalize) for member in subset
+        )
+        utonal_tetrads.append(
+            (tetrad_sorted[0], tetrad_sorted[1], tetrad_sorted[2], tetrad_sorted[3])
+        )
+
+    return otonal_tetrads, utonal_tetrads

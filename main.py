@@ -78,6 +78,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Skip analysis artifacts and JSON manifest generation.",
     )
     parser.add_argument(
+        "--analysis-mode",
+        choices=("full", "summary", "fast"),
+        default="full",
+        help="Analysis detail level when analysis artifacts are enabled.",
+    )
+    parser.add_argument(
+        "--fast-preview",
+        action="store_true",
+        help="Use faster native preview mastering instead of the production limiter chain.",
+    )
+    parser.add_argument(
         "--inspect-at",
         help="Inspect what is happening at a timestamp like 130 or 2:10 instead of rendering.",
     )
@@ -209,6 +220,8 @@ def main() -> None:
             piece_name,
             save_plot=args.plot,
             save_analysis=not args.no_analysis,
+            analysis_mode=args.analysis_mode,
+            fast_preview=args.fast_preview,
             render_window=render_window,
         )
         if result.analysis_manifest_path is not None:

@@ -897,7 +897,7 @@ def _place_arp(score: Score) -> None:
                 start=_pos(bar) + step * S16 + swing,
                 duration=S16 * 0.85,
                 partial=_partial(degree, octave),
-                amp_db=-11.5 if in_s5 else -14.0,
+                amp_db=-9.0 if in_s5 else -14.0,
                 velocity=min(1.0, 0.5 + accent + rng.uniform(-0.04, 0.04)),
                 label=f"arp;deg={degree};oct={octave};step={step};chord={name}",
             )
@@ -1084,9 +1084,21 @@ def _place_clap(score: Score) -> None:
             )
 
 
+_S5_HAT_BRIGHT: dict[str, float] = {
+    "metallic_brightness": 0.82,
+    "metallic_hat_noise_bp_hz": 8500.0,
+}
+
+
 def _place_hats(score: Score) -> None:
     def hat(
-        voice: str, bar: int, step: int, vel: float, amp: float, dur: float = 0.05
+        voice: str,
+        bar: int,
+        step: int,
+        vel: float,
+        amp: float,
+        dur: float = 0.05,
+        synth: dict[str, float] | None = None,
     ) -> None:
         score.add_note(
             voice,
@@ -1095,6 +1107,7 @@ def _place_hats(score: Score) -> None:
             freq=4600.0,
             amp_db=amp,
             velocity=vel,
+            synth=synth,
         )
 
     # Offbeat 8ths through the driving sections.
@@ -1105,36 +1118,70 @@ def _place_hats(score: Score) -> None:
             continue  # one-bar hat dropout mid-section — the floor breathes
         in_s5 = bar >= S5_BAR
         climb = 137 <= bar < 143
-        base = -10.5 if in_s5 else (-14.0 if climb else -12.0)
+        # S5 hats cut through brighter and louder than the darker default —
+        # the wave's peak wants a sharper top end.
+        base = -8.5 if in_s5 else (-14.0 if climb else -12.0)
+        bright = _S5_HAT_BRIGHT if in_s5 else None
         for step in (2, 6, 10, 14):
-            hat("hat_c", bar, step, 0.66 if step in (6, 14) else 0.56, base)
+            hat(
+                "hat_c",
+                bar,
+                step,
+                0.66 if step in (6, 14) else 0.56,
+                base,
+                synth=bright,
+            )
         # S3/S5 add quiet 16th ticks between the offbeats — in four-bar
         # waves rather than wall-to-wall, so the top end keeps moving.
         ticks_s3 = 73 <= bar < S4_BAR and (bar // 4) % 2 == 1
         ticks_s5 = in_s5 and bar >= 161 and (bar - 161) % 8 != 7
         if ticks_s3 or ticks_s5:
             for step in (1, 3, 5, 7, 9, 11, 13, 15):
-                hat("hat_c", bar, step, 0.3, base - 6.5)
+                hat("hat_c", bar, step, 0.3, base - 6.5, synth=bright)
     # Open hat accents at phrase ends; every 2 bars in S5.
     for bar in range(36, 199, 4):
         if bar in _DROP_BARS or S4_BAR <= bar < 145:
             continue
-        hat("hat_o", bar, 14, 0.62, -13.0, dur=0.45)
+        in_s5 = bar >= S5_BAR
+        hat(
+            "hat_o",
+            bar,
+            14,
+            0.62,
+            -11.0 if in_s5 else -13.0,
+            dur=0.45,
+            synth=_S5_HAT_BRIGHT if in_s5 else None,
+        )
     for bar in range(S5_BAR + 1, 199, 2):
-        hat("hat_o", bar, 6, 0.5, -15.0, dur=0.35)
+        hat("hat_o", bar, 6, 0.5, -13.0, dur=0.35, synth=_S5_HAT_BRIGHT)
 
 
 def _place_shaker(score: Score) -> None:
-    # 16th bed in the driving stretches.
-    for bar in list(range(73, 97)) + list(range(105, S4_BAR)) + list(range(153, 199)):
+    rng = random.Random(945)  # 1*3*5*7*9 — the dekany product
+    # 16th bed in the driving stretches.  The wood-block-ish accent (every
+    # 4th 16th) used to be an identical quarter-note tick every single bar;
+    # it now breathes with gaps, velocity jitter, and a rotating polymeter
+    # (occasionally a 3-step or 5-step accent cycle instead of 4) so the
+    # pulse phases against the bar instead of locking rigidly to it.
+    active = list(range(73, 97)) + list(range(105, S4_BAR)) + list(range(153, 199))
+    for idx, bar in enumerate(active):
+        if bar in (88, 176):
+            continue  # matches the hats' one-bar dropout — the floor breathes
+        cycle = {0: 4, 1: 4, 2: 4, 3: 3, 4: 3, 5: 4, 6: 5, 7: 4}[idx % 8]
+        phase = (idx * 5) % cycle
         for step in range(16):
-            vel = 0.55 if step % 4 == 0 else (0.42 if step % 2 == 0 else 0.3)
+            accent = step % cycle == phase
+            gap_chance = 0.08 if accent else 0.24
+            if rng.random() < gap_chance:
+                continue
+            base_vel = 0.58 if accent else (0.42 if step % 2 == 0 else 0.3)
+            vel = min(1.0, max(0.12, base_vel + rng.uniform(-0.09, 0.09)))
             score.add_note(
                 "shaker",
                 start=_pos(bar) + step * S16 + (HAT_SWING_S if step % 2 else 0.0),
                 duration=0.1,
                 freq=950.0,
-                amp_db=-16.0,
+                amp_db=-16.0 + rng.uniform(-1.0, 1.0),
                 velocity=vel,
             )
     # Rising rolls into the section slams.  (No roll into S5 — the wave
