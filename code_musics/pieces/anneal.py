@@ -16,9 +16,16 @@ tonic (the piece's Act II gesture in miniature) with a slow anneal home.
 
 from __future__ import annotations
 
-from code_musics.pieces._shared import DEFAULT_MASTER_EFFECTS, SOFT_REVERB_EFFECT
+from code_musics.drum_helpers import add_drum_voice, setup_drum_bus
+from code_musics.humanize import EnvelopeHumanizeSpec, TimingHumanizeSpec
+from code_musics.meter import Groove
+from code_musics.pieces._shared import (
+    DEFAULT_MASTER_EFFECTS,
+    SOFT_REVERB_EFFECT,
+    bricasti_or_reverb,
+)
 from code_musics.pieces.registry import PieceDefinition, PieceSection
-from code_musics.score import Score
+from code_musics.score import EffectSpec, Score, SendBusSpec, VoiceSend
 from code_musics.spectra import scale_fused_spectrum
 from code_musics.tuning import stretch_ratio
 
@@ -156,6 +163,410 @@ def _fusion_sketch_score() -> Score:
     return score
 
 
+# ---------------------------------------------------------------------------
+# Palette sketch (audition study 2): all voice roles at home tuning over a
+# simple I -> IV(neutral) -> V(6:7:8) -> I pass, ~52 s at 110 BPM.
+# The voice-construction helpers below are reused verbatim by the full piece.
+# ---------------------------------------------------------------------------
+
+BPM = 110.0
+BEAT = 60.0 / BPM
+BAR = 4.0 * BEAT
+S16 = BEAT / 4.0
+
+GROOVE = Groove.sixteenths_swing()
+
+# V chord: 6:7:8 septimal subminor on the fifth (all scale members).
+FIFTH_6_7_8: list[tuple[float, list[float]]] = [
+    (3 / 2, []),
+    (7 / 4, []),
+    (2.0, []),
+]
+
+# (start_bar, n_bars, chord) — bars 0-1 are a pad/atmosphere intro.
+_PALETTE_PROGRESSION: list[tuple[int, int, list[tuple[float, list[float]]]]] = [
+    (0, 2, TONIC_4_6_7),
+    (2, 6, TONIC_4_6_7),
+    (8, 4, NEUTRAL_SUBDOMINANT),
+    (12, 2, FIFTH_6_7_8),
+    (14, 4, TONIC_4_6_7),
+    (18, 2, NEUTRAL_SUBDOMINANT),
+    (20, 2, FIFTH_6_7_8),
+    (22, 2, TONIC_4_6_7),
+]
+_PALETTE_BARS = 24
+
+
+def _bell_partials(
+    pseudo_octave: float = HOME_PSEUDO_OCTAVE,
+) -> list[dict[str, object]]:
+    """Fused skeleton with mallet physics: higher partials decay faster."""
+    bell: list[dict[str, object]] = []
+    for partial in SKELETON_PARTIALS:
+        ratio = stretch_ratio(partial["ratio"], pseudo_octave)
+        # Envelope times are normalized to note duration; higher partials
+        # reach their floor sooner = mallet/bell physics.
+        decay_frac = min(1.0, 0.9 / ratio**0.5)
+        bell.append(
+            {
+                "ratio": ratio,
+                "amp": partial["amp"],
+                "envelope": [
+                    {"time": 0.0, "value": 1.0},
+                    {"time": decay_frac, "value": 0.08},
+                ],
+            }
+        )
+    return bell
+
+
+def _hall_bus() -> SendBusSpec:
+    return SendBusSpec(
+        name="hall",
+        effects=[
+            bricasti_or_reverb(
+                "1 Halls 07 Large & Dark",
+                1.0,
+                room_size=0.78,
+                damping=0.55,
+            )
+        ],
+        return_db=0.0,
+    )
+
+
+def _kick_duck(threshold_db: float, ratio: float) -> EffectSpec:
+    return EffectSpec(
+        "compressor",
+        {
+            "threshold_db": threshold_db,
+            "ratio": ratio,
+            "attack_ms": 3.0,
+            "release_ms": 160.0,
+            "lookahead_ms": 5.0,
+            "sidechain_source": "kick",
+            "detector_mode": "peak",
+        },
+    )
+
+
+def _add_atmosphere(score: Score, total_dur: float) -> None:
+    """The unstretched found-sound room: empty building + distant city."""
+    for name, preset, mix_db in [
+        ("room_tone", "found_empty_room", -16.0),
+        ("city", "found_city_at_night", -20.0),
+    ]:
+        score.add_voice(
+            name,
+            synth_defaults={"engine": "synth_voice", "preset": preset},
+            pan=0.0 if name == "room_tone" else -0.2,
+            mix_db=mix_db,
+            velocity_humanize=None,
+        )
+        score.add_note(name, start=0.0, duration=total_dur, partial=1.0, amp_db=-6.0)
+
+
+def _add_bass(score: Score) -> None:
+    score.add_voice(
+        "bass",
+        synth_defaults={
+            "engine": "synth_voice",
+            "partials_type": "additive",
+            "partials_partials": [
+                {"ratio": 1.0, "amp": 1.0},
+                {"ratio": 2.0, "amp": 0.45},
+                {"ratio": 3.0, "amp": 0.22},
+                {"ratio": 7.0, "amp": 0.05},
+            ],
+            "filter_topology": "ladder",
+            "cutoff_hz": 420.0,
+            "resonance_q": 0.9,
+            "attack": 0.012,
+            "release": 0.3,
+        },
+        effects=[_kick_duck(-21.0, 4.0)],
+        pan=0.0,
+        mix_db=-6.5,
+        max_polyphony=1,
+        legato=True,
+        envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog"),
+        drift_bus="kiln_drift",
+        drift_bus_correlation=0.9,
+    )
+
+
+def _place_bass(score: Score, start_bar: int, n_bars: int, root_degree: float) -> None:
+    for bar in range(start_bar, start_bar + n_bars):
+        bar_t = bar * BAR
+        low_root = stretch_ratio(root_degree, HOME_PSEUDO_OCTAVE) * 0.5
+        score.add_note(
+            "bass", start=bar_t, duration=1.5 * BEAT, partial=low_root, velocity=0.95
+        )
+        score.add_note(
+            "bass",
+            start=bar_t + 2.5 * BEAT,
+            duration=0.6 * BEAT,
+            partial=low_root,
+            velocity=0.7,
+        )
+
+
+def _add_pad(score: Score) -> None:
+    score.add_voice(
+        "pad",
+        synth_defaults={
+            "engine": "additive",
+            "attack": 0.9,
+            "release": 1.8,
+            "decay_power": 2.0,
+            "spectral_morph_type": "phase_disperse",
+            "spectral_morph_amount": 0.3,
+        },
+        effects=[_kick_duck(-30.0, 2.0)],
+        sends=[VoiceSend(target="hall", send_db=-10.0)],
+        pan=0.0,
+        mix_db=-4.0,
+        envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog"),
+        drift_bus="kiln_drift",
+        drift_bus_correlation=0.85,
+    )
+
+
+def _place_pad(
+    score: Score,
+    start_bar: int,
+    n_bars: int,
+    chord: list[tuple[float, list[float]]],
+    pseudo_octave: float = HOME_PSEUDO_OCTAVE,
+) -> None:
+    start = start_bar * BAR
+    duration = n_bars * BAR
+    for note_index, (degree, color_ratios) in enumerate(chord):
+        partials = _stretched_partials(
+            _with_color(SKELETON_PARTIALS, color_ratios), pseudo_octave
+        )
+        score.add_note(
+            "pad",
+            start=start,
+            duration=duration,
+            partial=stretch_ratio(degree, pseudo_octave),
+            amp_db=-15.0 if note_index == 0 else -18.0,
+            synth={"partials": partials},
+        )
+
+
+def _add_bell_arp(score: Score) -> None:
+    score.add_voice(
+        "arp",
+        synth_defaults={
+            "engine": "additive",
+            "partials": _bell_partials(),
+            "attack": 0.004,
+            "release": 0.28,
+            "decay_power": 2.0,
+        },
+        sends=[VoiceSend(target="hall", send_db=-12.0)],
+        pan=0.12,
+        mix_db=-8.0,
+        drift_bus="kiln_drift",
+        drift_bus_correlation=0.7,
+    )
+
+
+# 2-bar arp cycle: (16th step, chord-tone index, velocity). Tone indices walk
+# chord tones one and two octaves up; step 29 is a deliberate syncopation.
+_ARP_CYCLE: list[tuple[int, int, float]] = [
+    (0, 0, 1.0),
+    (2, 1, 0.7),
+    (4, 2, 0.8),
+    (6, 3, 0.65),
+    (8, 2, 0.75),
+    (10, 1, 0.6),
+    (12, 0, 0.85),
+    (14, 2, 0.6),
+    (16, 3, 0.9),
+    (18, 4, 0.7),
+    (20, 2, 0.75),
+    (22, 1, 0.6),
+    (24, 0, 0.8),
+    (26, 2, 0.65),
+    (29, 4, 0.7),
+    (30, 3, 0.6),
+]
+
+
+def _place_arp(
+    score: Score,
+    start_bar: int,
+    n_bars: int,
+    chord: list[tuple[float, list[float]]],
+    pseudo_octave: float = HOME_PSEUDO_OCTAVE,
+) -> None:
+    degrees = [degree for degree, _ in chord]
+    tones = [
+        degrees[0] * 2.0,
+        degrees[1] * 2.0,
+        degrees[2] * 2.0,
+        degrees[0] * 4.0,
+        degrees[1] * 4.0,
+    ]
+    steps_per_cycle = 32
+    total_steps = n_bars * 16
+    for cycle_start in range(0, total_steps, steps_per_cycle):
+        for step, tone_index, velocity in _ARP_CYCLE:
+            absolute_step = cycle_start + step
+            if absolute_step >= total_steps:
+                break
+            onset = (
+                start_bar * BAR
+                + absolute_step * S16
+                + S16 * GROOVE.timing_offset_at(absolute_step)
+            )
+            score.add_note(
+                "arp",
+                start=onset,
+                duration=0.11,
+                partial=stretch_ratio(tones[tone_index], pseudo_octave),
+                velocity=velocity,
+                synth={"partials": _bell_partials(pseudo_octave)},
+            )
+
+
+def _add_drums(score: Score, drum_bus: str) -> None:
+    add_drum_voice(
+        score,
+        "kick",
+        engine="drum_voice",
+        preset="909_techno",
+        drum_bus=drum_bus,
+        send_db=-6.0,
+        synth_overrides={
+            "tone_decay_s": 0.22,
+            "tone_punch": 0.4,
+            "exciter_level": 0.24,
+        },
+        mix_db=-5.0,
+    )
+    add_drum_voice(
+        score,
+        "hat_closed",
+        engine="drum_voice",
+        preset="closed_hat",
+        drum_bus=drum_bus,
+        send_db=-16.0,
+        choke_group="hats",
+        mix_db=-13.0,
+        pan=0.18,
+    )
+    add_drum_voice(
+        score,
+        "hat_open",
+        engine="drum_voice",
+        preset="open_hat",
+        drum_bus=drum_bus,
+        send_db=-14.0,
+        choke_group="hats",
+        mix_db=-16.0,
+        pan=0.18,
+    )
+    add_drum_voice(
+        score,
+        "tom",
+        engine="drum_voice",
+        drum_bus=drum_bus,
+        send_db=-10.0,
+        mix_db=-12.0,
+        pan=-0.25,
+        synth_overrides={
+            "exciter_type": "click",
+            "exciter_level": 0.08,
+            "tone_type": "modal",
+            "tone_level": 1.0,
+            "modal_ratios": [1.0, 19 / 8, 49 / 15, 4.9, 98 / 15],
+            "modal_decays_s": [0.5, 0.34, 0.26, 0.2, 0.15],
+        },
+    )
+
+
+def _place_drums(score: Score, start_bar: int, n_bars: int) -> None:
+    kick_steps_a = [(0, 1.0), (7, 0.85), (10, 0.9)]
+    kick_steps_b = [(0, 1.0), (7, 0.85), (13, 0.75)]
+    for bar in range(start_bar, start_bar + n_bars):
+        bar_t = bar * BAR
+        kick_steps = kick_steps_a if bar % 2 == 0 else kick_steps_b
+        for step, velocity in kick_steps:
+            score.add_note(
+                "kick",
+                start=bar_t + step * S16,
+                duration=0.3,
+                freq=49.0,
+                velocity=velocity,
+            )
+        for step in range(0, 16, 2):
+            if bar % 4 == 2 and step == 8:
+                continue  # breath every fourth bar
+            onset = bar_t + step * S16 + S16 * GROOVE.timing_offset_at(step)
+            score.add_note(
+                "hat_closed",
+                start=onset,
+                duration=0.09,
+                freq=784.0,
+                velocity=0.85 if step % 4 == 0 else 0.5,
+            )
+        if bar % 2 == 1:
+            onset = bar_t + 14 * S16 + S16 * GROOVE.timing_offset_at(14)
+            score.add_note(
+                "hat_open", start=onset, duration=0.4, freq=784.0, velocity=0.7
+            )
+        if bar % 4 == 3:
+            score.add_note(
+                "tom",
+                start=bar_t + 11 * S16,
+                duration=0.5,
+                freq=98.0 * 4 / 3,
+                velocity=0.7,
+            )
+            score.add_note(
+                "tom", start=bar_t + 14 * S16, duration=0.5, freq=98.0, velocity=0.5
+            )
+
+
+def _palette_sketch_score() -> Score:
+    score = Score(
+        f0_hz=F0,
+        master_effects=DEFAULT_MASTER_EFFECTS,
+        send_buses=[_hall_bus()],
+        timing_humanize=TimingHumanizeSpec(preset="tight_ensemble"),
+    )
+    score.add_drift_bus("kiln_drift", rate_hz=0.06, depth_cents=3.5, seed=20260705)
+    drum_bus = setup_drum_bus(score, style="light")
+
+    total_dur = _PALETTE_BARS * BAR + 3.0
+    _add_atmosphere(score, total_dur)
+    _add_pad(score)
+    _add_bass(score)
+    _add_bell_arp(score)
+    _add_drums(score, drum_bus)
+
+    for start_bar, n_bars, chord in _PALETTE_PROGRESSION:
+        _place_pad(score, start_bar, n_bars, chord)
+        if start_bar >= 2:
+            root_degree = chord[0][0]
+            _place_bass(score, start_bar, n_bars, root_degree)
+            _place_arp(score, start_bar, n_bars, chord)
+            _place_drums(score, start_bar, n_bars)
+    return score
+
+
+_PALETTE_SECTIONS = (
+    PieceSection("intro (pad + room)", 0.0, 2 * BAR),
+    PieceSection("tonic groove", 2 * BAR, 8 * BAR),
+    PieceSection("neutral subdominant", 8 * BAR, 12 * BAR),
+    PieceSection("septimal V (6:7:8)", 12 * BAR, 14 * BAR),
+    PieceSection("tonic return", 14 * BAR, 18 * BAR),
+    PieceSection("IV - V - I close", 18 * BAR, 24 * BAR),
+)
+
 _FUSION_SECTIONS = (
     PieceSection("tonic 4:6:7 (home)", 0.0, 6.0),
     PieceSection("16:19:24, root 19-color (home)", 6.0, 12.0),
@@ -172,6 +583,13 @@ PIECES = {
         output_name="anneal_fusion_sketch",
         build_score=_fusion_sketch_score,
         sections=_FUSION_SECTIONS,
+        study=True,
+    ),
+    "anneal_palette_sketch": PieceDefinition(
+        name="anneal_palette_sketch",
+        output_name="anneal_palette_sketch",
+        build_score=_palette_sketch_score,
+        sections=_PALETTE_SECTIONS,
         study=True,
     ),
 }
