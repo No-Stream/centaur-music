@@ -7,6 +7,7 @@ import pytest
 from code_musics.tuning import (
     TuningTable,
     cents_to_ratio,
+    colundi_core,
     cps,
     dekany,
     dekany_chords,
@@ -19,6 +20,7 @@ from code_musics.tuning import (
     ji_chord,
     otonal,
     ratio_to_cents,
+    stretch_ratio,
     utonal,
 )
 
@@ -506,3 +508,43 @@ class TestEikosanyTetrads:
     def test_eikosany_tetrads_requires_exactly_six_factors(self) -> None:
         with pytest.raises(ValueError, match="6 factors"):
             eikosany_tetrads((1, 3, 5, 7, 9))
+
+
+class TestStretchRatio:
+    def test_identity_at_true_octave(self) -> None:
+        assert stretch_ratio(3 / 2, 2.0) == pytest.approx(1.5)
+        assert stretch_ratio(7 / 4, 2.0) == pytest.approx(1.75)
+
+    def test_octave_maps_to_pseudo_octave(self) -> None:
+        assert stretch_ratio(2.0, 2.07) == pytest.approx(2.07)
+
+    def test_fifth_widens_at_2_07(self) -> None:
+        cents = ratio_to_cents(stretch_ratio(3 / 2, 2.07))
+        assert cents == pytest.approx(701.955 * math.log2(2.07), abs=0.01)
+        assert 735.0 < cents < 739.0
+
+    def test_preserves_multiplicative_geometry(self) -> None:
+        p = 2.07
+        assert stretch_ratio(3 / 2 * 7 / 4, p) == pytest.approx(
+            stretch_ratio(3 / 2, p) * stretch_ratio(7 / 4, p)
+        )
+
+    def test_rejects_bad_args(self) -> None:
+        with pytest.raises(ValueError, match="ratio"):
+            stretch_ratio(0.0, 2.07)
+        with pytest.raises(ValueError, match="pseudo_octave"):
+            stretch_ratio(1.5, 1.0)
+
+
+class TestColundiCore:
+    def test_degrees(self) -> None:
+        expected = [1.0, 11 / 10, 19 / 16, 4 / 3, 3 / 2, 49 / 30, 7 / 4]
+        result = colundi_core()
+        assert len(result) == 7
+        for actual, exp in zip(result, expected, strict=True):
+            assert actual == pytest.approx(exp)
+
+    def test_sorted_and_within_octave(self) -> None:
+        result = colundi_core()
+        assert result == sorted(result)
+        assert all(1.0 <= r < 2.0 for r in result)

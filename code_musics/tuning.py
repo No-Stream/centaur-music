@@ -498,3 +498,23 @@ def eikosany_tetrads(
         )
 
     return otonal_tetrads, utonal_tetrads
+
+
+def stretch_ratio(ratio: float, pseudo_octave: float) -> float:
+    """Map a JI ratio into a stretched pitch space.
+
+    Pure exponent scaling in log-pitch space: ``r ** log2(P)``. The true
+    octave 2/1 maps to the pseudo-octave ``P`` and all interval *geometry*
+    (products of intervals) is preserved, so a scale and a spectrum
+    stretched by the same ``P`` remain mutually consonant (Sethares).
+    """
+    if ratio <= 0.0:
+        raise ValueError(f"ratio must be positive, got {ratio}")
+    if pseudo_octave <= 1.0:
+        raise ValueError(f"pseudo_octave must be > 1.0, got {pseudo_octave}")
+    return float(ratio ** math.log2(pseudo_octave))
+
+
+def colundi_core() -> list[float]:
+    """Approximate Colundi-inspired 7-note 11-limit JI scale (octave-equivalent)."""
+    return sorted([1.0, 11 / 10, 19 / 16, 4 / 3, 3 / 2, 49 / 30, 7 / 4])
