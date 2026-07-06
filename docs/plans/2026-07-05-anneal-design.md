@@ -43,13 +43,21 @@ into single composite timbres.
      additive path).
   Stretch moves over minutes, so per-note-onset sampling is seamless; scale
   and spectrum cannot drift apart because both derive from one function.
-- **Fused spectra:** partial sets built from scale degrees across octaves,
-  dominated by the 3/7-limit skeleton (1, 3/2, 7/4 and their compounds).
-  11-flavored partials appear only in the designated spice voice/moments.
-- Verify during implementation that `inharmonic_scale` semantics on the
-  chosen engines match `n ** log2(P)` per partial; if any engine's stretch
-  law differs, use explicit partial ratio lists instead. Engine
-  modifications/extensions are in scope where the piece needs them
+- **Fused spectra (all explicit partial lists):** scale degrees transposed by
+  octaves. The 3/7-limit skeleton yields the integer set
+  **{1, 2, 3, 4, 6, 7, 8, 12, 14, 16}** with rolloff — critically **no 5th
+  harmonic** (or 10/15/20): the scale has no 5/4 (19/16 is 89 c away), so a
+  5th partial would beat against every third in the piece. The color degrees
+  yield inharmonic partials that carry their harmony timbrally:
+  19/16 → {2.375, 4.75}; 49/30 → {3.27, 6.53}; 11/10 → {2.2, 4.4}.
+- Because every tonal voice uses explicit partial lists, the stretch is
+  applied by mapping each list through `stretch_ratio(p, S(t))` per note —
+  exact and engine-agnostic; `inharmonic_scale` is not needed.
+- **Distortion restraint:** saturation regenerates all integer harmonics
+  including the forbidden 5th. Tonal voices get warmth from multiband preamp
+  (lows/highs bypass) or very subtle drive only; no `voice_dist` on fused
+  voices. Filters are safe (subtractive only).
+- Engine modifications/extensions are in scope where the piece needs them
   (delegate granular engine work to subagents; composition stays in the
   main context).
 
@@ -86,12 +94,12 @@ into single composite timbres.
 
 | Role | Voice |
 |---|---|
-| Bass | `synth_voice`, fused scale-partials, follows the root motion |
-| Lead arp | additive / FM bell with fused spectrum, groove template, velocity phrasing, vibrato |
-| Pad | fused additive chords, `ratio_glide` between changes, spectral gravity |
-| Act II counter-voice | grain or FM bell carrying the 11-limit color |
-| Drums | 49 Hz kick recipe + `drum_voice` modal hats/toms with mode tables tuned to scale degrees, electronic drum bus |
-| Atmosphere | `found_sound` toolkit presets, unstretched, low in the mix |
+| Bass | `synth_voice`: sine/sub osc (49 Hz foundation) + partials layer {1, 2, 3, whisper of 7} through a ladder filter |
+| Lead arp | **additive bell, not FM** (FM sidebands land off-scale): skeleton spectrum with exponential per-partial decays (faster high-partial decay = mallet physics), touch of `phase_disperse`, velocity → brightness, groove template, vibrato |
+| Pad | `additive`, skeleton spectrum + section-dependent color partials (+19-family in Act II dark passages, +49-family on the neutral subdominant — timbre foreshadows harmony), `phase_disperse`, per-partial slow envelopes, mild spectral gravity, `ratio_glide` |
+| Act II counter-voice | the **11-carrier**: additive spectrum {1, 2.2, 4.4, 8.8} over a light skeleton, optionally through the `grain` slot (shimmer halo). The only voice possessing 11-family partials — the restraint rule enforced timbrally |
+| Drums | 49 Hz kick recipe + `drum_voice` modal hats/toms with mode tables from scale-degree ratios; the mode tables receive S(t) too, and drums stretch slightly *ahead* of tonal voices in Act II to introduce the warp timbrally |
+| Atmosphere | `found_empty_room` + `found_city_at_night` presets, unstretched, low in the mix |
 
 Standard finish: `DEFAULT_MASTER_EFFECTS`, shared reverb send bus
 (`bricasti_or_reverb`), full automation passes (filter rides, send rides,
@@ -100,6 +108,16 @@ all melodic/sustained voices.
 
 ## Implementation shape
 
+- **Audition-first milestones.** Before composing the full piece, produce
+  short sketch renders for user sign-off:
+  1. *Timbre/fusion sketch:* skeleton pad playing 4:6:7 and 16:19:24 with and
+     without color partials, at S=2.000 and S=2.07 — confirm fusion is
+     audible/visible in the chromagram and that explicit non-integer partials
+     render cleanly.
+  2. *Palette sketch:* ~30–60 s with bass, bell arp, pad, drums, and the
+     found-sound bed at home tuning — sanity-check the sound world and mix
+     before any form-building.
+  User auditions each before the piece proceeds.
 - `code_musics/pieces/anneal.py` (composed in main context).
 - `stretch_ratio(...)` helper in `code_musics/tuning.py` + unit tests.
 - Piece integration/render smoke test following existing piece-test
