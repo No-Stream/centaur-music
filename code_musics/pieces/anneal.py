@@ -183,16 +183,28 @@ FIFTH_6_7_8: list[tuple[float, list[float]]] = [
     (2.0, []),
 ]
 
-# (start_bar, n_bars, chord) — bars 0-1 are a pad/atmosphere intro.
-_PALETTE_PROGRESSION: list[tuple[int, int, list[tuple[float, list[float]]]]] = [
-    (0, 2, TONIC_4_6_7),
-    (2, 6, TONIC_4_6_7),
-    (8, 4, NEUTRAL_SUBDOMINANT),
-    (12, 2, FIFTH_6_7_8),
-    (14, 4, TONIC_4_6_7),
-    (18, 2, NEUTRAL_SUBDOMINANT),
-    (20, 2, FIFTH_6_7_8),
-    (22, 2, TONIC_4_6_7),
+# Workhorse IV: open fifth on 4/3 — every tone pure. The neutral triad is
+# color, not a resting consonance (audition 2 finding), so it appears only
+# as a brief pad-only moment with the arp staying on open tones above it.
+FOURTH_OPEN: list[tuple[float, list[float]]] = [
+    (4 / 3, []),
+    (2.0, []),
+    (8 / 3, []),
+]
+
+# (start_bar, n_bars, pad_chord, arp_chord) — bars 0-1 are a pad/atmosphere
+# intro; arp_chord lets the pad take a color voicing while the arp stays pure.
+_PALETTE_PROGRESSION: list[
+    tuple[int, int, list[tuple[float, list[float]]], list[tuple[float, list[float]]]]
+] = [
+    (0, 2, TONIC_4_6_7, TONIC_4_6_7),
+    (2, 6, TONIC_4_6_7, TONIC_4_6_7),
+    (8, 4, FOURTH_OPEN, FOURTH_OPEN),
+    (12, 2, FIFTH_6_7_8, FIFTH_6_7_8),
+    (14, 4, TONIC_4_6_7, TONIC_4_6_7),
+    (18, 2, NEUTRAL_SUBDOMINANT, FOURTH_OPEN),
+    (20, 2, FIFTH_6_7_8, FIFTH_6_7_8),
+    (22, 2, TONIC_4_6_7, TONIC_4_6_7),
 ]
 _PALETTE_BARS = 24
 
@@ -322,7 +334,7 @@ def _add_pad(score: Score) -> None:
             "spectral_morph_type": "phase_disperse",
             "spectral_morph_amount": 0.3,
         },
-        effects=[_kick_duck(-30.0, 2.0)],
+        effects=[_kick_duck(-26.0, 1.8)],
         sends=[VoiceSend(target="hall", send_db=-10.0)],
         pan=0.0,
         mix_db=-4.0,
@@ -442,10 +454,12 @@ def _add_drums(score: Score, drum_bus: str) -> None:
         send_db=-6.0,
         synth_overrides={
             "tone_decay_s": 0.22,
-            "tone_punch": 0.4,
-            "exciter_level": 0.24,
+            # Punchy low thump, minimal click: in this sparse mix a loud
+            # exciter reads as a separate midrange "clap" (audition 2).
+            "tone_punch": 0.6,
+            "exciter_level": 0.08,
         },
-        mix_db=-5.0,
+        mix_db=-2.0,
     )
     add_drum_voice(
         score,
@@ -482,13 +496,18 @@ def _add_drums(score: Score, drum_bus: str) -> None:
             "exciter_level": 0.08,
             "tone_type": "modal",
             "tone_level": 1.0,
-            "modal_ratios": [1.0, 19 / 8, 49 / 15, 4.9, 98 / 15],
-            "modal_decays_s": [0.5, 0.34, 0.26, 0.2, 0.15],
+            # Pure skeleton modes only. Color-family modes ring color
+            # intervals over whatever chord is playing — the "out of tune
+            # bleep" of audition 2. Role-awareness applies to drums too.
+            "modal_ratios": [1.0, 2.0, 3.0, 3.5],
+            "modal_decays_s": [0.5, 0.34, 0.26, 0.2],
         },
     )
 
 
-def _place_drums(score: Score, start_bar: int, n_bars: int) -> None:
+def _place_drums(
+    score: Score, start_bar: int, n_bars: int, root_degree: float = 1.0
+) -> None:
     kick_steps_a = [(0, 1.0), (7, 0.85), (10, 0.9)]
     kick_steps_b = [(0, 1.0), (7, 0.85), (13, 0.75)]
     for bar in range(start_bar, start_bar + n_bars):
@@ -519,15 +538,20 @@ def _place_drums(score: Score, start_bar: int, n_bars: int) -> None:
                 "hat_open", start=onset, duration=0.4, freq=784.0, velocity=0.7
             )
         if bar % 4 == 3:
+            tom_freq = F0 * root_degree
             score.add_note(
                 "tom",
                 start=bar_t + 11 * S16,
                 duration=0.5,
-                freq=98.0 * 4 / 3,
+                freq=tom_freq,
                 velocity=0.7,
             )
             score.add_note(
-                "tom", start=bar_t + 14 * S16, duration=0.5, freq=98.0, velocity=0.5
+                "tom",
+                start=bar_t + 14 * S16,
+                duration=0.5,
+                freq=tom_freq * 3 / 4,
+                velocity=0.5,
             )
 
 
@@ -548,13 +572,13 @@ def _palette_sketch_score() -> Score:
     _add_bell_arp(score)
     _add_drums(score, drum_bus)
 
-    for start_bar, n_bars, chord in _PALETTE_PROGRESSION:
-        _place_pad(score, start_bar, n_bars, chord)
+    for start_bar, n_bars, pad_chord, arp_chord in _PALETTE_PROGRESSION:
+        _place_pad(score, start_bar, n_bars, pad_chord)
         if start_bar >= 2:
-            root_degree = chord[0][0]
+            root_degree = arp_chord[0][0]
             _place_bass(score, start_bar, n_bars, root_degree)
-            _place_arp(score, start_bar, n_bars, chord)
-            _place_drums(score, start_bar, n_bars)
+            _place_arp(score, start_bar, n_bars, arp_chord)
+            _place_drums(score, start_bar, n_bars, root_degree)
     return score
 
 
