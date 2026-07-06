@@ -143,6 +143,43 @@ def ratio_spectrum(
     return spectrum
 
 
+def scale_fused_spectrum(
+    degrees: Sequence[float],
+    *,
+    octaves: int = 3,
+    rolloff_alpha: float = 1.0,
+    amp_floor: float = 0.02,
+) -> list[dict[str, float]]:
+    """Build a partial set from a scale's own degrees transposed by octaves.
+
+    The Sethares co-design move: a spectrum whose partials are scale members
+    makes the scale's intervals maximally consonant by construction. The root
+    degree (ratio ``1.0``) contributes its own full harmonic series —
+    ``2**k`` for ``k`` in ``0..octaves`` — while every other degree
+    contributes only its octave-transposed images (``degree * 2**k`` for
+    ``k`` in ``1..octaves``), so a scale degree's raw, un-transposed value
+    never sits close enough to the fundamental to beat roughly against it.
+    Ratios are deduplicated and sorted; amps roll off as
+    ``ratio ** -rolloff_alpha`` and partials below ``amp_floor`` are dropped.
+    Same ``{"ratio", "amp"}`` format as the other builders (additive
+    ``partials`` / synth_voice ``partials_partials``).
+    """
+    if not degrees:
+        raise ValueError("degrees must be non-empty")
+    if any(d <= 0.0 for d in degrees):
+        raise ValueError("degrees must be strictly positive")
+    ratios: set[float] = set()
+    for degree in degrees:
+        resolved_degree = float(degree)
+        start_octave = 0 if abs(resolved_degree - 1.0) < 1e-9 else 1
+        for k in range(start_octave, octaves + 1):
+            ratios.add(round(resolved_degree * (2.0**k), 9))
+    partials = [
+        {"ratio": ratio, "amp": ratio**-rolloff_alpha} for ratio in sorted(ratios)
+    ]
+    return [p for p in partials if p["amp"] >= amp_floor]
+
+
 def harmonic_spectrum(
     *,
     n_partials: int,
