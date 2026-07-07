@@ -684,6 +684,15 @@ See `FUTURE.md` for way more ideas.
   `docs/synth_api.md`.
 - The `bricasti` convolution wrapper supports basic wet-return tone shaping
   (`highpass_hz`, `lowpass_hz`, `tilt_db`) for cleaner, darker, or brighter tails.
+- The native `fdn_reverb` effect (`EffectSpec("fdn_reverb", ...)`, DSP core in
+  `code_musics/engines/_fdn_reverb.py`) is a plugin-free Feedback Delay Network
+  built for enormous, dark, clean, chorus-free spaces — a cave beyond
+  architectural scale — with smooth tails at 30–60 s decays. Unitary
+  Householder/Hadamard feedback matrix over mutually-prime delay lines, Jot
+  per-line RT60 gains, in-loop HF damping plus an independent bass-decay band,
+  slow decorrelated delay-time modulation, input diffusion, and orthogonal
+  Hadamard stereo taps. Deterministic/seeded. `mix` accepts effect-amount
+  automation. See `docs/synth_api.md` for the full parameter surface.
 - The local Linux environment has a small plugin palette installed for
   experimentation: `LSP` utilities in `~/.vst` and `~/.lv2`, `Dragonfly Reverb`
   in `~/.vst3` and `~/.lv2`, `TAL-Chorus-LX` and `TAL-Reverb-2` in `~/.vst3`,

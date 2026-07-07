@@ -949,6 +949,100 @@ score = Score(
 )
 ```
 
+### `fdn_reverb`
+
+Implementation: [code_musics/synth.py](code_musics/synth.py),
+[code_musics/engines/_fdn_reverb.py](code_musics/engines/_fdn_reverb.py)
+
+Native Feedback Delay Network reverb built for enormous, unworldly, dark, but
+*clean* spaces — a cave well beyond architectural scale — whose tails stay
+smooth and chorus-free even at 30–60 s decays. Fully native (no plugin
+dependency) and deterministic: identical input and params render
+bit-identically.
+
+Design: a unitary (energy-preserving) feedback matrix over `n_lines`
+mutually-prime delay lines. Because the matrix is lossless, the only decay
+comes from the per-line loop gains, which follow the Jot RT60 formula
+`g_i = 10^(-3 · D_i / (fs · decay_s))` so every line decays 60 dB in `decay_s`
+regardless of its length. An in-loop one-pole lowpass (`damping_hz`) makes
+highs decay faster; a separate bass band (`low_decay_mult` /
+`low_crossover_hz`) lets the low end ring longer than the mids. Each line's
+read pointer is modulated by its own slow, shallow, decorrelated sine, which
+continuously sweeps the modal notches to kill metallic ringing without audible
+chorusing. A Schroeder allpass cascade (`diffusion`) smears the input onset,
+and two *orthogonal* Hadamard tap vectors produce a strongly decorrelated
+stereo field from a mono input (broadband late-tail L/R correlation ≈ 0).
+
+Prefer this over `reverb` / `dragonfly` / `bricasti` when you want a very long,
+very large, dark-but-clean tail with no plugin/IR dependency. RT60 accuracy is
+within a few percent for musical decays (measured −0.9 % at 3 s); at extreme
+decays (≥ 45 s) the HF damping accumulates over many passes and the measured
+1 kHz RT60 reads modestly short of the target — raise `damping_hz` if you need
+the top end to ring as long as the mids.
+
+Parameters:
+
+- `decay_s: float`
+  RT60 target in seconds; musical up to ≥ 45 s. Default `18.0`.
+- `size: float`
+  Perceptual room scale `[0, 1]`; scales the prime delay lengths (and hence
+  modal density / pre-echo character). Default `0.85`.
+- `predelay_ms: float`
+  Dry-to-wet gap in milliseconds. Default `40.0`.
+- `damping_hz: float`
+  HF decay corner. Lower darkens the tail (and shortens the effective
+  broadband RT60). Default `7000.0`.
+- `low_decay_mult: float`
+  Bass-band decay multiplier. `> 1` makes the low end ring longer than the
+  mids; `< 1` makes it die faster. Default `1.5`.
+- `low_crossover_hz: float`
+  Corner below which `low_decay_mult` applies. Default `250.0`.
+- `modulation_depth: float`
+  Delay-time modulation depth `[0, 1]`. Deliberately shallow (a few samples at
+  `1.0`) so the tail stays chorus-free. Default `0.3`.
+- `modulation_rate_hz: float`
+  Slow modulation rate. Default `0.15`. Per-line rates are detuned around this
+  value and given seeded random phases for decorrelation.
+- `diffusion: float`
+  Input allpass diffusion `[0, 1]`. Higher = smoother, more washed onset.
+  Default `0.7`.
+- `feedback_matrix: str`
+  `"householder"` (dense maximally-diffusive reflection, O(N), default) or
+  `"hadamard"` (normalized Sylvester matrix; power-of-two `n_lines` only).
+- `n_lines: int`
+  Delay-line count — `8` or `16`. More lines = denser, smoother tail.
+  Default `16`.
+- `mix: float`
+  Wet level `[0, 1]`. Accepts effect-amount automation (target `mix`) like
+  other native effects. Default `0.3`.
+- `highpass_hz: float`
+  Wet-return highpass (`0` = off). Default `0.0`.
+- `lowpass_hz: float`
+  Wet-return lowpass (`0` = off). Default `0.0`.
+- `seed: int`
+  Deterministic seed for the modulation phases/rates. Default `0`.
+
+Example:
+
+```python
+score = Score(
+    f0=110.0,
+    master_effects=[
+        EffectSpec(
+            "fdn_reverb",
+            {
+                "decay_s": 42.0,
+                "size": 1.0,
+                "damping_hz": 5500.0,
+                "low_decay_mult": 1.8,
+                "modulation_depth": 0.25,
+                "mix": 0.35,
+            },
+        )
+    ],
+)
+```
+
 ### `mod_delay`
 
 Implementation: [code_musics/synth.py](code_musics/synth.py)

@@ -105,6 +105,7 @@ EffectKind = Literal[
     "gate",
     "delay",
     "reverb",
+    "fdn_reverb",
     "chow_tape",
     "bricasti",
     "brit_pre",

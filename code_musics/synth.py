@@ -29,6 +29,7 @@ from code_musics.engines._dsp_utils import (
     resolve_quality_mode,
     upsample_cutoff_profile,
 )
+from code_musics.engines._fdn_reverb import render_fdn_reverb
 from code_musics.engines._filters import (
     _SUPPORTED_FILTER_MODES,
     _SUPPORTED_FILTER_TOPOLOGIES,
@@ -4590,6 +4591,95 @@ def apply_bricasti(
     return _match_input_layout(blended.astype(np.float64), signal)
 
 
+def apply_fdn_reverb(
+    signal: np.ndarray,
+    *,
+    decay_s: float = 18.0,
+    size: float = 0.85,
+    predelay_ms: float = 40.0,
+    damping_hz: float = 7000.0,
+    low_decay_mult: float = 1.5,
+    low_crossover_hz: float = 250.0,
+    modulation_depth: float = 0.3,
+    modulation_rate_hz: float = 0.15,
+    diffusion: float = 0.7,
+    feedback_matrix: str = "householder",
+    n_lines: int = 16,
+    mix: float = 0.3,
+    highpass_hz: float = 0.0,
+    lowpass_hz: float = 0.0,
+    seed: int = 0,
+    sample_rate: int = SAMPLE_RATE,
+) -> np.ndarray:
+    """Native FDN reverb for enormous, dark, clean, chorus-free spaces.
+
+    A unitary feedback delay network (Householder or Hadamard matrix) over
+    mutually-prime delay lines with per-line Jot RT60 gains, in-loop HF damping
+    plus an independent bass-decay band, and slow decorrelated delay-time
+    modulation that keeps the tail smooth at 30-60 s decays. Deterministic:
+    identical input and params render bit-identically.
+
+    Parameters
+    ----------
+    decay_s:            RT60 target in seconds (musical up to ≥ 45 s).
+    size:               Perceptual room scale ``[0, 1]``; scales delay lengths.
+    predelay_ms:        Dry-to-wet gap in milliseconds.
+    damping_hz:         HF decay corner; lower darkens the tail.
+    low_decay_mult:     Bass-band decay multiplier (``> 1`` = bass rings longer
+                        than the mids).
+    low_crossover_hz:   Corner below which ``low_decay_mult`` applies.
+    modulation_depth:   Delay-time modulation depth ``[0, 1]`` (kept shallow so
+                        the tail stays chorus-free).
+    modulation_rate_hz: Slow modulation rate.
+    diffusion:          Input allpass diffusion ``[0, 1]``.
+    feedback_matrix:    ``"householder"`` (dense, O(N), default) or
+                        ``"hadamard"`` (power-of-two ``n_lines`` only).
+    n_lines:            Delay-line count (``8`` or ``16``).
+    mix:                Wet level ``[0, 1]``; accepts effect-amount automation.
+    highpass_hz:        Wet-return highpass (0 = off).
+    lowpass_hz:         Wet-return lowpass (0 = off).
+    seed:               Deterministic seed for modulation phases/rates.
+    """
+    if not 0.0 <= mix <= 1.0:
+        raise ValueError("mix must be between 0 and 1")
+    if predelay_ms < 0.0:
+        raise ValueError("predelay_ms must be non-negative")
+
+    stereo_signal = _ensure_stereo(signal)
+    n_samples = stereo_signal.shape[-1]
+    mono_input = stereo_signal.mean(axis=0)
+
+    wet_signal = render_fdn_reverb(
+        mono_input,
+        sample_rate=sample_rate,
+        decay_s=decay_s,
+        size=size,
+        damping_hz=damping_hz,
+        low_decay_mult=low_decay_mult,
+        low_crossover_hz=low_crossover_hz,
+        modulation_depth=modulation_depth,
+        modulation_rate_hz=modulation_rate_hz,
+        diffusion=diffusion,
+        feedback_matrix=feedback_matrix,
+        n_lines=n_lines,
+        seed=seed,
+    )
+
+    predelay_samples = int(round(predelay_ms * sample_rate / 1000.0))
+    if predelay_samples > 0:
+        wet_signal = np.pad(wet_signal, ((0, 0), (predelay_samples, 0)))[:, :n_samples]
+
+    wet_signal = _shape_reverb_return(
+        wet_signal,
+        sample_rate=sample_rate,
+        highpass_hz=highpass_hz,
+        lowpass_hz=lowpass_hz,
+    )
+
+    blended = ((1.0 - mix) * stereo_signal) + (mix * wet_signal)
+    return _match_input_layout(blended.astype(np.float64), signal)
+
+
 def apply_tal_chorus_lx(
     signal: np.ndarray,
     mix: float = 0.5,
@@ -8492,6 +8582,7 @@ def _is_missing_vst3_plugin(plugin_name: str) -> bool:
 _SIMPLE_EFFECT_DISPATCH: dict[str, Callable[..., np.ndarray]] = {
     "delay": apply_delay,
     "reverb": apply_reverb,
+    "fdn_reverb": apply_fdn_reverb,
     "chow_tape": apply_chow_tape,
     "bricasti": apply_bricasti,
     "chorus": apply_chorus,
