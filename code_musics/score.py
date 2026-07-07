@@ -43,6 +43,7 @@ from code_musics.humanize import (
     build_velocity_multipliers,
     resolve_envelope_params,
 )
+from code_musics.meter import Timeline
 from code_musics.modulation import (
     MacroDefinition,
     ModConnection,
@@ -515,12 +516,16 @@ class Score:
     macros: dict[str, MacroDefinition] = field(default_factory=dict)
     modulations: list[ModConnection] = field(default_factory=list)
     voices: dict[str, Voice] = field(default_factory=dict)
+    timeline: Timeline | None = None
     time_origin_seconds: float = 0.0
     time_reference_total_dur: float | None = None
+    effect_tail_seconds: float = 0.0
 
     def __post_init__(self) -> None:
         if not np.isfinite(self.master_bus_target_lufs):
             raise ValueError("master_bus_target_lufs must be finite")
+        if not np.isfinite(self.effect_tail_seconds) or self.effect_tail_seconds < 0.0:
+            raise ValueError("effect_tail_seconds must be finite and non-negative")
         if not np.isfinite(self.master_bus_max_true_peak_dbfs):
             raise ValueError("master_bus_max_true_peak_dbfs must be finite")
         if not np.isfinite(self.master_input_gain_db):
@@ -676,6 +681,7 @@ class Score:
         """
         macro = MacroDefinition(name=name, default=default, automation=automation)
         self.macros[name] = macro
+        self._macro_lookup_cache.clear()
         return macro
 
     def add_drift_bus(
@@ -1012,6 +1018,7 @@ class Score:
             macros=dict(self.macros),
             modulations=list(self.modulations),
             voices=shifted_voices,
+            timeline=self.timeline,
             time_origin_seconds=self.time_origin_seconds + start_seconds,
             time_reference_total_dur=reference_total_dur,
         )
@@ -1293,13 +1300,15 @@ class Score:
         engine_name = str(resolved_defaults.get("engine", "additive"))
 
         if is_instrument_engine(engine_name):
-            return self._render_voice_via_instrument(
-                voice_name=voice_name,
-                voice=voice,
-                timing_offsets=timing_offsets,
-                velocity_multipliers=velocity_multipliers,
-                engine_params=resolved_defaults,
-                engine_name=engine_name,
+            return self._pad_effect_tail(
+                self._render_voice_via_instrument(
+                    voice_name=voice_name,
+                    voice=voice,
+                    timing_offsets=timing_offsets,
+                    velocity_multipliers=velocity_multipliers,
+                    engine_params=resolved_defaults,
+                    engine_name=engine_name,
+                )
             )
 
         # (offset_samples, note_signal) pairs rather than pre-padded
@@ -1393,7 +1402,17 @@ class Score:
             voice_mix = self._apply_sympathetic_resonance(
                 voice_mix, voice, prepared_notes
             )
-        return self._normalize_voice_signal(voice_mix, voice)
+        return self._pad_effect_tail(self._normalize_voice_signal(voice_mix, voice))
+
+    def _pad_effect_tail(self, voice_mix: np.ndarray) -> np.ndarray:
+        """Pad a rendered voice with silence so downstream time-extending
+        effects (voice inserts, send buses, master chain) have room to ring
+        past the voice's last note instead of being truncated at it."""
+        tail_samples = int(round(self.effect_tail_seconds * self.sample_rate))
+        if tail_samples <= 0 or voice_mix.size == 0:
+            return voice_mix
+        pad_spec = [(0, 0)] * (voice_mix.ndim - 1) + [(0, tail_samples)]
+        return np.pad(voice_mix, pad_spec)
 
     def _apply_sympathetic_resonance(
         self,
@@ -1667,6 +1686,7 @@ class Score:
             note_velocity=note_velocity,
             note_start=note_start,
             note_duration=note_duration,
+            timeline=self.timeline,
         )
 
     def _apply_matrix_to_synth_params(
@@ -1766,14 +1786,29 @@ class Score:
         )
         profiles: dict[str, np.ndarray] = {}
         for param_name, group in grouped.items():
+            stereo_connections = [
+                connection for connection in group if connection.stereo
+            ]
+            if stereo_connections:
+                raise ValueError(
+                    "Stereo modulation is not supported for synth param profile "
+                    f"destination {param_name!r}"
+                )
             base_value = float(synth_params.get(param_name, 0.0))
             base_curve = np.full(times.shape, base_value, dtype=np.float64)
-            profiles[param_name] = combine_connections_on_curve(
+            profile = combine_connections_on_curve(
                 base=base_curve,
                 connections=group,
                 times=times,
                 context=context,
             )
+            if profile.ndim != 1 or profile.shape != times.shape:
+                raise ValueError(
+                    "Synth param profile "
+                    f"{param_name!r} must be a 1D mono array shaped {times.shape}; "
+                    f"got {profile.shape}. Stereo/2D profile outputs are not supported."
+                )
+            profiles[param_name] = profile
         return profiles
 
     def describe_modulations(self) -> list[dict[str, Any]]:
@@ -1985,7 +2020,7 @@ class Score:
                 raise ValueError(
                     "pitch_ratio automation cannot be combined with pitch_motion on the same note"
                 )
-            if note.pitch_motion is not None:
+            if note.pitch_motion is not None and held_samples > 0:
                 held_trajectory = build_frequency_trajectory(
                     base_freq=note_freq,
                     duration=note.duration,

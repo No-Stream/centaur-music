@@ -113,7 +113,11 @@ def _slow_vibrato() -> PitchMotionSpec:
 
 def build_aphotic_audition() -> Score:
     """Build the aphotic tuning/timbre audition score."""
-    score = Score(f0_hz=APHOTIC_F0_HZ, master_effects=DEFAULT_MASTER_EFFECTS)
+    score = Score(
+        f0_hz=APHOTIC_F0_HZ,
+        master_effects=DEFAULT_MASTER_EFFECTS,
+        effect_tail_seconds=8.0,
+    )
     score.add_send_bus(
         "cave",
         effects=[bricasti_or_reverb("1 Halls 07 Large & Dark", 1.0)],
@@ -376,7 +380,11 @@ def _space_material(score: Score, voice: str, start: float) -> None:
 
 def build_aphotic_space_audition() -> Score:
     """Audition four cave-space candidates on identical tri-free material."""
-    score = Score(f0_hz=APHOTIC_F0_HZ, master_effects=DEFAULT_MASTER_EFFECTS)
+    score = Score(
+        f0_hz=APHOTIC_F0_HZ,
+        master_effects=DEFAULT_MASTER_EFFECTS,
+        effect_tail_seconds=10.0,
+    )
 
     close_reverb = bricasti_or_reverb(
         "1 Halls 07 Large & Dark", 1.0, room_size=0.5, damping=0.75

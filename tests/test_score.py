@@ -10,7 +10,7 @@ import pytest
 
 from code_musics import synth
 from code_musics.automation import AutomationSegment, AutomationSpec, AutomationTarget
-from code_musics.composition import line
+from code_musics.composition import grid_line, grid_sequence, line
 from code_musics.humanize import (
     EnvelopeHumanizeSpec,
     TimingHumanizeSpec,
@@ -21,6 +21,7 @@ from code_musics.humanize import (
     build_velocity_multipliers,
     resolve_envelope_params,
 )
+from code_musics.meter import B, Q, TempoMap, TempoPoint, Timeline
 from code_musics.pieces import PIECES
 from code_musics.pitch_motion import PitchMotionSpec
 from code_musics.render import RenderWindow, render_piece
@@ -116,6 +117,34 @@ def test_add_phrase_synth_none_is_backward_compatible() -> None:
 
     assert placed[0].synth is None
     assert placed[1].synth == {"attack": 0.01}
+
+
+def test_grid_sequence_attaches_timeline_to_score() -> None:
+    timeline = Timeline.from_tempo_map(
+        TempoMap(
+            points=(
+                TempoPoint(beat=0.0, bpm=120.0, curve="hold"),
+                TempoPoint(beat=2.0, bpm=60.0),
+            )
+        )
+    )
+    score = Score(f0_hz=55.0)
+    phrase = grid_line(tones=[4.0], durations=[Q], timeline=timeline)
+
+    grid_sequence(score, "lead", phrase, timeline=timeline, at=[B(0.0)])
+
+    assert score.timeline == timeline
+    assert score.total_dur == pytest.approx(0.5)
+
+
+def test_grid_sequence_rejects_conflicting_score_timeline() -> None:
+    first_timeline = Timeline.from_tempo_map(TempoMap.constant(120.0))
+    second_timeline = Timeline.from_tempo_map(TempoMap.constant(90.0))
+    score = Score(f0_hz=55.0, timeline=first_timeline)
+    phrase = grid_line(tones=[4.0], durations=[Q], timeline=second_timeline)
+
+    with pytest.raises(ValueError, match="score already has a different timeline"):
+        grid_sequence(score, "lead", phrase, timeline=second_timeline, at=[B(0.0)])
 
 
 def test_note_event_and_add_note_support_amp_db() -> None:
@@ -682,6 +711,39 @@ def test_extract_window_keeps_overlapping_notes_and_shifts_them() -> None:
     assert windowed_score.time_reference_total_dur == pytest.approx(score.total_dur)
 
 
+def test_render_sub_sample_duration_notes_with_pitch_trajectories() -> None:
+    """Window extraction can clip a note to a sub-sample duration; rendering
+    must not crash on the resulting empty pitch trajectory (regression:
+    IndexError at held_trajectory[-1])."""
+    score = Score(f0_hz=110.0, sample_rate=8000)
+    score.add_voice("lead", velocity_humanize=None)
+    score.add_note(
+        "lead",
+        start=0.0,
+        duration=5e-6,
+        partial=2.0,
+        amp=0.2,
+        pitch_motion=PitchMotionSpec.vibrato(depth_ratio=0.01, rate_hz=5.0),
+    )
+    score.add_voice("auto", velocity_humanize=None)
+    score.voices["auto"].automation.append(
+        AutomationSpec(
+            target=AutomationTarget(kind="pitch_ratio", name="pitch_ratio"),
+            segments=(
+                AutomationSegment(
+                    start=0.0, end=1.0, shape="linear", start_value=1.0, end_value=1.1
+                ),
+            ),
+            default_value=1.0,
+        )
+    )
+    score.add_note("auto", start=0.0, duration=5e-6, partial=2.0, amp=0.2)
+
+    mix = score.render()
+
+    assert np.all(np.isfinite(mix))
+
+
 def test_extract_window_preserves_absolute_timing_context() -> None:
     score = Score(
         f0_hz=55.0,
@@ -849,6 +911,42 @@ def test_compressor_effect_analysis_reports_gain_reduction_metrics() -> None:
         >= (compressor_metrics["avg_gain_reduction_db"])
     )
     assert "longest_run_above_1db_seconds" in compressor_metrics
+    assert "longest_run_above_2db_seconds" in compressor_metrics
+    assert (
+        compressor_metrics["longest_run_above_2db_seconds"]
+        <= compressor_metrics["longest_run_above_1db_seconds"]
+    )
+
+
+def test_continuous_gain_reduction_severity_tiers() -> None:
+    def continuous_gr_warnings(
+        *, run_above_1db_s: float, run_above_2db_s: float
+    ) -> list[synth.EffectAnalysisWarning]:
+        warnings = synth._build_effect_analysis_warnings(
+            kind="compressor",
+            metrics={
+                "avg_gain_reduction_db": 2.0,
+                "max_gain_reduction_db": 4.0,
+                "p95_gain_reduction_db": 3.0,
+                "longest_run_above_1db_seconds": run_above_1db_s,
+                "longest_run_above_2db_seconds": run_above_2db_s,
+            },
+            signal_duration_seconds=30.0,
+        )
+        return [w for w in warnings if w.code == "continuous_gain_reduction"]
+
+    # GR sitting at ~1.5 dB for 30 s: unusual but not alarming -> warning only.
+    moderate = continuous_gr_warnings(run_above_1db_s=30.0, run_above_2db_s=0.0)
+    assert [w.severity for w in moderate] == ["warning"]
+    assert moderate[0].metrics["longest_run_above_1db_seconds"] == 30.0
+
+    # GR sitting at ~2.5 dB for 30 s: pinned above 2 dB -> severe.
+    severe = continuous_gr_warnings(run_above_1db_s=30.0, run_above_2db_s=30.0)
+    assert [w.severity for w in severe] == ["severe"]
+    assert severe[0].metrics["longest_run_above_2db_seconds"] == 30.0
+
+    # Short runs stay quiet.
+    assert continuous_gr_warnings(run_above_1db_s=5.0, run_above_2db_s=0.0) == []
 
 
 def test_score_voice_compressor_can_sidechain_from_another_voice() -> None:
@@ -3176,3 +3274,46 @@ def test_collect_effect_analysis_false_produces_identical_audio() -> None:
     # Without analysis: voice and send diagnostics are empty
     assert not analysis_without["voice_effects"]
     assert not analysis_without["send_effects"]
+
+
+class TestEffectTailSeconds:
+    """effect_tail_seconds gives time-extending effects room beyond note ends."""
+
+    @staticmethod
+    def _delay_send_score(effect_tail_seconds: float) -> Score:
+        score = Score(f0_hz=220.0, effect_tail_seconds=effect_tail_seconds)
+        score.add_send_bus(
+            "echo",
+            effects=[
+                EffectSpec(
+                    "delay",
+                    {"delay_seconds": 1.0, "feedback": 0.0, "mix": 1.0},
+                )
+            ],
+        )
+        score.add_voice(
+            "lead",
+            synth_defaults={"engine": "additive", "attack": 0.01, "release": 0.05},
+            sends=[VoiceSend("echo", send_db=0.0)],
+            velocity_humanize=None,
+            normalize_lufs=None,
+            normalize_peak_db=-6.0,
+        )
+        score.add_note("lead", start=0.0, duration=0.5, partial=1.0, amp=0.5)
+        return score
+
+    def test_default_render_length_unchanged(self) -> None:
+        mix = self._delay_send_score(0.0).render()
+        assert mix.shape[-1] <= int(0.7 * synth.SAMPLE_RATE)
+
+    def test_tail_pad_extends_render_and_keeps_echo(self) -> None:
+        mix = self._delay_send_score(2.0).render()
+        # Note ends at ~0.55s; echo lands at 1.0-1.55s and must survive.
+        assert mix.shape[-1] >= int(2.4 * synth.SAMPLE_RATE)
+        mono = mix if mix.ndim == 1 else mix.mean(axis=0)
+        echo_window = mono[int(1.05 * synth.SAMPLE_RATE) : int(1.5 * synth.SAMPLE_RATE)]
+        assert float(np.sqrt(np.mean(echo_window**2))) > 1e-4
+
+    def test_negative_tail_rejected(self) -> None:
+        with pytest.raises(ValueError, match="effect_tail_seconds"):
+            Score(f0_hz=220.0, effect_tail_seconds=-1.0)

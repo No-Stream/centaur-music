@@ -435,6 +435,26 @@ Fields:
 - `macros: dict[str, MacroDefinition] = {}`
 - `modulations: list[ModConnection] = []`
 - `voices: dict[str, Voice] = {}`
+- `timeline: Timeline | None = None`
+- `effect_tail_seconds: float = 0.0`
+
+`effect_tail_seconds` pads every rendered voice with that much trailing
+silence *before* voice effects, sends, and the master chain run, so
+time-extending effects (reverb, delay) can ring past a voice's last note
+instead of being truncated at it. Without it, a send-bus reverb fed by a
+voice whose notes end mid-piece goes hard-silent the moment the voice's
+buffer ends, and the final mix stops at the last note endpoint with no
+tail. Set it to roughly the longest audible effect tail in the piece
+(e.g. `8.0`–`60.0` for long reverbs). The default `0.0` preserves the
+legacy truncating behavior bit-identically. `total_dur` still reflects
+note endpoints only; the rendered audio simply extends past it.
+
+`timeline` is optional musical-time metadata used by grid composition helpers,
+analysis, render metadata, and viz export. It does not make the renderer
+reinterpret note timing: notes are still stored and rendered as absolute seconds.
+Grid helpers attach the timeline they use to an unset score and reject attempts
+to mix different timelines in the same score. For tempo-map authoring, create
+the timeline with `Timeline.from_tempo_map(...)`; see `docs/composition_api.md`.
 
 ### `Score.add_voice(...)`
 
@@ -822,6 +842,7 @@ interface; each subclass advertises its natural output domain
 | Source | Output | Per-note | Notes |
 |---|---|---|---|
 | `LFOSource(rate_hz, waveshape, phase_rad, retrigger, seed)` | bipolar | optional | waveshapes: `sine`, `triangle`, `saw_up`, `saw_down`, `square`, `smoothed_random`. `smoothed_random` raises `ValueError` if `rate_hz > 200` (capped below audio rate); use `OscillatorSource` for audio-rate modulation |
+| `TempoSyncedLFOSource(period_beats, waveshape, phase, retrigger)` | bipolar | optional | beat-synced LFO that samples against `Score.timeline`; use this when modulation should stay locked to bars/beats across tempo changes and extracted windows |
 | `OscillatorSource(rate_hz, waveshape, phase, stereo, stereo_phase_offset)` | bipolar | no | audio-rate sibling to `LFOSource` with no sub-audio cap, intended for per-sample synth destinations (PWM, osc2 detune FM, supersaw spread). Waveshapes limited to `sine`, `saw`, `triangle`; no anti-aliasing, so rates near Nyquist will alias (lean on engine oversampling). `stereo=True` returns a `(2, n)` array with the right channel phase-shifted by `stereo_phase_offset` cycles |
 | `EnvelopeSource(attack, hold, decay, sustain, release, *_power)` | unipolar | always | triggered at note onset; mirrors synth ADSR curve powers |
 | `MacroSource(name)` | unipolar | shared | resolved via `Score.add_macro(name, default, automation)` |
@@ -870,10 +891,10 @@ Targets reuse `AutomationTarget`:
 - `kind="synth"` — any name in
   `_SUPPORTED_SYNTH_AUTOMATION_PARAMS`;
 - `kind="control"` — `mix_db`, `pan`, `send_db`, `return_db`,
-  `pre_fx_gain_db`. Effect wet/mix/wet_level targets (`wet`, `mix`,
-  `wet_level`) are reachable by `AutomationSpec` but **not yet** by
-  matrix `ModConnection`s; see `FUTURE.md` under "Modulation
-  architecture";
+  `pre_fx_gain_db`, effect amount controls (`mix`, `wet`,
+  `wet_level`), and supported per-effect params such as
+  `analog_filter.cutoff_hz`, `clipper.threshold_db`,
+  `clipper.knee_width_db`, and `stereo_width.width`;
 - `kind="pitch_ratio"` — the dedicated `pitch_ratio` target.
 
 ### Time resolution
@@ -886,14 +907,36 @@ Destinations decide the time resolution:
   onset and folded into the synth params dict alongside
   `apply_synth_automation`.
 
-The **per-sample synth whitelist** for MVP is a single destination:
-`cutoff_hz` on the `polyblep` engine, via the engine's
-`param_profiles` kwarg.  Engines opt in explicitly via
-`register_param_profile_support(engine_name)`; engines that don't opt
-in silently ignore profiles and use the scalar value.
+The **per-sample synth whitelist** is destination-specific by engine,
+via the engine's `param_profiles` kwarg. Engines opt in explicitly via
+`register_param_profile_support(engine_name, destinations=...)`; if an
+engine does not support a destination, the score folds the matrix value
+to a note-onset scalar instead of silently dropping it.
 
-See `FUTURE.md` under "Modulation architecture" for the deferred
-per-sample destinations.
+Current per-sample destinations:
+
+| Engine | Destinations |
+|---|---|
+| `polyblep` | `cutoff_hz`, `resonance_q`, `filter_drive`, `filter_morph`, `hpf_cutoff_hz`, `feedback_amount`, `pulse_width`, `osc2_detune_cents`, `osc2_freq_ratio`, `voice_dist_drive` |
+| `filtered_stack` | `cutoff_hz`, `resonance_q`, `filter_drive`, `filter_morph`, `hpf_cutoff_hz`, `feedback_amount`, `voice_dist_drive` |
+| `synth_voice` | `filter_cutoff_hz`, `resonance_q`, `filter_drive`, `filter_morph`, `hpf_cutoff_hz`, `feedback_amount`, `shaper_drive` |
+| `drum_voice` | `filter_cutoff_hz`, `filter_q`, `filter_drive`, `filter_morph`, `feedback_amount`, `shaper_drive` |
+| `va` | top-level/filter-1 aliases `cutoff_hz`, `resonance_q`, `filter_drive`, `filter_morph`, `hpf_cutoff_hz`, `feedback_amount`; filter-slot names `filter1_*` / `filter2_*` for cutoff, resonance, drive, morph, HPF, and feedback; plus `drive_amount`, `osc_spread_cents`, and `voice_dist_drive` |
+
+Notes:
+
+- `OscillatorSource` is the intended source for audio-rate PWM,
+  osc2 ratio/detune motion, and VA supersaw spread. Stereo source
+  output is rejected for synth param profiles until synth destinations
+  become explicitly stereo-aware.
+- `osc_spread_cents` profiles are VA supersaw-only; spectralwave mode
+  raises rather than accepting a silent no-op.
+- Dynamic main controls on non-SVF filter topologies require an explicit
+  `filter_solver="adaa"` opt-in. The profiled stateful kernel preserves
+  per-sample motion across all topologies, but it is not Newton-solver
+  equivalent for topology feedback loops, so the default Newton path
+  fails closed instead of quietly downgrading character. Use
+  `filter_topology="svf"` when dynamic Newton parity matters.
 
 ### Macros
 
