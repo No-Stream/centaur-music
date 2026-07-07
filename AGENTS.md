@@ -688,11 +688,17 @@ See `FUTURE.md` for way more ideas.
   `code_musics/engines/_fdn_reverb.py`) is a plugin-free Feedback Delay Network
   built for enormous, dark, clean, chorus-free spaces — a cave beyond
   architectural scale — with smooth tails at 30–60 s decays. Unitary
-  Householder/Hadamard feedback matrix over mutually-prime delay lines, Jot
-  per-line RT60 gains, in-loop HF damping plus an independent bass-decay band,
-  slow decorrelated delay-time modulation, input diffusion, and orthogonal
-  Hadamard stereo taps. Deterministic/seeded. `mix` accepts effect-amount
-  automation. See `docs/synth_api.md` for the full parameter surface.
+  Householder/Hadamard feedback matrix over prime delay lines (re-snapped to
+  distinct primes after `size` scaling so they stay pairwise coprime),
+  reference-normalized Jot per-line loop filters (`decay_s` = 1 kHz RT60,
+  accurate within ±10 % from 2–45 s), in-loop HF damping plus an independent
+  longer bass-decay band, slow decorrelated delay-time modulation
+  (`modulation_rate_hz` capped at 2 Hz), input diffusion, and orthogonal
+  Hadamard stereo taps. Energy-calibrated wet return (`1/√N` injection) so
+  sustained input stays near input level and `mix=0.3` sits comparably to the
+  native `reverb`. Deterministic/seeded, with an unconditional per-line
+  stability clamp. `mix` accepts effect-amount automation. See
+  `docs/synth_api.md` for the full parameter surface.
 - The local Linux environment has a small plugin palette installed for
   experimentation: `LSP` utilities in `~/.vst` and `~/.lv2`, `Dragonfly Reverb`
   in `~/.vst3` and `~/.lv2`, `TAL-Chorus-LX` and `TAL-Reverb-2` in `~/.vst3`,

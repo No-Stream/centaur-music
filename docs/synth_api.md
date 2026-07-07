@@ -960,33 +960,55 @@ smooth and chorus-free even at 30–60 s decays. Fully native (no plugin
 dependency) and deterministic: identical input and params render
 bit-identically.
 
-Design: a unitary (energy-preserving) feedback matrix over `n_lines`
-mutually-prime delay lines. Because the matrix is lossless, the only decay
-comes from the per-line loop gains, which follow the Jot RT60 formula
-`g_i = 10^(-3 · D_i / (fs · decay_s))` so every line decays 60 dB in `decay_s`
-regardless of its length. An in-loop one-pole lowpass (`damping_hz`) makes
-highs decay faster; a separate bass band (`low_decay_mult` /
-`low_crossover_hz`) lets the low end ring longer than the mids. Each line's
-read pointer is modulated by its own slow, shallow, decorrelated sine, which
-continuously sweeps the modal notches to kill metallic ringing without audible
-chorusing. A Schroeder allpass cascade (`diffusion`) smears the input onset,
-and two *orthogonal* Hadamard tap vectors produce a strongly decorrelated
-stereo field from a mono input (broadband late-tail L/R correlation ≈ 0).
+Design: a unitary (energy-preserving) feedback matrix over `n_lines` prime
+delay lines. The base prime table is scaled by `size` and then **re-snapped to
+distinct primes**, so the delay lengths stay pairwise coprime (pairwise
+`gcd == 1`) at every `size` — size scaling no longer collapses the mode
+distribution. Because the matrix is lossless, the only decay comes from the
+per-line in-loop absorbent filter.
+
+**`decay_s` is the 1 kHz reference-band RT60.** Each line's loop filter is
+calibrated (Jot-style, reference-normalized) so the loop gain *at 1 kHz* is
+exactly `g_i = 10^(-3 · D_i / (fs · decay_s))`, i.e. every line decays 60 dB at
+1 kHz in `decay_s` regardless of its length. `damping_hz` sets the corner above
+which the tail decays faster (dark tail); the bass band decays with its own,
+longer RT60 `decay_s · low_decay_mult` (corner `low_crossover_hz`). The
+absorbent filter is a two-one-pole blend whose coefficients are solved from the
+DC (bass) and 1 kHz (reference) targets — both genuine Jot gains below 1, so the
+design is inherently bounded, with an unconditional per-line spectral
+magnitude clamp guaranteeing stability across the whole parameter space
+(including large `low_decay_mult` on short lines). Measured 1 kHz RT60 is within
+±10 % from 2 s to 45 s (e.g. −1.8 % at 2 s, −7.6 % at 45 s, damping well above
+the reference band). Each line's read pointer is modulated by its own slow,
+shallow, decorrelated sine, which continuously sweeps the modal notches to kill
+metallic ringing without audible chorusing. A Schroeder allpass cascade
+(`diffusion`) smears the input onset, and two *orthogonal* Hadamard tap vectors
+produce a strongly decorrelated stereo field from a mono input (broadband
+late-tail L/R correlation ≈ 0 on both feedback matrices).
+
+The wet return is energy-calibrated: the diffused input is injected into the
+lines scaled by `1/√N` and the wet output is calibrated so that sustained input
+returns a wet level on the same order as the input (rather than the
+several-times-input buildup of the pre-calibration version). Concretely,
+5 s of unit-RMS pink noise at `decay_s=45` returns wet RMS ≈ input RMS at
+`mix=1.0`. `mix` behaves like the other native reverbs' wet blend — `mix=0.3`
+on typical material gives an audible wash comparable to the native `reverb`.
 
 Prefer this over `reverb` / `dragonfly` / `bricasti` when you want a very long,
-very large, dark-but-clean tail with no plugin/IR dependency. RT60 accuracy is
-within a few percent for musical decays (measured −0.9 % at 3 s); at extreme
-decays (≥ 45 s) the HF damping accumulates over many passes and the measured
-1 kHz RT60 reads modestly short of the target — raise `damping_hz` if you need
-the top end to ring as long as the mids.
+very large, dark-but-clean tail with no plugin/IR dependency. If you need the
+top end to ring as long as the mids, raise `damping_hz`; if you want a longer
+1 kHz tail than the deep bass, keep `low_decay_mult` near or below 1.
 
 Parameters:
 
 - `decay_s: float`
-  RT60 target in seconds; musical up to ≥ 45 s. Default `18.0`.
+  1 kHz reference-band RT60 target in seconds; musical up to ≥ 45 s. The bass
+  band rings `low_decay_mult`× longer and HF shorter (per `damping_hz`).
+  Default `18.0`.
 - `size: float`
   Perceptual room scale `[0, 1]`; scales the prime delay lengths (and hence
-  modal density / pre-echo character). Default `0.85`.
+  modal density / pre-echo character). Lengths are re-snapped to distinct
+  primes after scaling so they stay pairwise coprime. Default `0.85`.
 - `predelay_ms: float`
   Dry-to-wet gap in milliseconds. Default `40.0`.
 - `damping_hz: float`
@@ -1001,8 +1023,10 @@ Parameters:
   Delay-time modulation depth `[0, 1]`. Deliberately shallow (a few samples at
   `1.0`) so the tail stays chorus-free. Default `0.3`.
 - `modulation_rate_hz: float`
-  Slow modulation rate. Default `0.15`. Per-line rates are detuned around this
-  value and given seeded random phases for decorrelation.
+  Slow modulation rate, `[0, 2.0]` Hz (values above `2.0` raise — beyond that
+  the pointer wobble audibly pitch-modulates the tail rather than sweeping modal
+  notches). Default `0.15`. Per-line rates are detuned around this value and
+  given seeded random phases for decorrelation.
 - `diffusion: float`
   Input allpass diffusion `[0, 1]`. Higher = smoother, more washed onset.
   Default `0.7`.
@@ -1014,7 +1038,9 @@ Parameters:
   Default `16`.
 - `mix: float`
   Wet level `[0, 1]`. Accepts effect-amount automation (target `mix`) like
-  other native effects. Default `0.3`.
+  other native effects. The wet return is energy-calibrated (see design note),
+  so `mix=0.3` sits comparably to the native `reverb`; a `mix=1.0` send returns
+  the wet field at roughly input level. Default `0.3`.
 - `highpass_hz: float`
   Wet-return highpass (`0` = off). Default `0.0`.
 - `lowpass_hz: float`
