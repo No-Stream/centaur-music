@@ -207,6 +207,48 @@ def harmonic_spectrum(
     return spectrum
 
 
+def sieved_harmonic_spectrum(
+    *,
+    n_partials: int,
+    omit_factors: tuple[int, ...] = (3,),
+    downweight_factors: dict[int, float] | None = None,
+    harmonic_rolloff: float = 0.5,
+    brightness_tilt: float = 0.0,
+) -> list[dict[str, float]]:
+    """Harmonic spectrum with sieved (omitted) and down-weighted partial indices.
+
+    Built for scale/timbre co-design in restricted JI subgroups: e.g. a
+    no-threes (2.5.7.11) piece uses ``omit_factors=(3,)`` so no voice carries
+    an acoustic twelfth/fifth, and ``downweight_factors={5: 0.35}`` to ration
+    major-third color.
+    """
+    for factor in omit_factors:
+        if factor < 2:
+            raise ValueError("omit_factors entries must be >= 2")
+    resolved_downweights = downweight_factors or {}
+    for factor, weight in resolved_downweights.items():
+        if factor < 2 or not 0.0 <= weight <= 1.0:
+            raise ValueError(
+                "downweight_factors must map factor >= 2 to weight in [0, 1]"
+            )
+
+    spectrum: list[dict[str, float]] = []
+    for partial in harmonic_spectrum(
+        n_partials=n_partials,
+        harmonic_rolloff=harmonic_rolloff,
+        brightness_tilt=brightness_tilt,
+    ):
+        harmonic_index = int(partial["ratio"])
+        if any(harmonic_index % factor == 0 for factor in omit_factors):
+            continue
+        amp = partial["amp"]
+        for factor, weight in resolved_downweights.items():
+            if harmonic_index % factor == 0:
+                amp *= weight
+        spectrum.append({"ratio": partial["ratio"], "amp": amp})
+    return spectrum
+
+
 def stretched_spectrum(
     *,
     n_partials: int,

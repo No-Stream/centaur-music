@@ -306,25 +306,29 @@ Important v1 limits:
 
 The modulation matrix (`code_musics/modulation.py`) can ride selected
 synth params at audio rate via the engine-level `param_profiles`
-kwarg on `render_note_signal`.  Engines opt in by registering via
-`register_param_profile_support(engine_name)`.  When a profile is
-supplied for a supported param, it replaces the scalar base before
-the engine's internal envelope/drift/jitter stack.  Engines not in
-the whitelist silently ignore the kwarg.
+kwarg on `render_note_signal`. Engines opt in destination-by-destination.
+When a profile is supplied for a supported param, it replaces the scalar
+base before the engine's internal envelope/drift/jitter stack. Direct
+`render_note_signal(..., param_profiles=...)` calls fail fast for
+unsupported profile keys; the score-level matrix folds unsupported
+destinations down to a note-onset scalar so the modulation still reaches
+engines that only understand scalar params.
 
 Current support:
 
 | Engine | Per-sample params |
 |---|---|
-| `polyblep` | `cutoff_hz`, `pulse_width`, `osc2_detune_cents`, `osc2_freq_ratio` |
-| `va` | `cutoff_hz`, `osc_spread_cents` |
+| `polyblep` | `cutoff_hz`, `resonance_q`, `filter_drive`, `filter_morph`, `hpf_cutoff_hz`, `feedback_amount`, `pulse_width`, `osc2_detune_cents`, `osc2_freq_ratio`, `voice_dist_drive` |
+| `filtered_stack` | `cutoff_hz`, `resonance_q`, `filter_drive`, `filter_morph`, `hpf_cutoff_hz`, `feedback_amount`, `voice_dist_drive` |
+| `synth_voice` | `filter_cutoff_hz`, `resonance_q`, `filter_drive`, `filter_morph`, `hpf_cutoff_hz`, `feedback_amount`, `shaper_drive` |
+| `drum_voice` | `filter_cutoff_hz`, `filter_q`, `filter_drive`, `filter_morph`, `feedback_amount`, `shaper_drive` |
+| `va` | `cutoff_hz`, `resonance_q`, `filter_drive`, `filter_morph`, `hpf_cutoff_hz`, `feedback_amount`, the slot-specific `filter1_*` / `filter2_*` equivalents, `drive_amount`, `osc_spread_cents`, `voice_dist_drive` |
 
-All other synth destinations still resolve to a scalar at note
-onset.  See `FUTURE.md` for the deferred per-sample destinations
-(`filter_morph`, `resonance_q`, `hpf_cutoff_hz`, comb/filter1/2
-family, `vibrato_depth`, etc.).  The `ModConnection` surface is
-unchanged across the two modes — only the plumbing into the engine
-differs.
+The `ModConnection` surface is unchanged across per-sample and scalar
+modes — only the plumbing into the engine differs. For phrase gestures,
+`opening()` / `darkening()` target `cutoff_hz` by default and resolve to
+`filter_cutoff_hz` automatically when placed on `synth_voice` or
+`drum_voice`.
 
 For audio-rate modulation (above `LFOSource`'s 200 Hz cap), pair
 these destinations with `OscillatorSource` in
@@ -332,7 +336,20 @@ these destinations with `OscillatorSource` in
 `waveshape` in `{"sine", "saw", "triangle"}` and no upper rate
 limit.  Typical musical uses: PWM on `pulse_width` (polyblep),
 cross-osc FM on `osc2_freq_ratio`, and audio-rate detune
-modulation on `osc_spread_cents` (va supersaw).
+modulation on `osc_spread_cents` (va supersaw). `osc_spread_cents`
+profiles fail fast in VA spectralwave mode because that oscillator has
+no supersaw spread lane.
+
+Dynamic `resonance_q`, `filter_drive`, `filter_morph`, and
+`feedback_amount` profiles are available across the eight analog filter
+topologies, but the default quality contract is conservative. SVF keeps
+the Newton-capable ZDF path. Non-SVF topologies require
+`filter_solver="adaa"` for those dynamic main controls because their
+profiled stateful kernel preserves motion but is not Newton-solver
+equivalent for topology feedback loops. With the default Newton solver,
+non-SVF dynamic main-control profiles fail closed instead of quietly
+downgrading character. Dynamic cutoff and serial HPF motion remain usable
+without that opt-in.
 
 ### Per-note voice distortion (`voice_dist_*`)
 
@@ -2260,6 +2277,7 @@ Helper builders (`code_musics.spectra`):
 - `ratio_spectrum(ratios, amps)` — explicit partials from ratio/amplitude lists
 - `harmonic_spectrum(n_partials, ...)` — harmonic-series partials matching legacy weightings
 - `stretched_spectrum(n_partials, stretch_exponent, ...)` — stretched/compressed overtone families
+- `scale_fused_spectrum(degrees, octaves, ...)` — partials built from a scale's own degrees (Sethares co-design)
 - `membrane_spectrum(n_modes, damping)` — circular drumhead modes (Bessel zeros)
 - `bar_spectrum(n_modes, material)` — vibrating bar modes (marimba/xylophone)
 - `plate_spectrum(n_modes, aspect_ratio)` — rectangular plate modes
@@ -2384,10 +2402,35 @@ these builders.
   post-process it (morphs, gravity, formant shaping).
   `n_partials >= 1`; `odd_even_balance` clamped internally to
   `[-0.95, 0.95]`.
+- `sieved_harmonic_spectrum(*, n_partials, omit_factors=(3,), downweight_factors=None, harmonic_rolloff=0.5, brightness_tilt=0.0) -> list[dict]`
+  `harmonic_spectrum` variant that drops any partial index divisible by an
+  `omit_factors` entry and multiplies the amplitude of partials divisible by
+  a `downweight_factors` key by its value (weights in `[0, 1]`). Built for
+  scale/timbre co-design in restricted JI subgroups — e.g. a no-threes
+  (2.5.7.11) piece uses `omit_factors=(3,)` so no voice carries an acoustic
+  twelfth/fifth, plus `downweight_factors={5: 0.35}` to ration major-third
+  color. `omit_factors=()` reproduces `harmonic_spectrum` exactly. Raises on
+  factors `< 2` or weights outside `[0, 1]`.
 - `stretched_spectrum(*, n_partials, stretch_exponent, harmonic_rolloff=0.5, brightness_tilt=0.0) -> list[dict]`
   Stretched / compressed overtone family: ratios follow
   `partial_index ** stretch_exponent`. `stretch_exponent > 1` stretches
   (piano-like), `< 1` compresses. Raises if `stretch_exponent <= 0`.
+- `scale_fused_spectrum(degrees, *, octaves=3, rolloff_alpha=1.0, amp_floor=0.02) -> list[dict]`
+  Sethares co-design builder: constructs a partial set directly from a
+  scale's own degrees (already stretched/tuned by the caller), so the
+  scale's intervals are maximally consonant against the spectrum by
+  construction. The root degree (ratio `1.0`) contributes its own full
+  harmonic series (`2**k` for `k` in `0..octaves`); every other degree
+  contributes only its octave-transposed images (`degree * 2**k` for `k`
+  in `1..octaves`) — a degree's raw, un-transposed value is deliberately
+  omitted so it never sits close enough to the fundamental to beat
+  roughly against it. Amplitudes roll off as `ratio ** -rolloff_alpha`;
+  partials below `amp_floor` are dropped. Raises if `degrees` is empty or
+  contains a non-positive value. Usage: pass skeleton degrees
+  `[1, 3/2, 7/4, 4/3]` for a workhorse fused spectrum that reinforces a
+  7-limit-flavored skeleton; append color-degree partials (e.g. a
+  section-specific `19/16` or `11/8`) on top for section-dependent flavor
+  without disturbing the workhorse core.
 
 ### Physical-model spectra
 
@@ -4238,6 +4281,7 @@ Key routing:
 | `multi_tap` | Multiple rapid micro-bursts (clap architecture) | `exciter_n_taps`, `exciter_tap_spacing_s`, `exciter_tap_decay_s`, `exciter_tap_crescendo`, `exciter_tap_acceleration`, `exciter_tap_freq_spread`, `exciter_tap_bandwidth_ratio` |
 | `fm_burst` | Short FM oscillator burst | `exciter_fm_ratio`, `exciter_fm_index`, `exciter_fm_feedback` |
 | `noise_burst` | Wider-band noise with optional tail filter | `exciter_bandwidth_ratio`, `exciter_filter_cutoff_hz`, `exciter_filter_q` |
+| `beater` | Damped pitch-descending chirp (beater/mallet contact knock) | `exciter_center_hz`, `exciter_beater_floor_ratio`, `exciter_beater_chirp_s`, `exciter_noise_blend` |
 | `sample` | WAV playback as transient layer | `exciter_sample_path`, `exciter_sample_pitch_shift`, `exciter_sample_start_jitter_ms`, `exciter_sample_ring_freq_hz`, `exciter_sample_reverse` |
 | `bow` | **Sustained** stick-slip friction (bowed bodies) | `exciter_bow_pressure`, `exciter_bow_speed`, `exciter_bow_position`, `exciter_bow_noise_amount` |
 | `blow` | **Sustained** reed-table nonlinearity (blown reeds) | `exciter_blow_pressure`, `exciter_blow_embouchure`, `exciter_blow_breath_noise`, `exciter_blow_wobble_rate_hz`, `exciter_blow_wobble_depth` |
@@ -4605,6 +4649,29 @@ bright `bar_metal` or `plate` table and decays start warbling
 prominently; push dispersion past ~0.5 and short strikes pick up an
 audible piano-stiffness smear. Both are automatable at score time.
 
+**Beater exciter params** (consumed when `exciter_type="beater"`):
+
+Models a beater/mallet contact "knock" — correlated, pitched, and punchy
+— as an alternative to the pure bandpassed-noise `click` exciter. `click`
+and `noise_burst` are incoherent noise, which at audible levels in sparse
+mixes reads as a clap/snare co-timed with the kick rather than the kick's
+own attack. `beater` instead renders a phase-integrated sine sweeping
+from `exciter_center_hz` down toward `exciter_beater_floor_ratio *
+exciter_center_hz` over `exciter_beater_chirp_s` seconds (antialiased via
+cumulative phase integration, not naive `sin(2*pi*f(t)*t)`), damped by
+its own short exponential envelope over that same window so it doesn't
+ring on at the floor pitch. An optional small amount of the existing
+`click`-style bandpassed noise can be blended in via `exciter_noise_blend`
+for a touch of grit/air on top of the knock; both the chirp and the
+blended noise share the same damping window.
+
+| Parameter | Type | Range | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `exciter_center_hz` | `float` | > 0 | `3200.0` | Starting frequency of the descending chirp (shared with `click`) |
+| `exciter_beater_floor_ratio` | `float` | (0, 1] | `0.25` | Chirp floor as a ratio of `exciter_center_hz` — how far the pitch falls |
+| `exciter_beater_chirp_s` | `float` | > 0 | `0.005` | Chirp glide + damping time constant in seconds; 3-8 ms is the intended beater-knock range |
+| `exciter_noise_blend` | `float` | 0.0-1.0 | `0.15` | Blend toward the bandpassed-noise `click` texture (0 = pure chirp, 1 = pure noise) |
+
 **Sample exciter params** (consumed when `exciter_type="sample"`):
 
 | Parameter | Type | Range | Default | Description |
@@ -4640,7 +4707,7 @@ digital character):
 | `808_hiphop` | Long 808-style sub kick with deep sweep |
 | `808_house` | Medium 808 with moderate sweep and punch |
 | `808_tape` | 808 with sine_clip body for tape-saturated warmth |
-| `909_techno` | Hard 909-style kick with triangle body and strong click |
+| `909_techno` | Hard 909-style kick with triangle body and a pitched beater knock (`exciter_type="beater"`) |
 | `909_house` | Clean 909 house kick with sharp attack |
 | `909_crunch` | 909 with sine_clip body and extra click emphasis |
 | `distorted_hardkick` | Aggressive hard kick with heavy click and sine_clip |
@@ -5120,6 +5187,25 @@ compose existing engine primitives rather than reimplementing DSP.
   frequency), `noise_bandwidth_ratio`
 - `flow` — Mutable Elements rare-event S&H exciter; `noise_flow_density`
   0..1
+- `rain` — deterministic rain texture: Poisson-arrival droplet clicks
+  (short exponentially-decaying bandpassed chirps, "drip" character) mixed
+  with a breathing bandpassed-pink-noise wash. Params: `noise_rain_density`
+  (0..1, droplet arrival rate — ~2/s at 0.1 to ~80/s at 1.0),
+  `noise_rain_brightness` (0..1, droplet band + wash top edge — 0.3 dull
+  window rain, 0.8 bright close rain on leaves), `noise_rain_drop_size`
+  (0..1, 0 = fine drizzle, 1 = fat drops), `noise_rain_wash` (0..1,
+  crossfade droplets-only to wash-only). RMS-normalized like `flow` so
+  switching `noise_type` preserves loudness. Underlying primitive is
+  `rain_exciter()` in `_dsp_utils.py`.
+- `found` — sample-free synthetic field-recording textures (vinyl crackle,
+  tape hiss, room tone, city rumble, wind gusts, rain) from
+  `code_musics/found_sound.py`. Params: `noise_found_texture` (required —
+  one of `"vinyl"` / `"tape"` / `"room"` / `"city"` / `"wind"` / `"rain"`)
+  plus the uniform `noise_found_density` / `noise_found_brightness` /
+  `noise_found_movement` knobs (0..1, defaults 0.5). RMS-normalized to the
+  shared `rain` target so switching textures preserves loudness. See the
+  **Found-sound textures** section below for per-texture knob semantics and
+  the `found_*` preset palette.
 
 **`grain`** — source-agnostic granulator (fifth slot, sums into the same
 post-chain as the four above). Granulates a *live-rendered* source buffer
@@ -5628,3 +5714,94 @@ existing primitives: adding a new slot type (e.g. a chaotic source) to
 `synth_voice` automatically becomes a valid `grain_source` if wired
 into `_build_source_buffer`. Determinism follows the per-note RNG like
 the other slots.
+
+## Found-sound textures
+
+Implementation: [code_musics/found_sound.py](code_musics/found_sound.py)
+
+Sample-free synthetic field-recording atmospheres — Burial / Boards of
+Canada / Basinski-adjacent "fake found sound" that sits inside pieces as
+ordinary texture voices. No samples, no network: purely synthetic DSP,
+deterministic from a seed, and RMS-normalized to the shared `rain_exciter`
+target (0.25) so switching textures (or `noise_type` values) never jumps
+the loudness.
+
+### Reaching the textures
+
+Two surfaces:
+
+1. **Voice-level (the normal path)** — the `synth_voice` noise slot with
+   `noise_type="found"`:
+
+   ```python
+   score.add_voice(
+       "atmosphere",
+       synth_defaults={
+           "engine": "synth_voice",
+           "preset": "found_dust_and_shellac",
+       },
+       mix_db=-16.0,
+   )
+   # Author as one long held note; the noise slot ignores note frequency.
+   score.add_note("atmosphere", start=0.0, duration=120.0, partial=1.0, amp_db=0.0)
+   ```
+
+   Everything downstream is a normal voice: LUFS normalization, `mix_db`,
+   effects, send buses, automation, and the full `synth_voice` post-chain
+   (HPF -> filter palette -> shaper) all apply.
+
+2. **Buffer-level** — call the generators directly when you need raw
+   arrays (e.g. custom layering or offline analysis):
+
+   ```python
+   from code_musics.found_sound import found_sound, vinyl_crackle
+
+   crackle = vinyl_crackle(44_100 * 8, 44_100, density=0.3, seed=7)
+   wind = found_sound("wind", 44_100 * 8, 44_100, movement=0.8, seed=7)
+   ```
+
+### The uniform three-knob surface
+
+Every texture shares one signature —
+`(n_samples, sample_rate, *, density=0.5, brightness=0.5, movement=0.5, seed)`
+— with texture-specific knob meanings. All knobs are 0..1 and follow the
+repo convention (0.2 subtle, 0.5 moderate, 0.8 strong). Voice-level params
+are the same knobs with a `noise_found_` prefix.
+
+| texture | what it fakes | `density` | `brightness` | `movement` |
+|---|---|---|---|---|
+| `vinyl` | vinyl crackle / dust | tick arrival rate (~2/s at 0.1 to ~50/s at 1.0; fat low "pops" at 1/12 that rate) | tick resonant band (1.5-4.5 kHz base) + dust-bed lowpass | slow breathing of the surface bed (~0.15 Hz) |
+| `tape` | tape hiss with wow/flutter | flutter AM rate (4-12 Hz) | hiss top edge (~3 kHz dull to ~15 kHz open) | wow (~0.7 Hz) + flutter AM depth, plus slow spectral dulling drift |
+| `room` | room tone | sub-120 Hz "building hum" shelf weight | lowpass corner (~200 Hz sealed to ~1.2 kHz aired) | very slow AM depth (0.02-0.1 Hz) |
+| `city` | distant traffic rumble / wash | traffic-pass rate (~1/20 s at 0.1 to ~1/1.5 s at 1.0) | rumble top edge (~120-600 Hz) | swell depth (passes also lift a faint 300-800 Hz tire-hiss wash) |
+| `wind` | wind gusts | gust rate (~0.05-0.4 Hz) | band center (~300-1500 Hz) | depth of the correlated gust AM **and** low<->high band drift (gusts get louder and brighter together) |
+| `rain` | rain on a surface | droplet arrival rate | droplet band + wash top edge | `wash = 1 - movement`: 0 = distant wash, 1 = close individual droplets |
+
+The `rain` texture delegates to `rain_exciter()` in
+`engines/_dsp_utils.py` (it is not a duplicate implementation); for the
+full four-knob rain surface (`drop_size` etc.) use `noise_type="rain"`
+directly.
+
+Implementation notes: impulsive events (vinyl ticks/pops) are
+Poisson-arrival decaying-sinusoid bursts; beds are FFT-shaped pink /
+brown / white noise; slow motion comes from summed random slow sinusoids
+(the same breathing recipe as the rain wash layer). Everything is derived
+from a single `numpy.random.default_rng(seed)` stream, so a fixed seed
+reproduces bit-identical output. At the voice level the seed derives from
+the per-note RNG like the rain/granular dispatches.
+
+### `found_*` presets (synth_voice)
+
+| preset | texture | character |
+|---|---|---|
+| `found_dust_and_shellac` | vinyl | worn 78rpm surface: sparse dark ticks, rare fat pops, slow-breathing dust bed |
+| `found_worn_cassette` | tape | hiss with audible wow/flutter and slow dulling drift |
+| `found_empty_room` | room | dark room tone with building-hum low end; sits under anything |
+| `found_city_at_night` | city | low rumble with sporadic swelling traffic passes through a closed window |
+| `found_wind_over_wires` | wind | gusting wind, long lulls, correlated loudness + brightness surges |
+| `found_rain_on_glass` | rain (`noise_type="rain"`) | steady wash-forward rain against a window |
+
+All presets set `noise_level=1.0` (the slot default is 0.1) and gentle
+lowpass + long attack/release so a single held note fades in as an
+atmosphere. Balance with the voice fader (`mix_db`) — these are texture
+beds, typically mixed 12-20 dB under the foreground.
