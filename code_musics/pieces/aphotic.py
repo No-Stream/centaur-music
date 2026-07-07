@@ -206,6 +206,16 @@ def _add_voices(score: Score) -> None:
         drift_bus="breath",
         drift_bus_correlation=0.85,
     )
+    add_drum_voice(
+        score,
+        "ticks",
+        engine="drum_voice",
+        preset="closed_hat",
+        drum_bus=drum_bus,
+        send_db=-6.0,
+        mix_db=-16.0,
+        pan=0.22,
+    )
     score.add_voice(
         "air",
         synth_defaults={"engine": "synth_voice", "preset": "found_empty_room"},
@@ -356,6 +366,198 @@ def _compose_section_i(score: Score, timeline: Timeline) -> None:
     )
 
 
+# The crystal motif: a falling three-note gesture (seventh -> dusk_sixth ->
+# floater) that recurs through II and IV and rings as a chord in III.
+_CRYSTAL_MOTIF: tuple[str, ...] = ("seventh", "dusk_sixth", "floater")
+
+
+def _add_crystal_motif(
+    score: Score,
+    timeline: Timeline,
+    *,
+    bar: int,
+    beat: float,
+    octave: float = 8.0,
+    amp_db: float = -16.5,
+    velocity: float = 0.8,
+    stretch: float = 1.0,
+) -> None:
+    for step_index, label in enumerate(_CRYSTAL_MOTIF):
+        score.add_note(
+            "crystal",
+            start=timeline.at(bar=bar, beat=beat + step_index * 1.1 * stretch),
+            duration=2.0 * stretch,
+            partial=_DEGREE[label] * octave,
+            amp_db=amp_db - 1.2 * step_index,
+            velocity=velocity - 0.05 * step_index,
+            pitch_motion=_slow_vibrato(),
+        )
+
+
+def _compose_section_ii(score: Score, timeline: Timeline) -> None:
+    """Skeleton: the kick coheres out of the drips; the cave starts answering."""
+    kick_rng = random.Random(4711)
+
+    # Bars 39-46: the kick is still a drip -- once a bar, placement wandering,
+    # then the wander tightens until it has settled into a pulse by bar 47.
+    for bar in range(_BARS_II[0], 47):
+        settle = (bar - _BARS_II[0]) / (47 - _BARS_II[0])
+        wander = 0.45 * (1.0 - settle) + 0.06 * settle
+        score.add_note(
+            "floor",
+            start=timeline.at(bar=bar, beat=kick_rng.uniform(0.0, wander)),
+            duration=1.4,
+            partial=1.0,
+            amp_db=-8.5,
+            velocity=0.66 + 0.06 * settle,
+        )
+
+    # Bars 47-77: the settled skeleton. Beat 1 every bar; a soft push on the
+    # "and of 3" roughly every other bar; whole-bar dropouts keep it breathing.
+    dropout_bars = {55, 63, 71}
+    for bar in range(47, _BARS_II[1] + 1):
+        if bar in dropout_bars:
+            continue
+        score.add_note(
+            "floor",
+            start=timeline.at(bar=bar) + kick_rng.uniform(-0.018, 0.018),
+            duration=1.4,
+            partial=1.0,
+            amp_db=-8.0,
+            velocity=kick_rng.uniform(0.72, 0.8),
+        )
+        if bar % 2 == 1 and kick_rng.random() < 0.7:
+            score.add_note(
+                "floor",
+                start=timeline.at(bar=bar, beat=2.5 + kick_rng.uniform(-0.03, 0.03)),
+                duration=1.1,
+                partial=1.0,
+                amp_db=-11.5,
+                velocity=kick_rng.uniform(0.5, 0.6),
+            )
+
+    # Ticks: near-subliminal metallic offbeats from bar 47, thinned by chance.
+    tick_rng = random.Random(4723)
+    for bar in range(47, _BARS_II[1] + 1):
+        for eighth in range(8):
+            if eighth % 2 == 0:
+                continue
+            if tick_rng.random() > 0.55:
+                continue
+            score.add_note(
+                "ticks",
+                start=timeline.at(bar=bar, beat=eighth * 0.5),
+                duration=0.1,
+                partial=64.0,
+                amp_db=-26.0 + tick_rng.uniform(-2.0, 1.0),
+                velocity=tick_rng.uniform(0.35, 0.55),
+            )
+
+    # Rain thickens and brightens across the section.
+    rain_rng = random.Random(4733)
+    for onset in _rain_onsets(
+        timeline,
+        start_bar=_BARS_II[0],
+        end_bar=_BARS_II[1],
+        density_start=0.3,
+        density_end=0.55,
+        seed=137,
+    ):
+        score.add_note(
+            "rain",
+            start=onset,
+            duration=rain_rng.uniform(0.25, 0.6),
+            partial=_rain_pitch(rain_rng),
+            amp_db=-18.5 + rain_rng.uniform(-3.0, 1.5),
+            velocity=rain_rng.uniform(0.5, 0.85),
+        )
+
+    # Air keeps breathing underneath, a shade further back.
+    air_cursor = timeline.at(bar=_BARS_II[0])
+    section_end = timeline.at(bar=_BARS_III[0])
+    breath_index = 0
+    while air_cursor < section_end:
+        breath_dur = 20.0 + 5.0 * (breath_index % 2)
+        score.add_note(
+            "air",
+            start=air_cursor,
+            duration=breath_dur,
+            partial=4.0,
+            amp_db=-27.0,
+            velocity=0.55,
+        )
+        air_cursor += breath_dur * 0.7
+        breath_index += 1
+
+    # Underbed: the utonal pair as one dark chord, then a septimal shift that
+    # leans the harmony toward the illumination to come.
+    score.add_note(
+        "underbed",
+        start=timeline.at(bar=41),
+        duration=timeline.at(bar=58) - timeline.at(bar=41),
+        partial=16.0 / 7.0,
+        amp_db=-25.0,
+        velocity=0.58,
+        pitch_motion=_slow_vibrato(depth_ratio=0.0016, rate_hz=2.2),
+    )
+    score.add_note(
+        "underbed",
+        start=timeline.at(bar=41),
+        duration=timeline.at(bar=58) - timeline.at(bar=41),
+        partial=32.0 / 11.0,
+        amp_db=-27.0,
+        velocity=0.55,
+        pitch_motion=_slow_vibrato(depth_ratio=0.0016, rate_hz=2.6),
+    )
+    score.add_note(
+        "underbed",
+        start=timeline.at(bar=59),
+        duration=timeline.at(bar=_BARS_III[0]) - timeline.at(bar=59),
+        partial=7.0 / 4.0,
+        amp_db=-25.0,
+        velocity=0.6,
+        pitch_motion=PitchMotionSpec.ratio_glide(start_ratio=0.997, end_ratio=1.0),
+    )
+
+    # The crystal motif recurs, answering the skeleton from the dark.
+    _add_crystal_motif(score, timeline, bar=44, beat=1.5, amp_db=-17.5, velocity=0.74)
+    _add_crystal_motif(score, timeline, bar=52, beat=0.5)
+    _add_crystal_motif(
+        score, timeline, bar=60, beat=2.0, octave=16.0, amp_db=-19.0, velocity=0.7
+    )
+    _add_crystal_motif(score, timeline, bar=68, beat=0.5, stretch=1.4)
+    # Fragment of the motif (first two tones) as II thins toward III.
+    score.add_note(
+        "crystal",
+        start=timeline.at(bar=75, beat=1.0),
+        duration=2.6,
+        partial=_DEGREE["seventh"] * 8.0,
+        amp_db=-17.0,
+        velocity=0.72,
+        pitch_motion=_slow_vibrato(),
+    )
+    score.add_note(
+        "crystal",
+        start=timeline.at(bar=76, beat=1.6),
+        duration=3.0,
+        partial=_DEGREE["dusk_sixth"] * 8.0,
+        amp_db=-18.5,
+        velocity=0.66,
+        pitch_motion=_slow_vibrato(),
+    )
+
+    # One bow swell foreshadows the illumination as the beat prepares to leave.
+    score.add_note(
+        "bow",
+        start=timeline.at(bar=74),
+        duration=timeline.at(bar=_BARS_III[0]) - timeline.at(bar=74),
+        partial=7.0,
+        amp_db=-24.0,
+        velocity=0.6,
+        pitch_motion=_slow_vibrato(depth_ratio=0.0018, rate_hz=2.4),
+    )
+
+
 def _section_boundaries(timeline: Timeline) -> tuple[PieceSection, ...]:
     return (
         PieceSection(
@@ -393,6 +595,7 @@ def build_aphotic() -> Score:
     )
     _add_voices(score)
     _compose_section_i(score, timeline)
+    _compose_section_ii(score, timeline)
     return score
 
 
