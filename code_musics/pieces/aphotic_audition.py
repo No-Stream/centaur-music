@@ -11,7 +11,7 @@ from __future__ import annotations
 from code_musics.pieces._shared import DEFAULT_MASTER_EFFECTS, bricasti_or_reverb
 from code_musics.pieces.registry import PieceDefinition, PieceSection
 from code_musics.pitch_motion import PitchMotionSpec
-from code_musics.score import Score, VoiceSend
+from code_musics.score import EffectSpec, Score, VoiceSend
 from code_musics.spectra import harmonic_spectrum, sieved_harmonic_spectrum
 
 APHOTIC_F0_HZ = 46.249  # F#1: sub tonic of the eventual piece
@@ -311,12 +311,132 @@ def _section_boundaries() -> tuple[PieceSection, ...]:
     return tuple(sections)
 
 
+# --------------------------------------------------------------------------
+# Space audition: the same material through four cave-space candidates.
+# --------------------------------------------------------------------------
+
+_SPACE_VARIANT_DUR = 24.0
+
+_SPACE_VARIANTS: tuple[tuple[str, str], ...] = (
+    ("fdn_20s", "FDN alone, 20 s decay"),
+    ("fdn_45s", "FDN alone, 45 s decay"),
+    ("serial", "close dark reverb into 30 s FDN"),
+    ("parallel", "two-depth parallel sends (close + vast)"),
+)
+
+
+def _fdn(decay_s: float, **overrides: float) -> EffectSpec:
+    params: dict[str, object] = {
+        "decay_s": decay_s,
+        "size": 0.95,
+        "predelay_ms": 55.0,
+        "damping_hz": 4_200.0,
+        "low_decay_mult": 1.35,
+        "modulation_depth": 0.3,
+        "modulation_rate_hz": 0.11,
+        "diffusion": 0.75,
+        "mix": 1.0,
+        "highpass_hz": 60.0,
+        "lowpass_hz": 9_000.0,
+    }
+    params.update(overrides)
+    return EffectSpec("fdn_reverb", params)
+
+
+def _space_material(score: Score, voice: str, start: float) -> None:
+    """~14 s of shared audition material: chord swell, strikes, drip pings."""
+    for note_index, partial in enumerate((4.0, 7.0, 11.0)):
+        score.add_note(
+            voice,
+            start=start + 0.2 * note_index,
+            duration=7.5,
+            partial=partial,
+            amp_db=-21.0 - 1.5 * note_index,
+            velocity=0.78,
+            pitch_motion=_slow_vibrato(),
+        )
+    for strike_index, (offset, label, octave) in enumerate(
+        (
+            (8.6, "seventh", _AUDITION_OCTAVE),
+            (10.2, "floater", _AUDITION_OCTAVE * 2.0),
+            (12.0, "root", _AUDITION_OCTAVE * 2.0),
+        )
+    ):
+        score.add_note(
+            voice,
+            start=start + offset,
+            duration=0.9,
+            partial=_degree(label, octave),
+            amp_db=-17.0,
+            velocity=0.86 - 0.04 * strike_index,
+            synth={"attack": 0.004, "release": 1.2},
+        )
+    # The rest of the variant window is tail listening.
+
+
+def build_aphotic_space_audition() -> Score:
+    """Audition four cave-space candidates on identical tri-free material."""
+    score = Score(f0_hz=APHOTIC_F0_HZ, master_effects=DEFAULT_MASTER_EFFECTS)
+
+    close_reverb = bricasti_or_reverb(
+        "1 Halls 07 Large & Dark", 1.0, room_size=0.5, damping=0.75
+    )
+    score.add_send_bus("fdn_20s", effects=[_fdn(20.0)])
+    score.add_send_bus("fdn_45s", effects=[_fdn(45.0)])
+    score.add_send_bus("serial", effects=[close_reverb, _fdn(30.0)])
+    # Parallel two-depth: the variant voice feeds both of these at once.
+    score.add_send_bus("close", effects=[close_reverb])
+    score.add_send_bus("vast", effects=[_fdn(45.0, predelay_ms=110.0)])
+
+    variant_sends: dict[str, list[VoiceSend]] = {
+        "fdn_20s": [VoiceSend("fdn_20s", send_db=-6.0)],
+        "fdn_45s": [VoiceSend("fdn_45s", send_db=-6.0)],
+        "serial": [VoiceSend("serial", send_db=-6.0)],
+        "parallel": [
+            VoiceSend("close", send_db=-9.0),
+            VoiceSend("vast", send_db=-7.0),
+        ],
+    }
+    for variant_index, (variant_name, _description) in enumerate(_SPACE_VARIANTS):
+        score.add_voice(
+            f"crystal_{variant_name}",
+            synth_defaults=_crystal_defaults(),
+            mix_db=-7.0,
+            sends=variant_sends[variant_name],
+            normalize_lufs=-24.0,
+        )
+        _space_material(
+            score,
+            f"crystal_{variant_name}",
+            variant_index * _SPACE_VARIANT_DUR,
+        )
+    return score
+
+
+def _space_section_boundaries() -> tuple[PieceSection, ...]:
+    return tuple(
+        PieceSection(
+            description,
+            index * _SPACE_VARIANT_DUR,
+            (index + 1) * _SPACE_VARIANT_DUR,
+        )
+        for index, (_name, description) in enumerate(_SPACE_VARIANTS)
+    )
+
+
 PIECES: dict[str, PieceDefinition] = {
     "aphotic_audition": PieceDefinition(
         name="aphotic_audition",
         output_name="aphotic_audition",
         build_score=build_aphotic_audition,
         sections=_section_boundaries(),
+        study=True,
+    ),
+    "aphotic_space_audition": PieceDefinition(
+        name="aphotic_space_audition",
+        output_name="aphotic_space_audition",
+        build_score=build_aphotic_space_audition,
+        sections=_space_section_boundaries(),
         study=True,
     ),
 }
