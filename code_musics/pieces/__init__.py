@@ -6,6 +6,7 @@ from code_musics.pieces.analog_filter_bus_study import (
     PIECES as _ANALOG_FILTER_BUS_STUDY_PIECES,
 )
 from code_musics.pieces.anneal import PIECES as _ANNEAL_PIECES
+from code_musics.pieces.aphotic import PIECES as _APHOTIC_PIECES
 from code_musics.pieces.aphotic_audition import PIECES as _APHOTIC_AUDITION_PIECES
 from code_musics.pieces.beating_light import PIECES as _BEATING_LIGHT_PIECES
 from code_musics.pieces.bell_pulse import PIECES as _BELL_PULSE_PIECES
@@ -86,6 +87,7 @@ PIECES = merge_piece_maps(
     _ADDITIVE_STUDY_PIECES,
     _AMBER_ROOM_PIECES,
     _ANNEAL_PIECES,
+    _APHOTIC_PIECES,
     _APHOTIC_AUDITION_PIECES,
     _BWV_846_PIECES,
     _BWV_846_FUGUE_PIECES,
