@@ -1067,13 +1067,16 @@ severity regardless of context:
   gating decision (`voice_relative_level_db`) is recorded on any warning that
   survives, so it stays auditable in the manifest.
 - Cumulative effect-chain brightness codes (`chain_papery`,
-  `chain_brightness_creep`, `perceptual_brightness_lift`) are capped at
-  "warning" (never "severe") when the chain's input was mostly silent across
-  the render (loudness-gated active-block fraction below ~25%, exposed as
-  `chain_input_active_fraction` on the summary/warning metrics). A drum bus
-  that drops out for whole sections can otherwise produce a huge *relative*
+  `chain_brightness_creep`, `perceptual_brightness_lift`) are gated on input
+  activity when the chain's input was mostly silent across the render
+  (loudness-gated active-block fraction below ~25%, exposed as
+  `chain_input_active_fraction` on the summary/warning metrics): the
+  warning-tier variants are suppressed entirely, and the severe-tier variants
+  are capped at "warning". A drum bus that drops out for whole sections (or
+  carries only a sparse kick) can otherwise produce a huge *relative*
   centroid/high-band lift from a handful of active blocks without anything
-  audibly wrong happening.
+  audibly wrong happening — in practice the warning tier fired there as a
+  pure false positive.
 
 ## Recommended Usage
 

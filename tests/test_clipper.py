@@ -879,3 +879,68 @@ class TestChainSummary:
         codes = {w.code: w for w in summary.warnings}
         assert "chain_papery" in codes
         assert codes["chain_papery"].severity == "warning"
+
+    def test_warning_tier_brightness_codes_suppressed_on_sparse_input(self) -> None:
+        """Warning-tier papery/brightness codes are unreliable on sparse
+        transient buses (e.g. a lone kick) and must not fire there."""
+        entries = [
+            {
+                "index": 0,
+                "kind": "preamp",
+                "display_name": "preamp",
+                "metrics": {
+                    "high_band_delta_db": 3.0,
+                    "a_weighted_high_band_delta_db": 3.0,
+                    "spectral_centroid_delta_hz": 400.0,
+                    "input_active_window_fraction": 0.15,
+                },
+                "warnings": [],
+            },
+            {
+                "index": 1,
+                "kind": "clipper",
+                "display_name": "clipper",
+                "metrics": {
+                    "high_band_delta_db": 2.5,
+                    "a_weighted_high_band_delta_db": 2.5,
+                    "spectral_centroid_delta_hz": 250.0,
+                },
+                "warnings": [],
+            },
+        ]
+        summary = build_chain_summary_from_dicts(entries, chain_label="drum_bus")
+        assert summary is not None
+        codes = {w.code for w in summary.warnings}
+        assert "chain_papery" not in codes
+        assert "perceptual_brightness_lift" not in codes
+        assert "chain_brightness_creep" not in codes
+
+    def test_warning_tier_brightness_codes_fire_on_active_input(self) -> None:
+        entries = [
+            {
+                "index": 0,
+                "kind": "preamp",
+                "display_name": "preamp",
+                "metrics": {
+                    "high_band_delta_db": 3.0,
+                    "a_weighted_high_band_delta_db": 3.0,
+                    "input_active_window_fraction": 0.8,
+                },
+                "warnings": [],
+            },
+            {
+                "index": 1,
+                "kind": "clipper",
+                "display_name": "clipper",
+                "metrics": {
+                    "high_band_delta_db": 2.5,
+                    "a_weighted_high_band_delta_db": 2.5,
+                },
+                "warnings": [],
+            },
+        ]
+        summary = build_chain_summary_from_dicts(entries, chain_label="drum_bus")
+        assert summary is not None
+        codes = {w.code: w for w in summary.warnings}
+        assert codes["chain_papery"].severity == "warning"
+        assert codes["perceptual_brightness_lift"].severity == "warning"

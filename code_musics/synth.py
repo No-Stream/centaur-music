@@ -2435,7 +2435,14 @@ def _build_chain_summary(
                 chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
-    elif chain_has_nonlinear_stage and total_high_band_lift_db >= 4.0:
+    elif (
+        chain_has_nonlinear_stage
+        and total_high_band_lift_db >= 4.0
+        and chain_input_active_fraction >= _CHAIN_SPARSE_INPUT_ACTIVE_FRACTION
+    ):
+        # Warning-tier brightness codes are suppressed entirely on sparse
+        # input (lone-kick drum buses etc.): the lift measurement is
+        # unreliable there and fires as a false positive.
         warnings.append(
             _build_effect_warning(
                 severity="warning",
@@ -2460,7 +2467,10 @@ def _build_chain_summary(
                 chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
-    elif total_centroid_lift_hz >= 500.0:
+    elif (
+        total_centroid_lift_hz >= 500.0
+        and chain_input_active_fraction >= _CHAIN_SPARSE_INPUT_ACTIVE_FRACTION
+    ):
         warnings.append(
             _build_effect_warning(
                 severity="warning",
@@ -2541,7 +2551,11 @@ def _build_chain_summary(
                 chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
-    elif chain_has_nonlinear_stage and total_a_weighted_lift_db >= 4.0:
+    elif (
+        chain_has_nonlinear_stage
+        and total_a_weighted_lift_db >= 4.0
+        and chain_input_active_fraction >= _CHAIN_SPARSE_INPUT_ACTIVE_FRACTION
+    ):
         warnings.append(
             _build_effect_warning(
                 severity="warning",
