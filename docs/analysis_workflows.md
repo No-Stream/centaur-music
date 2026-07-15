@@ -75,12 +75,16 @@ Initial artifact contents:
 - voice activity windows
 - time-binned onset density and active-note density
 - optional rough registral summaries per time window
+- optional musical-time metadata when `Score.timeline` is set, including
+  `musical_time.tempo_map` plus authored/resolved bar-beat locations per note
 
 Current shape:
 
 - one stable latest timeline artifact path recorded in the analysis manifest
 - versioned copies alongside existing versioned render artifacts
 - plain JSON that can be read directly in Python
+- score seconds remain the canonical timing; musical-time fields are metadata
+  derived from the attached `Timeline`
 
 The timeline JSON is the substrate used by the inspector and is the preferred
 machine-readable entry point for any future UI work.

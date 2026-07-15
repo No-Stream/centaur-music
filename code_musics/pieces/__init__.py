@@ -5,6 +5,9 @@ from code_musics.pieces.amber_room import PIECES as _AMBER_ROOM_PIECES
 from code_musics.pieces.analog_filter_bus_study import (
     PIECES as _ANALOG_FILTER_BUS_STUDY_PIECES,
 )
+from code_musics.pieces.anneal import PIECES as _ANNEAL_PIECES
+from code_musics.pieces.aphotic import PIECES as _APHOTIC_PIECES
+from code_musics.pieces.aphotic_audition import PIECES as _APHOTIC_AUDITION_PIECES
 from code_musics.pieces.beating_light import PIECES as _BEATING_LIGHT_PIECES
 from code_musics.pieces.bell_pulse import PIECES as _BELL_PULSE_PIECES
 from code_musics.pieces.bowed_glass import PIECES as _BOWED_GLASS_PIECES
@@ -47,6 +50,7 @@ from code_musics.pieces.natural_steps import PIECES as _NATURAL_STEPS_PIECES
 from code_musics.pieces.newton_bloom import PIECES as _NEWTON_BLOOM_PIECES
 from code_musics.pieces.night_carriage import PIECES as _NIGHT_CARRIAGE_PIECES
 from code_musics.pieces.night_lattice import PIECES as _NIGHT_LATTICE_PIECES
+from code_musics.pieces.ninth_wave import PIECES as _NINTH_WAVE_PIECES
 from code_musics.pieces.organ_passacaglia import PIECES as _ORGAN_CHORALE_PIECES
 from code_musics.pieces.phase_garden import PIECES as _PHASE_GARDEN_PIECES
 from code_musics.pieces.registry import merge_piece_maps
@@ -56,6 +60,10 @@ from code_musics.pieces.septimal_bloom import PIECES as _SEPTIMAL_BLOOM_PIECES
 from code_musics.pieces.seventh_window import PIECES as _SEVENTH_WINDOW_PIECES
 from code_musics.pieces.slow_glass import PIECES as _SLOW_GLASS_PIECES
 from code_musics.pieces.slow_glass_v2 import PIECES as _SLOW_GLASS_V2_PIECES
+from code_musics.pieces.sodium_hymn import PIECES as _SODIUM_HYMN_PIECES
+from code_musics.pieces.spectral_palette_study import (
+    PIECES as _SPECTRAL_PALETTE_STUDY_PIECES,
+)
 from code_musics.pieces.spectral_passage import PIECES as _SPECTRAL_PASSAGE_PIECES
 from code_musics.pieces.spectral_studies import PIECES as _SPECTRAL_STUDY_PIECES
 from code_musics.pieces.still_window import PIECES as _STILL_WINDOW_PIECES
@@ -67,6 +75,7 @@ from code_musics.pieces.trance_studies import PIECES as _TRANCE_PIECES
 from code_musics.pieces.tube_palette_study import (
     PIECES as _TUBE_PALETTE_STUDY_PIECES,
 )
+from code_musics.pieces.undertow_canon import PIECES as _UNDERTOW_CANON_PIECES
 from code_musics.pieces.va_showcase import PIECES as _VA_SHOWCASE_PIECES
 from code_musics.pieces.va_trance import PIECES as _VA_TRANCE_PIECES
 from code_musics.pieces.velvet_wall import PIECES as _VELVET_WALL_PIECES
@@ -77,6 +86,9 @@ from code_musics.pieces.wtc_sketches import PIECES as _WTC_PIECES
 PIECES = merge_piece_maps(
     _ADDITIVE_STUDY_PIECES,
     _AMBER_ROOM_PIECES,
+    _ANNEAL_PIECES,
+    _APHOTIC_PIECES,
+    _APHOTIC_AUDITION_PIECES,
     _BWV_846_PIECES,
     _BWV_846_FUGUE_PIECES,
     _SEPTIMAL_PIECES,
@@ -100,6 +112,7 @@ PIECES = merge_piece_maps(
     _SLOW_GLASS_PIECES,
     _SLOW_GLASS_V2_PIECES,
     _SPECTRAL_PASSAGE_PIECES,
+    _SPECTRAL_PALETTE_STUDY_PIECES,
     _SPECTRAL_STUDY_PIECES,
     _TECHNO_PIECES,
     _COLUNDI_ARPS_STUDY_PIECES,
@@ -130,6 +143,7 @@ PIECES = merge_piece_maps(
     _CLOCK_OF_7_PIECES,
     _MISTY_PIXEL_PIECES,
     _NIGHT_CARRIAGE_PIECES,
+    _NINTH_WAVE_PIECES,
     _ANALOG_FILTER_BUS_STUDY_PIECES,
     _SCANNED_GARDEN_PIECES,
     _COUPLED_BELLS_PIECES,
@@ -139,6 +153,8 @@ PIECES = merge_piece_maps(
     _IAMBIC_GHOST_PIECES,
     _STILL_WINDOW_PIECES,
     _WEAVING_ROOM_PIECES,
+    _UNDERTOW_CANON_PIECES,
+    _SODIUM_HYMN_PIECES,
 )
 
 __all__ = ["PIECES"]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import Any
 
 import numpy as np
@@ -168,11 +168,21 @@ _PARAM_ALIAS_TO_CANONICAL: dict[str, str] = {
     "filter1_resonance_q": "filter1_resonance_q",
     "filter1_filter_drive_ratio": "filter1_filter_drive",
     "filter1_filter_drive": "filter1_filter_drive",
+    "filter1_filter_morph_ratio": "filter1_filter_morph",
+    "filter1_filter_morph": "filter1_filter_morph",
+    "filter1_hpf_cutoff_hz": "filter1_hpf_cutoff_hz",
+    "filter1_feedback_amount_ratio": "filter1_feedback_amount",
+    "filter1_feedback_amount": "filter1_feedback_amount",
     "filter2_cutoff_hz": "filter2_cutoff_hz",
     "filter2_resonance_ratio": "filter2_resonance_q",
     "filter2_resonance_q": "filter2_resonance_q",
     "filter2_filter_drive_ratio": "filter2_filter_drive",
     "filter2_filter_drive": "filter2_filter_drive",
+    "filter2_filter_morph_ratio": "filter2_filter_morph",
+    "filter2_filter_morph": "filter2_filter_morph",
+    "filter2_hpf_cutoff_hz": "filter2_hpf_cutoff_hz",
+    "filter2_feedback_amount_ratio": "filter2_feedback_amount",
+    "filter2_feedback_amount": "filter2_feedback_amount",
 }
 
 _SECONDS_FROM_MS_PARAM_KEYS = {
@@ -2688,10 +2698,16 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "noise_center_ratio": 18.0,
         },
         "909_techno": {
-            "exciter_type": "click",
-            "exciter_level": 0.18,
+            # Beater knock (pitch-descending chirp) instead of pure bandpassed
+            # noise ("click") — reads as a beater striking the skin rather
+            # than a noisy clap/snare layered on top of the kick.
+            "exciter_type": "beater",
+            "exciter_level": 0.16,
             "exciter_decay_s": 0.006,
             "exciter_center_hz": 4400.0,
+            "exciter_beater_floor_ratio": 0.22,
+            "exciter_beater_chirp_s": 0.004,
+            "exciter_noise_blend": 0.12,
             "tone_type": "oscillator",
             "tone_level": 1.0,
             "tone_decay_s": 0.3,
@@ -2700,9 +2716,11 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "tone_sweep_decay_s": 0.034,
             "tone_punch": 0.28,
             "tone_second_harmonic": 0.22,
+            # Short/quiet air only: a louder ~20 ms midband noise burst reads
+            # as a snare layered on the kick, not as part of the kick.
             "noise_type": "bandpass",
-            "noise_level": 0.03,
-            "noise_decay_s": 0.018,
+            "noise_level": 0.012,
+            "noise_decay_s": 0.008,
             "noise_center_ratio": 44.0,
         },
         "909_house": {
@@ -3370,55 +3388,51 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
         # --- Metallic presets (from metallic_perc) ---
         "closed_hat": {
             "exciter_type": "click",
-            "exciter_level": 0.08,
+            "exciter_level": 0.12,
             "exciter_decay_s": 0.007,
-            "exciter_center_hz": 5600.0,
+            "exciter_center_hz": 8000.0,
             "tone_type": None,
             "tone_sweep_ratio": 1.0,
             "metallic_type": "hat_noise",
             "metallic_level": 1.0,
-            "metallic_decay_s": 0.06,
+            "metallic_decay_s": 0.015,
             "metallic_n_partials": 24,
-            "metallic_brightness": 0.48,
+            "metallic_brightness": 0.6,
             "metallic_density": 0.9,
-            "metallic_hat_noise_mix": 0.74,
+            "metallic_hat_noise_mix": 0.8,
             "metallic_hat_partial_decay_spread": 0.82,
-            "metallic_hat_noise_bp_hz": 6500.0,
-            "metallic_hat_noise_bp_q": 0.65,
+            "metallic_hat_bank_hp_hz": 6500.0,
+            "metallic_hat_noise_hp_hz": 6000.0,
+            "metallic_hat_noise_bp_hz": 8500.0,
+            "metallic_hat_noise_bp_q": 0.7,
             "metallic_filter_mode": "highpass",
             "metallic_filter_q": 0.707,
-            "metallic_filter_cutoff_hz": 4200.0,
-            "noise_type": "bandpass",
-            "noise_level": 0.40,
-            "noise_decay_s": 0.06,
-            "noise_center_ratio": 1.42,
-            "noise_width_ratio": 2.0,
+            "metallic_filter_cutoff_hz": 6500.0,
+            "noise_type": None,
         },
         "open_hat": {
             "exciter_type": "click",
-            "exciter_level": 0.05,
+            "exciter_level": 0.08,
             "exciter_decay_s": 0.007,
-            "exciter_center_hz": 5600.0,
+            "exciter_center_hz": 8000.0,
             "tone_type": None,
             "tone_sweep_ratio": 1.0,
             "metallic_type": "hat_noise",
             "metallic_level": 1.0,
-            "metallic_decay_s": 0.35,
+            "metallic_decay_s": 0.13,
             "metallic_n_partials": 30,
-            "metallic_brightness": 0.52,
+            "metallic_brightness": 0.6,
             "metallic_density": 0.9,
-            "metallic_hat_noise_mix": 0.82,
+            "metallic_hat_noise_mix": 0.88,
             "metallic_hat_partial_decay_spread": 0.78,
-            "metallic_hat_noise_bp_hz": 6200.0,
-            "metallic_hat_noise_bp_q": 0.65,
+            "metallic_hat_bank_hp_hz": 5500.0,
+            "metallic_hat_noise_hp_hz": 4800.0,
+            "metallic_hat_noise_bp_hz": 7800.0,
+            "metallic_hat_noise_bp_q": 0.6,
             "metallic_filter_mode": "highpass",
             "metallic_filter_q": 0.707,
-            "metallic_filter_cutoff_hz": 3600.0,
-            "noise_type": "bandpass",
-            "noise_level": 0.58,
-            "noise_decay_s": 0.35,
-            "noise_center_ratio": 1.35,
-            "noise_width_ratio": 2.1,
+            "metallic_filter_cutoff_hz": 5200.0,
+            "noise_type": None,
         },
         "pedal_hat": {
             "exciter_type": "click",
@@ -5321,6 +5335,113 @@ _PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "attack": 0.15,
             "release": 2.0,
         },
+        # --- Found-sound presets (found_*) ---
+        #
+        # Fake field recordings: sample-free synthetic atmospheres from
+        # code_musics/found_sound.py via the noise slot's
+        # noise_type="found".  Burial / BoC / Basinski territory — author
+        # them as long held notes on a quiet texture voice; the note
+        # frequency is ignored by the noise slot, so any partial works.
+        "found_dust_and_shellac": {
+            # Worn 78rpm surface: sparse resonant ticks, rare fat pops,
+            # dark dust bed breathing slowly underneath.
+            "noise_type": "found",
+            "noise_found_texture": "vinyl",
+            "noise_level": 1.0,
+            "noise_found_density": 0.35,
+            "noise_found_brightness": 0.35,
+            "noise_found_movement": 0.4,
+            "filter_mode": "lowpass",
+            "filter_topology": "svf",
+            "filter_cutoff_hz": 5000.0,
+            "resonance_q": 0.707,
+            "hpf_cutoff_hz": 60.0,
+            "attack": 0.4,
+            "release": 1.5,
+        },
+        "found_worn_cassette": {
+            # Tape hiss with audible wow/flutter and slow dulling drift —
+            # the sound of a cassette that's been loved too long.
+            "noise_type": "found",
+            "noise_found_texture": "tape",
+            "noise_level": 1.0,
+            "noise_found_density": 0.5,
+            "noise_found_brightness": 0.4,
+            "noise_found_movement": 0.6,
+            "filter_mode": "lowpass",
+            "filter_topology": "svf",
+            "filter_cutoff_hz": 7000.0,
+            "resonance_q": 0.707,
+            "hpf_cutoff_hz": 100.0,
+            "attack": 0.8,
+            "release": 2.0,
+        },
+        "found_empty_room": {
+            # Dark room tone with building-hum low end and near-static
+            # slow breathing.  Sits under anything without being heard.
+            "noise_type": "found",
+            "noise_found_texture": "room",
+            "noise_level": 1.0,
+            "noise_found_density": 0.6,
+            "noise_found_brightness": 0.25,
+            "noise_found_movement": 0.5,
+            "filter_mode": "lowpass",
+            "filter_topology": "svf",
+            "filter_cutoff_hz": 1200.0,
+            "resonance_q": 0.707,
+            "attack": 1.2,
+            "release": 3.0,
+        },
+        "found_city_at_night": {
+            # Distant traffic through a closed window: low rumble with
+            # sporadic swelling passes and a faint tire-hiss wash.
+            "noise_type": "found",
+            "noise_found_texture": "city",
+            "noise_level": 1.0,
+            "noise_found_density": 0.4,
+            "noise_found_brightness": 0.3,
+            "noise_found_movement": 0.7,
+            "filter_mode": "lowpass",
+            "filter_topology": "svf",
+            "filter_cutoff_hz": 800.0,
+            "resonance_q": 0.707,
+            "attack": 1.5,
+            "release": 4.0,
+        },
+        "found_wind_over_wires": {
+            # Gusting wind: correlated loudness + brightness surges with
+            # long lulls between them.  Push movement up for a storm.
+            "noise_type": "found",
+            "noise_found_texture": "wind",
+            "noise_level": 1.0,
+            "noise_found_density": 0.45,
+            "noise_found_brightness": 0.55,
+            "noise_found_movement": 0.75,
+            "filter_mode": "lowpass",
+            "filter_topology": "svf",
+            "filter_cutoff_hz": 4000.0,
+            "resonance_q": 0.707,
+            "hpf_cutoff_hz": 80.0,
+            "attack": 1.0,
+            "release": 2.5,
+        },
+        "found_rain_on_glass": {
+            # Steady rain against a window — wash-forward, dull droplets.
+            # Uses the noise slot's rain type directly (rain_exciter).
+            "noise_type": "rain",
+            "noise_level": 1.0,
+            "noise_rain_density": 0.45,
+            "noise_rain_brightness": 0.35,
+            "noise_rain_drop_size": 0.4,
+            "noise_rain_wash": 0.6,
+            "filter_mode": "lowpass",
+            "filter_topology": "svf",
+            "filter_cutoff_hz": 5500.0,
+            "resonance_q": 0.707,
+            "hpf_cutoff_hz": 120.0,
+            "attack": 1.0,
+            "release": 2.0,
+        },
     },
 }
 
@@ -5435,16 +5556,93 @@ def _rewrite_aliases_in_place(
         resolved_canonical_keys.add(canonical_name)
 
 
-_PARAM_PROFILE_AWARE_ENGINES: set[str] = {"polyblep", "va"}
+_PARAM_PROFILE_SUPPORT: dict[str, frozenset[str]] = {
+    "polyblep": frozenset(
+        {
+            "cutoff_hz",
+            "feedback_amount",
+            "filter_drive",
+            "filter_morph",
+            "hpf_cutoff_hz",
+            "osc2_detune_cents",
+            "osc2_freq_ratio",
+            "pulse_width",
+            "resonance_q",
+            "voice_dist_drive",
+        }
+    ),
+    "filtered_stack": frozenset(
+        {
+            "cutoff_hz",
+            "feedback_amount",
+            "filter_drive",
+            "filter_morph",
+            "hpf_cutoff_hz",
+            "resonance_q",
+            "voice_dist_drive",
+        }
+    ),
+    "synth_voice": frozenset(
+        {
+            "feedback_amount",
+            "filter_cutoff_hz",
+            "filter_drive",
+            "filter_morph",
+            "hpf_cutoff_hz",
+            "resonance_q",
+            "shaper_drive",
+        }
+    ),
+    "drum_voice": frozenset(
+        {
+            "feedback_amount",
+            "filter_cutoff_hz",
+            "filter_drive",
+            "filter_morph",
+            "filter_q",
+            "shaper_drive",
+        }
+    ),
+    "va": frozenset(
+        {
+            "cutoff_hz",
+            "drive_amount",
+            "feedback_amount",
+            "filter_drive",
+            "filter_morph",
+            "hpf_cutoff_hz",
+            "osc_spread_cents",
+            "resonance_q",
+            "voice_dist_drive",
+            "filter1_cutoff_hz",
+            "filter1_feedback_amount",
+            "filter1_filter_drive",
+            "filter1_filter_morph",
+            "filter1_hpf_cutoff_hz",
+            "filter1_resonance_q",
+            "filter2_cutoff_hz",
+            "filter2_feedback_amount",
+            "filter2_filter_drive",
+            "filter2_filter_morph",
+            "filter2_hpf_cutoff_hz",
+            "filter2_resonance_q",
+        }
+    ),
+}
 
 
-def register_param_profile_support(engine_name: str) -> None:
-    """Declare that an engine accepts the ``param_profiles`` kwarg.
+def register_param_profile_support(
+    engine_name: str, param_names: Collection[str]
+) -> None:
+    """Declare destination-specific ``param_profiles`` support for an engine.
 
-    Engines opt in explicitly so that engines without per-sample
-    profile plumbing don't receive an unexpected keyword argument.
+    Engines opt in explicitly per destination so the score router and
+    direct render calls do not confuse "accepts the param_profiles
+    kwarg" with "consumes every profile key".
     """
-    _PARAM_PROFILE_AWARE_ENGINES.add(engine_name)
+    if not param_names:
+        raise ValueError("param_names must not be empty")
+    _PARAM_PROFILE_SUPPORT[engine_name] = frozenset(param_names)
 
 
 def engine_supports_param_profile(engine_name: str, param_name: str) -> bool:
@@ -5452,13 +5650,41 @@ def engine_supports_param_profile(engine_name: str, param_name: str) -> bool:
 
     Used by the Score render path to decide between the scalar matrix
     fold (engine does not consume the profile) and the per-sample
-    profile path (engine does).  Currently engines either consume all
-    per-sample-capable destinations or none, so ``param_name`` is only
-    used so callers can ask at the destination granularity the matrix
-    routes at.
+    profile path (engine does).
     """
-    del param_name
-    return engine_name in _PARAM_PROFILE_AWARE_ENGINES
+    return param_name in _PARAM_PROFILE_SUPPORT.get(engine_name, frozenset())
+
+
+def _validate_param_profiles(
+    *,
+    engine_name: str,
+    param_profiles: dict[str, np.ndarray],
+) -> None:
+    supported = _PARAM_PROFILE_SUPPORT.get(engine_name, frozenset())
+    unsupported = sorted(set(param_profiles) - supported)
+    if unsupported:
+        if not supported:
+            raise ValueError(
+                "Engine "
+                f"{engine_name!r} does not consume per-sample param_profiles "
+                f"but received profiles for: {sorted(param_profiles)}. "
+                "Score should route non-aware engines through the scalar "
+                "matrix fold; register destination support via "
+                "register_param_profile_support() if it now supports profiles."
+            )
+        raise ValueError(
+            "Engine "
+            f"{engine_name!r} does not consume per-sample profiles for "
+            f"{unsupported}; supported profile keys are {sorted(supported)}."
+        )
+    for param_name, profile in param_profiles.items():
+        profile_array = np.asarray(profile)
+        if profile_array.ndim != 1:
+            raise ValueError(
+                "param_profiles "
+                f"{param_name!r} for engine {engine_name!r} must be a 1D mono "
+                "array; stereo/2D profile outputs are not supported"
+            )
 
 
 _VOICE_STATE_AWARE_ENGINES: set[str] = {"polyblep", "filtered_stack"}
@@ -5479,10 +5705,11 @@ def render_note_signal(
 
     ``param_profiles`` maps synth parameter names to per-sample
     ``np.ndarray`` curves (length must equal ``duration * sample_rate``).
-    Only engines registered via :func:`register_param_profile_support`
-    consume these; others silently ignore the kwarg and fall back to
-    the scalar value already in ``params``.  See ``docs/synth_api.md``
-    for the opt-in parameter list per engine.
+    Only engine/destination pairs registered via
+    :func:`register_param_profile_support` consume these; unsupported
+    profile keys fail fast so callers do not mistake a silent no-op for
+    audio-rate modulation.  See ``docs/synth_api.md`` for the opt-in
+    parameter list per engine.
 
     ``voice_state`` is a mutable dict owned by the score-level per-voice
     render loop.  Only engines in ``_VOICE_STATE_AWARE_ENGINES``
@@ -5507,16 +5734,10 @@ def render_note_signal(
     if freq_trajectory is not None:
         renderer_kwargs["freq_trajectory"] = freq_trajectory
     if param_profiles:
-        if engine_name not in _PARAM_PROFILE_AWARE_ENGINES:
-            raise ValueError(
-                "Engine "
-                f"{engine_name!r} does not consume per-sample param_profiles "
-                f"but received profiles for: {sorted(param_profiles)}. "
-                "Score should route non-aware engines through the scalar "
-                "matrix fold; register the engine via "
-                "register_param_profile_support() if it now supports "
-                "param_profiles."
-            )
+        _validate_param_profiles(
+            engine_name=engine_name,
+            param_profiles=param_profiles,
+        )
         renderer_kwargs["param_profiles"] = param_profiles
     if voice_state is not None and engine_name in _VOICE_STATE_AWARE_ENGINES:
         renderer_kwargs["voice_state"] = voice_state

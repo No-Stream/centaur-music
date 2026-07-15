@@ -34,6 +34,7 @@ from code_musics.humanize import (
     seed_or_default,
     stable_seed,
 )
+from code_musics.meter import Timeline
 
 ModSourceDomain = Literal["bipolar", "unipolar"]
 LFOWaveshape = Literal[
@@ -49,10 +50,32 @@ OscillatorWaveshape = Literal["sine", "saw", "triangle"]
 _PER_SAMPLE_SYNTH_DESTINATIONS: frozenset[str] = frozenset(
     {
         "cutoff_hz",
-        "pulse_width",
+        "drive_amount",
+        "feedback_amount",
+        "filter1_cutoff_hz",
+        "filter1_feedback_amount",
+        "filter1_filter_drive",
+        "filter1_filter_morph",
+        "filter1_hpf_cutoff_hz",
+        "filter1_resonance_q",
+        "filter2_cutoff_hz",
+        "filter2_feedback_amount",
+        "filter2_filter_drive",
+        "filter2_filter_morph",
+        "filter2_hpf_cutoff_hz",
+        "filter2_resonance_q",
+        "filter_cutoff_hz",
+        "filter_drive",
+        "filter_morph",
+        "filter_q",
+        "hpf_cutoff_hz",
         "osc2_detune_cents",
         "osc2_freq_ratio",
         "osc_spread_cents",
+        "pulse_width",
+        "resonance_q",
+        "shaper_drive",
+        "voice_dist_drive",
     }
 )
 
@@ -83,6 +106,7 @@ class SourceSamplingContext:
     note_velocity: float | None = None
     note_start: float | None = None
     note_duration: float | None = None
+    timeline: Timeline | None = None
 
 
 @dataclass(frozen=True)
@@ -157,6 +181,78 @@ class LFOSource(ModSource):
                 seed=seed_or_default(self.seed, "lfo_smoothed_random"),
             )
         raise ValueError(f"Unsupported LFO waveshape: {self.waveshape!r}")
+
+
+@dataclass(frozen=True)
+class TempoSyncedLFOSource(ModSource):
+    """LFO whose phase advances in timeline beats rather than seconds."""
+
+    period_beats: float = 1.0
+    waveshape: LFOWaveshape = "sine"
+    phase_rad: float = 0.0
+    retrigger: bool = False
+    seed: int | None = None
+    output_domain: ModSourceDomain = "bipolar"
+
+    def __post_init__(self) -> None:
+        if self.period_beats <= 0:
+            raise ValueError("TempoSyncedLFOSource.period_beats must be positive")
+
+    def sample(self, times: np.ndarray, context: SourceSamplingContext) -> np.ndarray:
+        if times.size == 0:
+            return np.zeros(0, dtype=np.float64)
+        if context.timeline is None:
+            raise ValueError("TempoSyncedLFOSource requires Score.timeline in context")
+        beat_positions = _timeline_beats_for_seconds(
+            timeline=context.timeline,
+            times=np.asarray(times, dtype=np.float64),
+        )
+        if self.retrigger and context.note_start is not None:
+            note_start_beats = _timeline_beats_for_seconds(
+                timeline=context.timeline,
+                times=np.asarray([context.note_start], dtype=np.float64),
+            )[0]
+            local_beats = beat_positions - note_start_beats
+        else:
+            local_beats = beat_positions
+        phase_cycles = local_beats / self.period_beats + self.phase_rad / (
+            2.0 * math.pi
+        )
+        phase = 2.0 * math.pi * phase_cycles
+
+        if self.waveshape == "sine":
+            return np.sin(phase)
+        if self.waveshape == "triangle":
+            frac = phase_cycles % 1.0
+            return np.asarray(2.0 * np.abs(2.0 * frac - 1.0) - 1.0, dtype=np.float64)
+        if self.waveshape == "saw_up":
+            frac = phase_cycles % 1.0
+            return np.asarray(2.0 * frac - 1.0, dtype=np.float64)
+        if self.waveshape == "saw_down":
+            frac = phase_cycles % 1.0
+            return np.asarray(1.0 - 2.0 * frac, dtype=np.float64)
+        if self.waveshape == "square":
+            return np.where(np.sin(phase) >= 0.0, 1.0, -1.0).astype(np.float64)
+        if self.waveshape == "smoothed_random":
+            return _sample_smoothed_random_lfo(
+                times=local_beats,
+                rate_hz=1.0 / self.period_beats,
+                seed=seed_or_default(self.seed, "tempo_synced_lfo_smoothed_random"),
+            )
+        raise ValueError(
+            f"Unsupported TempoSyncedLFOSource waveshape: {self.waveshape!r}"
+        )
+
+
+def _timeline_beats_for_seconds(*, timeline: Timeline, times: np.ndarray) -> np.ndarray:
+    """Return absolute quarter-note beats for score-absolute second positions."""
+    if timeline.tempo_map is None and timeline.groove is None:
+        return times / timeline.seconds_per_beat
+    return np.fromiter(
+        (timeline.locate(float(time_seconds)).absolute_beats for time_seconds in times),
+        dtype=np.float64,
+        count=times.size,
+    )
 
 
 @dataclass(frozen=True)

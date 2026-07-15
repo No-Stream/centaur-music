@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import code_musics.render as render_module
+from code_musics.meter import TempoMap, TempoPoint, Timeline
 from code_musics.pieces.registry import PieceDefinition, PieceSection
 from code_musics.render import export_piece_viz
 from code_musics.score import Score
@@ -108,6 +109,30 @@ class TestVizPayloadSchema:
         starts = [note["start_seconds"] for note in payload["notes"]]
         assert starts == sorted(starts)
         assert len(payload["notes"]) == 4
+
+    def test_musical_time_metadata_when_score_has_timeline(
+        self, tmp_path: Path
+    ) -> None:
+        score = _build_test_score()
+        score.timeline = Timeline.from_tempo_map(
+            TempoMap(
+                points=(
+                    TempoPoint(beat=0.0, bpm=120.0, curve="hold"),
+                    TempoPoint(beat=2.0, bpm=60.0),
+                )
+            )
+        )
+        wav_path = tmp_path / "mix.wav"
+        _write_sine_wav(wav_path)
+
+        payload = build_viz_payload(
+            score=score,
+            mix_wav_path=wav_path,
+            spec=VizExportSpec(piece_name="test_piece", output_name="test_piece"),
+        )
+
+        assert payload["musical_time"]["tempo_map"]["points"][1]["bpm"] == 60.0
+        assert payload["notes"][0]["musical_location"]["absolute_beats"] == 0.0
 
 
 class TestVelocityAmpJoin:

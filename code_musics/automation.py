@@ -31,11 +31,13 @@ _SUPPORTED_SYNTH_AUTOMATION_PARAMS = {
     "feedback",
     "feedback_amount",
     "feedback_saturation",
+    "filter_cutoff_hz",
     "filter_drive",
     "filter_env_amount",
     "filter_env_decay",
     "filter_even_harmonics",
     "filter_morph",
+    "filter_q",
     "hammer_hardness",
     "hammer_noise",
     "hpf_cutoff_hz",
@@ -46,7 +48,9 @@ _SUPPORTED_SYNTH_AUTOMATION_PARAMS = {
     "noise_amount",
     "noise_floor",
     "osc2_detune_cents",
+    "osc2_freq_ratio",
     "osc2_level",
+    "osc_spread_cents",
     "osc_asymmetry",
     "osc_dc_offset",
     "osc_shape_drift",
@@ -55,15 +59,18 @@ _SUPPORTED_SYNTH_AUTOMATION_PARAMS = {
     "pitch_drift",
     "pluck_hardness",
     "pluck_noise",
+    "pulse_width",
     "release",
     "release_power",
     "resonance_q",
     "soundboard_brightness",
     "soundboard_color",
+    "shaper_drive",
     "sustain_level",
     "vca_nonlinearity",
     "vibrato_chorus",
     "vibrato_depth",
+    "voice_dist_drive",
     "voice_card_spread",
     "voice_card_pitch_spread",
     "voice_card_filter_spread",
@@ -82,21 +89,32 @@ _SUPPORTED_SYNTH_AUTOMATION_PARAMS = {
     "comb_mix",
     "comb_delay_ms",
     "filter1_cutoff_hz",
+    "filter1_feedback_amount",
+    "filter1_filter_drive",
+    "filter1_filter_morph",
+    "filter1_hpf_cutoff_hz",
     "filter1_resonance_q",
     "filter2_cutoff_hz",
+    "filter2_feedback_amount",
+    "filter2_filter_drive",
+    "filter2_filter_morph",
+    "filter2_hpf_cutoff_hz",
     "filter2_resonance_q",
 }
 
 _SUPPORTED_CONTROL_AUTOMATION_PARAMS = {
     "cutoff_hz",  # per-effect param automation — analog_filter effect cutoff sweeps
+    "knee_width_db",
     "mix",
     "mix_db",
     "pan",
     "pre_fx_gain_db",
     "return_db",
     "send_db",
+    "threshold_db",
     "wet",
     "wet_level",
+    "width",
 }
 
 
@@ -262,7 +280,10 @@ def build_pitch_ratio_trajectory(
     """Build a per-sample pitch trajectory from pitch_ratio automation lanes."""
     n_samples = int(duration * sample_rate)
     if n_samples == 0:
-        return np.zeros(0, dtype=np.float64)
+        # A note clipped below one sample (e.g. at a window edge) carries no
+        # trajectory; returning an empty array would crash downstream code
+        # that anchors the release tail on the last held sample.
+        return None
 
     pitch_specs = [
         spec

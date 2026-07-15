@@ -10,7 +10,10 @@ from code_musics.automation import (
     AutomationSpec,
     AutomationTarget,
 )
+from code_musics.engines import engine_supports_param_profile, render_note_signal
+from code_musics.meter import Timeline
 from code_musics.modulation import (
+    _PER_SAMPLE_SYNTH_DESTINATIONS,
     ConstantSource,
     DriftAdapter,
     EnvelopeSource,
@@ -18,8 +21,10 @@ from code_musics.modulation import (
     MacroDefinition,
     MacroSource,
     ModConnection,
+    OscillatorSource,
     RandomSource,
     SourceSamplingContext,
+    TempoSyncedLFOSource,
     VelocitySource,
     build_macro_lookup,
     combine_connections_on_curve,
@@ -36,6 +41,7 @@ def _ctx(
     note_start: float | None = None,
     note_duration: float | None = None,
     macro_lookup: dict[str, np.ndarray] | None = None,
+    timeline: Timeline | None = None,
 ) -> SourceSamplingContext:
     return SourceSamplingContext(
         sample_rate=44100,
@@ -44,6 +50,7 @@ def _ctx(
         note_velocity=note_velocity,
         note_start=note_start,
         note_duration=note_duration,
+        timeline=timeline,
     )
 
 
@@ -78,6 +85,23 @@ class TestLFOSource:
         curve = source.sample(times, _ctx(note_start=2.0))
         # Retrigger means at note_start the phase is 0 => value ~ 0.
         assert abs(curve[0]) < 1e-9
+
+
+class TestTempoSyncedLFOSource:
+    def test_sine_phase_follows_timeline_beats(self) -> None:
+        timeline = Timeline(bpm=120.0)
+        source = TempoSyncedLFOSource(period_beats=1.0, waveshape="sine")
+        times = np.array([0.0, 0.125, 0.25, 0.375, 0.5])
+
+        curve = source.sample(times, _ctx(timeline=timeline))
+
+        np.testing.assert_allclose(curve, [0.0, 1.0, 0.0, -1.0, 0.0], atol=1e-12)
+
+    def test_requires_timeline_context(self) -> None:
+        source = TempoSyncedLFOSource(period_beats=1.0)
+
+        with pytest.raises(ValueError, match="requires Score.timeline"):
+            source.sample(np.array([0.0]), _ctx())
 
 
 class TestEnvelopeSource:
@@ -462,6 +486,169 @@ class TestScoreIntegration:
         assert rows[0]["scope"] == "voice:v"
         assert rows[0]["source"] == "ConstantSource"
         assert rows[0]["target_name"] == "mix_db"
+
+    def test_engine_param_profile_support_is_destination_specific(self) -> None:
+        assert engine_supports_param_profile("polyblep", "cutoff_hz")
+        assert engine_supports_param_profile("polyblep", "pulse_width")
+        assert not engine_supports_param_profile("polyblep", "osc_spread_cents")
+        assert engine_supports_param_profile("va", "osc_spread_cents")
+        assert engine_supports_param_profile("va", "cutoff_hz")
+        assert not engine_supports_param_profile("additive", "cutoff_hz")
+
+    def test_unsupported_direct_param_profile_key_raises(self) -> None:
+        with pytest.raises(ValueError, match="does not consume per-sample profiles"):
+            render_note_signal(
+                freq=220.0,
+                duration=0.01,
+                amp=0.1,
+                sample_rate=22050,
+                params={"engine": "polyblep", "waveform": "saw"},
+                param_profiles={"osc_spread_cents": np.zeros(220, dtype=np.float64)},
+            )
+
+    def test_direct_stereo_param_profile_raises(self) -> None:
+        with pytest.raises(ValueError, match="1D mono"):
+            render_note_signal(
+                freq=220.0,
+                duration=0.01,
+                amp=0.1,
+                sample_rate=22050,
+                params={"engine": "polyblep", "waveform": "saw"},
+                param_profiles={"cutoff_hz": np.zeros((2, 220), dtype=np.float64)},
+            )
+
+    def test_score_routes_generic_but_engine_unsupported_destination_to_scalar(
+        self,
+    ) -> None:
+        score = Score(f0_hz=220.0, sample_rate=100)
+        score.add_voice(
+            "lead",
+            synth_defaults={
+                "engine": "additive",
+                "cutoff_hz": 500.0,
+                "release": 0.0,
+            },
+            modulations=[
+                ModConnection(
+                    source=ConstantSource(value=1.0),
+                    target=AutomationTarget(kind="synth", name="cutoff_hz"),
+                    amount=700.0,
+                    mode="add",
+                )
+            ],
+        )
+        score.add_note("lead", start=0.0, duration=0.1, partial=1.0)
+
+        prepared = score._prepare_voice_notes(
+            voice_name="lead",
+            voice=score.voices["lead"],
+            timing_offsets={},
+            velocity_multipliers={("lead", 0): 1.0},
+        )
+
+        assert prepared[0].param_profiles == {}
+        assert prepared[0].synth_params["cutoff_hz"] == pytest.approx(1200.0)
+
+    def test_stereo_param_profile_connection_raises(self) -> None:
+        score = Score(f0_hz=220.0, sample_rate=100)
+        score.add_voice(
+            "lead",
+            synth_defaults={
+                "engine": "polyblep",
+                "waveform": "saw",
+                "cutoff_hz": 500.0,
+                "release": 0.0,
+            },
+            modulations=[
+                ModConnection(
+                    source=ConstantSource(value=1.0),
+                    target=AutomationTarget(kind="synth", name="cutoff_hz"),
+                    amount=100.0,
+                    mode="add",
+                    stereo=True,
+                )
+            ],
+        )
+        score.add_note("lead", start=0.0, duration=0.1, partial=1.0)
+
+        with pytest.raises(ValueError, match="Stereo modulation"):
+            score._prepare_voice_notes(
+                voice_name="lead",
+                voice=score.voices["lead"],
+                timing_offsets={},
+                velocity_multipliers={("lead", 0): 1.0},
+            )
+
+    def test_2d_source_output_for_param_profile_raises(self) -> None:
+        score = Score(f0_hz=220.0, sample_rate=100)
+        score.add_voice(
+            "lead",
+            synth_defaults={
+                "engine": "polyblep",
+                "waveform": "saw",
+                "cutoff_hz": 500.0,
+                "release": 0.0,
+            },
+            modulations=[
+                ModConnection(
+                    source=OscillatorSource(rate_hz=10.0, stereo=True),
+                    target=AutomationTarget(kind="synth", name="cutoff_hz"),
+                    amount=100.0,
+                    mode="add",
+                )
+            ],
+        )
+        score.add_note("lead", start=0.0, duration=0.1, partial=1.0)
+
+        with pytest.raises(ValueError, match="1D mono"):
+            score._prepare_voice_notes(
+                voice_name="lead",
+                voice=score.voices["lead"],
+                timing_offsets={},
+                velocity_multipliers={("lead", 0): 1.0},
+            )
+
+    def test_tempo_synced_lfo_preserves_phase_through_extract_window(self) -> None:
+        timeline = Timeline(bpm=120.0)
+        score = Score(f0_hz=220.0, sample_rate=20, timeline=timeline)
+        score.add_voice(
+            "lead",
+            synth_defaults={
+                "engine": "polyblep",
+                "waveform": "saw",
+                "cutoff_hz": 1000.0,
+                "release": 0.0,
+            },
+            modulations=[
+                ModConnection(
+                    source=TempoSyncedLFOSource(period_beats=4.0, waveshape="sine"),
+                    target=AutomationTarget(kind="synth", name="cutoff_hz"),
+                    amount=100.0,
+                    mode="add",
+                )
+            ],
+        )
+        score.add_note("lead", start=0.5, duration=0.25, partial=1.0)
+        window = score.extract_window(start_seconds=0.5, end_seconds=0.75)
+
+        full_prepared = score._prepare_voice_notes(
+            voice_name="lead",
+            voice=score.voices["lead"],
+            timing_offsets={},
+            velocity_multipliers={("lead", 0): 1.0},
+        )
+        window_prepared = window._prepare_voice_notes(
+            voice_name="lead",
+            voice=window.voices["lead"],
+            timing_offsets={},
+            velocity_multipliers={("lead", 0): 1.0},
+        )
+
+        assert window.timeline == timeline
+        full_cutoff = full_prepared[0].param_profiles["cutoff_hz"]
+        window_cutoff = window_prepared[0].param_profiles["cutoff_hz"]
+        assert full_cutoff[0] == pytest.approx(1100.0)
+        assert window_cutoff[0] == pytest.approx(full_cutoff[0])
 
     def test_param_profile_shifts_cutoff(self) -> None:
         """Matrix-driven cutoff produces different audio than baseline."""
@@ -952,3 +1139,79 @@ class TestMacroReRegistration:
         assert score.macros["brightness"].default == pytest.approx(0.8)
         # No stale copy left behind.
         assert len(score.macros) == 1
+
+    def test_re_registration_invalidates_macro_lookup_cache(self) -> None:
+        score = Score(f0_hz=220.0, sample_rate=22050)
+        times = np.linspace(0.0, 1.0, 8)
+        score.add_macro("brightness", default=0.5)
+        first_lookup = score._macro_lookup_for_times(times)
+        np.testing.assert_allclose(first_lookup["brightness"], 0.5)
+
+        score.add_macro("brightness", default=0.8)
+        second_lookup = score._macro_lookup_for_times(times)
+
+        np.testing.assert_allclose(second_lookup["brightness"], 0.8)
+
+
+class TestPublicModulationSurface:
+    def test_all_per_sample_destinations_are_valid_synth_targets(self) -> None:
+        for destination in _PER_SAMPLE_SYNTH_DESTINATIONS:
+            AutomationTarget(kind="synth", name=destination)
+
+    def test_modulation_primitives_are_exported_from_package_root(self) -> None:
+        import code_musics
+
+        assert code_musics.ModConnection is ModConnection
+        assert code_musics.MacroSource is MacroSource
+        assert code_musics.OscillatorSource is OscillatorSource
+        assert code_musics.TempoSyncedLFOSource is TempoSyncedLFOSource
+
+
+class TestScoreLevelModulations:
+    def test_score_level_mix_db_modulation_affects_all_voices(self) -> None:
+        def render(with_modulation: bool) -> np.ndarray:
+            modulations = []
+            if with_modulation:
+                modulations.append(
+                    ModConnection(
+                        source=ConstantSource(value=1.0),
+                        target=AutomationTarget(kind="control", name="mix_db"),
+                        amount=-18.0,
+                        mode="add",
+                    )
+                )
+            score = Score(
+                f0_hz=110.0,
+                sample_rate=8000,
+                auto_master_gain_stage=False,
+                modulations=modulations,
+            )
+            for voice_name, partial in (("left", 1.0), ("right", 1.5)):
+                score.add_voice(
+                    voice_name,
+                    synth_defaults={
+                        "engine": "polyblep",
+                        "waveform": "sine",
+                        "attack": 0.0,
+                        "cutoff_hz": 4_000.0,
+                        "quality": "draft",
+                        "release": 0.0,
+                    },
+                    normalize_lufs=None,
+                    normalize_peak_db=None,
+                )
+                score.add_note(
+                    voice_name,
+                    start=0.0,
+                    duration=0.1,
+                    partial=partial,
+                    amp=0.25,
+                )
+            return score.render()
+
+        baseline = render(False)
+        attenuated = render(True)
+
+        baseline_rms = float(np.sqrt(np.mean(np.square(baseline))))
+        attenuated_rms = float(np.sqrt(np.mean(np.square(attenuated))))
+        assert attenuated_rms < baseline_rms * 0.2

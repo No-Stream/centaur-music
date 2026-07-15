@@ -117,9 +117,24 @@ class TestClipperKnee:
             freqs = np.fft.rfftfreq(x.shape[0], d=1.0 / SAMPLE_RATE)
             return float(np.sum(spec[freqs > 2000.0] ** 2))
 
-        wide = apply_clipper(signal, threshold_db=threshold_db, knee_width_db=6.0)
-        mid = apply_clipper(signal, threshold_db=threshold_db, knee_width_db=2.0)
-        hard = apply_clipper(signal, threshold_db=threshold_db, knee_width_db=0.0)
+        wide = apply_clipper(
+            signal,
+            threshold_db=threshold_db,
+            knee_width_db=6.0,
+            algorithm="poly_knee",
+        )
+        mid = apply_clipper(
+            signal,
+            threshold_db=threshold_db,
+            knee_width_db=2.0,
+            algorithm="poly_knee",
+        )
+        hard = apply_clipper(
+            signal,
+            threshold_db=threshold_db,
+            knee_width_db=0.0,
+            algorithm="poly_knee",
+        )
         e_wide = hf_energy(wide)
         e_mid = hf_energy(mid)
         e_hard = hf_energy(hard)
@@ -184,7 +199,34 @@ class TestClipperKnee:
 
 
 class TestClipperAlgorithms:
-    """algorithm = 'poly_knee' (default) vs 'hard'."""
+    """algorithm = 'hard' (default) vs 'poly_knee'."""
+
+    def test_default_algorithm_is_hard_mastering_clip(self) -> None:
+        signal = _sine(440.0, 0.1, amp=1.0)
+        default_out, metrics = apply_clipper(
+            signal, threshold_db=-6.0, return_analysis=True
+        )
+        explicit_hard = apply_clipper(
+            signal,
+            threshold_db=-6.0,
+            knee_width_db=0.0,
+            algorithm="hard",
+            oversample_factor=8,
+        )
+        np.testing.assert_array_equal(default_out, explicit_hard)
+        assert metrics["algorithm"] == "hard"
+        assert metrics["knee_width_db"] == 0.0
+
+    def test_poly_knee_algorithm_gets_character_knee_default(self) -> None:
+        signal = _sine(440.0, 0.1, amp=1.0)
+        _, metrics = apply_clipper(
+            signal,
+            threshold_db=-6.0,
+            algorithm="poly_knee",
+            return_analysis=True,
+        )
+        assert metrics["algorithm"] == "poly_knee"
+        assert metrics["knee_width_db"] == 2.0
 
     def test_hard_algorithm_ignores_knee(self) -> None:
         # algorithm="hard" is a literal clamp; knee_width_db is silently
@@ -837,3 +879,68 @@ class TestChainSummary:
         codes = {w.code: w for w in summary.warnings}
         assert "chain_papery" in codes
         assert codes["chain_papery"].severity == "warning"
+
+    def test_warning_tier_brightness_codes_suppressed_on_sparse_input(self) -> None:
+        """Warning-tier papery/brightness codes are unreliable on sparse
+        transient buses (e.g. a lone kick) and must not fire there."""
+        entries = [
+            {
+                "index": 0,
+                "kind": "preamp",
+                "display_name": "preamp",
+                "metrics": {
+                    "high_band_delta_db": 3.0,
+                    "a_weighted_high_band_delta_db": 3.0,
+                    "spectral_centroid_delta_hz": 400.0,
+                    "input_active_window_fraction": 0.15,
+                },
+                "warnings": [],
+            },
+            {
+                "index": 1,
+                "kind": "clipper",
+                "display_name": "clipper",
+                "metrics": {
+                    "high_band_delta_db": 2.5,
+                    "a_weighted_high_band_delta_db": 2.5,
+                    "spectral_centroid_delta_hz": 250.0,
+                },
+                "warnings": [],
+            },
+        ]
+        summary = build_chain_summary_from_dicts(entries, chain_label="drum_bus")
+        assert summary is not None
+        codes = {w.code for w in summary.warnings}
+        assert "chain_papery" not in codes
+        assert "perceptual_brightness_lift" not in codes
+        assert "chain_brightness_creep" not in codes
+
+    def test_warning_tier_brightness_codes_fire_on_active_input(self) -> None:
+        entries = [
+            {
+                "index": 0,
+                "kind": "preamp",
+                "display_name": "preamp",
+                "metrics": {
+                    "high_band_delta_db": 3.0,
+                    "a_weighted_high_band_delta_db": 3.0,
+                    "input_active_window_fraction": 0.8,
+                },
+                "warnings": [],
+            },
+            {
+                "index": 1,
+                "kind": "clipper",
+                "display_name": "clipper",
+                "metrics": {
+                    "high_band_delta_db": 2.5,
+                    "a_weighted_high_band_delta_db": 2.5,
+                },
+                "warnings": [],
+            },
+        ]
+        summary = build_chain_summary_from_dicts(entries, chain_label="drum_bus")
+        assert summary is not None
+        codes = {w.code: w for w in summary.warnings}
+        assert codes["chain_papery"].severity == "warning"
+        assert codes["perceptual_brightness_lift"].severity == "warning"

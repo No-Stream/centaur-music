@@ -70,6 +70,13 @@ def test_parse_args_supports_export_midi_and_midi_formats() -> None:
     assert args.midi_formats == "scala,tun"
 
 
+def test_parse_args_supports_analysis_mode_and_fast_preview() -> None:
+    args = parse_args(["chord_4567", "--analysis-mode", "summary", "--fast-preview"])
+
+    assert args.analysis_mode == "summary"
+    assert args.fast_preview is True
+
+
 def test_parse_midi_formats_defaults_to_all() -> None:
     assert _parse_midi_formats(None) == ALL_STEM_FORMATS
 

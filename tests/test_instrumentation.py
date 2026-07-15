@@ -111,6 +111,108 @@ class TestIMD:
         assert result.detection == "two_tone"
         assert result.ratio > 0.3
 
+    def test_memoryless_nonlinearity_grows_imd_ratio_clearly(self) -> None:
+        """True-positive regression: real nonlinearity must still register.
+
+        Two incommensurate tones through a tanh waveshaper produce discrete
+        sum/difference spurs that stand well above the local floor, so the
+        floor-referenced measurement should still show strong IMD growth
+        relative to the clean dry signal.
+        """
+        dry = _sine(311.0, amp=0.3) + _sine(523.0, amp=0.3)
+        driven = np.tanh(2.5 * dry)
+
+        dry_freqs, dry_mag_db = _spectrum(dry)
+        dry_result = intermodulation_ratio(dry_freqs, dry_mag_db)
+        assert dry_result.detection == "two_tone"
+
+        driven_freqs, driven_mag_db = _spectrum(driven)
+        driven_result = intermodulation_ratio(
+            driven_freqs,
+            driven_mag_db,
+            f1_override_hz=dry_result.f1_hz,
+            f2_override_hz=dry_result.f2_hz,
+        )
+        assert driven_result.detection == "two_tone"
+        growth_factor = (driven_result.ratio - dry_result.ratio) / max(
+            dry_result.ratio, 0.1
+        )
+        assert growth_factor > 1.5, (
+            f"expected clear IMD growth from real nonlinearity, got "
+            f"{growth_factor} (dry={dry_result.ratio}, driven={driven_result.ratio})"
+        )
+
+    def test_linear_reverb_tail_does_not_inflate_imd_ratio(self) -> None:
+        """False-positive regression: diffuse reverb tails must not read as IMD.
+
+        A purely linear operation — convolving the two-tone signal with an
+        exponentially-decaying noise "impulse response" and summing wet with
+        dry — raises the spectral floor between partials without adding any
+        discrete nonlinear spurs. Before the floor-referencing fix this
+        inflated the raw-bin-power ratio; after the fix, growth should stay
+        well below the 0.5 warning threshold used by the artifact-risk gates
+        in analysis.py / synth.py.
+        """
+        rng = np.random.default_rng(3)
+        dry = _sine(311.0, amp=0.3) + _sine(523.0, amp=0.3)
+
+        tail_len = int(0.6 * SAMPLE_RATE)
+        decay = np.exp(-np.arange(tail_len) / (0.15 * SAMPLE_RATE))
+        impulse_response = rng.standard_normal(tail_len) * decay
+        impulse_response /= float(np.max(np.abs(impulse_response)))
+        wet = np.convolve(dry, impulse_response, mode="full")[: dry.size] * 0.35
+        reverbed = dry + wet
+
+        dry_freqs, dry_mag_db = _spectrum(dry)
+        dry_result = intermodulation_ratio(dry_freqs, dry_mag_db)
+        assert dry_result.detection == "two_tone"
+
+        wet_freqs, wet_mag_db = _spectrum(reverbed)
+        wet_result = intermodulation_ratio(
+            wet_freqs,
+            wet_mag_db,
+            f1_override_hz=dry_result.f1_hz,
+            f2_override_hz=dry_result.f2_hz,
+        )
+        assert wet_result.detection == "two_tone"
+        growth_factor = (wet_result.ratio - dry_result.ratio) / max(
+            dry_result.ratio, 0.1
+        )
+        assert growth_factor < 0.5, (
+            f"linear reverb tail should not read as IMD growth, got "
+            f"{growth_factor} (dry={dry_result.ratio}, wet={wet_result.ratio})"
+        )
+
+    def test_faint_tones_in_noise_report_noise_dominated(self) -> None:
+        """Tones sitting only ~14 dB above a broadband noise floor should be
+        flagged as un-probeable rather than producing a spurious ratio."""
+        rng = np.random.default_rng(11)
+        noise = rng.standard_normal(int(1.0 * SAMPLE_RATE)) * 0.08
+        faint = (
+            noise
+            + _sine(311.0, duration=1.0, amp=0.01)
+            + _sine(523.0, duration=1.0, amp=0.01)
+        )
+        freqs, magnitude_db = _spectrum(faint)
+        result = intermodulation_ratio(freqs, magnitude_db)
+        assert result.detection == "noise_dominated"
+        assert result.ratio == 0.0
+
+    def test_pure_pink_noise_reports_single_tone_or_noise_dominated(self) -> None:
+        """Pure broadband noise with no tonal content should never report
+        "two_tone" — either no plausible pair is found, or (if a spurious
+        pair is picked) the dominance gate catches it."""
+        rng = np.random.default_rng(5)
+        white = rng.standard_normal(int(1.0 * SAMPLE_RATE))
+        # Simple pink-ish shaping via cumulative sum + high-pass leak.
+        pink = np.cumsum(white) * 0.01
+        pink -= np.mean(pink)
+        pink = pink / (float(np.max(np.abs(pink))) + 1e-9) * 0.3
+        freqs, magnitude_db = _spectrum(pink)
+        result = intermodulation_ratio(freqs, magnitude_db)
+        assert result.detection in ("single_tone", "noise_dominated")
+        assert result.ratio == 0.0
+
 
 # ---------------------------------------------------------------------------
 # Percussive onsets + per-hit transient metrics

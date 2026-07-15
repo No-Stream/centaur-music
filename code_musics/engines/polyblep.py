@@ -42,11 +42,13 @@ from code_musics.engines._dsp_utils import (
 from code_musics.engines._filters import (
     _SUPPORTED_FILTER_MODES,
     _SUPPORTED_FILTER_TOPOLOGIES,
+    FilterControlValue,
 )
 from code_musics.engines._oscillators import (
     render_polyblep_oscillator as _render_oscillator_with_phase,
 )
 from code_musics.engines._voice_dist import apply_voice_dist
+from code_musics.engines._waveshaper import apply_waveshaper
 
 # Scale factor for per-sample oscillator phase-noise in cycles.  At
 # ``osc_phase_noise=1.0`` the per-sample perturbation has peak amplitude
@@ -549,6 +551,8 @@ def render(
             raise ValueError(
                 "pulse_width profile length must match note duration in samples"
             )
+        if not np.all(np.isfinite(pw_profile)):
+            raise ValueError("pulse_width profile values must be finite")
         pulse_width_per_sample = np.clip(pw_profile, 0.01, 0.99)
 
     # Per-sample phase-noise for osc1.  Seeded via a dedicated
@@ -624,6 +628,8 @@ def render(
                 raise ValueError(
                     "osc2_detune_cents profile length must match note duration"
                 )
+            if not np.all(np.isfinite(detune_arr)):
+                raise ValueError("osc2_detune_cents profile values must be finite")
             osc2_detune_profile = detune_arr
         osc2_ratio_profile: np.ndarray | None = None
         if param_profiles is not None and "osc2_freq_ratio" in param_profiles:
@@ -632,6 +638,8 @@ def render(
                 raise ValueError(
                     "osc2_freq_ratio profile length must match note duration"
                 )
+            if not np.all(np.isfinite(ratio_arr)):
+                raise ValueError("osc2_freq_ratio profile values must be finite")
             osc2_ratio_profile = ratio_arr
 
         effective_detune_scalar = osc2_detune_cents * pow(0.5, osc2_spread_power - 1.0)
@@ -834,18 +842,28 @@ def render(
     filtered = apply_filter_oversampled(
         raw_signal,
         cutoff_profile=cutoff_profile,
-        resonance_q=resonance_q,
+        resonance_q=_profile_or_scalar(
+            "resonance_q", resonance_q, param_profiles, n_samples
+        ),
         sample_rate=sample_rate,
         oversample_factor=quality_config.oversample_factor,
         filter_mode=filter_mode,
-        filter_drive=filter_drive,
+        filter_drive=_profile_or_scalar(
+            "filter_drive", filter_drive, param_profiles, n_samples
+        ),
         filter_even_harmonics=filter_even_harmonics,
         filter_topology=filter_topology,
         bass_compensation=bass_compensation,
-        filter_morph=filter_morph,
-        hpf_cutoff_hz=hpf_cutoff_hz,
+        filter_morph=_profile_or_scalar(
+            "filter_morph", filter_morph, param_profiles, n_samples
+        ),
+        hpf_cutoff_hz=_profile_or_scalar(
+            "hpf_cutoff_hz", hpf_cutoff_hz, param_profiles, n_samples
+        ),
         hpf_resonance_q=hpf_resonance_q,
-        feedback_amount=feedback_amount,
+        feedback_amount=_profile_or_scalar(
+            "feedback_amount", feedback_amount, param_profiles, n_samples
+        ),
         feedback_saturation=feedback_saturation,
         k35_feedback_asymmetry=k35_feedback_asymmetry,
         filter_solver=quality_config.solver,
@@ -889,14 +907,83 @@ def render(
         dc_sign_osc2=dc_sign_osc2,
     )
 
-    return apply_voice_dist(
+    voice_dist_drive_control = _profile_or_scalar(
+        "voice_dist_drive", voice_dist_drive, param_profiles, n_samples
+    )
+    return _apply_voice_dist_profiled(
         note_buffer,
         mode=voice_dist_mode,
-        drive=voice_dist_drive,
+        drive=voice_dist_drive_control,
         mix=voice_dist_mix,
         tone=voice_dist_tone,
         sample_rate=sample_rate,
     )
+
+
+def _profile_or_scalar(
+    name: str,
+    scalar_value: float,
+    param_profiles: dict[str, np.ndarray] | None,
+    n_samples: int,
+) -> FilterControlValue:
+    """Return a 1D per-note profile when supplied, otherwise the scalar value."""
+    if param_profiles is None or name not in param_profiles:
+        return scalar_value
+    profile = np.asarray(param_profiles[name], dtype=np.float64)
+    if profile.shape != (n_samples,):
+        raise ValueError(f"{name} profile length must match note duration in samples")
+    if not np.all(np.isfinite(profile)):
+        raise ValueError(f"{name} profile values must be finite")
+    return profile
+
+
+def _apply_voice_dist_profiled(
+    signal: np.ndarray,
+    *,
+    mode: str,
+    drive: FilterControlValue,
+    mix: float,
+    tone: float,
+    sample_rate: int,
+) -> np.ndarray:
+    """Apply voice distortion, preserving the existing scalar path exactly."""
+    if not isinstance(drive, np.ndarray):
+        return apply_voice_dist(
+            signal,
+            mode=mode,
+            drive=float(drive),
+            mix=mix,
+            tone=tone,
+            sample_rate=sample_rate,
+        )
+    if mode == "off":
+        return signal
+    active_mask = drive > 0.0
+    if not bool(np.any(active_mask)):
+        return signal
+    if tone != 0.0:
+        raise ValueError(
+            "voice_dist_drive profiles currently require voice_dist_tone=0"
+        )
+    mode_to_algorithm = {
+        "soft_clip": "tanh",
+        "hard_clip": "hard_clip",
+        "foldback": "linear_fold",
+    }
+    if mode not in mode_to_algorithm:
+        raise ValueError(
+            f"voice_dist_drive profiles are not supported for voice_dist_mode={mode!r}"
+        )
+    drive_envelope = np.clip(drive * 0.5, 0.0, 1.0)
+    wet = apply_waveshaper(
+        signal,
+        algorithm=mode_to_algorithm[mode],
+        drive=1.0,
+        drive_envelope=drive_envelope,
+        mix=1.0,
+    )
+    wet = np.where(active_mask, wet, signal)
+    return (1.0 - mix) * signal + mix * wet
 
 
 def _apply_shape_drift(

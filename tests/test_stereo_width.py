@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from code_musics.automation import AutomationSegment, AutomationSpec, AutomationTarget
 from code_musics.score import EffectSpec
 from code_musics.synth import SAMPLE_RATE, apply_effect_chain, apply_stereo_width
 
@@ -60,3 +61,37 @@ class TestStereoWidth:
         )
         # Should collapse to mono
         np.testing.assert_allclose(result[0], result[1], atol=1e-12)
+
+    def test_stereo_width_width_automation_changes_side_energy(self) -> None:
+        signal = _stereo_signal(duration_s=0.05)
+        narrowed = apply_effect_chain(
+            signal,
+            [EffectSpec("stereo_width", {"width": 0.0})],
+        )
+        widened = apply_effect_chain(
+            signal,
+            [
+                EffectSpec(
+                    "stereo_width",
+                    {"width": 0.0},
+                    automation=[
+                        AutomationSpec(
+                            target=AutomationTarget(kind="control", name="width"),
+                            segments=(
+                                AutomationSegment(
+                                    start=0.0,
+                                    end=0.05,
+                                    shape="linear",
+                                    start_value=0.0,
+                                    end_value=2.0,
+                                ),
+                            ),
+                        )
+                    ],
+                )
+            ],
+        )
+
+        narrowed_side_energy = float(np.sum((narrowed[0] - narrowed[1]) ** 2))
+        widened_side_energy = float(np.sum((widened[0] - widened[1]) ** 2))
+        assert widened_side_energy > narrowed_side_energy

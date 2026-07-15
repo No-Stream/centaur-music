@@ -4,7 +4,8 @@ Each function returns a raw mono float64 numpy array BEFORE envelope/level
 scaling — the main engine handles envelopes and mixing.
 
 Layer types are ported from existing engines:
-- Exciter: click (kick_tom), impulse, multi_tap (clap)
+- Exciter: click (kick_tom), impulse, multi_tap (clap), beater (pitch-descending
+  knock)
 - Tone: oscillator (kick_tom), resonator (kick_tom), fm (kick_tom/snare), additive
 - Noise: white, colored (snare), bandpass, comb (snare)
 - Metallic: partials (metallic_perc)
@@ -50,6 +51,7 @@ _VALID_EXCITER_TYPES = frozenset(
         "fm_burst",
         "noise_burst",
         "sample",
+        "beater",
         "bow",
         "blow",
         "rub",
@@ -98,7 +100,7 @@ def render_exciter(
 
     ``velocity`` drives the optional ``contact_nonlinearity`` hammer-contact
     curve that shapes transient exciters (``click`` / ``impulse`` /
-    ``multi_tap`` / ``fm_burst`` / ``noise_burst``).  Sustained exciters
+    ``multi_tap`` / ``fm_burst`` / ``noise_burst`` / ``beater``).  Sustained exciters
     (``bow`` / ``blow`` / ``rub``) ignore the contact curve — they have
     their own pressure/speed semantics.  ``duration`` is required for the
     sustained renderers and derived from ``n_samples / sample_rate`` when
@@ -175,6 +177,16 @@ def render_exciter(
             freq=freq,
             sample_rate=sample_rate,
             params=params,
+        )
+    elif exciter_type == "beater":
+        raw = _exciter_beater(
+            n_samples=n_samples,
+            sample_rate=sample_rate,
+            rng=rng,
+            center_hz=float(params.get("exciter_center_hz", 3200.0)),
+            floor_ratio=float(params.get("exciter_beater_floor_ratio", 0.25)),
+            chirp_s=float(params.get("exciter_beater_chirp_s", 0.005)),
+            noise_blend=float(params.get("exciter_noise_blend", 0.15)),
         )
     else:
         raw = _exciter_multi_tap(
@@ -322,6 +334,58 @@ def _exciter_click(
     envelope = np.exp(-time / decay_s)
     envelope[: max(1, n_samples // 512)] *= emphasis
     return shaped * envelope
+
+
+def _exciter_beater(
+    *,
+    n_samples: int,
+    sample_rate: int,
+    rng: np.random.Generator,
+    center_hz: float,
+    floor_ratio: float,
+    chirp_s: float,
+    noise_blend: float,
+) -> np.ndarray:
+    """Damped pitch-descending chirp — models a beater/mallet striking a skin.
+
+    ``click`` and ``noise_burst`` are pure incoherent noise, which at
+    audible levels in sparse mixes reads as a clap/snare co-timed with the
+    kick rather than the kick's own attack. A real beater contact is
+    correlated and pitched: it excites a very short, rapidly falling tone
+    as the felt/rubber deforms against the head. This renders that as a
+    phase-integrated sine sweeping from ``center_hz`` down toward
+    ``floor_ratio * center_hz`` over ``chirp_s`` seconds (antialiased via
+    cumulative phase, not naive ``sin(2*pi*f(t)*t)``), damped by its own
+    short exponential envelope so it doesn't ring on at the floor pitch.
+    An optional small amount of the existing bandpassed ``click`` noise is
+    blended in via ``noise_blend`` for a touch of grit/air on top of the
+    knock.
+    """
+    if not 0.0 < floor_ratio <= 1.0:
+        raise ValueError(
+            f"exciter_beater_floor_ratio must be in (0, 1], got {floor_ratio}"
+        )
+    if chirp_s <= 0.0:
+        raise ValueError(f"exciter_beater_chirp_s must be positive, got {chirp_s}")
+    if not 0.0 <= noise_blend <= 1.0:
+        raise ValueError(f"exciter_noise_blend must be in [0, 1], got {noise_blend}")
+
+    floor_hz = center_hz * floor_ratio
+    time = np.arange(n_samples, dtype=np.float64) / sample_rate
+    chirp_progress = np.minimum(time / chirp_s, 1.0)
+    freq_profile = floor_hz + (center_hz - floor_hz) * np.exp(-3.0 * chirp_progress)
+    phase = integrated_phase(freq_profile, sample_rate=sample_rate)
+    body_env = np.exp(-time / chirp_s)
+    knock = np.sin(phase) * body_env
+
+    if noise_blend > 0.0:
+        noise_raw = rng.standard_normal(n_samples)
+        noise_shaped = bandpass_noise(
+            noise_raw, sample_rate=sample_rate, center_hz=center_hz
+        )
+        knock = (1.0 - noise_blend) * knock + noise_blend * noise_shaped * body_env
+
+    return knock
 
 
 def _exciter_impulse(*, n_samples: int, width_samples: int) -> np.ndarray:

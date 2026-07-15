@@ -53,8 +53,11 @@ Concrete piece prompts:
 - **Loveless-adjacent smearing:** fragmented chords, global glide/tremolo-bar
   bends, sus2/sus4/add9 ambiguity, octave duplication, chorus, saturation, and
   polyrhythmic drift.
-- **More with Erv Wilson's CPS**: we have one piece with this, interesting.
-  Let's use it more. New directions?
+- **Focusing on Sine, Additive, (and modal/physical/karplus)**: Aleksi Perala
+  is an example of a producer who blends synthesis with scale. E.g. can construct
+  additive sounds that omit the octave with a scale that omits the octave, can reduce
+  the clash of sounds "wanting the octave" or not adapting well to alt tunings.
+  (Note: octave just an example here, relevant w/ other intervals.)
 - **Utonal / subharmonic form:** darker undertone passages that contrast with
   otonal material inside a coherent structure.
 - **Four Tet-ish Colundi arps:** warm, organic arpeggios using the Colundi-ish
@@ -139,13 +142,12 @@ Lower-value unless a piece demands it:
 
 ### Rhythm, Groove, and Tempo
 
-Implemented foundations: groove templates, tuplets, polyrhythm, cross-rhythm,
-rhythmic transforms, probability rhythms, aksak patterns, CA rhythms, and rhythm
-mutation.
+Implemented foundations: tempo maps, groove templates, tuplets, polyrhythm,
+cross-rhythm, rhythmic transforms, probability rhythms, aksak patterns, CA
+rhythms, and rhythm mutation.
 
 Still useful:
 
-- tempo maps and tempo automation
 - metric modulation helpers
 - independent polymeter helpers where voices run their own cycles
 - Reich-style phasing helpers
@@ -155,21 +157,33 @@ Still useful:
 
 ### Modulation and Aliveness
 
-The modulation matrix exists; future work should make it more expressive and
-more consistently audio-rate where it matters.
+The modulation matrix now has broad audio-rate coverage for core filter,
+drive, oscillator, VA filter-slot, and phrase-gesture use cases. Future work
+should focus on sources, stereo destinations, and deeper integration rather
+than repeating the basic filter/drive plumbing. Current feature details live
+in `docs/score_api.md`, `docs/synth_api.md`, and `docs/composition_api.md`.
 
 Worth doing:
 
-- per-sample coverage for more synth destinations, starting with
-  `filter_morph`, `resonance_q`, `hpf_cutoff_hz`, and feedback / drive params
+- **Filter gap: dynamic Newton parity for non-SVF topologies.** The current
+  modulation work gives all eight filter topologies per-sample cutoff plus
+  dynamic `resonance_q`, `filter_drive`, `filter_morph`, and
+  `feedback_amount`, but non-SVF topologies switch to the profiled stateful
+  kernel for those dynamic main controls only when the caller explicitly sets
+  `filter_solver="adaa"`. That preserves musical motion and is useful, but it
+  is not the same as the scalar Newton-closed feedback behavior for ladder,
+  sallen-key, cascade, SEM, Jupiter, K35, and diode. Future work should close
+  the dynamic feedback loops per sample for those topologies, keep
+  scalar/constant-profile renders bit-identical, stress-test high-Q /
+  high-feedback stability, and remove the fail-closed guard only once the
+  profiled and scalar quality contracts genuinely match.
 - stereo modulation for currently mono synth destinations
-- beat-synced LFO rates through meter/timeline integration
 - `VelocityParamMap` lowering into matrix connections
 - envelope follower as a reusable modulation source
 - Lorenz, Ornstein-Uhlenbeck, enhanced sample-and-hold, and shared drift-bus
   sources
-- phrase-level timbre gestures for opening, darkening, widening, blooming, and
-  settling
+- richer phrase-level timbre gestures that compose multiple lanes, such as
+  opening while blooming into a send or settling while narrowing
 
 Keep current humanization ergonomics unless a migration clearly improves the
 authoring surface.
@@ -194,6 +208,26 @@ Open ideas:
   toggles, and host-vs-plugin-vs-mapping failures
 - paid Linux-capable plugins (`u-he Satin`, `u-he Presswerk`) once activation is
   low-friction enough
+
+### Arrangement / Arc Analysis Tooling
+
+Hand-rolled scratch scripts during aphotic (per-bucket RMS "loudness arc"
+with ASCII bars) proved immediately useful for verifying form — worth
+promoting into the standard analysis pass:
+
+- loudness-arc timeline in the analysis manifest: RMS/LUFS per N-second
+  bucket for the mix and per voice, plus an ASCII/plot rendering, so
+  "does III stay quieter than II" is answerable without a scratch script
+- section-aware aggregates keyed to `PieceSection` boundaries: note count,
+  onset density, active-voice count, mean velocity, spectral centroid per
+  section — an "arrangement map" that shows orchestration at a glance
+- tuning-aware pitch histogram over time resolved to scale-degree labels
+  (chromagram is close but bins, not ratios); would directly audit things
+  like aphotic's no-3 constraint or a lone prime-5 event
+- per-voice activity/density curves for spotting dead zones and
+  over-stacked moments
+- render-to-render arc diff: same buckets, two renders, signed delta —
+  the fastest possible answer to "what did this revision change, where"
 
 ### Evaluation and Iteration
 
@@ -245,7 +279,9 @@ or obvious quality gaps.
 
 ### Tuning and Harmony
 
-- Combination Product Sets / Erv Wilson harmonic lattice materials
+- Combination Product Sets / Erv Wilson harmonic lattice materials — three
+  pieces exist (hexany_garden, ninth_wave, sodium_hymn), so CPS is deliberately
+  resting for now; definitely worth returning to when a piece calls for it
 - comma-pump progression generator
 - 6:7:9 subminor triads, 11/9 neutral-third triads, 9/7 supermajor color,
   utonal tetrads

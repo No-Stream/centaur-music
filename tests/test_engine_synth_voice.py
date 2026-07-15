@@ -201,9 +201,22 @@ def test_fm_slot_two_op_produces_signal() -> None:
     assert np.max(np.abs(audio)) > 0.1
 
 
-@pytest.mark.parametrize("noise_type", ["white", "pink", "bandpass", "flow"])
+@pytest.mark.parametrize("noise_type", ["white", "pink", "bandpass", "flow", "rain"])
 def test_noise_slot_produces_signal(noise_type: str) -> None:
     audio = _render_voice(noise_type=noise_type, noise_level=1.0)
+    assert np.isfinite(audio).all()
+    assert np.max(np.abs(audio)) > 0.01
+
+
+def test_noise_rain_params_accepted() -> None:
+    audio = _render_voice(
+        noise_type="rain",
+        noise_level=1.0,
+        noise_rain_density=0.7,
+        noise_rain_brightness=0.4,
+        noise_rain_drop_size=0.6,
+        noise_rain_wash=0.5,
+    )
     assert np.isfinite(audio).all()
     assert np.max(np.abs(audio)) > 0.01
 

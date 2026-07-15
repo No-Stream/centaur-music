@@ -29,6 +29,7 @@ from code_musics.engines._envelopes import render_envelope
 from code_musics.engines._filters import (
     _SUPPORTED_FILTER_MODES,
     _SUPPORTED_FILTER_TOPOLOGIES,
+    FilterControlValue,
     apply_zdf_svf,
 )
 from code_musics.engines._pi_macros import resolve_pi_macros
@@ -47,6 +48,7 @@ def render(
     sample_rate: int,
     params: dict[str, Any],
     freq_trajectory: np.ndarray | None = None,
+    param_profiles: dict[str, np.ndarray] | None = None,
 ) -> np.ndarray:
     """Render a composable drum voice with up to four synthesis layers."""
     if duration <= 0:
@@ -120,6 +122,7 @@ def render(
     filter_envelope_raw = params.get("filter_envelope")
     filter_topology = str(params.get("filter_topology", "svf")).lower()
     filter_morph = float(params.get("filter_morph", 0.0))
+    feedback_amount = float(params.get("feedback_amount", 0.0))
     k35_feedback_asymmetry = float(params.get("k35_feedback_asymmetry", 0.0))
 
     # Engine-level quality: modern-clean default. Transient drum content
@@ -309,7 +312,17 @@ def render(
                 f"Unsupported filter_topology: {filter_topology!r}. "
                 f"Supported: {sorted(_SUPPORTED_FILTER_TOPOLOGIES)}"
             )
-        if filter_envelope_raw is not None:
+        if param_profiles is not None and "filter_cutoff_hz" in param_profiles:
+            cutoff_profile = _control_to_profile(
+                _profile_or_scalar(
+                    "filter_cutoff_hz",
+                    filter_cutoff_hz,
+                    param_profiles,
+                    n_samples,
+                ),
+                n_samples,
+            )
+        elif filter_envelope_raw is not None:
             cutoff_profile = render_envelope(
                 filter_envelope_raw, n_samples, default_value=filter_cutoff_hz
             )
@@ -323,13 +336,22 @@ def render(
         signal = apply_filter_oversampled(
             signal,
             cutoff_profile=cutoff_profile,
-            resonance_q=filter_q,
+            resonance_q=_profile_or_scalar(
+                "filter_q", filter_q, param_profiles, n_samples
+            ),
             sample_rate=sample_rate,
             oversample_factor=quality_config.oversample_factor,
             filter_mode=filter_mode,
-            filter_drive=filter_drive,
+            filter_drive=_profile_or_scalar(
+                "filter_drive", filter_drive, param_profiles, n_samples
+            ),
             filter_topology=filter_topology,
-            filter_morph=filter_morph,
+            filter_morph=_profile_or_scalar(
+                "filter_morph", filter_morph, param_profiles, n_samples
+            ),
+            feedback_amount=_profile_or_scalar(
+                "feedback_amount", feedback_amount, param_profiles, n_samples
+            ),
             k35_feedback_asymmetry=k35_feedback_asymmetry,
             filter_solver=quality_config.solver,
             max_newton_iters=quality_config.max_newton_iters,
@@ -340,7 +362,9 @@ def render(
     signal = _apply_layer_shaper(
         signal,
         voice_shaper,
-        voice_shaper_drive,
+        _profile_or_scalar(
+            "shaper_drive", voice_shaper_drive, param_profiles, n_samples
+        ),
         voice_shaper_mix,
         sample_rate=sample_rate,
         mode=voice_shaper_mode,
@@ -430,7 +454,7 @@ _DRUM_TUBE_CHARACTER_ALIASES: dict[str, str] = {
 def _apply_layer_shaper(
     signal: np.ndarray,
     shaper: str | None,
-    drive: float,
+    drive: FilterControlValue,
     mix: float,
     *,
     sample_rate: int = 44_100,
@@ -444,6 +468,8 @@ def _apply_layer_shaper(
 
     if shaper is None:
         return signal
+    if isinstance(drive, np.ndarray) and shaper in {"tube", "preamp"}:
+        raise ValueError(f"shaper_drive profiles are not supported for {shaper!r}")
 
     if shaper == "tube":
         # Deferred import: synth.py -> engines/__init__.py -> drum_voice.py cycle
@@ -453,7 +479,7 @@ def _apply_layer_shaper(
         result = apply_tube(
             signal,
             character=character,
-            drive=drive,
+            drive=float(drive),
             mix=mix,
             sample_rate=sample_rate,
         )
@@ -465,7 +491,7 @@ def _apply_layer_shaper(
 
         result = apply_preamp(
             signal,
-            drive=drive,
+            drive=float(drive),
             mix=mix,
             sample_rate=sample_rate,
         )
@@ -480,8 +506,35 @@ def _apply_layer_shaper(
     return apply_waveshaper(
         signal,
         algorithm=shaper,
-        drive=drive,
+        drive=1.0 if isinstance(drive, np.ndarray) else float(drive),
+        drive_envelope=np.clip(drive, 0.0, 1.0)
+        if isinstance(drive, np.ndarray)
+        else None,
         mix=mix,
         bit_depth=bit_depth,
         reduce_ratio=reduce_ratio,
     )
+
+
+def _profile_or_scalar(
+    name: str,
+    scalar_value: float,
+    param_profiles: dict[str, np.ndarray] | None,
+    n_samples: int,
+) -> FilterControlValue:
+    """Return a 1D per-note profile when supplied, otherwise the scalar value."""
+    if param_profiles is None or name not in param_profiles:
+        return scalar_value
+    profile = np.asarray(param_profiles[name], dtype=np.float64)
+    if profile.shape != (n_samples,):
+        raise ValueError(f"{name} profile length must match note duration in samples")
+    if not np.all(np.isfinite(profile)):
+        raise ValueError(f"{name} profile values must be finite")
+    return profile
+
+
+def _control_to_profile(control: FilterControlValue, n_samples: int) -> np.ndarray:
+    """Broadcast a scalar control or return an already-validated profile."""
+    if isinstance(control, np.ndarray):
+        return control
+    return np.full(n_samples, float(control), dtype=np.float64)

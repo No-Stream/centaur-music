@@ -102,6 +102,155 @@ def test_exciter_multi_tap_no_tone() -> None:
     assert np.max(np.abs(audio)) > 0
 
 
+def _spectral_flatness(signal: np.ndarray) -> float:
+    """Geometric mean / arithmetic mean of the magnitude spectrum.
+
+    Close to 1.0 for white noise (flat spectrum), much lower for tonal /
+    pitched content whose energy concentrates in a few bins.
+    """
+    spec = np.abs(np.fft.rfft(signal))
+    spec = spec[spec > 0.0]
+    if spec.size == 0:
+        return 0.0
+    log_mean = np.mean(np.log(spec))
+    arith_mean = np.mean(spec)
+    return float(np.exp(log_mean) / arith_mean)
+
+
+def test_exciter_beater_no_tone() -> None:
+    audio = render(
+        freq=60.0,
+        duration=0.15,
+        amp=0.8,
+        sample_rate=SAMPLE_RATE,
+        params={"exciter_type": "beater", "exciter_level": 1.0, "tone_type": None},
+    )
+    assert np.isfinite(audio).all()
+    assert np.max(np.abs(audio)) > 0
+
+
+def test_exciter_beater_deterministic() -> None:
+    kwargs: dict = {
+        "freq": 55.0,
+        "duration": 0.1,
+        "amp": 0.8,
+        "sample_rate": SAMPLE_RATE,
+        "params": {"exciter_type": "beater", "exciter_level": 1.0, "tone_type": None},
+    }
+    first = render(**kwargs)
+    second = render(**kwargs)
+    assert np.allclose(first, second)
+
+
+def test_exciter_beater_descends_below_click_centroid() -> None:
+    """The beater knock sweeps down toward ``floor_ratio * center_hz`` and is
+    damped over its own short window, so — unlike the click exciter's flat
+    bandpassed-noise-around-``center_hz`` spectrum — its energy is dragged
+    toward lower frequencies. Spectral centroid should read materially lower
+    than the click exciter at the same nominal center frequency, evidencing
+    the pitched, descending contact character rather than static noise."""
+    shared_params = {
+        "exciter_level": 1.0,
+        "tone_type": None,
+        "exciter_decay_s": 0.02,
+        "exciter_center_hz": 3200.0,
+    }
+    click_audio = render(
+        freq=60.0,
+        duration=0.05,
+        amp=0.8,
+        sample_rate=SAMPLE_RATE,
+        params={**shared_params, "exciter_type": "click"},
+    )
+    beater_audio = render(
+        freq=60.0,
+        duration=0.05,
+        amp=0.8,
+        sample_rate=SAMPLE_RATE,
+        params={
+            **shared_params,
+            "exciter_type": "beater",
+            "exciter_noise_blend": 0.0,
+        },
+    )
+    click_centroid = _spectral_centroid(click_audio, SAMPLE_RATE)
+    beater_centroid = _spectral_centroid(beater_audio, SAMPLE_RATE)
+    assert beater_centroid < click_centroid * 0.85, (
+        f"beater centroid {beater_centroid:.1f} Hz not materially lower than "
+        f"click centroid {click_centroid:.1f} Hz"
+    )
+
+
+def test_exciter_beater_noise_blend_increases_flatness() -> None:
+    """``exciter_noise_blend`` should audibly shift the knock toward noise."""
+    base_params = {
+        "exciter_type": "beater",
+        "exciter_level": 1.0,
+        "tone_type": None,
+        "exciter_decay_s": 0.02,
+        "exciter_center_hz": 3200.0,
+    }
+    pure_chirp = render(
+        freq=60.0,
+        duration=0.05,
+        amp=0.8,
+        sample_rate=SAMPLE_RATE,
+        params={**base_params, "exciter_noise_blend": 0.0},
+    )
+    blended = render(
+        freq=60.0,
+        duration=0.05,
+        amp=0.8,
+        sample_rate=SAMPLE_RATE,
+        params={**base_params, "exciter_noise_blend": 0.8},
+    )
+    assert _spectral_flatness(blended) > _spectral_flatness(pure_chirp)
+
+
+def test_exciter_beater_default_params_via_registry_preset() -> None:
+    """Smoke test the updated ``909_techno`` drum_voice preset, which now
+    uses the beater exciter, renders end-to-end without errors."""
+    from code_musics.engines.registry import render_note_signal, resolve_synth_params
+
+    params = resolve_synth_params({"engine": "drum_voice", "preset": "909_techno"})
+    signal = render_note_signal(
+        freq=55.0,
+        duration=0.5,
+        amp=0.8,
+        sample_rate=SAMPLE_RATE,
+        params=params,
+    )
+    assert np.isfinite(signal).all()
+    assert np.max(np.abs(signal)) > 0
+
+
+@pytest.mark.parametrize(
+    "bad_params, match",
+    [
+        ({"exciter_beater_floor_ratio": 0.0}, "exciter_beater_floor_ratio"),
+        ({"exciter_beater_floor_ratio": 1.5}, "exciter_beater_floor_ratio"),
+        ({"exciter_beater_chirp_s": 0.0}, "exciter_beater_chirp_s"),
+        ({"exciter_beater_chirp_s": -0.001}, "exciter_beater_chirp_s"),
+        ({"exciter_noise_blend": -0.1}, "exciter_noise_blend"),
+        ({"exciter_noise_blend": 1.1}, "exciter_noise_blend"),
+    ],
+)
+def test_exciter_beater_invalid_params_raise(bad_params: dict, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        render(
+            freq=55.0,
+            duration=0.05,
+            amp=0.8,
+            sample_rate=SAMPLE_RATE,
+            params={
+                "exciter_type": "beater",
+                "exciter_level": 1.0,
+                "tone_type": None,
+                **bad_params,
+            },
+        )
+
+
 # ---------------------------------------------------------------------------
 # 3. Tone types
 # ---------------------------------------------------------------------------

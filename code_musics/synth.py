@@ -29,6 +29,7 @@ from code_musics.engines._dsp_utils import (
     resolve_quality_mode,
     upsample_cutoff_profile,
 )
+from code_musics.engines._fdn_reverb import render_fdn_reverb
 from code_musics.engines._filters import (
     _SUPPORTED_FILTER_MODES,
     _SUPPORTED_FILTER_TOPOLOGIES,
@@ -357,6 +358,13 @@ def _mean_band_energy_db(
 
 def _spectral_centroid_hz(signal: np.ndarray, *, sample_rate: int) -> float:
     freqs, magnitude_db = _average_spectrum_db(signal, sample_rate=sample_rate)
+    return _spectral_centroid_from_spectrum(freqs, magnitude_db)
+
+
+def _spectral_centroid_from_spectrum(
+    freqs: np.ndarray,
+    magnitude_db: np.ndarray,
+) -> float:
     if freqs.size == 0:
         return 0.0
     magnitudes = np.power(10.0, magnitude_db / 20.0)
@@ -1243,7 +1251,7 @@ def adsr(
     attack_target = float(
         np.clip(attack_target, _ATTACK_TARGET_MIN, _ATTACK_TARGET_MAX)
     )
-    n = len(signal)
+    n = signal.shape[-1]
     n_attack = int(attack * sample_rate)
     n_decay = int(decay * sample_rate)
     n_release = int(release * sample_rate)
@@ -1803,12 +1811,12 @@ def _build_effect_analysis_entry(
         low_hz=2_000.0,
         high_hz=8_000.0,
     )
-    spectral_centroid_delta_hz = _spectral_centroid_hz(
-        output_signal,
-        sample_rate=sample_rate,
-    ) - _spectral_centroid_hz(
-        input_signal,
-        sample_rate=sample_rate,
+    spectral_centroid_delta_hz = _spectral_centroid_from_spectrum(
+        output_freqs,
+        output_magnitude_db,
+    ) - _spectral_centroid_from_spectrum(
+        input_freqs,
+        input_magnitude_db,
     )
 
     input_imd = intermodulation_ratio(input_freqs, input_magnitude_db)
@@ -1927,6 +1935,9 @@ def _build_effect_analysis_warnings(
         longest_run_above_1db_seconds = float(
             metrics.get("longest_run_above_1db_seconds", 0.0)
         )
+        longest_run_above_2db_seconds = float(
+            metrics.get("longest_run_above_2db_seconds", 0.0)
+        )
         if avg_gain_reduction_db < 0.5 and max_gain_reduction_db < 1.5:
             warnings.append(
                 _build_effect_warning(
@@ -1959,14 +1970,18 @@ def _build_effect_analysis_warnings(
                     p95_gain_reduction_db=round(p95_gain_reduction_db, 2),
                 )
             )
-        if signal_duration_seconds >= 15.0 and longest_run_above_1db_seconds >= 20.0:
+        if signal_duration_seconds >= 15.0 and longest_run_above_2db_seconds >= 20.0:
             warnings.append(
                 _build_effect_warning(
                     severity="severe",
                     code="continuous_gain_reduction",
-                    message="compressor stays above 1 dB of gain reduction for unusually long stretches",
+                    message="compressor stays above 2 dB of gain reduction for unusually long stretches",
                     longest_run_above_1db_seconds=round(
                         longest_run_above_1db_seconds,
+                        2,
+                    ),
+                    longest_run_above_2db_seconds=round(
+                        longest_run_above_2db_seconds,
                         2,
                     ),
                 )
@@ -2157,6 +2172,10 @@ def _build_effect_analysis_warnings(
     imd_output = float(metrics.get("imd_ratio_output", 0.0))
     imd_delta = imd_output - imd_input
     imd_growth_factor = imd_delta / max(imd_input, 0.1)
+    # Equality (not membership) against "two_tone" is deliberate: it also
+    # excludes the "noise_dominated" detection (floor-buried tones — see
+    # intermodulation_ratio) alongside "single_tone", since a noise-buried
+    # probe can't distinguish real nonlinearity from a raised floor either.
     imd_detection = str(metrics.get("imd_detection", "single_tone"))
     if imd_detection == "two_tone" and imd_growth_factor >= 1.5:
         warnings.append(
@@ -2320,6 +2339,10 @@ def _build_chain_summary(
         imd_input = float(m.get("imd_ratio_input", 0.0))
         imd_output = float(m.get("imd_ratio_output", 0.0))
         stage_imd_growth = (imd_output - imd_input) / max(imd_input, 0.1)
+        # Equality against "two_tone" also excludes "noise_dominated"
+        # (floor-buried tones), same rationale as _build_effect_analysis_warnings
+        # above: a floor-buried probe can't distinguish real nonlinearity
+        # from a raised floor, so it must not count toward chain warnings.
         if (
             str(m.get("imd_detection", "single_tone")) == "two_tone"
             and stage_imd_growth > 0.0
@@ -2427,7 +2450,14 @@ def _build_chain_summary(
                 chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
-    elif chain_has_nonlinear_stage and total_high_band_lift_db >= 4.0:
+    elif (
+        chain_has_nonlinear_stage
+        and total_high_band_lift_db >= 4.0
+        and chain_input_active_fraction >= _CHAIN_SPARSE_INPUT_ACTIVE_FRACTION
+    ):
+        # Warning-tier brightness codes are suppressed entirely on sparse
+        # input (lone-kick drum buses etc.): the lift measurement is
+        # unreliable there and fires as a false positive.
         warnings.append(
             _build_effect_warning(
                 severity="warning",
@@ -2452,7 +2482,10 @@ def _build_chain_summary(
                 chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
-    elif total_centroid_lift_hz >= 500.0:
+    elif (
+        total_centroid_lift_hz >= 500.0
+        and chain_input_active_fraction >= _CHAIN_SPARSE_INPUT_ACTIVE_FRACTION
+    ):
         warnings.append(
             _build_effect_warning(
                 severity="warning",
@@ -2533,7 +2566,11 @@ def _build_chain_summary(
                 chain_input_active_fraction=round(chain_input_active_fraction, 4),
             )
         )
-    elif chain_has_nonlinear_stage and total_a_weighted_lift_db >= 4.0:
+    elif (
+        chain_has_nonlinear_stage
+        and total_a_weighted_lift_db >= 4.0
+        and chain_input_active_fraction >= _CHAIN_SPARSE_INPUT_ACTIVE_FRACTION
+    ):
         warnings.append(
             _build_effect_warning(
                 severity="warning",
@@ -3223,6 +3260,13 @@ def apply_compressor(
         ),
         "longest_run_above_1db_seconds": round(
             _seconds_for_mask(active_mask, sample_rate=sample_rate),
+            2,
+        ),
+        "longest_run_above_2db_seconds": round(
+            _seconds_for_mask(
+                aligned_gain_reduction_trace_db >= 2.0,
+                sample_rate=sample_rate,
+            ),
             2,
         ),
     }
@@ -4583,6 +4627,95 @@ def apply_bricasti(
     return _match_input_layout(blended.astype(np.float64), signal)
 
 
+def apply_fdn_reverb(
+    signal: np.ndarray,
+    *,
+    decay_s: float = 18.0,
+    size: float = 0.85,
+    predelay_ms: float = 40.0,
+    damping_hz: float = 7000.0,
+    low_decay_mult: float = 1.5,
+    low_crossover_hz: float = 250.0,
+    modulation_depth: float = 0.3,
+    modulation_rate_hz: float = 0.15,
+    diffusion: float = 0.7,
+    feedback_matrix: str = "householder",
+    n_lines: int = 16,
+    mix: float = 0.3,
+    highpass_hz: float = 0.0,
+    lowpass_hz: float = 0.0,
+    seed: int = 0,
+    sample_rate: int = SAMPLE_RATE,
+) -> np.ndarray:
+    """Native FDN reverb for enormous, dark, clean, chorus-free spaces.
+
+    A unitary feedback delay network (Householder or Hadamard matrix) over
+    mutually-prime delay lines with per-line Jot RT60 gains, in-loop HF damping
+    plus an independent bass-decay band, and slow decorrelated delay-time
+    modulation that keeps the tail smooth at 30-60 s decays. Deterministic:
+    identical input and params render bit-identically.
+
+    Parameters
+    ----------
+    decay_s:            RT60 target in seconds (musical up to ≥ 45 s).
+    size:               Perceptual room scale ``[0, 1]``; scales delay lengths.
+    predelay_ms:        Dry-to-wet gap in milliseconds.
+    damping_hz:         HF decay corner; lower darkens the tail.
+    low_decay_mult:     Bass-band decay multiplier (``> 1`` = bass rings longer
+                        than the mids).
+    low_crossover_hz:   Corner below which ``low_decay_mult`` applies.
+    modulation_depth:   Delay-time modulation depth ``[0, 1]`` (kept shallow so
+                        the tail stays chorus-free).
+    modulation_rate_hz: Slow modulation rate.
+    diffusion:          Input allpass diffusion ``[0, 1]``.
+    feedback_matrix:    ``"householder"`` (dense, O(N), default) or
+                        ``"hadamard"`` (power-of-two ``n_lines`` only).
+    n_lines:            Delay-line count (``8`` or ``16``).
+    mix:                Wet level ``[0, 1]``; accepts effect-amount automation.
+    highpass_hz:        Wet-return highpass (0 = off).
+    lowpass_hz:         Wet-return lowpass (0 = off).
+    seed:               Deterministic seed for modulation phases/rates.
+    """
+    if not 0.0 <= mix <= 1.0:
+        raise ValueError("mix must be between 0 and 1")
+    if predelay_ms < 0.0:
+        raise ValueError("predelay_ms must be non-negative")
+
+    stereo_signal = _ensure_stereo(signal)
+    n_samples = stereo_signal.shape[-1]
+    mono_input = stereo_signal.mean(axis=0)
+
+    wet_signal = render_fdn_reverb(
+        mono_input,
+        sample_rate=sample_rate,
+        decay_s=decay_s,
+        size=size,
+        damping_hz=damping_hz,
+        low_decay_mult=low_decay_mult,
+        low_crossover_hz=low_crossover_hz,
+        modulation_depth=modulation_depth,
+        modulation_rate_hz=modulation_rate_hz,
+        diffusion=diffusion,
+        feedback_matrix=feedback_matrix,
+        n_lines=n_lines,
+        seed=seed,
+    )
+
+    predelay_samples = int(round(predelay_ms * sample_rate / 1000.0))
+    if predelay_samples > 0:
+        wet_signal = np.pad(wet_signal, ((0, 0), (predelay_samples, 0)))[:, :n_samples]
+
+    wet_signal = _shape_reverb_return(
+        wet_signal,
+        sample_rate=sample_rate,
+        highpass_hz=highpass_hz,
+        lowpass_hz=lowpass_hz,
+    )
+
+    blended = ((1.0 - mix) * stereo_signal) + (mix * wet_signal)
+    return _match_input_layout(blended.astype(np.float64), signal)
+
+
 def apply_tal_chorus_lx(
     signal: np.ndarray,
     mix: float = 0.5,
@@ -4998,7 +5131,7 @@ def apply_clipper(
     signal: np.ndarray,
     *,
     threshold_db: float | np.ndarray = ...,
-    knee_width_db: float | np.ndarray = ...,
+    knee_width_db: float | np.ndarray | None = ...,
     algorithm: str = ...,
     oversample_factor: int = ...,
     mix: float | np.ndarray = ...,
@@ -5015,7 +5148,7 @@ def apply_clipper(
     signal: np.ndarray,
     *,
     threshold_db: float | np.ndarray = ...,
-    knee_width_db: float | np.ndarray = ...,
+    knee_width_db: float | np.ndarray | None = ...,
     algorithm: str = ...,
     oversample_factor: int = ...,
     mix: float | np.ndarray = ...,
@@ -5031,8 +5164,8 @@ def apply_clipper(
     signal: np.ndarray,
     *,
     threshold_db: float | np.ndarray = -3.0,
-    knee_width_db: float | np.ndarray = 2.0,
-    algorithm: str = "poly_knee",
+    knee_width_db: float | np.ndarray | None = None,
+    algorithm: str = "hard",
     oversample_factor: int = 8,
     mix: float | np.ndarray = 1.0,
     makeup_gain_db: float = 0.0,
@@ -5041,21 +5174,21 @@ def apply_clipper(
     calibration_window_ms: float = 10.0,
     return_analysis: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, dict[str, float | int | str]]:
-    """Oversampled, stereo-linked peak clipper with a monotone polynomial knee.
+    """Oversampled, stereo-linked peak clipper.
 
     Transfer function (per channel, after oversampling):
 
-    * ``algorithm="poly_knee"`` (default): monotone cubic-Hermite soft knee.
+    * ``algorithm="hard"`` (default): literal ``numpy.clip`` on the oversampled
+      signal. ``knee_width_db`` is ignored. This is the transparent mastering
+      / final peak-shave default.
+    * ``algorithm="poly_knee"``: monotone cubic-Hermite soft knee.
       ``|x|`` below ``threshold_db - knee_width_db/2`` passes through
       bit-exact; between ``threshold_db - knee_width_db/2`` and
       ``threshold_db + knee_width_db/2`` the transfer follows a C¹ cubic
       Hermite blend to a flat ceiling; above that it is clamped to
       ``threshold_db`` exactly.  ``knee_width_db=0`` collapses to a pure
-      brickwall.  AD2-antialiased.
-    * ``algorithm="hard"``: literal ``numpy.clip`` on the oversampled signal.
-      ``knee_width_db`` is ignored.  The AD2 hard-clip kernel was measured
-      to add <0.01% IMD over naive ``np.clip`` at OS=8 on transient content,
-      so we skip ADAA here for speed and predictable null-test behavior.
+      brickwall.  AD2-antialiased. If ``knee_width_db`` is left at ``None``,
+      poly-knee uses a 2.0 dB character knee.
 
     This replaces the previous ``hardness`` crossfade of
     ``hard * 0.85 + tanh * 0.15`` which, per the ``clipper_bisect``
@@ -5072,10 +5205,11 @@ def apply_clipper(
     phase-coherent across L/R.  Mono input bypasses the link and returns
     the per-channel shaped waveform directly.
 
-    Typical use: drum-bus / master-bus peak shaver doing 1-3 dB of real
-    work above ``threshold_db``.  Follow with :func:`apply_native_limiter`
-    if a strict true-peak ceiling matters — inter-sample peaks can still
-    exist after downsampling.
+    Typical use: hard mode for master-bus peak shaving doing 0.5-2 dB of
+    real work above ``threshold_db``; poly-knee for drum-bus glue and
+    saturation-like character. Follow with :func:`apply_native_limiter` if
+    a strict true-peak ceiling matters — inter-sample peaks can still exist
+    after downsampling.
 
     Parameters
     ----------
@@ -5083,13 +5217,14 @@ def apply_clipper(
         Ceiling in dBFS (default -3.0, typical range -12..0).  May be a
         per-sample array matching the input length for automated rides.
         Ignored when ``max_shave_db`` is set.
-    knee_width_db : float | np.ndarray
+    knee_width_db : float | np.ndarray | None
         Total knee width in dB.  ``0.0`` is a brickwall; ``2.0`` is a
         mild musical soft-clip; ``6.0`` becomes audibly gentle.  Default
-        2.0.  May also be a per-sample array.  Only used by
-        ``algorithm="poly_knee"``.
+        ``None`` resolves to ``0.0`` for ``algorithm="hard"`` and ``2.0``
+        for ``algorithm="poly_knee"``.  May also be a per-sample array.
+        Only used by ``algorithm="poly_knee"``.
     algorithm : str
-        ``"poly_knee"`` (default) or ``"hard"``.  See transfer-function
+        ``"hard"`` (default) or ``"poly_knee"``.  See transfer-function
         description above.
     oversample_factor : int
         1, 2, 4, 8, or 16.  Default 8.  Uses a sharp Kaiser (β=14) polyphase
@@ -5118,6 +5253,8 @@ def apply_clipper(
         raise ValueError(
             f"algorithm must be one of {sorted(_CLIPPER_ALGORITHMS)}; got {algorithm!r}"
         )
+    if knee_width_db is None:
+        knee_width_db = 2.0 if algorithm == "poly_knee" else 0.0
 
     sig = np.asarray(signal, dtype=np.float64)
     was_mono = sig.ndim == 1
@@ -5445,10 +5582,13 @@ def finalize_master(
     oversample_factor: int = 4,
     max_iterations: int = 6,
     loudness_tolerance_lufs: float = 0.2,
+    limiter_backend: Literal["auto", "native", "lsp"] = "auto",
 ) -> MasteringResult:
     """Finalize a mix to a LUFS target with an LSP true-peak limiter ceiling."""
     if max_iterations < 1:
         raise ValueError("max_iterations must be at least 1")
+    if limiter_backend not in {"auto", "native", "lsp"}:
+        raise ValueError("limiter_backend must be one of: auto, native, lsp")
 
     source_signal = np.asarray(signal, dtype=np.float64)
     mastered = source_signal
@@ -5459,11 +5599,18 @@ def finalize_master(
             true_peak_dbfs=float("-inf"),
         )
 
-    use_lsp_limiter = has_external_plugin("lsp_limiter_stereo")
-    if not use_lsp_limiter:
+    lsp_available = has_external_plugin("lsp_limiter_stereo")
+    if limiter_backend == "lsp" and not lsp_available:
+        raise RuntimeError("limiter_backend='lsp' requires lsp_limiter_stereo")
+    use_lsp_limiter = limiter_backend == "lsp" or (
+        limiter_backend == "auto" and lsp_available
+    )
+    if not use_lsp_limiter and limiter_backend == "auto":
         logger.info(
             "LSP limiter unavailable — using native lookahead limiter fallback."
         )
+    elif limiter_backend == "native":
+        logger.info("Using native lookahead limiter for preview mastering.")
 
     current_lufs, active_window_fraction = integrated_lufs(
         mastered,
@@ -8239,6 +8386,7 @@ _SUPPORTED_EFFECT_AMOUNT_AUTOMATION_TARGETS = {"mix", "wet", "wet_level"}
 _PER_EFFECT_PARAM_AUTOMATION_TARGETS: dict[str, frozenset[str]] = {
     "analog_filter": frozenset({"cutoff_hz"}),
     "clipper": frozenset({"threshold_db", "knee_width_db"}),
+    "stereo_width": frozenset({"width"}),
 }
 
 
@@ -8471,6 +8619,7 @@ def _is_missing_vst3_plugin(plugin_name: str) -> bool:
 _SIMPLE_EFFECT_DISPATCH: dict[str, Callable[..., np.ndarray]] = {
     "delay": apply_delay,
     "reverb": apply_reverb,
+    "fdn_reverb": apply_fdn_reverb,
     "chow_tape": apply_chow_tape,
     "bricasti": apply_bricasti,
     "chorus": apply_chorus,

@@ -39,6 +39,8 @@ Automatic classification is conservative:
 ## Timing and Pitch Rules
 
 - MIDI timing is encoded at `60 BPM`, so `1 beat = 1 second`
+- `Score.timeline` / `TempoMap` metadata is not exported as MIDI tempo events;
+  grid-authored pieces should already have notes resolved into score seconds
 - `*_scala.mid` and `*_tun.mid` are plain note stems intended to be used with the shared tuning files
 - `*_mpe_48st.mid` uses per-note-channel pitch bend with a `48` semitone bend range
 - `*_poly_bend_12st.mid` uses channel-per-note pitch bend with a `12` semitone bend range

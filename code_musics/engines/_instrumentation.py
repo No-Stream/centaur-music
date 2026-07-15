@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 from scipy.ndimage import minimum_filter1d
@@ -111,15 +112,29 @@ def a_weighted_mean_band_energy_db(
 class IMDResult:
     """Result of an IMD probe on a signal.
 
-    ``ratio`` is ``sum(IMD_product_energy) / sum(harmonic_product_energy)``.
-    A value of 0.0 means no IMD (pure harmonic distortion); >1.0 means the
-    IMD products dominate — "crunchy" character.
-    ``detection`` is ``"two_tone"`` when two plausible tones were found,
-    ``"single_tone"`` otherwise (in which case ratio is forced to 0.0).
+    ``ratio`` is ``sum(IMD_product_energy) / sum(harmonic_product_energy)``,
+    where each product's energy is measured *above the local spectral floor*
+    (see :func:`_local_floor_linear`) rather than as raw bin power. A value
+    of 0.0 means no IMD (pure harmonic distortion); >1.0 means the IMD
+    products dominate — "crunchy" character.
+
+    ``detection`` is one of:
+
+    - ``"two_tone"`` — two plausible, floor-dominant tones were found and the
+      ratio is meaningful.
+    - ``"single_tone"`` — only one plausible tone was found (ratio forced to
+      0.0).
+    - ``"noise_dominated"`` — two tones were found but at least one does not
+      stand clearly above its local spectral floor (e.g. a tone buried in a
+      reverb tail or noise bed). Diffuse broadband energy fills the
+      would-be-quiet IMD bins without any real nonlinearity, so the raw
+      ratio would be meaningless; ratio is forced to 0.0 and callers should
+      *not* treat this as "no distortion" evidence either — it means the
+      probe couldn't tell.
     """
 
     ratio: float
-    detection: str
+    detection: Literal["two_tone", "single_tone", "noise_dominated"]
     f1_hz: float
     f2_hz: float
 
@@ -142,6 +157,62 @@ def _peak_magnitude_linear(
     if lo >= hi:
         return 0.0
     return float(np.max(magnitude_linear[lo:hi]))
+
+
+# Half-width (in FFT bins) of the window used to estimate the local spectral
+# floor around a target bin. Wide enough to average out bin-to-bin FFT noise
+# but narrow enough to track slow spectral tilt/shape.
+_FLOOR_WINDOW_BINS = 24
+
+
+def _local_floor_linear(
+    freqs_hz: np.ndarray,
+    magnitude_linear: np.ndarray,
+    center_hz: float,
+    *,
+    bin_tolerance: int,
+    floor_window_bins: int = _FLOOR_WINDOW_BINS,
+) -> float:
+    """Estimate the local spectral floor (linear magnitude) around ``center_hz``.
+
+    Diffuse broadband content (reverb tails, noise beds) raises the median
+    magnitude in a neighborhood uniformly, while discrete tones/spurs are
+    narrow outliers within that neighborhood. The median of a ``+/-
+    floor_window_bins`` window, excluding the ``+/- bin_tolerance`` core
+    around the target bin, is a robust floor estimate that a single tall
+    spur cannot drag upward.
+    """
+    if center_hz <= 0.0 or freqs_hz.size < 2 or center_hz >= float(freqs_hz[-1]):
+        return 0.0
+    bin_spacing = float(freqs_hz[1] - freqs_hz[0])
+    if bin_spacing <= 0.0:
+        return 0.0
+    center_idx = int(round((center_hz - float(freqs_hz[0])) / bin_spacing))
+    win_lo = max(center_idx - floor_window_bins, 0)
+    win_hi = min(center_idx + floor_window_bins + 1, magnitude_linear.size)
+    if win_lo >= win_hi:
+        return 0.0
+    core_lo = max(center_idx - bin_tolerance, 0)
+    core_hi = min(center_idx + bin_tolerance + 1, magnitude_linear.size)
+    window_indices = np.arange(win_lo, win_hi)
+    outside_core = (window_indices < core_lo) | (window_indices >= core_hi)
+    floor_bins = magnitude_linear[window_indices[outside_core]]
+    if floor_bins.size == 0:
+        return 0.0
+    return float(np.median(floor_bins))
+
+
+def _floor_referenced_power(peak_linear: float, floor_linear: float) -> float:
+    """Power standing above the local floor, clamped at zero.
+
+    Using ``max(peak - floor, 0) ** 2`` (rather than ``peak**2 -
+    floor**2``) treats the floor as a noise amplitude that partially
+    coherently sums with any real spur at that bin — the conservative
+    choice, since it can only ever *under*-count spur energy relative to
+    power subtraction, never invent energy from a floor that is louder
+    than the peak.
+    """
+    return max(peak_linear - floor_linear, 0.0) ** 2
 
 
 def _pick_two_tones(
@@ -194,6 +265,7 @@ def intermodulation_ratio(
     bin_tolerance: int = 2,
     max_harmonic: int = 10,
     max_imd_order: int = 3,
+    tone_dominance_db: float = 15.0,
     f1_override_hz: float | None = None,
     f2_override_hz: float | None = None,
 ) -> IMDResult:
@@ -204,11 +276,22 @@ def intermodulation_ratio(
     1. Detect the two strongest in-band tones (or use overrides).
     2. If only one tone is present, return ``ratio=0.0`` and flag
        ``"single_tone"``.
-    3. Sum power at integer harmonics of f1 and f2 up to ``max_harmonic``.
-    4. Sum power at ``|m*f1 +/- n*f2|`` for ``m, n`` in
+    3. Require both tones to stand at least ``tone_dominance_db`` above
+       their local spectral floor (see :func:`_local_floor_linear`). If
+       either tone is floor-buried (e.g. drowned in a reverb tail or noise
+       bed), the probe cannot distinguish real IMD spurs from a raised
+       floor, so return ``ratio=0.0`` and flag ``"noise_dominated"``.
+    4. Sum floor-referenced power (:func:`_floor_referenced_power`) at
+       integer harmonics of f1 and f2 up to ``max_harmonic``.
+    5. Sum floor-referenced power at ``|m*f1 +/- n*f2|`` for ``m, n`` in
        ``[1, max_imd_order]`` excluding pure harmonic cases
-       (``m==0 or n==0``).
-    5. Return ``ratio = imd_energy / (harmonic_energy + eps)``.
+       (``m==0 or n==0``). Measuring power above the local floor (rather
+       than raw bin power) is what keeps this ratio content-invariant on
+       diffuse broadband material: linear diffusion (reverb, noise beds)
+       raises the floor uniformly without adding discrete spurs, so it
+       contributes ~0 to both the harmonic and IMD sums, while real
+       nonlinear spurs stand above the floor and are counted normally.
+    6. Return ``ratio = imd_energy / (harmonic_energy + eps)``.
 
     Returns
     -------
@@ -231,14 +314,31 @@ def intermodulation_ratio(
     if f2 <= 0.0:
         return IMDResult(ratio=0.0, detection="single_tone", f1_hz=f1, f2_hz=0.0)
 
+    dominance_ratio = 10.0 ** (tone_dominance_db / 20.0)
+    for tone in (f1, f2):
+        tone_peak = _peak_magnitude_linear(
+            freqs_hz, magnitude_linear, tone, bin_tolerance=bin_tolerance
+        )
+        tone_floor = _local_floor_linear(
+            freqs_hz, magnitude_linear, tone, bin_tolerance=bin_tolerance
+        )
+        if tone_peak <= _EPS or tone_peak < tone_floor * dominance_ratio:
+            return IMDResult(ratio=0.0, detection="noise_dominated", f1_hz=f1, f2_hz=f2)
+
     def _power(freq: float) -> float:
-        amp = _peak_magnitude_linear(
+        peak = _peak_magnitude_linear(
             freqs_hz,
             magnitude_linear,
             freq,
             bin_tolerance=bin_tolerance,
         )
-        return amp * amp
+        floor = _local_floor_linear(
+            freqs_hz,
+            magnitude_linear,
+            freq,
+            bin_tolerance=bin_tolerance,
+        )
+        return _floor_referenced_power(peak, floor)
 
     harmonic_energy = 0.0
     for tone in (f1, f2):

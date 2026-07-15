@@ -25,8 +25,9 @@ from code_musics.engines._dsp_utils import (
     rng_for_note,
     snapshot_voice_state,
 )
-from code_musics.engines._filters import _SUPPORTED_FILTER_MODES
+from code_musics.engines._filters import _SUPPORTED_FILTER_MODES, FilterControlValue
 from code_musics.engines._voice_dist import apply_voice_dist
+from code_musics.engines._waveshaper import apply_waveshaper
 
 
 def render(
@@ -37,6 +38,7 @@ def render(
     sample_rate: int,
     params: dict[str, Any],
     freq_trajectory: np.ndarray | None = None,
+    param_profiles: dict[str, np.ndarray] | None = None,
     voice_state: dict[str, Any] | None = None,
 ) -> np.ndarray:
     """Render a harmonic-rich source shaped by a ZDF state-variable filter.
@@ -238,17 +240,36 @@ def render(
         signal = signal / np.sqrt(power_estimate)
 
     # Build per-sample cutoff profile with keytracking and filter envelope.
-    cutoff_profile = build_keytracked_cutoff_profile(
-        cutoff_hz=cutoff_hz,
-        keytrack=keytrack,
-        reference_freq_hz=reference_freq_hz,
-        filter_env_amount=filter_env_amount,
-        filter_env_decay=filter_env_decay,
-        duration=duration,
-        n_samples=n_samples,
-        freq_profile=freq_profile,
-        nyquist=nyquist_hz,
-    )
+    if param_profiles is not None and "cutoff_hz" in param_profiles:
+        cutoff_profile_base = _profile_or_scalar(
+            "cutoff_hz", cutoff_hz, param_profiles, n_samples
+        )
+        authored_cutoff = float(params.get("cutoff_hz", 1_800.0))
+        analog_scale = cutoff_hz / authored_cutoff if authored_cutoff > 0.0 else 1.0
+        cutoff_profile_base = np.asarray(cutoff_profile_base, dtype=np.float64)
+        cutoff_profile_base = cutoff_profile_base * analog_scale
+        time = np.linspace(0.0, duration, n_samples, endpoint=False)
+        cutoff_envelope = np.maximum(
+            1.0 + filter_env_amount * np.exp(-time / filter_env_decay), 0.05
+        )
+        keytracked_cutoff = cutoff_profile_base * np.power(
+            freq_profile / reference_freq_hz, keytrack
+        )
+        cutoff_profile = np.clip(
+            keytracked_cutoff * cutoff_envelope, 20.0, nyquist_hz * 0.98
+        )
+    else:
+        cutoff_profile = build_keytracked_cutoff_profile(
+            cutoff_hz=cutoff_hz,
+            keytrack=keytrack,
+            reference_freq_hz=reference_freq_hz,
+            filter_env_amount=filter_env_amount,
+            filter_env_decay=filter_env_decay,
+            duration=duration,
+            n_samples=n_samples,
+            freq_profile=freq_profile,
+            nyquist=nyquist_hz,
+        )
 
     if cutoff_drift_amount > 0:
         cutoff_rng = rng_for_note(
@@ -285,19 +306,29 @@ def render(
     filtered = apply_filter_oversampled(
         signal,
         cutoff_profile=cutoff_profile,
-        resonance_q=resonance_q,
+        resonance_q=_profile_or_scalar(
+            "resonance_q", resonance_q, param_profiles, n_samples
+        ),
         sample_rate=sample_rate,
         oversample_factor=quality_config.oversample_factor,
         filter_mode=filter_mode,
-        filter_drive=filter_drive,
+        filter_drive=_profile_or_scalar(
+            "filter_drive", filter_drive, param_profiles, n_samples
+        ),
         filter_even_harmonics=filter_even_harmonics,
         filter_topology=filter_topology,
         bass_compensation=bass_compensation,
-        filter_morph=filter_morph,
-        hpf_cutoff_hz=hpf_cutoff_hz,
+        filter_morph=_profile_or_scalar(
+            "filter_morph", filter_morph, param_profiles, n_samples
+        ),
+        hpf_cutoff_hz=_profile_or_scalar(
+            "hpf_cutoff_hz", hpf_cutoff_hz, param_profiles, n_samples
+        ),
         hpf_resonance_q=hpf_resonance_q,
         k35_feedback_asymmetry=k35_feedback_asymmetry,
-        feedback_amount=feedback_amount,
+        feedback_amount=_profile_or_scalar(
+            "feedback_amount", feedback_amount, param_profiles, n_samples
+        ),
         feedback_saturation=feedback_saturation,
         filter_solver=quality_config.solver,
         max_newton_iters=quality_config.max_newton_iters,
@@ -342,10 +373,13 @@ def render(
         dc_sign_osc2=1.0,
     )
 
-    return apply_voice_dist(
+    voice_dist_drive_control = _profile_or_scalar(
+        "voice_dist_drive", voice_dist_drive, param_profiles, n_samples
+    )
+    return _apply_voice_dist_profiled(
         note_signal,
         mode=voice_dist_mode,
-        drive=voice_dist_drive,
+        drive=voice_dist_drive_control,
         mix=voice_dist_mix,
         tone=voice_dist_tone,
         sample_rate=sample_rate,
@@ -369,3 +403,69 @@ def _waveform_weight(waveform: str, harmonic_index: int, pulse_width: float) -> 
         return sign / (harmonic_index * harmonic_index)
 
     raise ValueError(f"Unsupported waveform: {waveform}")
+
+
+def _profile_or_scalar(
+    name: str,
+    scalar_value: float,
+    param_profiles: dict[str, np.ndarray] | None,
+    n_samples: int,
+) -> FilterControlValue:
+    """Return a 1D per-note profile when supplied, otherwise the scalar value."""
+    if param_profiles is None or name not in param_profiles:
+        return scalar_value
+    profile = np.asarray(param_profiles[name], dtype=np.float64)
+    if profile.shape != (n_samples,):
+        raise ValueError(f"{name} profile length must match note duration in samples")
+    if not np.all(np.isfinite(profile)):
+        raise ValueError(f"{name} profile values must be finite")
+    return profile
+
+
+def _apply_voice_dist_profiled(
+    signal: np.ndarray,
+    *,
+    mode: str,
+    drive: FilterControlValue,
+    mix: float,
+    tone: float,
+    sample_rate: int,
+) -> np.ndarray:
+    """Apply voice distortion, preserving the existing scalar path exactly."""
+    if not isinstance(drive, np.ndarray):
+        return apply_voice_dist(
+            signal,
+            mode=mode,
+            drive=float(drive),
+            mix=mix,
+            tone=tone,
+            sample_rate=sample_rate,
+        )
+    if mode == "off":
+        return signal
+    active_mask = drive > 0.0
+    if not bool(np.any(active_mask)):
+        return signal
+    if tone != 0.0:
+        raise ValueError(
+            "voice_dist_drive profiles currently require voice_dist_tone=0"
+        )
+    mode_to_algorithm = {
+        "soft_clip": "tanh",
+        "hard_clip": "hard_clip",
+        "foldback": "linear_fold",
+    }
+    if mode not in mode_to_algorithm:
+        raise ValueError(
+            f"voice_dist_drive profiles are not supported for voice_dist_mode={mode!r}"
+        )
+    drive_envelope = np.clip(drive * 0.5, 0.0, 1.0)
+    wet = apply_waveshaper(
+        signal,
+        algorithm=mode_to_algorithm[mode],
+        drive=1.0,
+        drive_envelope=drive_envelope,
+        mix=1.0,
+    )
+    wet = np.where(active_mask, wet, signal)
+    return (1.0 - mix) * signal + mix * wet

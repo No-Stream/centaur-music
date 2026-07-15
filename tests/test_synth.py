@@ -52,6 +52,30 @@ def _component_rms(
     return float(abs(projection) / np.sqrt(2.0))
 
 
+def test_adsr_applies_envelope_to_stereo_sample_axis() -> None:
+    sample_rate = 1_000
+    mono = np.ones(sample_rate // 2)
+    stereo = np.stack([mono, mono * 0.5])
+
+    shaped = synth.adsr(
+        stereo,
+        attack=0.01,
+        decay=0.02,
+        sustain_level=0.7,
+        release=0.05,
+        sample_rate=sample_rate,
+        hold_duration=0.45,
+    )
+
+    assert shaped.shape == stereo.shape
+    assert np.isfinite(shaped).all()
+    assert shaped[0, 0] == pytest.approx(0.0)
+    assert shaped[1, 0] == pytest.approx(0.0)
+    assert shaped[0, -1] == pytest.approx(0.0)
+    assert shaped[1, -1] == pytest.approx(0.0)
+    np.testing.assert_allclose(shaped[1], shaped[0] * 0.5)
+
+
 def test_plugin_cache_key_includes_bundle_plugin_name() -> None:
     """Regression test: two plugins from the same bundle file (e.g. LSP compressor
     and limiter) must NOT share a cache slot.  The original bug used only

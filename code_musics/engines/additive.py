@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -26,6 +27,29 @@ _DEFAULT_GRAVITY_TARGETS = [1.0, 9 / 8, 5 / 4, 4 / 3, 3 / 2, 5 / 3, 7 / 4, 2.0]
 
 _VALID_NOISE_MODES = frozenset({"white", "flow"})
 _DEFAULT_FLOW_DENSITY = 0.5
+
+
+@dataclass(frozen=True)
+class _RatioGradientSpatial:
+    low_pan: float
+    high_pan: float
+    width: float
+    bass_mono_below_ratio: float | None
+
+
+@dataclass(frozen=True)
+class _SpatialGroup:
+    max_ratio: float
+    pan: float
+    width: float
+
+
+@dataclass(frozen=True)
+class _GroupsSpatial:
+    groups: tuple[_SpatialGroup, ...]
+
+
+_PartialSpatialConfig = _RatioGradientSpatial | _GroupsSpatial
 
 
 def render(
@@ -61,6 +85,19 @@ def render(
     if not (0.0 <= flow_density <= 1.0):
         raise ValueError("flow_density must be between 0.0 and 1.0")
 
+    partial_spatial = _parse_partial_spatial(params.get("partial_spatial"))
+    max_partial_hz = _parse_optional_positive_float(
+        params.get("max_partial_hz"), name="max_partial_hz"
+    )
+    partial_rolloff_start_hz = _parse_optional_positive_float(
+        params.get("partial_rolloff_start_hz"), name="partial_rolloff_start_hz"
+    )
+    partial_rolloff_db_per_octave = float(
+        params.get("partial_rolloff_db_per_octave", 0.0)
+    )
+    if partial_rolloff_db_per_octave < 0.0:
+        raise ValueError("partial_rolloff_db_per_octave must be non-negative")
+
     n_samples = int(sample_rate * duration)
     if n_samples == 0:
         return np.zeros(0)
@@ -79,7 +116,17 @@ def render(
     )
     partials_param = params.get("partials")
     attack_partials_param = params.get("attack_partials")
-    if partials_param is None and attack_partials_param is None:
+    has_register_safe_controls = (
+        max_partial_hz is not None
+        or partial_rolloff_start_hz is not None
+        or partial_rolloff_db_per_octave != 0.0
+    )
+    if (
+        partials_param is None
+        and attack_partials_param is None
+        and partial_spatial is None
+        and not has_register_safe_controls
+    ):
         signal = np.zeros(n_samples, dtype=np.float64)
         voice_detunes = _unison_detunes(unison_voices, detune_cents)
 
@@ -211,6 +258,22 @@ def render(
         if attack_partials is not None:
             attack_partials = apply_sigma_approximation(attack_partials)
 
+    sustain_partials = _apply_register_safe_partial_controls(
+        sustain_partials,
+        freq=freq,
+        max_partial_hz=max_partial_hz,
+        partial_rolloff_start_hz=partial_rolloff_start_hz,
+        partial_rolloff_db_per_octave=partial_rolloff_db_per_octave,
+    )
+    if attack_partials is not None:
+        attack_partials = _apply_register_safe_partial_controls(
+            attack_partials,
+            freq=freq,
+            max_partial_hz=max_partial_hz,
+            partial_rolloff_start_hz=partial_rolloff_start_hz,
+            partial_rolloff_db_per_octave=partial_rolloff_db_per_octave,
+        )
+
     spectral_partials = _build_spectral_partials(
         sustain_partials=sustain_partials,
         attack_partials=attack_partials,
@@ -226,7 +289,12 @@ def render(
         amp=amp,
     )
 
-    signal = np.zeros(n_samples, dtype=np.float64)
+    spatial_ratio_bounds = _spatial_ratio_bounds(spectral_partials)
+    signal = (
+        np.zeros((2, n_samples), dtype=np.float64)
+        if partial_spatial is not None
+        else np.zeros(n_samples, dtype=np.float64)
+    )
     voice_detunes = _unison_detunes(unison_voices, detune_cents)
     nyquist_hz = sample_rate / 2.0
 
@@ -269,7 +337,17 @@ def render(
                 )
             )
             partial_weight = partial["amp_trajectory"] * anti_alias_weight
-            signal += partial_weight * np.sin(phase)
+            partial_signal = partial_weight * np.sin(phase)
+            if partial_spatial is None:
+                signal += partial_signal
+            else:
+                left_gain, right_gain = _partial_pan_gains(
+                    ratio=partial["ratio"],
+                    config=partial_spatial,
+                    ratio_bounds=spatial_ratio_bounds,
+                )
+                signal[0] += left_gain * partial_signal
+                signal[1] += right_gain * partial_signal
 
     signal /= float(len(voice_detunes))
 
@@ -284,6 +362,8 @@ def render(
         noise_mode=noise_mode,
         flow_density=flow_density,
         freq_trajectory=freq_trajectory,
+        partial_spatial=partial_spatial,
+        spatial_ratio_bounds=spatial_ratio_bounds,
         rng=rng_for_note(
             freq=freq, duration=duration, amp=amp, sample_rate=sample_rate
         ),
@@ -329,6 +409,163 @@ def _normalize_partials(partials: Any) -> list[dict[str, Any]]:
     return normalized
 
 
+def _parse_optional_positive_float(value: Any, *, name: str) -> float | None:
+    if value is None:
+        return None
+    parsed = float(value)
+    if parsed <= 0.0:
+        raise ValueError(f"{name} must be positive")
+    return parsed
+
+
+def _parse_positive_float(value: Any, *, name: str) -> float:
+    parsed = float(value)
+    if parsed <= 0.0:
+        raise ValueError(f"{name} must be positive")
+    return parsed
+
+
+def _parse_pan(value: Any, *, name: str) -> float:
+    parsed = float(value)
+    if not -1.0 <= parsed <= 1.0:
+        raise ValueError(f"{name} must be between -1.0 and 1.0")
+    return parsed
+
+
+def _parse_width(value: Any, *, name: str) -> float:
+    parsed = float(value)
+    if parsed < 0.0:
+        raise ValueError(f"{name} must be non-negative")
+    return parsed
+
+
+def _parse_partial_spatial(value: Any) -> _PartialSpatialConfig | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("partial_spatial must be a dict or None")
+    mode = value.get("mode")
+    if mode == "ratio_gradient":
+        return _RatioGradientSpatial(
+            low_pan=_parse_pan(value.get("low_pan", -1.0), name="low_pan"),
+            high_pan=_parse_pan(value.get("high_pan", 1.0), name="high_pan"),
+            width=_parse_width(value.get("width", 0.0), name="width"),
+            bass_mono_below_ratio=_parse_optional_positive_float(
+                value.get("bass_mono_below_ratio"),
+                name="bass_mono_below_ratio",
+            ),
+        )
+    if mode == "groups":
+        groups_value = value.get("groups")
+        if not isinstance(groups_value, list) or len(groups_value) == 0:
+            raise ValueError("partial_spatial groups must be a non-empty list")
+        groups: list[_SpatialGroup] = []
+        for group in groups_value:
+            if not isinstance(group, dict):
+                raise ValueError("each partial_spatial group must be a dict")
+            if "max_ratio" not in group or "pan" not in group:
+                raise ValueError(
+                    "each partial_spatial group must define max_ratio and pan"
+                )
+            groups.append(
+                _SpatialGroup(
+                    max_ratio=_parse_positive_float(
+                        group["max_ratio"],
+                        name="group max_ratio",
+                    ),
+                    pan=_parse_pan(group["pan"], name="group pan"),
+                    width=_parse_width(group.get("width", 0.0), name="group width"),
+                )
+            )
+        return _GroupsSpatial(groups=tuple(groups))
+    raise ValueError(
+        f"partial_spatial mode must be 'ratio_gradient' or 'groups', got {mode!r}"
+    )
+
+
+def _apply_register_safe_partial_controls(
+    partials: list[dict[str, Any]],
+    *,
+    freq: float,
+    max_partial_hz: float | None,
+    partial_rolloff_start_hz: float | None,
+    partial_rolloff_db_per_octave: float,
+) -> list[dict[str, Any]]:
+    shaped_partials: list[dict[str, Any]] = []
+    for partial in partials:
+        partial_freq_hz = freq * float(partial["ratio"])
+        if max_partial_hz is not None and partial_freq_hz > max_partial_hz:
+            continue
+        shaped_partial = dict(partial)
+        if (
+            partial_rolloff_start_hz is not None
+            and partial_rolloff_db_per_octave > 0.0
+            and partial_freq_hz > partial_rolloff_start_hz
+        ):
+            octaves_above = math.log2(partial_freq_hz / partial_rolloff_start_hz)
+            attenuation_db = partial_rolloff_db_per_octave * octaves_above
+            shaped_partial["amp"] *= 10.0 ** (-attenuation_db / 20.0)
+        shaped_partials.append(shaped_partial)
+
+    if not any(partial["amp"] > 0.0 for partial in shaped_partials):
+        raise ValueError("register-safe additive params produced no audible partials")
+    return shaped_partials
+
+
+def _spatial_ratio_bounds(partials: list[dict[str, Any]]) -> tuple[float, float]:
+    ratios = [float(partial["ratio"]) for partial in partials]
+    return min(ratios), max(ratios)
+
+
+def _partial_pan_gains(
+    *,
+    ratio: float,
+    config: _PartialSpatialConfig,
+    ratio_bounds: tuple[float, float],
+) -> tuple[float, float]:
+    pan = _partial_pan(ratio=ratio, config=config, ratio_bounds=ratio_bounds)
+    equal_power_position = (pan + 1.0) * math.pi / 4.0
+    return math.cos(equal_power_position), math.sin(equal_power_position)
+
+
+def _partial_pan(
+    *,
+    ratio: float,
+    config: _PartialSpatialConfig,
+    ratio_bounds: tuple[float, float],
+) -> float:
+    if isinstance(config, _RatioGradientSpatial):
+        if (
+            config.bass_mono_below_ratio is not None
+            and ratio < config.bass_mono_below_ratio
+        ):
+            return 0.0
+        min_ratio, max_ratio = ratio_bounds
+        min_log = math.log2(min_ratio)
+        max_log = math.log2(max_ratio)
+        if max_log == min_log:
+            gradient_position = 0.0
+        else:
+            gradient_position = (math.log2(ratio) - min_log) / (max_log - min_log)
+        center_pan = config.low_pan + (
+            (config.high_pan - config.low_pan) * gradient_position
+        )
+        spread = config.width * gradient_position * _deterministic_spread(ratio)
+        return float(np.clip(center_pan + spread, -1.0, 1.0))
+
+    selected_group = config.groups[-1]
+    for group in config.groups:
+        if ratio <= group.max_ratio:
+            selected_group = group
+            break
+    spread = selected_group.width * _deterministic_spread(ratio)
+    return float(np.clip(selected_group.pan + spread, -1.0, 1.0))
+
+
+def _deterministic_spread(ratio: float) -> float:
+    return math.sin((ratio * 12.9898) + 78.233)
+
+
 def _render_noise_bands(
     *,
     partials: list[dict[str, Any]],
@@ -341,6 +578,8 @@ def _render_noise_bands(
     rng: np.random.Generator,
     noise_mode: str = "white",
     flow_density: float = _DEFAULT_FLOW_DENSITY,
+    partial_spatial: _PartialSpatialConfig | None = None,
+    spatial_ratio_bounds: tuple[float, float] | None = None,
 ) -> np.ndarray:
     """Render narrow noise bands centered on each partial's frequency.
 
@@ -357,7 +596,11 @@ def _render_noise_bands(
       Low density gives sparse exhale-style events; high density gives
       brush-on-cymbal texture.
     """
-    result = np.zeros(n_samples, dtype=np.float64)
+    result = (
+        np.zeros((2, n_samples), dtype=np.float64)
+        if partial_spatial is not None
+        else np.zeros(n_samples, dtype=np.float64)
+    )
     nyquist_hz = sample_rate / 2.0
 
     # Check if any partial has noise — skip early if nothing to do.
@@ -427,7 +670,18 @@ def _render_noise_bands(
 
         noise_band = 2.0 * filtered_noise * carrier
         noise_band *= partial["amp"] * partial_noise_level
-        result += noise_band
+        if partial_spatial is None:
+            result += noise_band
+        else:
+            if spatial_ratio_bounds is None:
+                raise ValueError("spatial_ratio_bounds required for partial_spatial")
+            left_gain, right_gain = _partial_pan_gains(
+                ratio=partial["ratio"],
+                config=partial_spatial,
+                ratio_bounds=spatial_ratio_bounds,
+            )
+            result[0] += left_gain * noise_band
+            result[1] += right_gain * noise_band
 
     return result
 

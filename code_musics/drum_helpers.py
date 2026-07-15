@@ -108,7 +108,12 @@ _DRUM_BUS_STYLES: dict[str, list[EffectSpec]] = {
         EffectSpec("preamp", {"drive": 0.7, "mix": 0.35}),
         EffectSpec(
             "clipper",
-            {"max_shave_db": 1.0, "knee_width_db": 2.5, "oversample_factor": 8},
+            {
+                "max_shave_db": 1.0,
+                "knee_width_db": 2.5,
+                "algorithm": "poly_knee",
+                "oversample_factor": 8,
+            },
         ),
     ],
     "weighty": [
@@ -138,7 +143,12 @@ _DRUM_BUS_STYLES: dict[str, list[EffectSpec]] = {
         EffectSpec("preamp", {"preset": "iron_color", "drive": 0.42}),
         EffectSpec(
             "clipper",
-            {"max_shave_db": 1.5, "knee_width_db": 3.5, "oversample_factor": 8},
+            {
+                "max_shave_db": 1.5,
+                "knee_width_db": 3.5,
+                "algorithm": "poly_knee",
+                "oversample_factor": 8,
+            },
         ),
     ],
     "berghain": [
@@ -172,7 +182,12 @@ _DRUM_BUS_STYLES: dict[str, list[EffectSpec]] = {
         EffectSpec("preamp", {"drive": 1.1, "mix": 0.45}),
         EffectSpec(
             "clipper",
-            {"max_shave_db": 3.0, "knee_width_db": 1.5, "oversample_factor": 8},
+            {
+                "max_shave_db": 3.0,
+                "knee_width_db": 1.5,
+                "algorithm": "poly_knee",
+                "oversample_factor": 8,
+            },
         ),
     ],
 }

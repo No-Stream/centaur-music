@@ -50,6 +50,7 @@ from code_musics.engines._dsp_utils import (
 from code_musics.engines._filters import (
     _SUPPORTED_FILTER_MODES,
     _SUPPORTED_FILTER_TOPOLOGIES,
+    FilterControlValue,
     apply_comb,
     apply_filter,
 )
@@ -668,6 +669,181 @@ def _resolve_filter_slot_params(
     return result
 
 
+def _profile_or_scalar(
+    name: str,
+    scalar_value: float,
+    param_profiles: dict[str, np.ndarray] | None,
+    n_samples: int,
+) -> FilterControlValue:
+    """Return a 1D per-note profile when supplied, otherwise the scalar value."""
+    if param_profiles is None or name not in param_profiles:
+        return scalar_value
+    profile = np.asarray(param_profiles[name], dtype=np.float64)
+    if profile.shape != (n_samples,):
+        raise ValueError(f"{name} profile length must match note duration in samples")
+    if not np.all(np.isfinite(profile)):
+        raise ValueError(f"{name} profile values must be finite")
+    return profile
+
+
+def _profile_or_scalar_alias(
+    names: tuple[str, ...],
+    scalar_value: float,
+    param_profiles: dict[str, np.ndarray] | None,
+    n_samples: int,
+) -> FilterControlValue:
+    """Resolve the first present profile name, otherwise return the scalar."""
+    if param_profiles is None:
+        return scalar_value
+    for name in names:
+        if name in param_profiles:
+            return _profile_or_scalar(name, scalar_value, param_profiles, n_samples)
+    return scalar_value
+
+
+def _slot_profile_or_scalar(
+    *,
+    slot: int,
+    key: str,
+    scalar_value: float,
+    param_profiles: dict[str, np.ndarray] | None,
+    n_samples: int,
+) -> FilterControlValue:
+    """Resolve explicit slot profiles, with top-level aliases for filter 1."""
+    names = (f"filter{slot}_{key}",)
+    if slot == 1:
+        names = names + (key,)
+    return _profile_or_scalar_alias(names, scalar_value, param_profiles, n_samples)
+
+
+def _build_slot_cutoff_profile(
+    *,
+    slot: int,
+    filter_slot: dict[str, Any],
+    authored_cutoff_hz: float,
+    param_profiles: dict[str, np.ndarray] | None,
+    n_samples: int,
+    duration: float,
+    freq_profile: np.ndarray,
+    nyquist: float,
+) -> np.ndarray:
+    """Build a cutoff profile, honoring top-level aliases for filter 1."""
+    cutoff_control = _slot_profile_or_scalar(
+        slot=slot,
+        key="cutoff_hz",
+        scalar_value=float(filter_slot["cutoff_hz"]),
+        param_profiles=param_profiles,
+        n_samples=n_samples,
+    )
+    if isinstance(cutoff_control, np.ndarray):
+        analog_scale = (
+            float(filter_slot["cutoff_hz"]) / authored_cutoff_hz
+            if authored_cutoff_hz > 0.0
+            else 1.0
+        )
+        cutoff_profile_base = cutoff_control * analog_scale
+        t = np.linspace(0.0, duration, n_samples, endpoint=False)
+        cutoff_envelope = np.maximum(
+            1.0
+            + float(filter_slot["filter_env_amount"])
+            * np.exp(-t / float(filter_slot["filter_env_decay"])),
+            0.05,
+        )
+        keytracked_cutoff = cutoff_profile_base * np.power(
+            freq_profile / float(filter_slot["reference_freq_hz"]),
+            float(filter_slot["keytrack"]),
+        )
+        return np.clip(keytracked_cutoff * cutoff_envelope, 20.0, nyquist * 0.98)
+
+    return build_keytracked_cutoff_profile(
+        cutoff_hz=float(cutoff_control),
+        keytrack=float(filter_slot["keytrack"]),
+        reference_freq_hz=float(filter_slot["reference_freq_hz"]),
+        filter_env_amount=float(filter_slot["filter_env_amount"]),
+        filter_env_decay=float(filter_slot["filter_env_decay"]),
+        duration=duration,
+        n_samples=n_samples,
+        freq_profile=freq_profile,
+        nyquist=nyquist,
+    )
+
+
+def _apply_drive_profiled(
+    signal: np.ndarray,
+    *,
+    algorithm: str,
+    drive: FilterControlValue,
+) -> np.ndarray:
+    """Apply pre-filter waveshaping while preserving the scalar fast path."""
+    if not isinstance(drive, np.ndarray):
+        if float(drive) <= 0.0:
+            return signal
+        return apply_waveshaper(
+            signal,
+            algorithm=algorithm,
+            drive=float(drive),
+            mix=1.0,
+        )
+    if not bool(np.any(drive > 0.0)):
+        return signal
+    return apply_waveshaper(
+        signal,
+        algorithm=algorithm,
+        drive=1.0,
+        drive_envelope=np.clip(drive, 0.0, 1.0),
+        mix=1.0,
+    )
+
+
+def _apply_voice_dist_profiled(
+    signal: np.ndarray,
+    *,
+    mode: str,
+    drive: FilterControlValue,
+    mix: float,
+    tone: float,
+    sample_rate: int,
+) -> np.ndarray:
+    """Apply voice distortion, preserving the existing scalar path exactly."""
+    if not isinstance(drive, np.ndarray):
+        return apply_voice_dist(
+            signal,
+            mode=mode,
+            drive=float(drive),
+            mix=mix,
+            tone=tone,
+            sample_rate=sample_rate,
+        )
+    if mode == "off":
+        return signal
+    active_mask = drive > 0.0
+    if not bool(np.any(active_mask)):
+        return signal
+    if tone != 0.0:
+        raise ValueError(
+            "voice_dist_drive profiles currently require voice_dist_tone=0"
+        )
+    mode_to_algorithm = {
+        "soft_clip": "tanh",
+        "hard_clip": "hard_clip",
+        "foldback": "linear_fold",
+    }
+    if mode not in mode_to_algorithm:
+        raise ValueError(
+            f"voice_dist_drive profiles are not supported for voice_dist_mode={mode!r}"
+        )
+    drive_envelope = np.clip(drive * 0.5, 0.0, 1.0)
+    wet = apply_waveshaper(
+        signal,
+        algorithm=mode_to_algorithm[mode],
+        drive=1.0,
+        drive_envelope=drive_envelope,
+        mix=1.0,
+    )
+    wet = np.where(active_mask, wet, signal)
+    return (1.0 - mix) * signal + mix * wet
+
+
 def _apply_va_defaults(params: dict[str, Any]) -> dict[str, Any]:
     """Override shared analog defaults with the VA engine's restrained values.
 
@@ -810,6 +986,12 @@ def render(
         params.get("filter2_cutoff_hz", default_slot_defaults["cutoff_hz"])
     )
     filter2 = _resolve_filter_slot_params(params, 2, filter2_defaults)
+    authored_cutoff1_hz = float(
+        params.get("filter1_cutoff_hz", params.get("cutoff_hz", 3000.0))
+    )
+    authored_cutoff2_hz = float(
+        params.get("filter2_cutoff_hz", params.get("cutoff_hz", 3000.0))
+    )
 
     comb_delay_ms = float(params.get("comb_delay_ms", 8.0))
     comb_feedback = float(params.get("comb_feedback", 0.5))
@@ -967,10 +1149,15 @@ def render(
         freq_profile = freq_profile * drift_multiplier
 
     # ---- Oscillator rendering ----
-    # Resolve audio-rate supersaw detune profile (optional).  Silently
-    # ignored if the engine is running in spectralwave mode.
+    # Resolve audio-rate supersaw detune profile (optional).  This lane is
+    # meaningful only for supersaw; fail fast for spectralwave instead of
+    # accepting a silent no-op route from the modulation matrix.
     spread_profile: np.ndarray | None = None
     if param_profiles is not None and "osc_spread_cents" in param_profiles:
+        if osc_mode != "supersaw":
+            raise ValueError(
+                "osc_spread_cents profiles are only supported when osc_mode='supersaw'"
+            )
         spread_profile = np.asarray(
             param_profiles["osc_spread_cents"], dtype=np.float64
         )
@@ -978,6 +1165,8 @@ def render(
             raise ValueError(
                 "osc_spread_cents profile length must match note duration in samples"
             )
+        if not np.all(np.isfinite(spread_profile)):
+            raise ValueError("osc_spread_cents profile values must be finite")
     signal_a: np.ndarray
     signal_b: np.ndarray
     if osc_mode == "supersaw":
@@ -1064,39 +1253,39 @@ def render(
             signal_b = signal_b / peak
 
     # ---- Drive stage (pre-filter saturation) ----
-    if drive_amount > 0.0:
-        raw_signal = apply_waveshaper(
-            raw_signal, algorithm=drive_algorithm, drive=drive_amount, mix=1.0
+    drive_amount_control = _profile_or_scalar(
+        "drive_amount", drive_amount, param_profiles, n_samples
+    )
+    raw_signal = _apply_drive_profiled(
+        raw_signal, algorithm=drive_algorithm, drive=drive_amount_control
+    )
+    if filter_routing == "split":
+        signal_a = _apply_drive_profiled(
+            signal_a, algorithm=drive_algorithm, drive=drive_amount_control
         )
-        if filter_routing == "split":
-            signal_a = apply_waveshaper(
-                signal_a, algorithm=drive_algorithm, drive=drive_amount, mix=1.0
-            )
-            signal_b = apply_waveshaper(
-                signal_b, algorithm=drive_algorithm, drive=drive_amount, mix=1.0
-            )
+        signal_b = _apply_drive_profiled(
+            signal_b, algorithm=drive_algorithm, drive=drive_amount_control
+        )
 
     # ---- Cutoff profiles ----
     nyquist = sample_rate / 2.0
-    cutoff1_profile = build_keytracked_cutoff_profile(
-        cutoff_hz=filter1["cutoff_hz"],
-        keytrack=filter1["keytrack"],
-        reference_freq_hz=filter1["reference_freq_hz"],
-        filter_env_amount=filter1["filter_env_amount"],
-        filter_env_decay=filter1["filter_env_decay"],
-        duration=duration,
+    cutoff1_profile = _build_slot_cutoff_profile(
+        slot=1,
+        filter_slot=filter1,
+        authored_cutoff_hz=authored_cutoff1_hz,
+        param_profiles=param_profiles,
         n_samples=n_samples,
+        duration=duration,
         freq_profile=freq_profile,
         nyquist=nyquist,
     )
-    cutoff2_profile = build_keytracked_cutoff_profile(
-        cutoff_hz=filter2["cutoff_hz"],
-        keytrack=filter2["keytrack"],
-        reference_freq_hz=filter2["reference_freq_hz"],
-        filter_env_amount=filter2["filter_env_amount"],
-        filter_env_decay=filter2["filter_env_decay"],
-        duration=duration,
+    cutoff2_profile = _build_slot_cutoff_profile(
+        slot=2,
+        filter_slot=filter2,
+        authored_cutoff_hz=authored_cutoff2_hz,
+        param_profiles=param_profiles,
         n_samples=n_samples,
+        duration=duration,
         freq_profile=freq_profile,
         nyquist=nyquist,
     )
@@ -1140,6 +1329,43 @@ def render(
         nyquist=nyquist,
     )
 
+    for slot, filter_slot in ((1, filter1), (2, filter2)):
+        filter_slot["resonance_q"] = _slot_profile_or_scalar(
+            slot=slot,
+            key="resonance_q",
+            scalar_value=float(filter_slot["resonance_q"]),
+            param_profiles=param_profiles,
+            n_samples=n_samples,
+        )
+        filter_slot["filter_drive"] = _slot_profile_or_scalar(
+            slot=slot,
+            key="filter_drive",
+            scalar_value=float(filter_slot["filter_drive"]),
+            param_profiles=param_profiles,
+            n_samples=n_samples,
+        )
+        filter_slot["filter_morph"] = _slot_profile_or_scalar(
+            slot=slot,
+            key="filter_morph",
+            scalar_value=float(filter_slot["filter_morph"]),
+            param_profiles=param_profiles,
+            n_samples=n_samples,
+        )
+        filter_slot["hpf_cutoff_hz"] = _slot_profile_or_scalar(
+            slot=slot,
+            key="hpf_cutoff_hz",
+            scalar_value=float(filter_slot["hpf_cutoff_hz"]),
+            param_profiles=param_profiles,
+            n_samples=n_samples,
+        )
+        filter_slot["feedback_amount"] = _slot_profile_or_scalar(
+            slot=slot,
+            key="feedback_amount",
+            scalar_value=float(filter_slot["feedback_amount"]),
+            param_profiles=param_profiles,
+            n_samples=n_samples,
+        )
+
     # ---- Comb delay profile (if enabled) ----
     comb_delay_base_samples = comb_delay_ms * 0.001 * sample_rate
     if comb_keytrack > 0.0:
@@ -1177,45 +1403,73 @@ def render(
     # ``_f2(_f1(pre))`` pattern would incur.
     os_factor = int(quality_config.oversample_factor)
 
-    def _f1_at_rate(sig: np.ndarray, cutoff: np.ndarray, rate: int) -> np.ndarray:
-        return apply_filter(
-            sig,
-            cutoff_profile=cutoff,
-            resonance_q=filter1["resonance_q"],
-            sample_rate=rate,
-            filter_mode=filter1["filter_mode"],
-            filter_drive=filter1["filter_drive"],
-            filter_even_harmonics=0.0,
-            filter_topology=filter1["filter_topology"],
-            bass_compensation=filter1["bass_compensation"],
-            filter_morph=filter1["filter_morph"],
-            hpf_cutoff_hz=filter1["hpf_cutoff_hz"],
-            hpf_resonance_q=filter1["hpf_resonance_q"],
-            feedback_amount=filter1["feedback_amount"],
-            feedback_saturation=filter1["feedback_saturation"],
-            k35_feedback_asymmetry=filter1["k35_feedback_asymmetry"],
-            filter_solver=quality_config.solver,
-            max_newton_iters=quality_config.max_newton_iters,
-            newton_tolerance=quality_config.newton_tolerance,
-        )
+    def _control_at_rate(
+        control: FilterControlValue, *, oversample_factor: int, n_base: int
+    ) -> FilterControlValue:
+        if not isinstance(control, np.ndarray):
+            return control
+        if oversample_factor == 1:
+            if control.shape != (n_base,):
+                raise ValueError(
+                    "filter control profile length must match signal length"
+                )
+            return control
+        n_up_expected = n_base * oversample_factor
+        control_up = resample_poly(
+            control,
+            up=oversample_factor,
+            down=1,
+            window=_OVERSAMPLE_RESAMPLE_WINDOW,
+        ).astype(np.float64)
+        if control_up.shape[0] > n_up_expected:
+            return control_up[:n_up_expected]
+        if control_up.shape[0] < n_up_expected:
+            return np.concatenate(
+                [
+                    control_up,
+                    np.full(
+                        n_up_expected - control_up.shape[0],
+                        float(control[-1]) if control.shape[0] > 0 else 0.0,
+                    ),
+                ]
+            )
+        return control_up
 
-    def _f2_at_rate(sig: np.ndarray, cutoff: np.ndarray, rate: int) -> np.ndarray:
+    def _slot_at_rate(
+        slot: dict[str, Any], *, oversample_factor: int, n_base: int
+    ) -> dict[str, Any]:
+        resolved = dict(slot)
+        for key in (
+            "resonance_q",
+            "filter_drive",
+            "filter_morph",
+            "hpf_cutoff_hz",
+            "feedback_amount",
+        ):
+            resolved[key] = _control_at_rate(
+                slot[key], oversample_factor=oversample_factor, n_base=n_base
+            )
+        return resolved
+
+    def _filter_at_rate(
+        sig: np.ndarray, cutoff: np.ndarray, rate: int, slot: dict[str, Any]
+    ) -> np.ndarray:
         return apply_filter(
             sig,
             cutoff_profile=cutoff,
-            resonance_q=filter2["resonance_q"],
+            resonance_q=slot["resonance_q"],
             sample_rate=rate,
-            filter_mode=filter2["filter_mode"],
-            filter_drive=filter2["filter_drive"],
+            filter_mode=slot["filter_mode"],
+            filter_drive=slot["filter_drive"],
             filter_even_harmonics=0.0,
-            filter_topology=filter2["filter_topology"],
-            bass_compensation=filter2["bass_compensation"],
-            filter_morph=filter2["filter_morph"],
-            hpf_cutoff_hz=filter2["hpf_cutoff_hz"],
-            hpf_resonance_q=filter2["hpf_resonance_q"],
-            feedback_amount=filter2["feedback_amount"],
-            feedback_saturation=filter2["feedback_saturation"],
-            k35_feedback_asymmetry=filter2["k35_feedback_asymmetry"],
+            filter_topology=slot["filter_topology"],
+            bass_compensation=slot["bass_compensation"],
+            filter_morph=slot["filter_morph"],
+            hpf_cutoff_hz=slot["hpf_cutoff_hz"],
+            hpf_resonance_q=slot["hpf_resonance_q"],
+            feedback_amount=slot["feedback_amount"],
+            feedback_saturation=slot["feedback_saturation"],
+            k35_feedback_asymmetry=slot["k35_feedback_asymmetry"],
             filter_solver=quality_config.solver,
             max_newton_iters=quality_config.max_newton_iters,
             newton_tolerance=quality_config.newton_tolerance,
@@ -1246,6 +1500,12 @@ def render(
         )
         rate_up = sample_rate * os_factor
         n_up = n_base * os_factor
+        filter1_at_rate = _slot_at_rate(
+            filter1, oversample_factor=os_factor, n_base=n_base
+        )
+        filter2_at_rate = _slot_at_rate(
+            filter2, oversample_factor=os_factor, n_base=n_base
+        )
 
         def _upsample(x: np.ndarray) -> np.ndarray:
             if os_factor == 1:
@@ -1273,21 +1533,24 @@ def render(
 
         a_up = _upsample(input_a)
         if filter_routing == "serial":
-            y_up = _f2_at_rate(
-                _f1_at_rate(a_up, cutoff1_up, rate_up), cutoff2_up, rate_up
+            y_up = _filter_at_rate(
+                _filter_at_rate(a_up, cutoff1_up, rate_up, filter1_at_rate),
+                cutoff2_up,
+                rate_up,
+                filter2_at_rate,
             )
             return _downsample(y_up)
         if filter_routing == "parallel":
             y_up = 0.5 * (
-                _f1_at_rate(a_up, cutoff1_up, rate_up)
-                + _f2_at_rate(a_up, cutoff2_up, rate_up)
+                _filter_at_rate(a_up, cutoff1_up, rate_up, filter1_at_rate)
+                + _filter_at_rate(a_up, cutoff2_up, rate_up, filter2_at_rate)
             )
             return _downsample(y_up)
         # split
         b_up = _upsample(input_b if input_b is not None else input_a)
-        y_up = _f1_at_rate(a_up, cutoff1_up, rate_up) + _f2_at_rate(
-            b_up, cutoff2_up, rate_up
-        )
+        y_up = _filter_at_rate(
+            a_up, cutoff1_up, rate_up, filter1_at_rate
+        ) + _filter_at_rate(b_up, cutoff2_up, rate_up, filter2_at_rate)
         return _downsample(y_up)
 
     if filter_routing == "single":
@@ -1337,14 +1600,14 @@ def render(
         filtered /= peak
     note_buffer = amp * filtered
 
-    # Per-note distortion slot (see _voice_dist.py).
-    if voice_dist_mode != "off" and voice_dist_drive > 0.0:
-        note_buffer = apply_voice_dist(
-            note_buffer,
-            mode=voice_dist_mode,
-            drive=voice_dist_drive,
-            mix=voice_dist_mix,
-            tone=voice_dist_tone,
-            sample_rate=sample_rate,
-        )
-    return note_buffer
+    voice_dist_drive_control = _profile_or_scalar(
+        "voice_dist_drive", voice_dist_drive, param_profiles, n_samples
+    )
+    return _apply_voice_dist_profiled(
+        note_buffer,
+        mode=voice_dist_mode,
+        drive=voice_dist_drive_control,
+        mix=voice_dist_mix,
+        tone=voice_dist_tone,
+        sample_rate=sample_rate,
+    )

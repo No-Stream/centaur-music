@@ -143,6 +143,43 @@ def ratio_spectrum(
     return spectrum
 
 
+def scale_fused_spectrum(
+    degrees: Sequence[float],
+    *,
+    octaves: int = 3,
+    rolloff_alpha: float = 1.0,
+    amp_floor: float = 0.02,
+) -> list[dict[str, float]]:
+    """Build a partial set from a scale's own degrees transposed by octaves.
+
+    The Sethares co-design move: a spectrum whose partials are scale members
+    makes the scale's intervals maximally consonant by construction. The root
+    degree (ratio ``1.0``) contributes its own full harmonic series —
+    ``2**k`` for ``k`` in ``0..octaves`` — while every other degree
+    contributes only its octave-transposed images (``degree * 2**k`` for
+    ``k`` in ``1..octaves``), so a scale degree's raw, un-transposed value
+    never sits close enough to the fundamental to beat roughly against it.
+    Ratios are deduplicated and sorted; amps roll off as
+    ``ratio ** -rolloff_alpha`` and partials below ``amp_floor`` are dropped.
+    Same ``{"ratio", "amp"}`` format as the other builders (additive
+    ``partials`` / synth_voice ``partials_partials``).
+    """
+    if not degrees:
+        raise ValueError("degrees must be non-empty")
+    if any(d <= 0.0 for d in degrees):
+        raise ValueError("degrees must be strictly positive")
+    ratios: set[float] = set()
+    for degree in degrees:
+        resolved_degree = float(degree)
+        start_octave = 0 if abs(resolved_degree - 1.0) < 1e-9 else 1
+        for k in range(start_octave, octaves + 1):
+            ratios.add(round(resolved_degree * (2.0**k), 9))
+    partials = [
+        {"ratio": ratio, "amp": ratio**-rolloff_alpha} for ratio in sorted(ratios)
+    ]
+    return [p for p in partials if p["amp"] >= amp_floor]
+
+
 def harmonic_spectrum(
     *,
     n_partials: int,
@@ -167,6 +204,48 @@ def harmonic_spectrum(
         if amp <= 0.0:
             continue
         spectrum.append({"ratio": float(harmonic_index), "amp": amp})
+    return spectrum
+
+
+def sieved_harmonic_spectrum(
+    *,
+    n_partials: int,
+    omit_factors: tuple[int, ...] = (3,),
+    downweight_factors: dict[int, float] | None = None,
+    harmonic_rolloff: float = 0.5,
+    brightness_tilt: float = 0.0,
+) -> list[dict[str, float]]:
+    """Harmonic spectrum with sieved (omitted) and down-weighted partial indices.
+
+    Built for scale/timbre co-design in restricted JI subgroups: e.g. a
+    no-threes (2.5.7.11) piece uses ``omit_factors=(3,)`` so no voice carries
+    an acoustic twelfth/fifth, and ``downweight_factors={5: 0.35}`` to ration
+    major-third color.
+    """
+    for factor in omit_factors:
+        if factor < 2:
+            raise ValueError("omit_factors entries must be >= 2")
+    resolved_downweights = downweight_factors or {}
+    for factor, weight in resolved_downweights.items():
+        if factor < 2 or not 0.0 <= weight <= 1.0:
+            raise ValueError(
+                "downweight_factors must map factor >= 2 to weight in [0, 1]"
+            )
+
+    spectrum: list[dict[str, float]] = []
+    for partial in harmonic_spectrum(
+        n_partials=n_partials,
+        harmonic_rolloff=harmonic_rolloff,
+        brightness_tilt=brightness_tilt,
+    ):
+        harmonic_index = int(partial["ratio"])
+        if any(harmonic_index % factor == 0 for factor in omit_factors):
+            continue
+        amp = partial["amp"]
+        for factor, weight in resolved_downweights.items():
+            if harmonic_index % factor == 0:
+                amp *= weight
+        spectrum.append({"ratio": partial["ratio"], "amp": amp})
     return spectrum
 
 
