@@ -178,31 +178,35 @@ def build_viz_payload(
     notes = []
     for note in resolved_notes:
         source_note = score.voices[note.voice_name].notes[note.note_index]
-        notes.append(
-            {
-                "voice_name": note.voice_name,
-                "note_index": note.note_index,
-                "start_seconds": round(note.resolved_start, 4),
-                "end_seconds": round(note.resolved_end, 4),
-                "duration_seconds": round(note.duration, 4),
-                "authored_start_seconds": round(note.authored_start, 4),
-                "freq_hz": round(note.freq_hz, 4),
-                "partial": note.partial,
-                "velocity": round(source_note.velocity, 5),
-                "amp": round(source_note.amp, 5)
-                if source_note.amp is not None
-                else None,
-                "amp_db": (
-                    round(source_note.amp_db, 3)
-                    if source_note.amp_db is not None
-                    else None
-                ),
-                "label": note.label,
-                "semantics": parse_viz_label(note.label),
-            }
-        )
+        note_payload = {
+            "voice_name": note.voice_name,
+            "note_index": note.note_index,
+            "start_seconds": round(note.resolved_start, 4),
+            "end_seconds": round(note.resolved_end, 4),
+            "duration_seconds": round(note.duration, 4),
+            "authored_start_seconds": round(note.authored_start, 4),
+            "freq_hz": round(note.freq_hz, 4),
+            "partial": note.partial,
+            "velocity": round(source_note.velocity, 5),
+            "amp": round(source_note.amp, 5) if source_note.amp is not None else None,
+            "amp_db": (
+                round(source_note.amp_db, 3) if source_note.amp_db is not None else None
+            ),
+            "label": note.label,
+            "semantics": parse_viz_label(note.label),
+        }
+        if score.timeline is not None:
+            note_payload["musical_location"] = _musical_location_metadata(
+                score.timeline,
+                note.resolved_start,
+            )
+            note_payload["authored_musical_location"] = _musical_location_metadata(
+                score.timeline,
+                note.authored_start,
+            )
+        notes.append(note_payload)
 
-    return {
+    payload: dict[str, Any] = {
         "schema_version": VIZ_SCHEMA_VERSION,
         "piece_name": spec.piece_name,
         "total_duration_seconds": round(score.total_dur, 4),
@@ -220,6 +224,19 @@ def build_viz_payload(
         "notes": notes,
         "annotations": annotations if annotations is not None else {},
         "envelope": envelope,
+    }
+    if score.timeline is not None:
+        payload["musical_time"] = score.timeline.to_metadata()
+    return payload
+
+
+def _musical_location_metadata(timeline: Any, seconds: float) -> dict[str, float | int]:
+    location = timeline.locate(seconds)
+    return {
+        "bar": location.bar,
+        "beat": location.beat,
+        "absolute_beats": location.absolute_beats,
+        "seconds": location.seconds,
     }
 
 

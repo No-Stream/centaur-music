@@ -6,12 +6,13 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from itertools import cycle, islice
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from code_musics import synth
 from code_musics.automation import (
     AutomationMode,
     AutomationSegment,
+    AutomationShape,
     AutomationSpec,
     AutomationTarget,
 )
@@ -25,12 +26,15 @@ from code_musics.meter import (
     TimePointLike,
 )
 from code_musics.pitch_motion import PitchMotionSpec
-from code_musics.score import BeatTiming, NoteEvent, Phrase
+from code_musics.score import BeatTiming, EffectSpec, NoteEvent, Phrase
 
 if TYPE_CHECKING:
-    from code_musics.score import Score
+    from code_musics.score import Score, Voice
 
 PitchKind = Literal["partial", "freq"]
+GestureSurface = Literal["voice", "effect", "send", "send_bus"]
+GesturePoint = tuple[float | None, float]
+MeteredAutomationPoint = tuple[int, float, float]
 
 __all__ = [
     "ArticulationSpec",
@@ -38,12 +42,15 @@ __all__ = [
     "ContextSectionSpec",
     "HarmonicContext",
     "MeteredSectionSpec",
+    "PhraseGesture",
     "PitchMotionSpec",
     "RhythmCell",
     "build_context_sections",
     "bar_automation",
+    "blooming",
     "canon",
     "concat",
+    "darkening",
     "echo",
     "grid_canon",
     "grid_line",
@@ -51,8 +58,11 @@ __all__ = [
     "grid_sequence",
     "legato",
     "line",
+    "metered_automation",
     "metered_sections",
+    "opening",
     "overlay",
+    "place_phrase",
     "place_ratio_chord",
     "place_ratio_line",
     "progression",
@@ -60,8 +70,10 @@ __all__ = [
     "ratio_line",
     "resolve_ratios",
     "sequence",
+    "settling",
     "staccato",
     "voiced_ratio_chord",
+    "widening",
     "with_accent_pattern",
     "with_gate",
     "with_synth_ramp",
@@ -171,6 +183,45 @@ class MeteredSectionSpec:
             raise ValueError("bars must be positive")
         if self.tonic_ratio <= 0:
             raise ValueError("tonic_ratio must be positive")
+
+
+@dataclass(frozen=True)
+class PhraseGesture:
+    """Phrase-relative automation gesture that compiles at placement time."""
+
+    surface: GestureSurface
+    target: AutomationTarget
+    points: tuple[GesturePoint, ...]
+    shape: AutomationShape = "linear"
+    mode: AutomationMode = "replace"
+    clamp_min: float | None = None
+    clamp_max: float | None = None
+    effect_kind: str | None = None
+    effect_index: int | None = None
+    send_name: str | None = None
+    create_stereo_width: bool = False
+    stereo_width: float = 1.35
+
+    def __post_init__(self) -> None:
+        if self.surface not in {"voice", "effect", "send", "send_bus"}:
+            raise ValueError("gesture surface must be voice, effect, send, or send_bus")
+        if self.shape not in {"hold", "linear", "exp"}:
+            raise ValueError("phrase gesture shape must be hold, linear, or exp")
+        if len(self.points) < 2:
+            raise ValueError("phrase gestures require at least two points")
+        for beat_offset, value in self.points:
+            if beat_offset is not None and (
+                not math.isfinite(beat_offset) or beat_offset < 0
+            ):
+                raise ValueError("gesture beat offsets must be non-negative and finite")
+            if not math.isfinite(value):
+                raise ValueError("gesture values must be finite")
+        if self.effect_index is not None and self.effect_index < 0:
+            raise ValueError("effect_index must be non-negative")
+        if self.create_stereo_width and self.surface != "effect":
+            raise ValueError("create_stereo_width gestures must target effect surface")
+        if self.stereo_width <= 0:
+            raise ValueError("stereo_width must be positive")
 
 
 @dataclass(frozen=True)
@@ -379,24 +430,32 @@ def metered_sections(
     start: TimePointLike | None = None,
 ) -> tuple[ContextSection, ...]:
     """Build harmonic sections measured in bars on a musical timeline."""
+    if base_tonic <= 0:
+        raise ValueError("base_tonic must be positive")
     if not specs:
         raise ValueError("specs must not be empty")
 
-    return build_context_sections(
-        base_tonic=base_tonic,
-        specs=tuple(
-            ContextSectionSpec(
-                duration=timeline.measures(spec.bars),
-                tonic_ratio=spec.tonic_ratio,
-                name=spec.name,
-            )
-            for spec in specs
-        ),
-        start=_resolve_time_point(
-            MeasurePosition(1.0) if start is None else start,
-            timeline=timeline,
-        ),
+    cursor_beats = _resolve_time_point_beats(
+        MeasurePosition(1.0) if start is None else start,
+        timeline=timeline,
     )
+    sections: list[ContextSection] = []
+    for spec in specs:
+        duration_beats = spec.bars * timeline.beats_per_bar
+        section_start = timeline.position(B(cursor_beats))
+        section_end = timeline.position(B(cursor_beats + duration_beats))
+        sections.append(
+            ContextSection(
+                start=section_start,
+                duration=section_end - section_start,
+                context=HarmonicContext(
+                    tonic=base_tonic * spec.tonic_ratio,
+                    name=spec.name,
+                ),
+            )
+        )
+        cursor_beats += duration_beats
+    return tuple(sections)
 
 
 def resolve_ratios(
@@ -652,7 +711,7 @@ def bar_automation(
     *,
     target: str,
     timeline: Timeline,
-    points: Sequence[tuple[int, float, float]],
+    points: Sequence[MeteredAutomationPoint],
     mode: AutomationMode = "replace",
     clamp_min: float | None = None,
     clamp_max: float | None = None,
@@ -663,44 +722,194 @@ def bar_automation(
     first segment starts. To keep the last value alive through a piece tail,
     include a final anchor at the desired endpoint with the same value.
     """
+    return metered_automation(
+        target=AutomationTarget(kind="synth", name=target),
+        timeline=timeline,
+        points=points,
+        mode=mode,
+        clamp_min=clamp_min,
+        clamp_max=clamp_max,
+    )
+
+
+def metered_automation(
+    *,
+    target: AutomationTarget,
+    timeline: Timeline,
+    points: Sequence[MeteredAutomationPoint],
+    shape: AutomationShape = "linear",
+    mode: AutomationMode = "replace",
+    clamp_min: float | None = None,
+    clamp_max: float | None = None,
+) -> AutomationSpec:
+    """Build an automation lane from bar/beat anchor points for any target."""
     if len(points) < 2:
         raise ValueError(
-            "bar_automation requires at least two (bar, beat, value) points"
+            "metered_automation requires at least two (bar, beat, value) points"
         )
+    if shape not in {"hold", "linear", "exp"}:
+        raise ValueError("metered_automation shape must be hold, linear, or exp")
 
-    previous_time: float | None = None
-    previous_value: float | None = None
-    segments: list[AutomationSegment] = []
-
+    beat_points: list[tuple[float, float]] = []
     for bar, beat, value in points:
         if bar < 1:
-            raise ValueError("bar_automation bar numbers must be >= 1")
-        time_seconds = timeline.at(bar=bar, beat=beat)
-        if previous_time is not None and time_seconds <= previous_time:
-            raise ValueError(
-                "bar_automation points must be strictly increasing in time"
-            )
-        if previous_time is not None and previous_value is not None:
-            segments.append(
-                AutomationSegment(
-                    start=previous_time,
-                    end=time_seconds,
-                    shape="linear",
-                    start_value=previous_value,
-                    end_value=float(value),
-                )
-            )
-        previous_time = time_seconds
-        previous_value = float(value)
+            raise ValueError("metered_automation bar numbers must be >= 1")
+        if not math.isfinite(beat) or beat < 0:
+            raise ValueError("metered_automation beat offsets must be non-negative")
+        absolute_beats = timeline.pickup_beats + ((bar - 1) * timeline.beats_per_bar)
+        beat_points.append((absolute_beats + beat, float(value)))
 
-    return AutomationSpec(
-        target=AutomationTarget(kind="synth", name=target),
-        segments=tuple(segments),
+    return _automation_from_absolute_beat_points(
+        target=target,
+        timeline=timeline,
+        points=beat_points,
+        shape=shape,
         default_value=float(points[0][2]),
         clamp_min=clamp_min,
         clamp_max=clamp_max,
         mode=mode,
     )
+
+
+def opening(
+    *,
+    start_cutoff_hz: float = 700.0,
+    end_cutoff_hz: float = 3600.0,
+    end_beat: float | None = None,
+) -> PhraseGesture:
+    """Phrase gesture for a filter opening over the phrase span."""
+    return PhraseGesture(
+        surface="voice",
+        target=AutomationTarget(kind="synth", name="cutoff_hz"),
+        points=((0.0, start_cutoff_hz), (end_beat, end_cutoff_hz)),
+        shape="exp",
+        clamp_min=20.0,
+    )
+
+
+def darkening(
+    *,
+    start_cutoff_hz: float = 3600.0,
+    end_cutoff_hz: float = 700.0,
+    end_beat: float | None = None,
+) -> PhraseGesture:
+    """Phrase gesture for a filter closing over the phrase span."""
+    return PhraseGesture(
+        surface="voice",
+        target=AutomationTarget(kind="synth", name="cutoff_hz"),
+        points=((0.0, start_cutoff_hz), (end_beat, end_cutoff_hz)),
+        shape="exp",
+        clamp_min=20.0,
+    )
+
+
+def settling(
+    *,
+    start_mix_db: float = 0.0,
+    end_mix_db: float = -4.0,
+    end_beat: float | None = None,
+) -> PhraseGesture:
+    """Phrase gesture for easing a voice down in the mix."""
+    return PhraseGesture(
+        surface="voice",
+        target=AutomationTarget(kind="control", name="mix_db"),
+        points=((0.0, start_mix_db), (end_beat, end_mix_db)),
+    )
+
+
+def blooming(
+    *,
+    send_name: str,
+    start_send_db: float = -24.0,
+    end_send_db: float = -8.0,
+    end_beat: float | None = None,
+) -> PhraseGesture:
+    """Phrase gesture for opening a pre-existing voice send."""
+    if not send_name:
+        raise ValueError("send_name must be non-empty")
+    return PhraseGesture(
+        surface="send",
+        target=AutomationTarget(kind="control", name="send_db"),
+        points=((0.0, start_send_db), (end_beat, end_send_db)),
+        send_name=send_name,
+    )
+
+
+def widening(
+    *,
+    start_width: float = 1.0,
+    end_width: float = 1.35,
+    end_beat: float | None = None,
+) -> PhraseGesture:
+    """Phrase gesture for widening a stereo-width effect over the phrase span."""
+    return PhraseGesture(
+        surface="effect",
+        target=AutomationTarget(kind="control", name="width"),
+        points=((0.0, start_width), (end_beat, end_width)),
+        clamp_min=0.0,
+        effect_kind="stereo_width",
+        create_stereo_width=True,
+        stereo_width=start_width,
+    )
+
+
+def place_phrase(
+    score: Score,
+    voice_name: str,
+    phrase: Phrase,
+    *,
+    timeline: Timeline,
+    at: TimePointLike,
+    gestures: Sequence[PhraseGesture] = (),
+    duration_beats: float | DurationLike | None = None,
+    time_scale: float = 1.0,
+    partial_shift: float = 0.0,
+    amp_scale: float = 1.0,
+    reverse: bool = False,
+    section: ContextSection | None = None,
+    source_tonic: float = 1.0,
+) -> list[NoteEvent]:
+    """Place a phrase on the meter grid and attach phrase-level gestures."""
+    _ensure_score_timeline(score, timeline)
+    start_beats = _resolve_time_point_beats(at, timeline=timeline)
+    if gestures:
+        phrase_duration_beats = _resolve_phrase_duration_beats(
+            phrase=phrase,
+            duration_beats=duration_beats,
+        )
+        _validate_phrase_gesture_references(
+            score=score,
+            voice_name=voice_name,
+            gestures=gestures,
+        )
+    else:
+        phrase_duration_beats = None
+    placed_entries = _place_grid_sequence_entries(
+        score,
+        voice_name,
+        phrase,
+        timeline=timeline,
+        start_beats=(start_beats,),
+        time_scales=(time_scale,),
+        partial_shifts=(partial_shift,),
+        amp_scales=(amp_scale,),
+        reverses=(reverse,),
+        sections=(section,),
+        source_tonic=source_tonic,
+    )
+    placed_notes = placed_entries[0]
+    if phrase_duration_beats is not None:
+        for gesture in gestures:
+            _attach_phrase_gesture(
+                score=score,
+                voice_name=voice_name,
+                gesture=gesture,
+                timeline=timeline,
+                start_beats=start_beats,
+                phrase_duration_beats=phrase_duration_beats,
+                time_scale=time_scale,
+            )
+    return placed_notes
 
 
 def staccato(phrase: Phrase, gate: float = 0.45) -> Phrase:
@@ -1295,6 +1504,7 @@ def grid_sequence(
     source_tonic: float = 1.0,
 ) -> list[list[NoteEvent]]:
     """Place repeated phrase entries using beat/bar references."""
+    _ensure_score_timeline(score, timeline)
     start_beats = tuple(
         _resolve_time_point_beats(value, timeline=timeline) for value in at
     )
@@ -1428,6 +1638,7 @@ def grid_canon(
     source_tonic: float = 1.0,
 ) -> dict[str, list[list[NoteEvent]]]:
     """Place delayed imitative entries using beat/bar timing references."""
+    _ensure_score_timeline(score, timeline)
     start_beats = _resolve_time_point_beats(start, timeline=timeline)
     if phrase.beat_timings is not None:
         return _place_grid_canon_entries(
@@ -1631,6 +1842,351 @@ def progression(
                     )
                 )
     return placed_notes
+
+
+def _automation_from_absolute_beat_points(
+    *,
+    target: AutomationTarget,
+    timeline: Timeline,
+    points: Sequence[tuple[float, float]],
+    shape: AutomationShape,
+    default_value: float,
+    clamp_min: float | None,
+    clamp_max: float | None,
+    mode: AutomationMode,
+) -> AutomationSpec:
+    previous_time: float | None = None
+    previous_value: float | None = None
+    segments: list[AutomationSegment] = []
+
+    for absolute_beats, value in points:
+        if not math.isfinite(absolute_beats) or absolute_beats < 0:
+            raise ValueError("automation beat points must be non-negative and finite")
+        time_seconds = timeline.position(B(absolute_beats))
+        if previous_time is not None and time_seconds <= previous_time:
+            raise ValueError("automation points must be strictly increasing in time")
+        if previous_time is not None and previous_value is not None:
+            if shape == "hold":
+                segments.append(
+                    AutomationSegment(
+                        start=previous_time,
+                        end=time_seconds,
+                        shape="hold",
+                        value=previous_value,
+                    )
+                )
+            else:
+                segments.append(
+                    AutomationSegment(
+                        start=previous_time,
+                        end=time_seconds,
+                        shape=shape,
+                        start_value=previous_value,
+                        end_value=float(value),
+                    )
+                )
+        previous_time = time_seconds
+        previous_value = float(value)
+
+    return AutomationSpec(
+        target=target,
+        segments=tuple(segments),
+        default_value=default_value,
+        clamp_min=clamp_min,
+        clamp_max=clamp_max,
+        mode=mode,
+    )
+
+
+def _resolve_phrase_duration_beats(
+    *,
+    phrase: Phrase,
+    duration_beats: float | DurationLike | None,
+) -> float:
+    if duration_beats is not None:
+        return _resolve_duration_beats_value(duration_beats, allow_zero=False)
+    if phrase.beat_timings is None:
+        raise ValueError(
+            "phrase gestures require phrase beat_timings or explicit duration_beats"
+        )
+    resolved = max(
+        timing.start_beats + timing.duration_beats for timing in phrase.beat_timings
+    )
+    if resolved <= 0:
+        raise ValueError("phrase duration beats must be positive")
+    return resolved
+
+
+def _validate_phrase_gesture_references(
+    *,
+    score: Score,
+    voice_name: str,
+    gestures: Sequence[PhraseGesture],
+) -> None:
+    voice = score.voices.get(voice_name)
+    for gesture in gestures:
+        if gesture.surface == "voice":
+            continue
+        if gesture.surface == "effect":
+            if voice is None:
+                if (
+                    gesture.create_stereo_width
+                    and gesture.effect_kind == "stereo_width"
+                ):
+                    continue
+                raise ValueError(f"voice {voice_name!r} does not exist")
+            effect = None
+            if gesture.effect_index is not None:
+                if gesture.effect_index >= len(voice.effects):
+                    raise ValueError(
+                        f"effect_index {gesture.effect_index} is out of range"
+                    )
+                effect = voice.effects[gesture.effect_index]
+                if (
+                    gesture.effect_kind is not None
+                    and effect.kind != gesture.effect_kind
+                ):
+                    raise ValueError(
+                        f"effect_index {gesture.effect_index} is not a "
+                        f"{gesture.effect_kind!r} effect"
+                    )
+            elif gesture.effect_kind is None:
+                raise ValueError("effect gestures require effect_kind or effect_index")
+            else:
+                effect = next(
+                    (
+                        voice_effect
+                        for voice_effect in voice.effects
+                        if voice_effect.kind == gesture.effect_kind
+                    ),
+                    None,
+                )
+            if effect is None:
+                if (
+                    gesture.create_stereo_width
+                    and gesture.effect_kind == "stereo_width"
+                ):
+                    continue
+                raise ValueError(f"voice has no effect of kind {gesture.effect_kind!r}")
+            params = dict(effect.params)
+            if gesture.create_stereo_width:
+                params["width"] = gesture.stereo_width
+                params.setdefault(gesture.target.name, gesture.points[0][1])
+            _validate_effect_gesture_target(effect.kind, params, gesture.target)
+            continue
+        if gesture.surface == "send":
+            if voice is None:
+                raise ValueError(
+                    f"voice {voice_name!r} has no send named {gesture.send_name!r}"
+                )
+            if gesture.target.kind != "control" or gesture.target.name != "send_db":
+                raise ValueError("send gestures must target control send_db")
+            if gesture.send_name is None:
+                raise ValueError("send gestures require send_name")
+            if not any(
+                voice_send.target == gesture.send_name for voice_send in voice.sends
+            ):
+                raise ValueError(
+                    f"voice {voice_name!r} has no send named {gesture.send_name!r}"
+                )
+            continue
+        if gesture.send_name is None:
+            raise ValueError("send_bus gestures require send_name")
+        if gesture.target.kind != "control" or gesture.target.name not in {
+            "return_db",
+            "pan",
+        }:
+            raise ValueError("send_bus gestures must target control return_db or pan")
+        if not any(send_bus.name == gesture.send_name for send_bus in score.send_buses):
+            raise ValueError(f"score has no send bus named {gesture.send_name!r}")
+
+
+def _attach_phrase_gesture(
+    *,
+    score: Score,
+    voice_name: str,
+    gesture: PhraseGesture,
+    timeline: Timeline,
+    start_beats: float,
+    phrase_duration_beats: float,
+    time_scale: float,
+) -> None:
+    voice = score.get_or_create_voice(voice_name)
+    target = _resolve_phrase_gesture_voice_target(voice, gesture.target)
+    automation = _compile_phrase_gesture_automation(
+        gesture=gesture,
+        target=target,
+        timeline=timeline,
+        start_beats=start_beats,
+        phrase_duration_beats=phrase_duration_beats,
+        time_scale=time_scale,
+    )
+
+    if gesture.surface == "voice":
+        voice.automation.append(automation)
+        return
+
+    if gesture.surface == "effect":
+        effect_index = _resolve_phrase_gesture_effect_index(voice.effects, gesture)
+        effect = voice.effects[effect_index]
+        params = dict(effect.params)
+        if gesture.create_stereo_width:
+            params["width"] = gesture.stereo_width
+            params.setdefault(gesture.target.name, automation.default_value)
+        _validate_effect_gesture_target(effect.kind, params, gesture.target)
+        voice.effects[effect_index] = replace(
+            effect,
+            params=params,
+            automation=[*effect.automation, automation],
+        )
+        return
+
+    if gesture.surface == "send":
+        if gesture.target.kind != "control" or gesture.target.name != "send_db":
+            raise ValueError("send gestures must target control send_db")
+        if gesture.send_name is None:
+            raise ValueError("send gestures require send_name")
+        send_index = next(
+            (
+                index
+                for index, voice_send in enumerate(voice.sends)
+                if voice_send.target == gesture.send_name
+            ),
+            None,
+        )
+        if send_index is None:
+            raise ValueError(
+                f"voice {voice_name!r} has no send named {gesture.send_name!r}"
+            )
+        voice_send = voice.sends[send_index]
+        voice.sends[send_index] = replace(
+            voice_send,
+            automation=[*voice_send.automation, automation],
+        )
+        return
+
+    if gesture.send_name is None:
+        raise ValueError("send_bus gestures require send_name")
+    if gesture.target.kind != "control" or gesture.target.name not in {
+        "return_db",
+        "pan",
+    }:
+        raise ValueError("send_bus gestures must target control return_db or pan")
+    bus_index = next(
+        (
+            index
+            for index, send_bus in enumerate(score.send_buses)
+            if send_bus.name == gesture.send_name
+        ),
+        None,
+    )
+    if bus_index is None:
+        raise ValueError(f"score has no send bus named {gesture.send_name!r}")
+    send_bus = score.send_buses[bus_index]
+    score.send_buses[bus_index] = replace(
+        send_bus,
+        automation=[*send_bus.automation, automation],
+    )
+
+
+def _compile_phrase_gesture_automation(
+    *,
+    gesture: PhraseGesture,
+    target: AutomationTarget | None = None,
+    timeline: Timeline,
+    start_beats: float,
+    phrase_duration_beats: float,
+    time_scale: float,
+) -> AutomationSpec:
+    if time_scale <= 0:
+        raise ValueError("time_scale must be positive")
+    if phrase_duration_beats <= 0:
+        raise ValueError("phrase duration beats must be positive")
+
+    points: list[tuple[float, float]] = []
+    for beat_offset, value in gesture.points:
+        resolved_offset = (
+            phrase_duration_beats if beat_offset is None else float(beat_offset)
+        )
+        points.append((start_beats + (resolved_offset * time_scale), value))
+
+    return _automation_from_absolute_beat_points(
+        target=gesture.target if target is None else target,
+        timeline=timeline,
+        points=points,
+        shape=gesture.shape,
+        default_value=gesture.points[0][1],
+        clamp_min=gesture.clamp_min,
+        clamp_max=gesture.clamp_max,
+        mode=gesture.mode,
+    )
+
+
+def _resolve_phrase_gesture_voice_target(
+    voice: Voice,
+    target: AutomationTarget,
+) -> AutomationTarget:
+    if target.kind != "synth":
+        return target
+    engine_name = str(voice.synth_defaults.get("engine", "sine"))
+    if target.name == "cutoff_hz" and engine_name in {"synth_voice", "drum_voice"}:
+        return AutomationTarget(kind="synth", name="filter_cutoff_hz")
+    if target.name == "resonance_q" and engine_name == "drum_voice":
+        return AutomationTarget(kind="synth", name="filter_q")
+    return target
+
+
+def _resolve_phrase_gesture_effect_index(
+    effects: list[EffectSpec],
+    gesture: PhraseGesture,
+) -> int:
+    if gesture.effect_index is not None:
+        if gesture.effect_index >= len(effects):
+            raise ValueError(f"effect_index {gesture.effect_index} is out of range")
+        if (
+            gesture.effect_kind is not None
+            and effects[gesture.effect_index].kind != gesture.effect_kind
+        ):
+            raise ValueError(
+                f"effect_index {gesture.effect_index} is not a "
+                f"{gesture.effect_kind!r} effect"
+            )
+        return gesture.effect_index
+
+    if gesture.effect_kind is None:
+        raise ValueError("effect gestures require effect_kind or effect_index")
+
+    for index, effect in enumerate(effects):
+        if effect.kind == gesture.effect_kind:
+            return index
+
+    if gesture.create_stereo_width and gesture.effect_kind == "stereo_width":
+        effects.append(
+            EffectSpec(
+                cast(Any, "stereo_width"),
+                {
+                    "width": gesture.stereo_width,
+                    gesture.target.name: gesture.points[0][1],
+                },
+            )
+        )
+        return len(effects) - 1
+
+    raise ValueError(f"voice has no effect of kind {gesture.effect_kind!r}")
+
+
+def _validate_effect_gesture_target(
+    effect_kind: str,
+    params: dict[str, Any],
+    target: AutomationTarget,
+) -> None:
+    if target.kind != "control":
+        raise ValueError("effect gestures must use control automation targets")
+    if target.name not in params:
+        raise ValueError(
+            f"effect gesture target {target.name!r} requires that parameter on "
+            f"the {effect_kind!r} effect"
+        )
 
 
 def _require_resolved_amp(event: NoteEvent) -> float:
@@ -2256,3 +2812,11 @@ def _resolve_duration_beats_value(
     if allow_zero and isinstance(value, (BeatSpan, BeatValue)) and value.beats == 0.0:
         return 0.0
     return _coerce_duration_beats_value(value)
+
+
+def _ensure_score_timeline(score: Score, timeline: Timeline) -> None:
+    if score.timeline is None:
+        score.timeline = timeline
+        return
+    if score.timeline != timeline:
+        raise ValueError("score already has a different timeline")

@@ -15,6 +15,7 @@ from code_musics.analysis import (
     save_analysis_artifacts,
 )
 from code_musics.humanize import TimingHumanizeSpec
+from code_musics.meter import TempoMap, TempoPoint, Timeline
 from code_musics.pieces.registry import PieceSection
 from code_musics.score import EffectSpec, Score, VelocityParamMap, VoiceSend
 
@@ -166,6 +167,28 @@ def test_build_score_timeline_includes_sections_and_resolved_notes() -> None:
     assert timeline["sections"][0]["label"] == "Intro"
     assert timeline["notes"][1]["label"] == "pickup"
     assert timeline["windows"]
+
+
+def test_build_score_timeline_includes_musical_time_when_score_has_timeline() -> None:
+    score = Score(
+        f0_hz=55.0,
+        timeline=Timeline.from_tempo_map(
+            TempoMap(
+                points=(
+                    TempoPoint(beat=0.0, bpm=120.0, curve="hold"),
+                    TempoPoint(beat=2.0, bpm=60.0),
+                )
+            )
+        ),
+    )
+    score.add_note("lead", start=1.0, duration=1.0, partial=4.0, amp=0.2)
+
+    timeline = build_score_timeline(score=score)
+
+    assert timeline["musical_time"]["tempo_map"]["points"][1]["bpm"] == 60.0
+    assert timeline["notes"][0]["authored_musical_location"]["absolute_beats"] == 2.0
+    assert timeline["notes"][0]["resolved_musical_location"]["bar"] == 1
+    assert timeline["notes"][0]["resolved_musical_location"]["beat"] == 2.0
 
 
 def test_save_analysis_artifacts_writes_manifest_and_plots(tmp_path: Path) -> None:

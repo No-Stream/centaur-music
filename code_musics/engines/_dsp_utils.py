@@ -16,7 +16,12 @@ import numba
 import numpy as np
 from scipy.signal import resample_poly
 
-from code_musics.engines._filters import FilterParams, apply_filter
+from code_musics.engines._filters import (
+    FilterControlValue,
+    FilterParams,
+    apply_filter,
+    resolve_filter_controls,
+)
 from code_musics.humanize import build_drift_bus  # re-exported for legacy callers
 
 __all__ = ["build_drift_bus"]
@@ -664,6 +669,220 @@ def flow_exciter(
         state = np.repeat(segment_values, segment_lengths)
 
     return state + (uniform_samples - state) * mix_weight
+
+
+def _rain_density_to_rate_hz(density: float) -> float:
+    """Map ``density`` in ``[0, 1]`` to a droplet arrival rate in Hz.
+
+    Exponential mapping calibrated so ``density=0.1`` gives ~2 drops/sec
+    (sparse drizzle) and ``density=1.0`` gives ~80 drops/sec (heavy rain).
+    """
+    lo_density, lo_rate = 0.1, 2.0
+    hi_density, hi_rate = 1.0, 80.0
+    log_ratio = math.log(hi_rate / lo_rate) / (hi_density - lo_density)
+    rate_base = math.exp(log_ratio)
+    rate_scale = lo_rate / (rate_base**lo_density)
+    return rate_scale * (rate_base**density)
+
+
+def rain_exciter(
+    n_samples: int,
+    sample_rate: int,
+    *,
+    density: float = 0.5,
+    brightness: float = 0.5,
+    drop_size: float = 0.5,
+    wash: float = 0.5,
+    seed: int,
+) -> np.ndarray:
+    """Deterministic rain texture: Poisson-arrival droplets + breathing wash.
+
+    Two layers crossfaded by ``wash``:
+
+    1. **Droplets** -- a Poisson-arrival process of short, exponentially
+       decaying bandpassed clicks with a slight downward pitch chirp (the
+       "drip" character). Per-droplet center frequency is drawn log-uniform
+       within a brightness-controlled band; duration follows a "drop size"
+       distribution that's mostly small drops with occasional fat ones,
+       bigger drops also landing lower-pitched and louder (physically
+       correct: big drops resonate lower).
+    2. **Wash** -- distant-rain hiss: pink-ish noise through a gentle
+       bandpass whose top edge tracks ``brightness``, amplitude-modulated by
+       a few slow summed sinusoids so it breathes instead of sitting static.
+
+    Args:
+        n_samples: Number of samples to generate.
+        sample_rate: Sample rate in Hz.
+        density: Droplet arrival rate control in ``[0, 1]`` -- see
+            ``_rain_density_to_rate_hz`` for the Hz mapping.
+        brightness: ``[0, 1]``. Controls both the droplet frequency band and
+            the wash bandpass top edge -- 0.3 reads as dull/muffled window
+            rain, 0.8 as close bright rain on leaves.
+        drop_size: ``[0, 1]``. Shifts the drop-size distribution -- 0 is fine
+            drizzle, 1 is fat drops.
+        wash: ``[0, 1]``. Crossfade between droplets-only (0) and wash-only
+            (1).
+        seed: Seed for an internal deterministic RNG (per-note derivation
+            mirrors the granular / pluck / scanned / chaotic dispatches in
+            ``synth_voice`` -- callers derive this from their per-note rng).
+
+    Returns:
+        Float64 array of length ``n_samples``, RMS-normalized to a fixed
+        target level so switching ``noise_type`` doesn't jump the overall
+        loudness (mirrors ``flow_exciter``'s bounded-output contract).
+    """
+    if n_samples < 0:
+        raise ValueError(f"n_samples must be non-negative, got {n_samples}")
+    if sample_rate <= 0:
+        raise ValueError(f"sample_rate must be positive, got {sample_rate}")
+    for name, value in (
+        ("density", density),
+        ("brightness", brightness),
+        ("drop_size", drop_size),
+        ("wash", wash),
+    ):
+        if not (0.0 <= value <= 1.0):
+            raise ValueError(f"{name} must be in [0, 1], got {value}")
+    if n_samples == 0:
+        return np.zeros(0, dtype=np.float64)
+
+    rng = np.random.default_rng(seed)
+    duration_s = n_samples / sample_rate
+
+    droplets = _rain_droplet_layer(
+        n_samples=n_samples,
+        sample_rate=sample_rate,
+        duration_s=duration_s,
+        density=density,
+        brightness=brightness,
+        drop_size=drop_size,
+        rng=rng,
+    )
+    washed = _rain_wash_layer(
+        n_samples=n_samples,
+        sample_rate=sample_rate,
+        brightness=brightness,
+        rng=rng,
+    )
+
+    signal = (1.0 - wash) * droplets + wash * washed
+
+    target_rms = 0.25
+    rms = float(np.sqrt(np.mean(signal**2)))
+    if rms > 1e-9:
+        signal = signal * (target_rms / rms)
+
+    return signal.astype(np.float64, copy=False)
+
+
+def _rain_droplet_layer(
+    *,
+    n_samples: int,
+    sample_rate: int,
+    duration_s: float,
+    density: float,
+    brightness: float,
+    drop_size: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Poisson-arrival short bandpassed chirp clicks scattered into a buffer."""
+    rate_hz = _rain_density_to_rate_hz(density)
+    n_drops = int(rng.poisson(rate_hz * duration_s))
+    out = np.zeros(n_samples, dtype=np.float64)
+    if n_drops == 0:
+        return out
+
+    # Conditional on the drop count, Poisson-process arrival times are iid
+    # uniform over the render window.
+    arrival_samples = rng.integers(0, n_samples, size=n_drops)
+
+    # Drop-size distribution: mostly small drops, occasional fat ones
+    # (exponential), shifted/scaled by drop_size.
+    size_factor = rng.exponential(scale=1.0, size=n_drops)
+
+    freq_lo = 1200.0 + 2500.0 * brightness
+    freq_hi = freq_lo * 2.5
+    # Bigger drops (larger size_factor) resonate lower in the band.
+    size_norm = size_factor / (size_factor + 1.0)  # in [0, 1), skewed low
+    log_lo, log_hi = math.log(freq_lo), math.log(freq_hi)
+    center_freq = np.exp(log_hi - size_norm * (log_hi - log_lo))
+
+    duration_ms = 3.0 + 12.0 * drop_size + size_factor * (4.0 + 20.0 * drop_size)
+    duration_samples = np.clip(
+        (duration_ms / 1000.0 * sample_rate).astype(np.int64), 8, n_samples
+    )
+
+    amp = (0.3 + 0.7 * size_norm) * rng.uniform(0.6, 1.0, size=n_drops)
+
+    for i in range(n_drops):
+        start = int(arrival_samples[i])
+        length = int(duration_samples[i])
+        length = min(length, n_samples - start)
+        if length <= 0:
+            continue
+
+        t = np.arange(length, dtype=np.float64) / sample_rate
+        envelope = np.exp(-t / (t[-1] / 4.0 if length > 1 else 1.0 / sample_rate))
+
+        f_start = float(center_freq[i]) * 1.3
+        f_end = float(center_freq[i]) * 0.7
+        inst_freq = f_start + (f_end - f_start) * (t / t[-1] if length > 1 else 0.0)
+        chirp_phase = 2.0 * np.pi * np.cumsum(inst_freq) / sample_rate
+        chirp_tone = np.sin(chirp_phase)
+
+        noise_burst = rng.standard_normal(length)
+        bandpassed = bandpass_noise(
+            noise_burst,
+            sample_rate=sample_rate,
+            center_hz=float(center_freq[i]),
+            width_ratio=0.4,
+        )
+        bp_peak = float(np.max(np.abs(bandpassed)))
+        if bp_peak > 1e-9:
+            bandpassed = bandpassed / bp_peak
+
+        droplet = envelope * (0.6 * chirp_tone + 0.6 * bandpassed) * float(amp[i])
+        out[start : start + length] += droplet
+
+    return out
+
+
+def _rain_wash_layer(
+    *,
+    n_samples: int,
+    sample_rate: int,
+    brightness: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Distant-rain hiss: bandpassed pink noise with slow breathing AM."""
+    white = rng.standard_normal(n_samples)
+    spectrum = np.fft.rfft(white)
+    freqs = np.fft.rfftfreq(n_samples, d=1.0 / sample_rate)
+    scale = np.ones_like(freqs)
+    scale[1:] = 1.0 / np.sqrt(freqs[1:])
+    spectrum = spectrum * scale
+    spectrum[0] = 0.0
+    pink = np.fft.irfft(spectrum, n=n_samples).real
+
+    low_hz = 400.0
+    high_hz = 1500.0 + 4000.0 * brightness
+    center_hz = math.sqrt(low_hz * high_hz)
+    width_ratio = (high_hz - low_hz) / center_hz
+    washed = bandpass_noise(
+        pink, sample_rate=sample_rate, center_hz=center_hz, width_ratio=width_ratio
+    )
+
+    time = np.arange(n_samples, dtype=np.float64) / sample_rate
+    breathing = np.zeros(n_samples, dtype=np.float64)
+    for _ in range(3):
+        rate_hz = rng.uniform(0.03, 0.25)
+        phase = rng.uniform(0.0, 2.0 * np.pi)
+        depth = rng.uniform(0.5, 1.0) / 3.0
+        breathing += depth * np.sin(2.0 * np.pi * rate_hz * time + phase)
+    breathing_max = float(np.max(np.abs(breathing))) or 1.0
+    breathing = 0.7 + 0.3 * (breathing / breathing_max)
+
+    return washed * breathing
 
 
 # ---------------------------------------------------------------------------
@@ -1324,22 +1543,58 @@ def upsample_cutoff_profile(
     return np.clip(resolved, 20.0, nyquist_up * 0.98)
 
 
+def _upsample_filter_control(
+    control: FilterControlValue,
+    *,
+    oversample_factor: int,
+    n_base: int,
+) -> FilterControlValue:
+    """Upsample a scalar-or-profile filter control without changing scalars."""
+    if not isinstance(control, np.ndarray):
+        return control
+    if n_base <= 0:
+        return np.zeros(0, dtype=np.float64)
+    n_up_expected = n_base * oversample_factor
+    if oversample_factor == 1:
+        if control.shape[0] != n_up_expected:
+            raise ValueError(
+                "filter control profile length must match signal length at "
+                "oversample_factor=1"
+            )
+        return control.astype(np.float64, copy=False)
+
+    control_up = resample_poly(
+        control,
+        up=oversample_factor,
+        down=1,
+        window=_OVERSAMPLE_RESAMPLE_WINDOW,
+    ).astype(np.float64)
+    if control_up.shape[0] > n_up_expected:
+        return control_up[:n_up_expected]
+    if control_up.shape[0] < n_up_expected:
+        pad_value = float(control[-1]) if control.shape[0] > 0 else 0.0
+        return np.concatenate(
+            [control_up, np.full(n_up_expected - control_up.shape[0], pad_value)]
+        )
+    return control_up
+
+
 def apply_filter_oversampled(
     signal: np.ndarray,
     *,
-    cutoff_profile: np.ndarray,
+    cutoff_profile: FilterControlValue,
     sample_rate: int,
     oversample_factor: int,
-    resonance_q: float = 0.707,
+    resonance_q: FilterControlValue = 0.707,
     filter_mode: str = "lowpass",
-    filter_drive: float = 0.0,
+    filter_drive: FilterControlValue = 0.0,
     filter_even_harmonics: float = 0.0,
     filter_topology: str = "svf",
     bass_compensation: float = 0.5,
-    filter_morph: float = 0.0,
-    hpf_cutoff_hz: float = 0.0,
+    filter_morph: FilterControlValue = 0.0,
+    hpf_cutoff_hz: FilterControlValue = 0.0,
     hpf_resonance_q: float = 0.707,
-    feedback_amount: float = 0.0,
+    feedback_amount: FilterControlValue = 0.0,
     feedback_saturation: float = 0.3,
     filter_solver: str = "adaa",
     max_newton_iters: int = 4,
@@ -1358,18 +1613,30 @@ def apply_filter_oversampled(
     if oversample_factor < 1:
         raise ValueError("oversample_factor must be >= 1")
 
+    n_base = int(signal.shape[0])
+    controls = resolve_filter_controls(
+        cutoff_profile=cutoff_profile,
+        resonance_q=resonance_q,
+        filter_drive=filter_drive,
+        filter_morph=filter_morph,
+        hpf_cutoff_hz=hpf_cutoff_hz,
+        feedback_amount=feedback_amount,
+        n_samples=n_base,
+        sample_rate=sample_rate,
+    )
+
     if oversample_factor == 1:
         fp = FilterParams(
-            resonance_q=resonance_q,
+            resonance_q=controls.resonance_q,
             filter_mode=filter_mode,
-            filter_drive=filter_drive,
+            filter_drive=controls.filter_drive,
             filter_even_harmonics=filter_even_harmonics,
             filter_topology=filter_topology,
             bass_compensation=bass_compensation,
-            filter_morph=filter_morph,
-            hpf_cutoff_hz=hpf_cutoff_hz,
+            filter_morph=controls.filter_morph,
+            hpf_cutoff_hz=controls.hpf_cutoff_hz,
             hpf_resonance_q=hpf_resonance_q,
-            feedback_amount=feedback_amount,
+            feedback_amount=controls.feedback_amount,
             feedback_saturation=feedback_saturation,
             filter_solver=filter_solver,
             k35_feedback_asymmetry=k35_feedback_asymmetry,
@@ -1378,32 +1645,51 @@ def apply_filter_oversampled(
         )
         return apply_filter(
             signal,
-            cutoff_profile=cutoff_profile,
+            cutoff_profile=controls.cutoff_profile,
             sample_rate=sample_rate,
             **asdict(fp),
         )
 
-    cutoff_up = upsample_cutoff_profile(
-        cutoff_profile,
+    cutoff_up = _upsample_filter_control(
+        controls.cutoff_profile,
         oversample_factor=oversample_factor,
-        sample_rate=sample_rate,
-        n_base=int(signal.shape[0]),
+        n_base=n_base,
     )
     return apply_filter_oversampled_preupsampled(
         signal,
         cutoff_profile_upsampled=cutoff_up,
         sample_rate=sample_rate,
         oversample_factor=oversample_factor,
-        resonance_q=resonance_q,
+        resonance_q=_upsample_filter_control(
+            controls.resonance_q,
+            oversample_factor=oversample_factor,
+            n_base=n_base,
+        ),
         filter_mode=filter_mode,
-        filter_drive=filter_drive,
+        filter_drive=_upsample_filter_control(
+            controls.filter_drive,
+            oversample_factor=oversample_factor,
+            n_base=n_base,
+        ),
         filter_even_harmonics=filter_even_harmonics,
         filter_topology=filter_topology,
         bass_compensation=bass_compensation,
-        filter_morph=filter_morph,
-        hpf_cutoff_hz=hpf_cutoff_hz,
+        filter_morph=_upsample_filter_control(
+            controls.filter_morph,
+            oversample_factor=oversample_factor,
+            n_base=n_base,
+        ),
+        hpf_cutoff_hz=_upsample_filter_control(
+            controls.hpf_cutoff_hz,
+            oversample_factor=oversample_factor,
+            n_base=n_base,
+        ),
         hpf_resonance_q=hpf_resonance_q,
-        feedback_amount=feedback_amount,
+        feedback_amount=_upsample_filter_control(
+            controls.feedback_amount,
+            oversample_factor=oversample_factor,
+            n_base=n_base,
+        ),
         feedback_saturation=feedback_saturation,
         filter_solver=filter_solver,
         max_newton_iters=max_newton_iters,
@@ -1415,19 +1701,19 @@ def apply_filter_oversampled(
 def apply_filter_oversampled_preupsampled(
     signal: np.ndarray,
     *,
-    cutoff_profile_upsampled: np.ndarray,
+    cutoff_profile_upsampled: FilterControlValue,
     sample_rate: int,
     oversample_factor: int,
-    resonance_q: float = 0.707,
+    resonance_q: FilterControlValue = 0.707,
     filter_mode: str = "lowpass",
-    filter_drive: float = 0.0,
+    filter_drive: FilterControlValue = 0.0,
     filter_even_harmonics: float = 0.0,
     filter_topology: str = "svf",
     bass_compensation: float = 0.5,
-    filter_morph: float = 0.0,
-    hpf_cutoff_hz: float = 0.0,
+    filter_morph: FilterControlValue = 0.0,
+    hpf_cutoff_hz: FilterControlValue = 0.0,
     hpf_resonance_q: float = 0.707,
-    feedback_amount: float = 0.0,
+    feedback_amount: FilterControlValue = 0.0,
     feedback_saturation: float = 0.3,
     filter_solver: str = "adaa",
     max_newton_iters: int = 4,
@@ -1467,7 +1753,10 @@ def apply_filter_oversampled_preupsampled(
         return np.zeros(0, dtype=np.float64)
 
     if oversample_factor == 1:
-        if cutoff_profile_upsampled.shape[0] != n_base:
+        if (
+            isinstance(cutoff_profile_upsampled, np.ndarray)
+            and cutoff_profile_upsampled.shape[0] != n_base
+        ):
             raise ValueError(
                 "cutoff_profile_upsampled length must match signal length at "
                 "oversample_factor=1"
@@ -1480,7 +1769,10 @@ def apply_filter_oversampled_preupsampled(
         )
 
     n_up_expected = n_base * oversample_factor
-    if cutoff_profile_upsampled.shape[0] != n_up_expected:
+    if (
+        isinstance(cutoff_profile_upsampled, np.ndarray)
+        and cutoff_profile_upsampled.shape[0] != n_up_expected
+    ):
         raise ValueError(
             f"cutoff_profile_upsampled length {cutoff_profile_upsampled.shape[0]} "
             f"must equal n_base * oversample_factor = {n_up_expected}"

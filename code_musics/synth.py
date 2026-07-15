@@ -1251,7 +1251,7 @@ def adsr(
     attack_target = float(
         np.clip(attack_target, _ATTACK_TARGET_MIN, _ATTACK_TARGET_MAX)
     )
-    n = len(signal)
+    n = signal.shape[-1]
     n_attack = int(attack * sample_rate)
     n_decay = int(decay * sample_rate)
     n_release = int(release * sample_rate)
@@ -1935,6 +1935,9 @@ def _build_effect_analysis_warnings(
         longest_run_above_1db_seconds = float(
             metrics.get("longest_run_above_1db_seconds", 0.0)
         )
+        longest_run_above_2db_seconds = float(
+            metrics.get("longest_run_above_2db_seconds", 0.0)
+        )
         if avg_gain_reduction_db < 0.5 and max_gain_reduction_db < 1.5:
             warnings.append(
                 _build_effect_warning(
@@ -1967,14 +1970,18 @@ def _build_effect_analysis_warnings(
                     p95_gain_reduction_db=round(p95_gain_reduction_db, 2),
                 )
             )
-        if signal_duration_seconds >= 15.0 and longest_run_above_1db_seconds >= 20.0:
+        if signal_duration_seconds >= 15.0 and longest_run_above_2db_seconds >= 20.0:
             warnings.append(
                 _build_effect_warning(
                     severity="severe",
                     code="continuous_gain_reduction",
-                    message="compressor stays above 1 dB of gain reduction for unusually long stretches",
+                    message="compressor stays above 2 dB of gain reduction for unusually long stretches",
                     longest_run_above_1db_seconds=round(
                         longest_run_above_1db_seconds,
+                        2,
+                    ),
+                    longest_run_above_2db_seconds=round(
+                        longest_run_above_2db_seconds,
                         2,
                     ),
                 )
@@ -2165,6 +2172,10 @@ def _build_effect_analysis_warnings(
     imd_output = float(metrics.get("imd_ratio_output", 0.0))
     imd_delta = imd_output - imd_input
     imd_growth_factor = imd_delta / max(imd_input, 0.1)
+    # Equality (not membership) against "two_tone" is deliberate: it also
+    # excludes the "noise_dominated" detection (floor-buried tones — see
+    # intermodulation_ratio) alongside "single_tone", since a noise-buried
+    # probe can't distinguish real nonlinearity from a raised floor either.
     imd_detection = str(metrics.get("imd_detection", "single_tone"))
     if imd_detection == "two_tone" and imd_growth_factor >= 1.5:
         warnings.append(
@@ -2328,6 +2339,10 @@ def _build_chain_summary(
         imd_input = float(m.get("imd_ratio_input", 0.0))
         imd_output = float(m.get("imd_ratio_output", 0.0))
         stage_imd_growth = (imd_output - imd_input) / max(imd_input, 0.1)
+        # Equality against "two_tone" also excludes "noise_dominated"
+        # (floor-buried tones), same rationale as _build_effect_analysis_warnings
+        # above: a floor-buried probe can't distinguish real nonlinearity
+        # from a raised floor, so it must not count toward chain warnings.
         if (
             str(m.get("imd_detection", "single_tone")) == "two_tone"
             and stage_imd_growth > 0.0
@@ -3245,6 +3260,13 @@ def apply_compressor(
         ),
         "longest_run_above_1db_seconds": round(
             _seconds_for_mask(active_mask, sample_rate=sample_rate),
+            2,
+        ),
+        "longest_run_above_2db_seconds": round(
+            _seconds_for_mask(
+                aligned_gain_reduction_trace_db >= 2.0,
+                sample_rate=sample_rate,
+            ),
             2,
         ),
     }
@@ -8364,6 +8386,7 @@ _SUPPORTED_EFFECT_AMOUNT_AUTOMATION_TARGETS = {"mix", "wet", "wet_level"}
 _PER_EFFECT_PARAM_AUTOMATION_TARGETS: dict[str, frozenset[str]] = {
     "analog_filter": frozenset({"cutoff_hz"}),
     "clipper": frozenset({"threshold_db", "knee_width_db"}),
+    "stereo_width": frozenset({"width"}),
 }
 
 

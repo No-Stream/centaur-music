@@ -52,7 +52,7 @@ drum_voice engines for timbre-harmony co-design.
 **Phrase-first composition.** Build motifs with `line()` and `ratio_line()`,
 transform them with `concat`, `overlay`, `echo`, place them with `sequence` and
 `canon`, build harmony with `voiced_ratio_chord` and `progression`. An optional
-metered-time layer adds bar/beat grid helpers and swing.
+metered-time layer adds bar/beat grid helpers, swing, tuplets, and tempo maps.
 
 **Generative tools.** Weighted pitch pools, euclidean rhythms, probability gates,
 Markov chains, Turing machine sequencers, harmonic lattice walkers, and

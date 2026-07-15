@@ -21,45 +21,59 @@ Structural gifts the piece leans on:
   it into 4:5:6:7; sodium_hymn ends one rung further up the series, on
   5:7:9:11 (= O{1,3}, whose notes 1/1, 11/10, 7/5, 9/5 hold the tonic).
 
-Home is U{1,3,5,9} — 1/1, 9/8, 3/2, 9/5, a graspable minor-seventh
-shadow with no 11 in it.  The undecimal color arrives deliberately, one
-pivot at a time, deepening across the arc until the fully undecimal
-U{5,7,9,11} cathedral at the center.
+Euphony doctrine (the v2 rewrite):
 
-Sound: Burial-inflected swung 2-step at 132 BPM.  No four-on-floor.
-Vinyl crackle and rain, tape haze, long dark hall.  A wordless ghost
-vocal (formant-morphing additive voice, gliding between eikosany tones)
-is the centerpiece; bells — the trilogy's connective tissue — ring
-distant and reverb-drowned, Perälä heard through a wall.  Bass is
-mid-harmonic warmth, not sub pressure; F1 only at structural moments.
+* Octave-reduction is how you catalog a CPS, not how you voice it.
+  Otonal stations are voiced as literal harmonic-series chords over a
+  real bass root (1:3:5:7 spread wide, glowing); utonal stations are
+  voiced open — no sustained adjacent seconds, fifths and sixths doing
+  the work.  Hand-tuned voicings live in ``VOICINGS``.
+* One tune.  The hymn theme (sigh / question / reach / settle, 4 bars)
+  is stated by the ghost voice in S2 and restated in every section:
+  on the comma-shifted light degrees in S4, augmented in the cathedral,
+  fragmented as call-and-answer in S7, and complete one last time in
+  S8 — where the settle lands on 11/10 instead of 1/1 and the reach
+  note has risen 4.0 -> 4.125 -> 4.4 across the piece.
+* Everything shares a clock.  A swung chord-tone arp is the coherence
+  spine under the beat; bells land on the grid; only the voice floats.
+* A quiet drone thread holds the station root at all times, so every
+  chord is heard against ground.
+
+Sound: Burial-inflected swung 2-step at 132 BPM with a Vangelis glow.
+No four-on-floor.  Rain and vinyl crackle, tape haze, long dark hall.
+The wordless ghost vocal (formant-morphing additive voice — strings
+from one angle, a voice from another) is the centerpiece; bells ring
+distant and reverb-drowned.  Bass is mid-harmonic warmth, not sub
+pressure; F1 only at structural moments.
 
 Tuning: eikosany over (1,3,5,7,9,11), normalized to 1*3*5, on
 f0 = F2 ~ 87.31 Hz.  BPM = 132, 1 bar ~ 1.818 s, 214 bars ~ 6:29.
 
 Form:
-  bars   1- 16  S1 Rain         beatless; vinyl/rain bed; distant bells
-                                outline the home shadow tetrad
-  bars  17- 40  S2 First voice  the ghost vocal enters over a smeared
-                                pad; home U{1,3,5,9}; at 33 the first
+  bars   1- 16  S1 Rain         beatless; weather; drone ground; bells
+                                hint the hymn's sigh
+  bars  17- 40  S2 First voice  two full hymn statements over the home
+                                shadow U{1,3,5,9}; at 33 the first
                                 undecimal tint (U{1,3,9,11}) — the
                                 voice slides 9/8 -> 11/10, a 40-cent
-                                comma sigh
-  bars  41- 80  S3 Two-step     the beat materialises; swung kit, bass
-                                enters; utonal walk
-  bars  81-104  S4 Light        pivot into O{9,11} = 1:3:5:7 — the
-                                hexany-garden quote, comma-shifted;
-                                brightest bells
-  bars 105-136  S5 Cathedral    beat dissolves; deep shadow U{5,7,9,11},
-                                fully undecimal; vocal and bells alone
-                                in the long hall
+                                comma sigh; the arp ghosts in
+  bars  41- 80  S3 Two-step     the beat materialises; arp spine, bass
+                                roots; utonal walk with hymn fragments
+  bars  81-104  S4 Light        O{9,11} voiced as a literal 1:3:5:7
+                                series chord — the hexany-garden quote,
+                                comma-shifted; the hymn on light degrees
+  bars 105-136  S5 Cathedral    beat dissolves; deep shadow U{5,7,9,11};
+                                the hymn augmented to double length,
+                                bells shadowing a bar behind
   bars 137-138  S6 Blackness    two bars of near-silence
   bars 139-186  S7 Second wave  the 2-step returns evolved; dekany-walk
-                                otonal chords against utonal answers;
-                                melody leads every turn; F1 touches
+                                otonal series chords against utonal
+                                answers; hymn fragments as call and
+                                answer; full statement at the climax
   bars 187-214  S8 Dissolution  beat decays to ghosts; U{1,3,5,9} and
-                                O{1,3} alternate around the fixed
-                                pillars 1/1 and 9/5; the piece hangs
-                                on 5:7:9:11, and the rain outlasts it
+                                O{1,3} alternate around the pillars 1/1
+                                and 9/5; the last hymn settles on 11/10
+                                and the piece hangs on 5:7:9:11
 
 Composed by Claude (Fable 5), July 2026.
 """
@@ -69,8 +83,18 @@ from __future__ import annotations
 from itertools import combinations
 from typing import cast
 
+from code_musics.automation import (
+    AutomationSegment,
+    AutomationShape,
+    AutomationSpec,
+    AutomationTarget,
+)
 from code_musics.drum_helpers import add_drum_voice, setup_drum_bus
-from code_musics.humanize import EnvelopeHumanizeSpec, VelocityHumanizeSpec
+from code_musics.humanize import (
+    EnvelopeHumanizeSpec,
+    TimingHumanizeSpec,
+    VelocityHumanizeSpec,
+)
 from code_musics.pieces._shared import DEFAULT_MASTER_EFFECTS, bricasti_or_reverb
 from code_musics.pieces.registry import PieceDefinition, PieceSection
 from code_musics.pitch_motion import PitchMotionSpec
@@ -139,13 +163,187 @@ S7_END = bar(187)
 TOTAL_DUR = bar(215)
 
 # ---------------------------------------------------------------------------
+# Voicings — the euphony layer
+# ---------------------------------------------------------------------------
+#
+# Each station gets a hand-tuned open voicing: (bass, pad tones, arp tones),
+# all as partials of F0.  Otonal stations are literal series chords over
+# their root (O{9,11} really is 1:3:5:7 over 33/32); utonal stations are
+# spread so no sustained adjacent seconds survive.  The octave-reduced
+# tetrads in HOME/TINT/... are the *material*; these are the *sounds*.
+
+_R = 33.0 / 32.0  # the light root (and the comma)
+
+# Arp voicings hold the pivot tone in the SAME register across adjacent
+# stations (HOME->TINT keep 3.6, TINT->U(1,3,7,11) keep 2.2, ...), so
+# chord changes are voice-led in the ear, not just on paper.
+VOICINGS: dict[str, tuple[float, tuple[float, ...], tuple[float, ...]]] = {
+    "HOME": (0.5, (1.0, 1.5, 2.25, 3.6), (1.5, 2.25, 3.0, 3.6)),
+    "TINT": (0.45, (0.9, 1.1, 1.65, 2.475), (1.65, 2.2, 2.475, 3.6)),
+    "U(1,3,7,11)": (0.7, (1.1, 1.925, 2.566667), (1.4, 1.925, 2.2, 2.566667)),
+    "U(1,3,7,9)": (0.45, (0.9, 1.4, 2.1, 3.15), (1.4, 2.1, 2.8, 3.6)),
+    # O{9,11}'s virtual fundamental is 33/40 (the {1,9,11} tone dropped
+    # low): its notes are 0.825 x (1,3,5,7) in octave classes.  Voiced as
+    # 4:5:6:7 over that root — ninth_wave's final chord, comma-shifted.
+    # Bass sits an octave below the root (36 Hz felt, not heard).
+    "HEX_LIGHT": (
+        0.4125,
+        (1.65, 2.0625, 2.475, 2.8875),  # 4:5:6:7 over 0.825
+        (1.65, 2.0625, 2.475, 3.3),
+    ),
+    # O{5,11}'s fundamental is 11/12; notes are 0.9167 x (1,3,7,9).
+    "O(5,11)": (
+        0.458333,
+        (0.916667, 1.833333, 2.75, 3.208333),  # 2:4:6:7 over the root
+        (1.833333, 2.0625, 2.75, 3.208333),
+    ),
+    "DEEP": (0.721875, (1.03125, 1.3125, 1.604167, 2.0625), ()),
+    "U(3,5,9,11)": (
+        0.6875,
+        (1.03125, 1.2375, 2.25, 2.75),
+        (1.375, 2.0625, 2.475, 2.75),
+    ),
+    "DARK_HOME": (0.5, (1.0, 1.375, 1.833333, 2.2), ()),
+    "O(1,11)": (0.55, (1.1, 1.833333, 2.566667, 3.3), (1.833333, 2.2, 2.566667, 3.3)),
+    "O(3,11)": (0.55, (1.1, 1.375, 1.925, 2.475), (1.375, 1.925, 2.475, 2.75)),
+    "O(7,11)": (
+        0.641667,
+        (1.283333, 1.925, 2.8875),  # 2:3:9 of the 77/120 series
+        (1.283333, 1.925, 2.8875, 3.208333),
+    ),
+    "U(1,7,9,11)": (
+        0.721875,
+        (1.05, 1.283333, 1.65, 2.8875),
+        (1.283333, 1.65, 2.1, 2.8875),
+    ),
+    "FINAL_LIGHT": (0.5, (1.4, 1.8, 2.2, 2.8), (1.4, 1.8, 2.2, 2.8)),
+}
+
+# Station root per bar (drives drone, bass, and tuned percussion).
+# (start_bar, voicing_key); consulted with the latest entry <= bar.
+ROOTS: list[tuple[float, str]] = [
+    (1.0, "HOME"),
+    (33.0, "TINT"),
+    (41.0, "HOME"),
+    (49.0, "TINT"),
+    (57.0, "U(1,3,7,11)"),
+    (65.0, "U(1,3,7,9)"),
+    (73.0, "TINT"),
+    (81.0, "HEX_LIGHT"),
+    (89.0, "O(5,11)"),
+    (97.0, "DEEP"),
+    (105.0, "DEEP"),
+    (117.0, "U(3,5,9,11)"),
+    (125.0, "DARK_HOME"),
+    (139.0, "O(1,11)"),
+    (147.0, "O(3,11)"),
+    (155.0, "O(5,11)"),
+    (163.0, "O(7,11)"),
+    (171.0, "HEX_LIGHT"),
+    (179.0, "TINT"),
+    (187.0, "HOME"),
+    (191.0, "FINAL_LIGHT"),
+    (195.0, "HOME"),
+    (199.0, "FINAL_LIGHT"),
+    (203.0, "HOME"),
+    (207.0, "FINAL_LIGHT"),
+]
+
+
+def _voicing_at(bar_num: float) -> tuple[float, tuple[float, ...], tuple[float, ...]]:
+    key = ROOTS[0][1]
+    for start_b, k in ROOTS:
+        if start_b <= bar_num:
+            key = k
+    return VOICINGS[key]
+
+
+def _hold_ramp(
+    target: AutomationTarget,
+    points: list[tuple[float, float, float, AutomationShape]],
+    default: float,
+) -> AutomationSpec:
+    """Replace-mode automation from (start, end, to_value, shape) rows,
+    holding each reached value until the next ramp begins."""
+    segments: list[AutomationSegment] = []
+    prev_value = default
+    prev_end = 0.0
+    for start, end, to_value, shape in points:
+        if start > prev_end and segments:
+            segments.append(
+                AutomationSegment(
+                    start=prev_end, end=start, shape="hold", value=prev_value
+                )
+            )
+        segments.append(
+            AutomationSegment(
+                start=start,
+                end=end,
+                shape=shape,
+                start_value=prev_value,
+                end_value=to_value,
+            )
+        )
+        prev_value = to_value
+        prev_end = end
+    if prev_end < TOTAL_DUR:
+        segments.append(
+            AutomationSegment(
+                start=prev_end, end=TOTAL_DUR, shape="hold", value=prev_value
+            )
+        )
+    return AutomationSpec(target=target, segments=tuple(segments), mode="replace")
+
+
+def _ghost_hall_ride() -> AutomationSpec:
+    """The voice sits deep in the hall when alone, closer under the beat."""
+    return _hold_ramp(
+        AutomationTarget(kind="control", name="send_db"),
+        [
+            (S2_END - BAR, S2_END + 2 * BAR, -6.0, "linear"),
+            (bar(101), S4_END, -2.5, "linear"),
+            (S6_END, S6_END + 2 * BAR, -6.0, "linear"),
+            (bar(183), S7_END, -2.5, "linear"),
+        ],
+        default=-3.5,
+    )
+
+
+def _pad_hall_ride() -> AutomationSpec:
+    """The pad opens into the hall for the cathedral and the ending."""
+    return _hold_ramp(
+        AutomationTarget(kind="control", name="send_db"),
+        [
+            (S4_END - 2 * BAR, S4_END + 2 * BAR, -4.0, "linear"),
+            (S6_END, S6_END + 2 * BAR, -8.0, "linear"),
+            (bar(203), bar(209), -4.0, "linear"),
+        ],
+        default=-8.0,
+    )
+
+
+def _bass_cutoff_arc() -> AutomationSpec:
+    """The bass opens across each wave and closes for the dissolution."""
+    return _hold_ramp(
+        AutomationTarget(kind="synth", name="cutoff_hz"),
+        [
+            (bar(45), bar(73), 900.0, "exp"),
+            (bar(97), bar(105), 420.0, "exp"),
+            (S6_END, bar(163), 1000.0, "exp"),
+            (bar(187), bar(203), 450.0, "exp"),
+        ],
+        default=520.0,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Ghost vocal — formant-morphing additive voice
 # ---------------------------------------------------------------------------
 
 # Nearly flat source spectrum: the formant envelope does the sculpting
 # (with a steep rolloff the partials carrying the 2-3 kHz singer formants
 # are dead before the vowel weighting ever sees them).
-_VOCAL_BASE = harmonic_spectrum(n_partials=26, harmonic_rolloff=0.80)
+_VOCAL_BASE = harmonic_spectrum(n_partials=26, harmonic_rolloff=0.78)
 
 
 def _ghost_partials(
@@ -189,7 +387,7 @@ def _sing(
     velocity: float = 1.0,
     glide_from: float | None = None,
     vibrato: bool = True,
-    breath: float = 0.16,
+    breath: float = 0.11,
     attack: float = 0.30,
     release: float = 1.4,
     label: str | None = None,
@@ -201,7 +399,7 @@ def _sing(
             start_ratio=glide_from / partial, end_ratio=1.0
         )
     elif vibrato:
-        motion = PitchMotionSpec.vibrato(depth_ratio=0.0075, rate_hz=5.1)
+        motion = PitchMotionSpec.vibrato(depth_ratio=0.005, rate_hz=5.1)
     else:
         motion = None
     score.add_note(
@@ -219,7 +417,7 @@ def _sing(
             "noise_mode": "flow",
             "flow_density": 0.25,
             "noise_bandwidth_hz": 160.0,
-            "spectral_flicker": 0.16,
+            "spectral_flicker": 0.1,
             "flicker_rate_hz": 1.5,
             "flicker_correlation": 0.7,
             "attack": attack,
@@ -228,6 +426,431 @@ def _sing(
             "release": release,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# The hymn theme — sigh / question / reach / settle (16 beats)
+# ---------------------------------------------------------------------------
+#
+# Each entry: (beat_offset, dur_beats, partial, vowels, glide_from, velocity).
+# The reach note rises across the piece: 4.0 (home octave) -> 4.125 (light,
+# 33/32 above) -> 4.4 (final, 11/10 above) — the series climbing.
+
+HymnNote = tuple[float, float, float, list[str], float | None, float]
+
+HYMN_HOME: list[HymnNote] = [
+    (0.0, 1.5, 3.6, ["u", "o"], None, 0.9),
+    (1.5, 0.5, 3.15, ["o"], 3.6, 0.72),
+    (2.0, 2.0, 3.0, ["o", "a"], None, 0.95),
+    (4.0, 1.0, 2.25, ["a"], None, 0.8),
+    (5.0, 1.0, 2.333333, ["a", "e"], None, 0.85),
+    (6.0, 2.0, 3.0, ["e", "o"], None, 0.9),
+    (8.0, 1.5, 3.6, ["o", "a"], None, 0.95),
+    (9.5, 2.5, 4.0, ["a", "e", "a"], 3.6, 1.0),
+    (12.0, 1.0, 3.0, ["a", "o"], None, 0.85),
+    (13.0, 1.0, 2.25, ["o"], None, 0.78),
+    (14.0, 2.0, 2.0, ["o", "u"], None, 0.9),
+]
+
+HYMN_LIGHT: list[HymnNote] = [
+    (0.0, 1.5, 3.2 * _R, ["u", "o"], None, 0.9),  # 3.3
+    (1.5, 0.5, 3.15, ["o"], 3.2 * _R, 0.72),  # 63/40 passing, as at home
+    (2.0, 2.0, 2.8 * _R, ["o", "a"], None, 0.95),  # 2.8875 = 7/2 of root /1.25
+    (4.0, 1.0, 2.0 * _R, ["a"], None, 0.8),
+    (5.0, 1.0, 2.545455 * _R, ["a", "e"], None, 0.85),  # 21/16 x2 inflection
+    (6.0, 2.0, 2.8 * _R, ["e", "o"], None, 0.9),
+    (8.0, 1.5, 3.2 * _R, ["o", "a"], None, 0.95),
+    (9.5, 2.5, 4.0 * _R, ["a", "e", "a"], 3.2 * _R, 1.0),  # the reach: 4.125
+    (12.0, 1.0, 2.8 * _R, ["a", "o"], None, 0.85),
+    (13.0, 1.0, 2.4 * _R, ["o"], None, 0.78),  # 99/80 x2
+    (14.0, 2.0, 2.0 * _R, ["o", "u"], None, 0.9),  # settle on the light root
+]
+
+HYMN_DEEP: list[HymnNote] = [
+    (0.0, 1.5, 3.208333, ["u", "o"], None, 0.88),  # 77/48 x2
+    (1.5, 0.5, 2.8875, ["o"], 3.208333, 0.7),
+    (2.0, 2.0, 2.625, ["o", "u"], None, 0.92),  # 21/16 x2
+    (4.0, 1.0, 2.0625, ["u"], None, 0.78),
+    (5.0, 1.0, 2.75, ["u", "o"], None, 0.82),  # 11/8 x2 — undecimal color
+    (6.0, 2.0, 2.625, ["o"], None, 0.88),
+    (8.0, 1.5, 3.208333, ["o", "a"], None, 0.92),
+    (9.5, 2.5, 4.125, ["a", "o", "u"], 3.208333, 0.95),
+    (12.0, 1.0, 2.8875, ["o"], None, 0.82),
+    (13.0, 1.0, 2.625, ["u"], None, 0.75),
+    (14.0, 2.0, 2.0625, ["u", "o"], None, 0.88),
+]
+
+HYMN_FINAL: list[HymnNote] = [
+    (0.0, 1.5, 3.6, ["u", "o"], None, 0.9),
+    (1.5, 0.5, 3.15, ["o"], 3.6, 0.72),
+    (2.0, 2.0, 2.8, ["o", "a"], None, 0.95),
+    (4.0, 1.0, 2.25, ["a"], None, 0.8),
+    (5.0, 1.0, 2.333333, ["a", "e"], None, 0.85),
+    (6.0, 2.0, 2.8, ["e", "o"], None, 0.9),
+    (8.0, 1.5, 3.6, ["o", "a"], None, 0.95),
+    (9.5, 2.5, 4.4, ["a", "e", "a"], 3.6, 1.0),  # the reach becomes 11/10
+    (12.0, 1.0, 2.8, ["a", "o"], None, 0.85),
+    (13.0, 1.0, 2.25, ["o"], None, 0.78),
+    (14.0, 3.0, 2.2, ["o", "u"], None, 0.92),  # settles on 11/10, not 1/1
+]
+
+
+def _hymn(
+    score: Score,
+    start_bar: float,
+    notes: list[HymnNote],
+    *,
+    stretch: float = 1.0,
+    amp_db: float = -13.5,
+    breath: float = 0.16,
+    release: float = 2.0,
+) -> None:
+    """State the hymn starting at *start_bar*, optionally time-stretched."""
+    for beat_offset, dur_beats, partial, vowels, glide_from, velocity in notes:
+        _sing(
+            score,
+            start=bar(start_bar) + beat_offset * stretch * BEAT,
+            duration=max(0.4, dur_beats * stretch * BEAT * 0.96),
+            partial=partial,
+            vowels=vowels,
+            glide_from=glide_from,
+            amp_db=amp_db,
+            velocity=velocity,
+            attack=0.25 * stretch,
+            release=release,
+            breath=breath,
+            label="vocal:hymn",
+        )
+
+
+def _hymn_fragment(
+    score: Score,
+    start_bar: float,
+    tones: tuple[float, float, float],
+    *,
+    amp_db: float = -14.0,
+    echo_bells: bool = True,
+) -> None:
+    """The sigh gesture (hi -> passing -> resolve) on station tones,
+    optionally echoed by the bells two bars later, on the grid."""
+    hi, passing, low = tones
+    _sing(
+        score,
+        start=bar(start_bar),
+        duration=1.4 * BEAT,
+        partial=hi,
+        vowels=["u", "o"],
+        amp_db=amp_db,
+        velocity=0.85,
+        label="vocal:frag",
+    )
+    _sing(
+        score,
+        start=bar(start_bar) + 1.5 * BEAT,
+        duration=0.45 * BEAT,
+        partial=passing,
+        vowels=["o"],
+        glide_from=hi,
+        amp_db=amp_db - 1.0,
+        velocity=0.7,
+        label="vocal:frag",
+    )
+    _sing(
+        score,
+        start=bar(start_bar) + 2.0 * BEAT,
+        duration=2.5 * BEAT,
+        partial=low,
+        vowels=["o", "a"],
+        amp_db=amp_db,
+        velocity=0.9,
+        release=2.2,
+        label="vocal:frag",
+    )
+    if echo_bells:
+        for i, tone in enumerate((hi, low)):
+            score.add_note(
+                "bells",
+                start=sw(start_bar + 2.0, 0 if i == 0 else 4),
+                duration=2.5,
+                partial=tone,
+                amp_db=-15.0,
+                velocity=0.75 - 0.1 * i,
+                label="bell:echo",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Groove spine: arp, bass, drone, kit
+# ---------------------------------------------------------------------------
+
+# Per-bar arp pattern: (sixteenth, tone index, velocity weight).  The
+# figure rises through the voicing and falls back — locked to the swing.
+_ARP_BAR_A = [(0, 0, 0.55), (3, 1, 0.7), (6, 2, 0.85), (10, 3, 0.75), (14, 1, 0.6)]
+_ARP_BAR_B = [(2, 1, 0.6), (6, 3, 0.8), (8, 2, 0.7), (11, 0, 0.6), (14, 2, 0.7)]
+
+
+def _arp_run(
+    score: Score,
+    start_bar: int,
+    end_bar: int,
+    *,
+    base_vel: float = 1.0,
+    amp_db: float = -10.0,
+    rest_bars: set[int] | None = None,
+) -> None:
+    for b in range(start_bar, end_bar):
+        if rest_bars and b in rest_bars:
+            continue
+        tones = _voicing_at(float(b))[2]
+        if not tones:
+            continue
+        pattern = _ARP_BAR_A if b % 2 == 0 else _ARP_BAR_B
+        for s, idx, weight in pattern:
+            tone = tones[idx % len(tones)]
+            wiggle = ((b * 7 + s * 3) % 5) * 0.015
+            score.add_note(
+                "arp",
+                start=sw(b, s),
+                duration=0.45 * BEAT,
+                partial=tone,
+                amp_db=amp_db,
+                velocity=min(1.0, base_vel * (weight + wiggle)),
+                label="arp",
+            )
+
+
+def _bass_run(
+    score: Score,
+    start_bar: int,
+    end_bar: int,
+    *,
+    rest_bars: set[int] | None = None,
+) -> None:
+    """Sub-register bass: feel first, rumble, with some notes.
+
+    Even bars hold a long sub root (40-65 Hz territory); odd bars answer
+    with a short root plus an octave-up ghost note — the "some notes".
+    Station changes get a slid approach tone.
+    """
+    change_bars = {int(b) for b, _ in ROOTS}
+    for b in range(start_bar, end_bar):
+        if rest_bars and b in rest_bars:
+            continue
+        root = _voicing_at(float(b))[0]
+        if b % 2 == 0:
+            score.add_note(
+                "bass",
+                start=sw(b, 2),
+                duration=2.2 * BEAT,
+                partial=root,
+                amp_db=-6.0,
+                velocity=0.85,
+                label="bass:sub",
+            )
+        else:
+            score.add_note(
+                "bass",
+                start=sw(b, 2),
+                duration=0.7 * BEAT,
+                partial=root,
+                amp_db=-6.5,
+                velocity=0.8,
+                label="bass:root",
+            )
+            score.add_note(
+                "bass",
+                start=sw(b, 10),
+                duration=0.5 * BEAT,
+                partial=root * 2.0,
+                amp_db=-11.0,
+                velocity=0.6,
+                label="bass:octave",
+            )
+        if (b + 1) in change_bars:
+            next_root = _voicing_at(float(b + 1))[0]
+            score.add_note(
+                "bass",
+                start=sw(b, 14),
+                duration=0.45 * BEAT,
+                partial=next_root,
+                amp_db=-8.0,
+                velocity=0.65,
+                pitch_motion=PitchMotionSpec.ratio_glide(
+                    start_ratio=root / next_root, end_ratio=1.0
+                ),
+                label="bass:approach",
+            )
+
+
+def _drone_thread(score: Score) -> None:
+    """The ground: station roots as long crossfading tones, always there
+    (except the blackness).  Every chord is heard against this."""
+    spans: list[tuple[float, float, float]] = []
+    for i, (start_b, key) in enumerate(ROOTS):
+        end_b = ROOTS[i + 1][0] if i + 1 < len(ROOTS) else 215.0
+        root = VOICINGS[key][0]
+        spans.append((start_b, end_b, root))
+    for start_b, end_b, root in spans:
+        seg_start = max(bar(start_b), bar(5.0))  # the drone wakes at bar 5
+        seg_end = min(bar(end_b) + 1.0, TOTAL_DUR - 2.0)
+        if seg_end <= seg_start:
+            continue
+        # Silence through the blackness.
+        if seg_start < S5_END < seg_end:
+            seg_end = S5_END
+        if S5_END <= seg_start < S6_END:
+            continue
+        score.add_note(
+            "drone",
+            start=seg_start,
+            duration=seg_end - seg_start,
+            partial=root * 2.0,
+            amp_db=-19.0,
+            label="drone:root",
+        )
+
+
+def _drum_hit(
+    score: Score,
+    voice: str,
+    bar_num: float,
+    sixteenth: float,
+    velocity: float,
+    *,
+    duration: float = 0.25,
+    partial: float = 1.0,
+    label: str | None = None,
+) -> None:
+    score.add_note(
+        voice,
+        start=sw(bar_num, sixteenth),
+        duration=duration,
+        partial=partial,
+        amp_db=0.0,
+        velocity=velocity,
+        label=label,
+    )
+
+
+def _beat(
+    score: Score,
+    start_bar: int,
+    end_bar: int,
+    *,
+    intro: bool = False,
+    evolved: bool = False,
+    kick_out: set[int] | None = None,
+    hats_only: set[int] | None = None,
+    breath_bars: set[int] | None = None,
+    all_out: set[int] | None = None,
+) -> None:
+    """The swung 2-step kit.  Fills land at 8-bar phrase ends; the rim is
+    tuned to the station root so syncopation stays inside the harmony."""
+    kick_out = kick_out or set()
+    hats_only = hats_only or set()
+    breath_bars = breath_bars or set()
+    all_out = all_out or set()
+    for b in range(start_bar, end_bar):
+        if b in all_out:
+            continue
+        phase = b - start_bar
+        breath = b in breath_bars
+        only_hats = b in hats_only
+        root = _voicing_at(float(b))[0]
+
+        kick_on = (not intro or phase >= 2) and b not in kick_out and not only_hats
+        snare_on = (not intro or phase >= 4) and not only_hats and not breath
+
+        if kick_on:
+            hits = [(0, 1.0), (10, 0.88)]
+            if b % 4 == 3:
+                hits = [(0, 1.0), (7, 0.7), (10, 0.88)]
+            elif b % 8 == 6:
+                hits = [(0, 1.0), (10, 0.86), (13, 0.62)]
+            if evolved and b % 16 == 12:
+                hits.append((15, 0.5))
+            if breath:
+                hits = hits[:1]
+            for s, vel in hits:
+                _drum_hit(score, "kick", b, s, vel, duration=0.35, partial=0.5)
+
+        if snare_on:
+            # The backbeat comes in waves, not as a constant 2+4 wall:
+            # full for the phrase head, thinning to 4-only mid-phrase,
+            # displaced at the sixth bar, ruff into every other phrase.
+            p = b % 8
+            if evolved:
+                backbeat = [(4, 0.92), (12, 0.85)]
+                if p == 3:
+                    backbeat = [(12, 0.88)]
+                elif p == 5:
+                    backbeat = [(4, 0.9), (13, 0.55)]
+            else:
+                backbeat = [(4, 0.88), (12, 0.8)]
+                if p in (2, 3):
+                    backbeat = [(12, 0.85)]
+                elif p == 5:
+                    backbeat = [(12, 0.85), (13, 0.4)]
+            for s, vel in backbeat:
+                _drum_hit(score, "snare", b, s, vel, partial=2.0)
+            if p == 1:
+                _drum_hit(score, "snare", b, 6, 0.28, partial=2.0)
+            if p == 7:
+                if b % 16 == 15:
+                    for s, vel in [(13, 0.35), (14, 0.45), (15, 0.6)]:
+                        _drum_hit(score, "snare", b, s, vel, partial=2.0)
+                else:
+                    _drum_hit(score, "snare", b, 14, 0.5, partial=2.0)
+
+        # Rim: tuned to the station root — syncopated color, not clash.
+        if not breath and not only_hats:
+            if evolved and 171 <= b < 179:
+                # Climax rotor: every third sixteenth, drifting phase.
+                for s in range((b * 16) % 3, 16, 3):
+                    if s not in (0, 4, 12):
+                        _drum_hit(score, "rim", b, s, 0.24, partial=root * 4.0)
+            elif b % 8 in (2, 5) and (not intro or phase >= 6):
+                _drum_hit(
+                    score,
+                    "rim",
+                    b,
+                    3 if b % 16 < 8 else 11,
+                    0.42,
+                    partial=root * 4.0,
+                )
+
+        hat_pattern = [(2, 0.5), (6, 0.66), (10, 0.5), (14, 0.7)]
+        for s, vel in hat_pattern:
+            if breath and s not in (6, 14):
+                continue
+            _drum_hit(score, "hat", b, s, vel, duration=0.12, partial=8.0)
+        if not breath and (b % 2 == 0 or evolved):
+            for s in (5, 9, 13):
+                if not evolved and s == 9:
+                    continue
+                _drum_hit(score, "hat", b, s, 0.24, duration=0.1, partial=8.0)
+        if b % 8 == 7:
+            _drum_hit(score, "openhat", b, 14, 0.55, duration=0.5, partial=8.0)
+
+
+def _pad_station(
+    score: Score,
+    start_b: float,
+    end_b: float,
+    key: str,
+    *,
+    amp_db: float = -16.0,
+) -> None:
+    tones = VOICINGS[key][1]
+    for i, partial in enumerate(tones):
+        score.add_note(
+            "pad",
+            start=bar(start_b),
+            duration=bar(end_b) - bar(start_b) + 1.5,
+            partial=partial,
+            amp_db=amp_db - 0.8 * i,  # gentle tilt: lows carry, highs shimmer
+            label=f"chord:{key}",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -251,20 +874,33 @@ def _setup(score: Score) -> None:
     )
     score.add_drift_bus("night", rate_hz=0.13, depth_cents=5.0, seed=1113)
 
-    # Weather bed: rain (pink) + vinyl crackle (sparse flow events).
+    # Weather bed: rain wash + vinyl crackle, both sunk into the hall so
+    # they read as a place, not as added noise.
+    # Real rain: Poisson droplets over a breathing wash (rain_exciter).
+    # Sections override density/wash per note — close in the intro,
+    # washed-out under the beat, thinning to drizzle at the end.
     score.add_voice(
         "rain",
         synth_defaults={
             "engine": "synth_voice",
             "osc_type": None,
-            "noise_type": "pink",
+            "noise_type": "rain",
+            # Dense, fine, dark: reads as weather, not as pitched squelch.
+            "noise_rain_density": 0.7,
+            "noise_rain_brightness": 0.3,
+            "noise_rain_drop_size": 0.22,
+            "noise_rain_wash": 0.65,
             "noise_level": 1.0,
-            "cutoff_hz": 3400.0,
-            "hpf_cutoff_hz": 180.0,
+            "cutoff_hz": 4200.0,
+            "hpf_cutoff_hz": 220.0,
             "attack": 4.0,
             "release": 6.0,
         },
-        mix_db=-14.0,
+        # Light hall send only: the wash is already diffuse, and heavy
+        # reverb on broadband noise reads as mud (and confuses the IMD
+        # artifact probe, which counts diffuse energy as distortion).
+        sends=[VoiceSend(target="hall", send_db=-14.0)],
+        mix_db=-19.0,
         velocity_humanize=None,
         pan=0.0,
     )
@@ -274,14 +910,15 @@ def _setup(score: Score) -> None:
             "engine": "synth_voice",
             "osc_type": None,
             "noise_type": "flow",
-            "noise_flow_density": 0.12,
+            "noise_flow_density": 0.1,
             "noise_level": 1.0,
-            "hpf_cutoff_hz": 1400.0,
-            "cutoff_hz": 9500.0,
+            "hpf_cutoff_hz": 1800.0,
+            "cutoff_hz": 8200.0,
             "attack": 2.0,
             "release": 3.0,
         },
-        mix_db=-16.0,
+        sends=[VoiceSend(target="hall", send_db=-8.0)],
+        mix_db=-13.0,
         velocity_humanize=None,
         pan=0.06,
     )
@@ -290,22 +927,24 @@ def _setup(score: Score) -> None:
     score.add_voice(
         "ghost",
         synth_defaults={"engine": "additive"},
-        sends=[VoiceSend(target="hall", send_db=-4.0)],
+        sends=[VoiceSend(target="hall", send_db=-3.5, automation=[_ghost_hall_ride()])],
         mix_db=-1.5,
         drift_bus="night",
-        drift_bus_correlation=0.35,
+        # High correlation with the arp/pad drift: the ensemble breathes
+        # together instead of beating against itself.
+        drift_bus_correlation=0.7,
         envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
         velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
         pan=-0.04,
     )
 
-    # Smeared shadow pad holding the tetrads.
+    # Pad: open-voiced station chords, dispersed, breathing.
     score.add_voice(
         "pad",
         synth_defaults={
             "engine": "additive",
-            "n_harmonics": 10,
-            "harmonic_rolloff": 0.5,
+            "n_harmonics": 8,
+            "harmonic_rolloff": 0.45,
             "phase_disperse": 0.55,
             "spectral_flicker": 0.12,
             "flicker_rate_hz": 1.1,
@@ -313,14 +952,55 @@ def _setup(score: Score) -> None:
             "attack": 2.8,
             "release": 5.0,
         },
-        sends=[VoiceSend(target="hall", send_db=-8.0)],
-        mix_db=-7.0,
+        sends=[VoiceSend(target="hall", send_db=-8.0, automation=[_pad_hall_ride()])],
+        mix_db=-7.5,
         drift_bus="night",
         drift_bus_correlation=0.6,
+        envelope_humanize=EnvelopeHumanizeSpec(preset="breathing_pad"),
         pan=0.05,
     )
 
-    # Bells: distant FM, drowned in the hall.
+    # Drone: the ground thread — almost-sine, felt more than heard.
+    score.add_voice(
+        "drone",
+        synth_defaults={
+            "engine": "additive",
+            "n_harmonics": 3,
+            "harmonic_rolloff": 0.4,
+            "attack": 3.5,
+            "release": 5.0,
+        },
+        sends=[VoiceSend(target="hall", send_db=-12.0)],
+        mix_db=-9.0,
+        drift_bus="night",
+        drift_bus_correlation=0.8,
+        pan=0.0,
+    )
+
+    # Arp: the coherence spine — soft pluck on the swing grid.
+    score.add_voice(
+        "arp",
+        synth_defaults={
+            "engine": "synth_voice",
+            "preset": "soft_pluck",
+            "release": 0.5,
+        },
+        effects=[
+            EffectSpec(
+                "delay",
+                {"delay_seconds": 0.75 * BEAT, "feedback": 0.3, "mix": 0.22},
+            ),
+        ],
+        sends=[VoiceSend(target="hall", send_db=-10.0)],
+        mix_db=-6.5,
+        envelope_humanize=EnvelopeHumanizeSpec(preset="loose_pluck"),
+        velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
+        drift_bus="night",
+        drift_bus_correlation=0.5,
+        pan=-0.14,
+    )
+
+    # Bells: distant FM, drowned in the hall, always on the grid.
     score.add_voice(
         "bells",
         synth_defaults={
@@ -328,8 +1008,14 @@ def _setup(score: Score) -> None:
             "preset": "two_op_bell",
             "release": 3.2,
         },
+        effects=[
+            EffectSpec(
+                "delay",
+                {"delay_seconds": 0.75 * BEAT, "feedback": 0.42, "mix": 0.3},
+            ),
+        ],
         sends=[VoiceSend(target="hall", send_db=-2.0)],
-        mix_db=-9.0,
+        mix_db=-9.5,
         envelope_humanize=EnvelopeHumanizeSpec(preset="loose_pluck"),
         velocity_humanize=VelocityHumanizeSpec(preset="subtle_living"),
         drift_bus="night",
@@ -369,458 +1055,397 @@ def _setup(score: Score) -> None:
         envelope_humanize=EnvelopeHumanizeSpec(preset="subtle_analog"),
         drift_bus="night",
         drift_bus_correlation=0.7,
+        automation=[_bass_cutoff_arc()],
     )
 
-    # 2-step kit: soft tape kick, brushed snare, rim accents, swung hats.
+    # 2-step kit: soft tape kick, brushed snare, tuned rim, swung hats.
     drum_bus = setup_drum_bus(score, style="light")
     add_drum_voice(
-        score, "kick", engine="drum_voice", preset="808_tape",
-        drum_bus=drum_bus, mix_db=-3.5,
+        score,
+        "kick",
+        engine="drum_voice",
+        preset="808_tape",
+        drum_bus=drum_bus,
+        mix_db=-3.5,
     )
     add_drum_voice(
-        score, "snare", engine="drum_voice", preset="brush",
-        drum_bus=drum_bus, mix_db=-6.0, pan=0.05,
+        score,
+        "snare",
+        engine="drum_voice",
+        preset="brush",
+        drum_bus=drum_bus,
+        mix_db=-6.0,
+        pan=0.05,
+        # Crisper top than stock brush — reads through the rain haze.
+        synth_overrides={"character": 0.6},
+        # Soft 2-step hits barely tickle the preset compressors; the
+        # drum-bus glue does the real work, so keep these voices bare.
+        effects=[],
     )
     add_drum_voice(
-        score, "rim", engine="drum_voice", preset="rim_shot",
-        drum_bus=drum_bus, mix_db=-10.0, pan=-0.15,
+        score,
+        "rim",
+        engine="drum_voice",
+        preset="rim_shot",
+        drum_bus=drum_bus,
+        mix_db=-13.0,
+        pan=-0.15,
+        effects=[],
     )
     add_drum_voice(
-        score, "hat", engine="drum_voice", preset="closed_hat",
-        drum_bus=drum_bus, mix_db=-11.0, choke_group="hats",
+        score,
+        "hat",
+        engine="drum_voice",
+        preset="closed_hat",
+        drum_bus=drum_bus,
+        mix_db=-11.0,
+        choke_group="hats",
         pan=0.12,
+        effects=[],
     )
     add_drum_voice(
-        score, "openhat", engine="drum_voice", preset="open_hat",
-        drum_bus=drum_bus, mix_db=-13.0, choke_group="hats",
+        score,
+        "openhat",
+        engine="drum_voice",
+        preset="open_hat",
+        drum_bus=drum_bus,
+        mix_db=-13.0,
+        choke_group="hats",
         pan=0.12,
+        effects=[],
     )
 
 
 # ---------------------------------------------------------------------------
-# S1 Rain (bars 1-16): weather fades in, bells outline the home shadow
+# S1 Rain (bars 1-16): weather, ground, and the sigh foreshadowed
 # ---------------------------------------------------------------------------
 
 
 def _s1_rain(score: Score) -> None:
-    # Continuous weather across S1-S2 (later sections re-seed their own).
+    # Close, detailed rain for the opening — you can hear the drops.
     score.add_note(
-        "rain", start=0.0, duration=S2_END + 4.0, partial=1.0, amp_db=-6.0
+        "rain",
+        start=0.0,
+        duration=S2_END + 4.0,
+        partial=1.0,
+        amp_db=-12.0,
+        synth={"noise_rain_density": 0.8, "noise_rain_wash": 0.55},
     )
     score.add_note(
-        "crackle", start=bar(2), duration=S2_END - bar(2) + 3.0, partial=1.0,
-        amp_db=-6.0,
+        "crackle",
+        start=bar(2),
+        duration=S2_END - bar(2) + 3.0,
+        partial=1.0,
+        amp_db=-12.0,
     )
 
-    # Distant bells: home tetrad tones, high and sparse.
-    for start_bar, partial, level_db in [
-        (4.0, 3.0, -16.0),  # 3/2
-        (7.5, 3.6, -18.0),  # 9/5
-        (10.0, 4.5, -17.0),  # 9/8, octave up
-        (13.0, 3.0, -19.0),
-        (15.0, 7.2, -22.0),  # 9/5 two octaves up, barely there
+    # Bells on the grid, hinting the hymn: the sigh's three tones, slow.
+    for start_b, s, partial, vel in [
+        (5.0, 0, 3.0, 0.7),
+        (7.0, 0, 3.6, 0.6),
+        (9.0, 4, 3.0, 0.65),
+        (11.0, 0, 2.25, 0.55),
+        (13.0, 0, 3.6, 0.7),  # the sigh begins...
+        (13.0, 6, 3.15, 0.5),
+        (14.0, 0, 3.0, 0.65),  # ...and resolves
+        (15.5, 0, 2.0, 0.5),
     ]:
         score.add_note(
             "bells",
-            start=bar(start_bar),
-            duration=3.5,
+            start=sw(start_b, s),
+            duration=3.0,
             partial=partial,
-            amp_db=level_db,
-            label="bell:distant",
+            amp_db=-15.0,
+            velocity=vel,
+            label="bell:foreshadow",
         )
 
 
 # ---------------------------------------------------------------------------
-# S2 First voice (bars 17-40): ghost vocal over the shadow pad
+# S2 First voice (bars 17-40): the hymn, twice, then the comma sigh
 # ---------------------------------------------------------------------------
 
 
 def _s2_first_voice(score: Score) -> None:
-    # Pad: home tetrad, then the first undecimal tint at bar 33.
-    for partial in HOME:
-        score.add_note(
-            "pad", start=bar(17), duration=bar(33) - bar(17) + 1.0,
-            partial=partial, amp_db=-16.0, label="chord:U(1,3,5,9)",
-        )
-    for partial in TINT:
-        score.add_note(
-            "pad", start=bar(33), duration=S2_END - bar(33) + 2.0,
-            partial=partial, amp_db=-17.0, label="chord:U(1,3,9,11)",
-        )
+    _pad_station(score, 17.0, 33.0, "HOME", amp_db=-15.0)
+    _pad_station(score, 33.0, 41.0, "TINT", amp_db=-15.5)
 
-    # Phrase A — the sigh: 9/5 held, falling through 63/40 to 3/2.
-    _sing(
-        score, start=bar(18), duration=2.5 * BAR, partial=3.6,
-        vowels=["u", "o"], morph_times=[0.0, 0.65], amp_db=-14.0,
-        velocity=0.85, attack=0.7, label="vocal:A1",
+    # First hymn statement — the tune this piece is about.
+    _hymn(score, 18.0, HYMN_HOME, amp_db=-13.5)
+    # Second statement, bells doubling the reach and the settle.
+    _hymn(score, 25.0, HYMN_HOME, amp_db=-13.0)
+    score.add_note(
+        "bells",
+        start=sw(27.0, 6),
+        duration=3.0,
+        partial=4.0,
+        amp_db=-14.0,
+        velocity=0.8,
+        label="bell:reach",
     )
-    _sing(
-        score, start=bar(20.5), duration=0.75 * BAR, partial=3.15,
-        vowels=["o"], glide_from=3.6, amp_db=-15.0, velocity=0.8,
-        label="vocal:A2",
-    )
-    _sing(
-        score, start=bar(21.25), duration=2.25 * BAR, partial=3.0,
-        vowels=["o", "a", "o"], morph_times=[0.0, 0.45, 1.0], amp_db=-13.5,
-        velocity=0.95, release=2.0, label="vocal:A3",
+    score.add_note(
+        "bells",
+        start=sw(28.5, 0),
+        duration=3.5,
+        partial=3.0,
+        amp_db=-15.0,
+        velocity=0.7,
+        label="bell:settle",
     )
 
-    # Phrase B — the question: rising 7/6, falling to a long 1/1.
+    # The comma sigh (bars 32-40): the voice holds 9/8 as the chord
+    # tints undecimal beneath it, then slides down the 40-cent comma to
+    # 11/10 — the first 11 of the piece arrives *in the melody*.
     _sing(
-        score, start=bar(25), duration=1.0 * BAR, partial=3.0,
-        vowels=["u", "e"], morph_times=[0.0, 0.8], amp_db=-14.5,
-        velocity=0.8, label="vocal:B1",
+        score,
+        start=bar(32),
+        duration=2.0 * BAR,
+        partial=2.25,
+        vowels=["a", "o"],
+        amp_db=-13.5,
+        velocity=0.85,
+        release=1.5,
+        label="vocal:comma-hold",
     )
     _sing(
-        score, start=bar(26), duration=1.5 * BAR, partial=2.333333,
-        vowels=["e", "a"], glide_from=3.0, amp_db=-13.5, velocity=0.9,
-        label="vocal:B2",
+        score,
+        start=bar(34),
+        duration=2.5 * BAR,
+        partial=2.2,
+        vowels=["o", "u"],
+        glide_from=2.25,
+        amp_db=-13.0,
+        velocity=0.95,
+        release=2.5,
+        label="vocal:comma-sigh",
     )
     _sing(
-        score, start=bar(27.5), duration=1.0 * BAR, partial=2.25,
-        vowels=["a", "o"], amp_db=-14.0, velocity=0.85, label="vocal:B3",
+        score,
+        start=bar(37.5),
+        duration=1.5 * BAR,
+        partial=2.475,
+        vowels=["u", "o"],
+        amp_db=-14.0,
+        velocity=0.8,
+        label="vocal:C-lift",
     )
     _sing(
-        score, start=bar(28.5), duration=3.0 * BAR, partial=2.0,
-        vowels=["o", "u"], morph_times=[0.0, 0.7], amp_db=-13.0,
-        velocity=1.0, release=2.5, label="vocal:B4",
+        score,
+        start=bar(39),
+        duration=2.0 * BAR,
+        partial=3.3,
+        vowels=["o", "a"],
+        glide_from=2.475,
+        amp_db=-13.5,
+        velocity=0.9,
+        release=2.5,
+        label="vocal:C-crest",
     )
 
-    # Phrase C — the comma sigh: 9/8 slides down to 11/10 as the chord
-    # tints undecimal; crest on 33/20 and hang on 99/80.
-    _sing(
-        score, start=bar(32), duration=1.0 * BAR, partial=2.25,
-        vowels=["a"], amp_db=-14.0, velocity=0.85, label="vocal:C1",
-    )
-    _sing(
-        score, start=bar(33), duration=2.0 * BAR, partial=2.2,
-        vowels=["a", "o"], glide_from=2.25, amp_db=-13.0, velocity=0.95,
-        release=2.0, label="vocal:C2-comma",
-    )
-    _sing(
-        score, start=bar(35.5), duration=1.0 * BAR, partial=2.475,
-        vowels=["o", "e"], amp_db=-14.0, velocity=0.85, label="vocal:C3",
-    )
-    _sing(
-        score, start=bar(36.5), duration=1.5 * BAR, partial=3.3,
-        vowels=["e", "a"], glide_from=2.475, amp_db=-13.0, velocity=1.0,
-        label="vocal:C4",
-    )
-    _sing(
-        score, start=bar(38), duration=2.5 * BAR, partial=2.475,
-        vowels=["a", "o", "u"], morph_times=[0.0, 0.4, 1.0],
-        glide_from=3.3, amp_db=-13.5, velocity=0.9, release=3.0,
-        label="vocal:C5-hang",
-    )
+    # The arp ghosts in under the tint, preparing the beat's grid.
+    _arp_run(score, 33, 41, base_vel=0.5, amp_db=-13.5)
 
 
 # ---------------------------------------------------------------------------
 # S3 Two-step (bars 41-80): the beat materialises; utonal walk
 # ---------------------------------------------------------------------------
 
-# Eight-bar harmonic stations for the walk.  Every adjacent pair shares at
-# least one note; the last station is TINT so its two common tones with
-# O{9,11} hinge open the light at bar 81.
-S3_STATIONS: list[tuple[float, tuple[float, float, float, float], float, str]] = [
-    (41.0, HOME, 1.0, "U(1,3,5,9)"),
-    (49.0, TINT, 1.1, "U(1,3,9,11)"),
-    (57.0, _utonal(1, 3, 7, 11), 1.1, "U(1,3,7,11)"),
-    (65.0, _utonal(1, 3, 7, 9), 0.9, "U(1,3,7,9)"),
-    (73.0, TINT, 1.1, "U(1,3,9,11)"),
-]
-
-
-def _drum_hit(
-    score: Score,
-    voice: str,
-    bar_num: float,
-    sixteenth: float,
-    velocity: float,
-    *,
-    duration: float = 0.25,
-    partial: float = 1.0,
-    label: str | None = None,
-) -> None:
-    score.add_note(
-        voice,
-        start=sw(bar_num, sixteenth),
-        duration=duration,
-        partial=partial,
-        amp_db=0.0,
-        velocity=velocity,
-        label=label,
-    )
-
-
-def _s3_beat(score: Score, start_bar: int, end_bar: int, *, intro: bool) -> None:
-    """The swung 2-step kit over [start_bar, end_bar) with evolution."""
-    for b in range(start_bar, end_bar):
-        phase = b - start_bar
-        # Dropout choreography: phrase-head breaths and Objekt-style waves.
-        kick_on = not intro or phase >= 2
-        snare_on = not intro or phase >= 4
-        if b in (56, 80):
-            kick_on = False
-        hats_only = b == 64
-        breath = b in (71, 72)
-
-        # Kick: 1 and the off of 3 (classic 2-step), with variants.
-        if kick_on and not hats_only:
-            hits = [(0, 1.0), (10, 0.88)]
-            if b % 4 == 3:
-                hits = [(0, 1.0), (7, 0.7), (10, 0.88)]
-            elif b % 8 == 6:
-                hits = [(0, 1.0), (10, 0.85), (13, 0.62)]
-            if breath:
-                hits = hits[:1]
-            for s, vel in hits:
-                _drum_hit(score, "kick", b, s, vel, duration=0.35, partial=0.5)
-
-        # Snare: 2 and 4, brushed; ghosts breathe around the backbeat.
-        if snare_on and not hats_only and not breath:
-            _drum_hit(score, "snare", b, 4, 0.9, partial=2.0)
-            _drum_hit(score, "snare", b, 12, 0.82, partial=2.0)
-            if b % 2 == 1:
-                _drum_hit(score, "snare", b, 6, 0.32, partial=2.0)
-            if b % 4 == 0:
-                _drum_hit(score, "snare", b, 15, 0.28, partial=2.0)
-
-        # Rim: sporadic syncopation, more often late in the section.
-        if not breath and b % 8 in (2, 5) and (not intro or phase >= 6):
-            _drum_hit(score, "rim", b, 3 if b % 16 < 8 else 11, 0.5, partial=4.0)
-
-        # Hats: swung offbeats with ghosts; open hat closes 8-bar phrases.
-        hat_pattern = [(2, 0.5), (6, 0.66), (10, 0.5), (14, 0.7)]
-        for s, vel in hat_pattern:
-            if breath and s not in (6, 14):
-                continue
-            _drum_hit(score, "hat", b, s, vel, duration=0.12, partial=8.0)
-        if b % 2 == 0 and not breath:
-            for s in (5, 9, 13):
-                _drum_hit(score, "hat", b, s, 0.24, duration=0.1, partial=8.0)
-        if b % 8 == 7:
-            _drum_hit(score, "openhat", b, 14, 0.55, duration=0.5, partial=8.0)
-
-
-def _station_at(bar_num: float) -> tuple[tuple[float, float, float, float], float, str]:
-    current = S3_STATIONS[0]
-    for station in S3_STATIONS:
-        if station[0] <= bar_num:
-            current = station
-    return current[1], current[2], current[3]
-
-
-def _s3_bass(score: Score, start_bar: int, end_bar: int) -> None:
-    """Sparse swung bass: root after the kick, a colour tone at the off
-    of 3, resting every fourth bar — dub space, not techno drive."""
-    for b in range(start_bar, end_bar):
-        if b % 4 == 0 or b in (64, 71, 72, 80):
-            continue
-        chord, root, _label = _station_at(float(b))
-        color = chord[2] / 2.0 if chord[2] / 2.0 > 0.62 else chord[2]
-        score.add_note(
-            "bass", start=sw(b, 2), duration=0.6 * BEAT, partial=root,
-            amp_db=-6.0, velocity=0.85, label="bass:root",
-        )
-        score.add_note(
-            "bass", start=sw(b, 11), duration=0.5 * BEAT, partial=color,
-            amp_db=-8.0, velocity=0.7, label="bass:color",
-        )
-
 
 def _s3_two_step(score: Score) -> None:
-    # Weather continues, a shade quieter under the beat.
     score.add_note(
-        "rain", start=S2_END, duration=S3_END - S2_END + 3.0, partial=1.0,
-        amp_db=-9.0,
-    )
-    score.add_note(
-        "crackle", start=S2_END, duration=S3_END - S2_END + 3.0, partial=1.0,
-        amp_db=-7.0,
-    )
-
-    # Pad: the walk stations.
-    for i, (station_bar, chord, _root, label) in enumerate(S3_STATIONS):
-        end = S3_STATIONS[i + 1][0] if i + 1 < len(S3_STATIONS) else 81.0
-        for partial in chord:
-            score.add_note(
-                "pad", start=bar(station_bar), duration=bar(end) - bar(station_bar) + 1.5,
-                partial=partial, amp_db=-19.0, label=f"chord:{label}",
-            )
-
-    _s3_beat(score, 41, 81, intro=True)
-    _s3_bass(score, 45, 81)
-
-    # Phrase D (bars 49-53, over the tint): a short call, bells answering.
-    _sing(
-        score, start=bar(49), duration=1.5 * BAR, partial=2.475,
-        vowels=["u", "o"], amp_db=-15.0, velocity=0.8, label="vocal:D1",
-    )
-    _sing(
-        score, start=bar(50.5), duration=2.0 * BAR, partial=2.2,
-        vowels=["o", "a", "u"], morph_times=[0.0, 0.35, 1.0],
-        glide_from=2.475, amp_db=-14.5, velocity=0.85, release=2.2,
-        label="vocal:D2",
+        "rain",
+        start=S2_END,
+        duration=S3_END - S2_END + 3.0,
+        partial=1.0,
+        amp_db=-15.0,
     )
     score.add_note(
-        "bells", start=bar(53), duration=2.5, partial=3.3, amp_db=-15.0,
-        velocity=0.8, label="bell:answer",
-    )
-    score.add_note(
-        "bells", start=bar(54.5), duration=2.5, partial=2.475, amp_db=-17.0,
-        velocity=0.7, label="bell:answer",
-    )
-
-    # Phrase E (bars 65-71, septimal shadow): the 11 recedes for a breath.
-    _sing(
-        score, start=bar(65), duration=1.5 * BAR, partial=2.8,
-        vowels=["o", "e"], amp_db=-14.0, velocity=0.85, label="vocal:E1",
-    )
-    _sing(
-        score, start=bar(66.5), duration=1.0 * BAR, partial=3.15,
-        vowels=["e", "a"], amp_db=-13.5, velocity=0.95, label="vocal:E2",
-    )
-    _sing(
-        score, start=bar(67.5), duration=1.5 * BAR, partial=2.8,
-        vowels=["a", "o"], glide_from=3.15, amp_db=-14.0, velocity=0.85,
-        label="vocal:E3",
-    )
-    _sing(
-        score, start=bar(69), duration=2.5 * BAR, partial=2.1,
-        vowels=["o", "u"], morph_times=[0.0, 0.6], glide_from=2.8,
-        amp_db=-13.5, velocity=0.9, release=2.5, label="vocal:E4",
+        "crackle",
+        start=S2_END,
+        duration=S3_END - S2_END + 3.0,
+        partial=1.0,
+        amp_db=-13.0,
     )
 
-    # The turn (bars 78-81): the voice leads the descent onto 33/20 — a
-    # tone that already belongs to the coming light — while the kit thins.
+    for start_b, end_b, key in [
+        (41.0, 49.0, "HOME"),
+        (49.0, 57.0, "TINT"),
+        (57.0, 65.0, "U(1,3,7,11)"),
+        (65.0, 73.0, "U(1,3,7,9)"),
+        (73.0, 81.0, "TINT"),
+    ]:
+        _pad_station(score, start_b, end_b, key, amp_db=-18.0)
+
+    _beat(
+        score,
+        41,
+        81,
+        intro=True,
+        kick_out={56, 80},
+        hats_only={64},
+        breath_bars={71, 72},
+        all_out={80},
+    )
+    _arp_run(score, 41, 81, rest_bars={64, 71, 72, 80})
+    _bass_run(score, 45, 80, rest_bars={56, 64, 71, 72})
+
+    # Pivot bells: half a bar before each station change, a quiet bell
+    # sounds the common tone the two chords share — the hinge made
+    # audible, so no change arrives unearned.
+    for b, pivot in [(48.5, 3.6), (56.5, 2.2), (64.5, 2.8), (72.5, 3.6)]:
+        score.add_note(
+            "bells",
+            start=sw(b, 4),
+            duration=2.5,
+            partial=pivot,
+            amp_db=-17.0,
+            velocity=0.55,
+            label="bell:pivot",
+        )
+
+    # Hymn fragments on the walk stations — the tune keeps surfacing.
+    _hymn_fragment(score, 50.0, (3.3, 2.475, 2.2))  # TINT sigh
+    _hymn_fragment(score, 60.0, (2.566667, 2.2, 1.925))  # septimal-undecimal
+    _hymn_fragment(score, 66.0, (3.15, 2.8, 2.1))  # septimal shadow
+    # The turn: the sigh lands on 33/20 — a tone the light already owns.
     _sing(
-        score, start=bar(78), duration=1.0 * BAR, partial=3.6,
-        vowels=["a"], amp_db=-13.5, velocity=0.9, label="vocal:turn1",
+        score,
+        start=bar(77),
+        duration=1.0 * BAR,
+        partial=3.6,
+        vowels=["a"],
+        amp_db=-13.5,
+        velocity=0.9,
+        label="vocal:turn",
     )
     _sing(
-        score, start=bar(79), duration=1.0 * BAR, partial=3.3,
-        vowels=["a", "o"], glide_from=3.6, amp_db=-13.0, velocity=0.95,
-        label="vocal:turn2",
+        score,
+        start=bar(78),
+        duration=1.0 * BAR,
+        partial=3.5,
+        vowels=["a", "o"],
+        glide_from=3.6,
+        amp_db=-13.5,
+        velocity=0.85,
+        label="vocal:turn",
     )
     _sing(
-        score, start=bar(80), duration=2.0 * BAR, partial=3.3,
-        vowels=["o", "u"], morph_times=[0.0, 0.75], amp_db=-12.5,
-        velocity=1.0, release=2.5, label="vocal:turn3-pivot",
+        score,
+        start=bar(79),
+        duration=2.0 * BAR,
+        partial=3.3,
+        vowels=["o", "u"],
+        morph_times=[0.0, 0.75],
+        glide_from=3.45,
+        amp_db=-12.5,
+        velocity=1.0,
+        release=2.5,
+        label="vocal:turn-pivot",
     )
 
 
 # ---------------------------------------------------------------------------
-# S4 Light (bars 81-104): O{9,11} = 1:3:5:7 — the hexany-garden memory
+# S4 Light (bars 81-104): the series chord — hexany garden through glass
 # ---------------------------------------------------------------------------
 
 
 def _s4_light(score: Score) -> None:
     score.add_note(
-        "rain", start=S3_END, duration=bar(105) - S3_END + 3.0, partial=1.0,
-        amp_db=-11.0,
+        "rain",
+        start=S3_END,
+        duration=bar(105) - S3_END + 3.0,
+        partial=1.0,
+        amp_db=-17.0,
     )
     score.add_note(
-        "crackle", start=S3_END, duration=bar(105) - S3_END + 3.0, partial=1.0,
-        amp_db=-8.0,
+        "crackle",
+        start=S3_END,
+        duration=bar(105) - S3_END + 3.0,
+        partial=1.0,
+        amp_db=-14.0,
     )
 
-    # Harmony: the light (81), a second dekany-flavoured light (89), then
-    # the deep shadow slides underneath (97) as the beat dissolves.
-    o_511 = _otonal(5, 11)  # sounds 1:3:7:9
-    for chord, start_b, end_b, label in [
-        (HEX_LIGHT, 81.0, 89.0, "O(9,11)=1:3:5:7"),
-        (o_511, 89.0, 97.0, "O(5,11)=1:3:7:9"),
-        (DEEP, 97.0, 105.0, "U(5,7,9,11)"),
-    ]:
-        for partial in chord:
-            score.add_note(
-                "pad", start=bar(start_b), duration=bar(end_b) - bar(start_b) + 1.5,
-                partial=partial, amp_db=-17.5, label=f"chord:{label}",
-            )
+    _pad_station(score, 81.0, 89.0, "HEX_LIGHT", amp_db=-15.5)
+    _pad_station(score, 89.0, 97.0, "O(5,11)", amp_db=-16.0)
+    _pad_station(score, 97.0, 105.0, "DEEP", amp_db=-15.5)
 
-    # The beat keeps rolling through the light, thinning from 101.
-    _s3_beat(score, 81, 101, intro=False)
-    _s3_bass_light(score, 81, 101)
+    _beat(score, 81, 101, breath_bars={96}, kick_out={100})
+    _arp_run(score, 81, 101, base_vel=1.05, amp_db=-9.5)
+    _bass_run(score, 81, 99)
 
     # Structural F1 touch on the downbeat of the light.
     score.add_note(
-        "bass", start=bar(81), duration=1.5 * BEAT, partial=33.0 / 64.0,
-        amp_db=-4.0, velocity=1.0, label="bass:F1-light",
+        "bass",
+        start=bar(81),
+        duration=1.5 * BEAT,
+        partial=_R / 2.0,
+        amp_db=-4.0,
+        velocity=1.0,
+        label="bass:F1-light",
     )
 
-    # Bells: the brightest passage — 1:3:5:7 arpeggio figures, the garden
-    # heard through glass.  Ratios of O{9,11}, octave-lifted.
-    light_tones = [p * 2.0 for p in HEX_LIGHT] + [HEX_LIGHT[0] * 4.0]
-    for b, tone_idx, vel in [
-        (81.5, 0, 0.9), (82.25, 1, 0.7), (83.0, 2, 0.8), (84.5, 3, 0.75),
-        (85.5, 4, 0.85), (87.0, 2, 0.7), (89.5, 1, 0.8), (91.0, 3, 0.7),
-        (93.0, 0, 0.75), (95.0, 2, 0.65),
+    # The hymn on the light degrees — same tune, a comma elsewhere.
+    _hymn(score, 83.0, HYMN_LIGHT, amp_db=-13.0)
+
+    # Bells: series arpeggios on the grid — the garden through glass.
+    # Multiples of the light fundamental 0.825, so every tone is real.
+    for b, s, mult, vel in [
+        (81.0, 6, 2.0, 0.85),
+        (82.0, 2, 3.0, 0.7),
+        (82.0, 10, 5.0, 0.75),
+        (83.0, 6, 7.0, 0.7),
+        (85.0, 2, 5.0, 0.65),
+        (87.0, 6, 3.0, 0.7),
+        (89.0, 0, 2.0, 0.8),
+        (91.0, 6, 4.0, 0.65),
+        (93.0, 2, 6.0, 0.7),
+        (95.0, 6, 3.0, 0.6),
     ]:
         score.add_note(
-            "bells", start=bar(b), duration=3.0, partial=light_tones[tone_idx],
-            amp_db=-13.0, velocity=vel, label="bell:light",
+            "bells",
+            start=sw(b, s),
+            duration=2.8,
+            partial=0.825 * mult,
+            amp_db=-13.5,
+            velocity=vel,
+            label="bell:series",
         )
 
-    # Vocal floats up into the light — brighter vowels, rising figures.
+    # As the shadow slides in at 97 the voice descends into it.
     _sing(
-        score, start=bar(83), duration=2.0 * BAR, partial=2.475,
-        vowels=["o", "e"], morph_times=[0.0, 0.7], amp_db=-14.0,
-        velocity=0.85, label="vocal:L1",
+        score,
+        start=bar(98),
+        duration=1.5 * BAR,
+        partial=3.2 * _R,
+        vowels=["o"],
+        amp_db=-14.0,
+        velocity=0.85,
+        label="vocal:darken",
     )
     _sing(
-        score, start=bar(85.5), duration=1.5 * BAR, partial=2.8875,
-        vowels=["e", "i"], glide_from=2.475, amp_db=-13.5, velocity=0.9,
-        label="vocal:L2",
+        score,
+        start=bar(99.5),
+        duration=1.5 * BAR,
+        partial=2.8875,
+        vowels=["o", "u"],
+        glide_from=3.2 * _R,
+        amp_db=-14.0,
+        velocity=0.85,
+        label="vocal:darken",
     )
     _sing(
-        score, start=bar(87), duration=3.0 * BAR, partial=3.3,
-        vowels=["i", "e", "a"], morph_times=[0.0, 0.4, 1.0], amp_db=-13.0,
-        velocity=1.0, release=2.5, label="vocal:L3",
+        score,
+        start=bar(101),
+        duration=3.0 * BAR,
+        partial=2.625,
+        vowels=["u", "o", "u"],
+        morph_times=[0.0, 0.5, 1.0],
+        glide_from=2.8875,
+        amp_db=-13.5,
+        velocity=0.9,
+        release=3.5,
+        label="vocal:into-shadow",
     )
-    _sing(
-        score, start=bar(91), duration=1.5 * BAR, partial=4.125,
-        vowels=["i", "e"], amp_db=-14.5, velocity=0.8, label="vocal:L4-crest",
-    )
-    _sing(
-        score, start=bar(92.5), duration=2.5 * BAR, partial=3.3,
-        vowels=["e", "o", "u"], morph_times=[0.0, 0.5, 1.0],
-        glide_from=4.125, amp_db=-13.5, velocity=0.9, release=3.0,
-        label="vocal:L5",
-    )
-    # As the shadow slides in at 97 the voice descends into it: the
-    # melody leads the darkening, landing on 231/160 — a DEEP tone.
-    _sing(
-        score, start=bar(97), duration=1.5 * BAR, partial=3.3,
-        vowels=["o"], amp_db=-14.0, velocity=0.85, label="vocal:L6",
-    )
-    _sing(
-        score, start=bar(98.5), duration=1.5 * BAR, partial=2.8875,
-        vowels=["o", "u"], glide_from=3.3, amp_db=-14.0, velocity=0.85,
-        label="vocal:L7",
-    )
-    _sing(
-        score, start=bar(100), duration=3.0 * BAR, partial=2.625,
-        vowels=["u", "o", "u"], morph_times=[0.0, 0.5, 1.0],
-        glide_from=2.8875, amp_db=-13.5, velocity=0.9, release=3.5,
-        label="vocal:L8-into-shadow",
-    )
-
-
-def _s3_bass_light(score: Score, start_bar: int, end_bar: int) -> None:
-    """Bass under the light: 33/32-rooted, same swung placement."""
-    for b in range(start_bar, end_bar):
-        if b % 4 == 0 or b >= 99:
-            continue
-        root = 33.0 / 32.0 if b < 97 else 33.0 / 32.0
-        color = 231.0 / 320.0 if b % 2 == 1 else 33.0 / 40.0
-        score.add_note(
-            "bass", start=sw(b, 2), duration=0.6 * BEAT, partial=root,
-            amp_db=-6.5, velocity=0.82, label="bass:root",
-        )
-        score.add_note(
-            "bass", start=sw(b, 11), duration=0.5 * BEAT, partial=color,
-            amp_db=-8.5, velocity=0.68, label="bass:color",
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -829,219 +1454,167 @@ def _s3_bass_light(score: Score, start_bar: int, end_bar: int) -> None:
 
 
 def _s5_cathedral(score: Score) -> None:
-    # The hall opens: only rain, faint crackle, voice, bells, pad.
     score.add_note(
-        "rain", start=bar(105), duration=S5_END - bar(105) + 2.0, partial=1.0,
-        amp_db=-8.0,
+        "rain",
+        start=bar(105),
+        duration=S5_END - bar(105) + 2.0,
+        partial=1.0,
+        amp_db=-14.0,
     )
     score.add_note(
-        "crackle", start=bar(105), duration=S5_END - bar(105), partial=1.0,
-        amp_db=-10.0,
-    )
-
-    u_35911 = _utonal(3, 5, 9, 11)  # 33/32, 9/8, 99/80, 11/8
-    for chord, start_b, end_b, label in [
-        (DEEP, 105.0, 117.0, "U(5,7,9,11)"),
-        (u_35911, 117.0, 125.0, "U(3,5,9,11)"),
-        (DARK_HOME, 125.0, 137.0, "U(1,3,5,11)"),
-    ]:
-        for partial in chord:
-            score.add_note(
-                "pad", start=bar(start_b),
-                duration=bar(end_b) - bar(start_b) + 2.0,
-                partial=partial, amp_db=-15.5, label=f"chord:{label}",
-            )
-    # Pedal: 33/32 under the deep shadow; the true 1/1 returns only with
-    # the darkened home at 125 — ground rediscovered, changed.
-    score.add_note(
-        "bass", start=bar(105), duration=bar(117) - bar(105), partial=33.0 / 64.0,
-        amp_db=-10.0, velocity=0.6, label="pedal:33/64",
-    )
-    score.add_note(
-        "bass", start=bar(125), duration=bar(137) - bar(125), partial=0.5,
-        amp_db=-9.0, velocity=0.65, label="pedal:1/2",
+        "crackle",
+        start=bar(105),
+        duration=S5_END - bar(105),
+        partial=1.0,
+        amp_db=-16.0,
     )
 
-    # Vocal and bells in duet — the longest, most undecimal lines.
-    duet = [
-        # (start_bar, dur_bars, vocal_partial, vowels, bell_partial, bell_delay_bars)
-        (106.0, 3.0, 2.0625, ["u", "o"], 4.125, 1.5),
-        (110.0, 2.5, 2.625, ["o", "a"], 5.25, 1.0),
-        (113.0, 3.0, 2.8875, ["a", "o", "u"], 5.775, 1.5),
-        (118.0, 3.0, 2.25, ["u", "o"], 4.95, 1.5),
-        (122.0, 2.5, 2.75, ["o", "e"], 4.5, 1.0),
-        (126.0, 3.5, 2.2, ["u", "o", "a"], 5.5, 2.0),
-        (130.5, 2.5, 2.75, ["a", "o"], 4.4, 1.0),
-        (133.0, 3.5, 1.833333, ["o", "u"], 3.666667, 1.5),
-    ]
-    for start_b, dur_b, v_partial, vowels, b_partial, b_delay in duet:
-        _sing(
-            score, start=bar(start_b), duration=dur_b * BAR, partial=v_partial,
-            vowels=vowels, amp_db=-13.0, velocity=0.9, attack=0.5,
-            release=3.0, breath=0.2, label="vocal:cathedral",
-        )
+    _pad_station(score, 105.0, 117.0, "DEEP", amp_db=-14.5)
+    _pad_station(score, 117.0, 125.0, "U(3,5,9,11)", amp_db=-15.0)
+    _pad_station(score, 125.0, 137.0, "DARK_HOME", amp_db=-14.5)
+
+    # The hymn, augmented to double length — the piece's slow heart.
+    _hymn(score, 106.0, HYMN_DEEP, stretch=2.0, amp_db=-12.5, breath=0.2, release=3.5)
+    # Bells shadow the augmented theme a bar behind, an octave above.
+    for beat_offset, _dur, partial, _vowels, _glide, vel in HYMN_DEEP[::2]:
         score.add_note(
-            "bells", start=bar(start_b + b_delay), duration=4.0,
-            partial=b_partial, amp_db=-15.0, velocity=0.7,
-            label="bell:cathedral",
+            "bells",
+            start=bar(107.0) + beat_offset * 2.0 * BEAT,
+            duration=4.0,
+            partial=partial * 2.0,
+            amp_db=-16.5,
+            velocity=vel * 0.75,
+            label="bell:shadow",
         )
+
+    # Over the darkened home: the sigh once more, slow, unaccompanied.
+    _sing(
+        score,
+        start=bar(127),
+        duration=2.0 * BAR,
+        partial=2.75,
+        vowels=["u", "o"],
+        amp_db=-13.0,
+        velocity=0.85,
+        attack=0.6,
+        release=3.0,
+        breath=0.22,
+        label="vocal:dark-sigh",
+    )
+    _sing(
+        score,
+        start=bar(129),
+        duration=1.5 * BAR,
+        partial=2.2,
+        vowels=["o"],
+        glide_from=2.75,
+        amp_db=-13.5,
+        velocity=0.8,
+        release=3.0,
+        breath=0.22,
+        label="vocal:dark-sigh",
+    )
+    _sing(
+        score,
+        start=bar(131),
+        duration=3.5 * BAR,
+        partial=1.833333,
+        vowels=["o", "u"],
+        morph_times=[0.0, 0.7],
+        amp_db=-13.0,
+        velocity=0.85,
+        attack=0.8,
+        release=4.0,
+        breath=0.24,
+        label="vocal:dark-settle",
+    )
 
 
 def _s6_blackness(score: Score) -> None:
-    # Two bars of near-silence: the rain alone, barely.
     score.add_note(
-        "rain", start=S5_END, duration=S6_END - S5_END, partial=1.0,
-        amp_db=-20.0,
+        "rain",
+        start=S5_END,
+        duration=S6_END - S5_END,
+        partial=1.0,
+        amp_db=-26.0,
     )
 
 
 # ---------------------------------------------------------------------------
-# S7 Second wave (bars 139-186): the drowned dekany, o/u call and answer
+# S7 Second wave (bars 139-186): the drowned dekany, call and answer
 # ---------------------------------------------------------------------------
 
-S7_STATIONS: list[
-    tuple[float, tuple[float, float, float, float], tuple[float, float, float, float], float, str]
-] = [
-    # (bar, otonal call, utonal answer, bass root, label)
-    (139.0, _otonal(1, 11), TINT, 1.1, "O(1,11)|U(1,3,9,11)"),
-    (147.0, _otonal(3, 11), _utonal(1, 3, 7, 11), 1.1, "O(3,11)|U(1,3,7,11)"),
-    (155.0, _otonal(5, 11), _utonal(3, 5, 9, 11), 33.0 / 32.0, "O(5,11)|U(3,5,9,11)"),
-    (163.0, _otonal(7, 11), _utonal(1, 7, 9, 11), 77.0 / 120.0 * 2.0, "O(7,11)|U(1,7,9,11)"),
-    (171.0, HEX_LIGHT, DEEP, 33.0 / 32.0, "O(9,11)|U(5,7,9,11)"),
-    (179.0, TINT, HOME, 1.0, "U(1,3,9,11)|U(1,3,5,9)"),
+# (station bar, otonal call key, utonal answer key)
+S7_STATIONS: list[tuple[float, str, str]] = [
+    (139.0, "O(1,11)", "TINT"),
+    (147.0, "O(3,11)", "U(1,3,7,11)"),
+    (155.0, "O(5,11)", "U(3,5,9,11)"),
+    (163.0, "O(7,11)", "U(1,7,9,11)"),
+    (171.0, "HEX_LIGHT", "DEEP"),
+    (179.0, "TINT", "HOME"),
 ]
+
+# The sigh fragment tones for each station's vocal call.
+S7_FRAGMENTS: dict[str, tuple[float, float, float]] = {
+    "O(1,11)": (3.3, 2.566667, 2.2),
+    "O(3,11)": (2.75, 2.475, 1.925),
+    "O(5,11)": (3.208333, 2.75, 1.833333),
+    "O(7,11)": (3.208333, 2.8875, 1.925),
+}
 
 
 def _s7_second_wave(score: Score) -> None:
     score.add_note(
-        "rain", start=S6_END, duration=S7_END - S6_END + 3.0, partial=1.0,
-        amp_db=-10.0,
+        "rain",
+        start=S6_END,
+        duration=S7_END - S6_END + 3.0,
+        partial=1.0,
+        amp_db=-16.0,
     )
     score.add_note(
-        "crackle", start=S6_END, duration=S7_END - S6_END + 3.0, partial=1.0,
-        amp_db=-7.0,
+        "crackle",
+        start=S6_END,
+        duration=S7_END - S6_END + 3.0,
+        partial=1.0,
+        amp_db=-13.0,
     )
 
-    # o/u call-and-answer: otonal chord for the first half of each
-    # 8-bar station, utonal mirror for the second half.
-    for station_bar, o_chord, u_chord, _root, label in S7_STATIONS:
-        for partial in o_chord:
-            score.add_note(
-                "pad", start=bar(station_bar), duration=4.0 * BAR + 1.0,
-                partial=partial, amp_db=-18.0, label=f"chord:{label.split('|')[0]}",
-            )
-        for partial in u_chord:
-            score.add_note(
-                "pad", start=bar(station_bar + 4.0), duration=4.0 * BAR + 1.0,
-                partial=partial, amp_db=-18.0, label=f"chord:{label.split('|')[1]}",
-            )
+    for station_bar, o_key, u_key in S7_STATIONS:
+        _pad_station(score, station_bar, station_bar + 4.0, o_key, amp_db=-17.0)
+        _pad_station(score, station_bar + 4.0, station_bar + 8.0, u_key, amp_db=-17.5)
 
-    # Kit: evolved — denser hats, rim rotor, more kick variants.
-    _s7_beat(score, 139, 187)
-    _s7_bass(score, 139, 187)
+    _beat(
+        score,
+        139,
+        187,
+        evolved=True,
+        breath_bars={150, 166},
+        kick_out={183, 184},
+    )
+    _arp_run(score, 139, 187, base_vel=1.1, amp_db=-9.0, rest_bars={183, 184})
+    _bass_run(score, 140, 183)
 
     # Slam downbeat: F1 octave with the kick after the blackness.
     score.add_note(
-        "bass", start=bar(139), duration=2.0 * BEAT, partial=0.55,
-        amp_db=-3.5, velocity=1.0, label="bass:F1-slam",
+        "bass",
+        start=bar(139),
+        duration=2.0 * BEAT,
+        partial=0.55,
+        amp_db=-3.5,
+        velocity=1.0,
+        label="bass:F1-slam",
     )
 
-    # Vocal: one phrase per station, each leading the harmonic turn a
-    # bar early — the voice pulls the chords, never chases them.
-    phrases = [
-        # (bars relative to station, partials with glides)
-        (138.0, [(0.0, 1.5, 2.2, ["a", "o"], None), (1.5, 2.0, 2.475, ["o", "u"], 2.2)]),
-        (146.0, [(0.0, 1.5, 2.75, ["o", "a"], None), (1.5, 2.5, 2.2, ["a", "u"], 2.75)]),
-        (154.0, [(0.0, 1.5, 2.475, ["u", "o"], None), (1.5, 2.0, 2.0625, ["o", "u"], 2.475)]),
-        (162.0, [(0.0, 1.5, 2.566667, ["o", "e"], None), (1.5, 2.5, 2.8875, ["e", "a"], 2.566667)]),
-        (170.0, [(0.0, 2.0, 3.3, ["a", "e"], None), (2.0, 2.5, 2.8875, ["e", "o"], 3.3)]),
-        (178.0, [(0.0, 1.5, 2.475, ["o", "u"], None), (1.5, 3.0, 2.25, ["u", "o", "u"], 2.475)]),
-    ]
-    for station_start, notes in phrases:
-        for offset_b, dur_b, partial, vowels, glide_from in notes:
-            _sing(
-                score, start=bar(station_start + offset_b), duration=dur_b * BAR,
-                partial=partial, vowels=vowels, glide_from=glide_from,
-                amp_db=-13.5, velocity=0.9, release=2.0, label="vocal:wave",
-            )
+    # Call and answer: the voice states the sigh over each otonal call;
+    # the bells answer it over the utonal mirror, on the grid.
+    for station_bar, o_key, _u_key in S7_STATIONS[:4]:
+        frag = S7_FRAGMENTS[o_key]
+        _hymn_fragment(score, station_bar + 1.0, frag, echo_bells=True)
 
-    # Bells thread the climax stations.
-    for b, partial, vel in [
-        (171.5, 4.125, 0.85), (173.0, 4.95, 0.75), (175.0, 5.775, 0.8),
-        (177.0, 4.125, 0.7), (181.0, 3.6, 0.75), (184.0, 3.0, 0.7),
-    ]:
-        score.add_note(
-            "bells", start=bar(b), duration=3.0, partial=partial,
-            amp_db=-13.5, velocity=vel, label="bell:wave",
-        )
-
-
-def _s7_beat(score: Score, start_bar: int, end_bar: int) -> None:
-    for b in range(start_bar, end_bar):
-        phase = b - start_bar
-        breath = b % 16 == 10  # phrase-head breaths, off the obvious grid
-        drop_wave = 183 <= b < 185  # pre-dissolution thinning
-
-        if not breath and not drop_wave:
-            hits = [(0, 1.0), (10, 0.9)]
-            if b % 4 == 3:
-                hits = [(0, 1.0), (7, 0.72), (10, 0.9)]
-            if b % 8 == 6:
-                hits = [(0, 1.0), (10, 0.88), (13, 0.66)]
-            if phase < 2:
-                hits = [(0, 1.0)]  # let the slam ring
-            for s, vel in hits:
-                _drum_hit(score, "kick", b, s, vel, duration=0.35, partial=0.5)
-
-        if not breath:
-            _drum_hit(score, "snare", b, 4, 0.92, partial=2.0)
-            _drum_hit(score, "snare", b, 12, 0.85, partial=2.0)
-            if b % 2 == 0:
-                _drum_hit(score, "snare", b, 14, 0.3, partial=2.0)
-
-        # Rim rotor: 3-against-4 — every third sixteenth, drifting
-        # across the bar line (Objekt's trick).
-        rotor_phase = (b - start_bar) * 16 % 3
-        if b % 8 >= 4 and not drop_wave:
-            for s in range(int(rotor_phase), 16, 3):
-                if s not in (0, 4, 12):
-                    _drum_hit(score, "rim", b, s, 0.34, partial=4.0)
-
-        hat_pattern = [(2, 0.55), (6, 0.7), (10, 0.55), (14, 0.72)]
-        for s, vel in hat_pattern:
-            _drum_hit(score, "hat", b, s, vel, duration=0.12, partial=8.0)
-        for s in (1, 5, 9, 13):
-            if (b + s) % 3 != 0:
-                _drum_hit(score, "hat", b, s, 0.26, duration=0.1, partial=8.0)
-        if b % 8 == 7:
-            _drum_hit(score, "openhat", b, 14, 0.6, duration=0.5, partial=8.0)
-
-
-def _s7_bass(score: Score, start_bar: int, end_bar: int) -> None:
-    for b in range(start_bar, end_bar):
-        if b % 8 == 7 or b in (139, 183, 184):
-            continue
-        station = S7_STATIONS[0]
-        for s in S7_STATIONS:
-            if s[0] <= b:
-                station = s
-        _, o_chord, u_chord, root, _label = station
-        in_answer = (b - station[0]) % 8 >= 4
-        chord = u_chord if in_answer else o_chord
-        color = chord[1] / 2.0 if chord[1] / 2.0 > 0.62 else chord[1]
-        score.add_note(
-            "bass", start=sw(b, 2), duration=0.6 * BEAT, partial=root,
-            amp_db=-6.0, velocity=0.85, label="bass:root",
-        )
-        score.add_note(
-            "bass", start=sw(b, 11), duration=0.5 * BEAT, partial=color,
-            amp_db=-8.0, velocity=0.7, label="bass:color",
-        )
-        if b % 8 == 3:
-            score.add_note(
-                "bass", start=sw(b, 14), duration=0.4 * BEAT, partial=root,
-                amp_db=-9.0, velocity=0.6, label="bass:push",
-            )
+    # Climax (171-178): the full hymn over light/deep alternation.
+    _hymn(score, 171.0, HYMN_LIGHT, amp_db=-12.5)
+    # Wind-down station: the sigh on home tones, last time with drums.
+    _hymn_fragment(score, 180.0, (3.6, 3.15, 3.0), echo_bells=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1050,43 +1623,60 @@ def _s7_bass(score: Score, start_bar: int, end_bar: int) -> None:
 
 
 def _s8_dissolution(score: Score) -> None:
+    # The rain thins to a drizzle as the piece lets go.
     score.add_note(
-        "rain", start=S7_END, duration=TOTAL_DUR - S7_END, partial=1.0,
-        amp_db=-8.0,
+        "rain",
+        start=S7_END,
+        duration=TOTAL_DUR - S7_END,
+        partial=1.0,
+        amp_db=-14.0,
+        synth={
+            "noise_rain_density": 0.4,
+            "noise_rain_drop_size": 0.15,
+            "noise_rain_wash": 0.6,
+        },
     )
     score.add_note(
-        "crackle", start=S7_END, duration=bar(207) - S7_END, partial=1.0,
-        amp_db=-9.0,
+        "crackle",
+        start=S7_END,
+        duration=bar(207) - S7_END,
+        partial=1.0,
+        amp_db=-15.0,
     )
 
-    # The alternation: HOME and FINAL_LIGHT swing around the fixed
-    # pillars 1/1 and 9/5 — shadow, light, shadow, light... and the
-    # last chord is the light, left hanging.
-    alternation = [
-        (187.0, HOME, "U(1,3,5,9)"),
-        (191.0, FINAL_LIGHT, "O(1,3)=5:7:9:11"),
-        (195.0, HOME, "U(1,3,5,9)"),
-        (199.0, FINAL_LIGHT, "O(1,3)=5:7:9:11"),
-        (203.0, HOME, "U(1,3,5,9)"),
-    ]
-    for start_b, chord, label in alternation:
-        for partial in chord:
-            score.add_note(
-                "pad", start=bar(start_b), duration=4.0 * BAR + 1.5,
-                partial=partial, amp_db=-16.5, label=f"chord:{label}",
-            )
-    # The final hanging light: longer, quieter, undamped.
-    for i, partial in enumerate(FINAL_LIGHT):
+    # Shadow and light alternate around the pillars 1/1 and 9/5.
+    for start_b, key in [
+        (187.0, "HOME"),
+        (191.0, "FINAL_LIGHT"),
+        (195.0, "HOME"),
+        (199.0, "FINAL_LIGHT"),
+        (203.0, "HOME"),
+    ]:
+        _pad_station(score, start_b, start_b + 4.0, key, amp_db=-16.0)
+    # The final hanging light — longer, quieter, undamped.
+    tones = VOICINGS["FINAL_LIGHT"][1]
+    for i, partial in enumerate(tones):
         score.add_note(
-            "pad", start=bar(207), duration=bar(214) - bar(207),
-            partial=partial, amp_db=-16.0 - 0.5 * i,
-            label="chord:O(1,3)=5:7:9:11-final",
+            "pad",
+            start=bar(207),
+            duration=bar(214) - bar(207),
+            partial=partial,
+            amp_db=-15.5 - 0.6 * i,
+            label="chord:FINAL_LIGHT-hang",
         )
 
-    # Beat decays: kick thins out and is gone by 195; hats ghost to 202.
+    # Beat decays: kick thins and is gone by 195; hats ghost to 202.
     for b in range(187, 195):
         if b % 2 == 1:
-            _drum_hit(score, "kick", b, 0, 0.8 - 0.06 * (b - 187), duration=0.35, partial=0.5)
+            _drum_hit(
+                score,
+                "kick",
+                b,
+                0,
+                0.8 - 0.06 * (b - 187),
+                duration=0.35,
+                partial=0.5,
+            )
         _drum_hit(score, "snare", b, 4, 0.7 - 0.05 * (b - 187), partial=2.0)
         if b < 191:
             _drum_hit(score, "snare", b, 12, 0.6, partial=2.0)
@@ -1094,52 +1684,69 @@ def _s8_dissolution(score: Score) -> None:
         fade = max(0.15, 0.5 - 0.025 * (b - 187))
         for s in (6, 14):
             _drum_hit(score, "hat", b, s, fade, duration=0.12, partial=8.0)
+    # The arp answers only inside the light bars — a phrase, a silence,
+    # a phrase — instead of running under everything.
+    _arp_run(
+        score,
+        191,
+        203,
+        base_vel=0.65,
+        amp_db=-12.0,
+        rest_bars={195, 196, 197, 198},
+    )
 
-    # Bass: pillar tones only, then silence after 202.
-    for b in range(187, 203, 2):
-        root = 1.0 if (b - 187) // 4 % 2 == 0 else 0.9
+    # Bass: one sub pedal on the shared pillar 1/1 (both chords contain
+    # it), breathing with the alternation instead of plucking against
+    # it.  Gone after 202.
+    for start_b in (187.0, 191.0, 195.0, 199.0):
         score.add_note(
-            "bass", start=sw(b, 2), duration=1.2 * BEAT, partial=root,
-            amp_db=-8.0, velocity=0.7, label="bass:pillar",
+            "bass",
+            start=bar(start_b),
+            duration=4.0 * BAR * 0.96,
+            partial=0.5,
+            amp_db=-9.0,
+            velocity=0.62,
+            label="bass:pedal",
         )
 
-    # The last vocal lines: descending onto the pillars, then one final
-    # rise onto 11/10 — the undecimal tone the piece taught us to hear.
+    # The last hymn: slow, and changed — the settle lands on 11/10 and
+    # the reach has become 4.4.  The tune has learned the eleventh.  It
+    # begins ON the first light chord, so the voice and the harmony are
+    # having the same conversation.
+    _hymn(score, 191.0, HYMN_FINAL, stretch=1.5, amp_db=-13.0, breath=0.2, release=3.5)
+
+    # One last breath up to the eleventh, into the rain.
     _sing(
-        score, start=bar(188), duration=2.5 * BAR, partial=3.6,
-        vowels=["o", "u"], amp_db=-13.5, velocity=0.85, release=3.0,
-        label="vocal:F1",
-    )
-    _sing(
-        score, start=bar(192), duration=2.0 * BAR, partial=2.8,
-        vowels=["u", "o"], glide_from=3.6, amp_db=-14.0, velocity=0.8,
-        release=3.0, label="vocal:F2",
-    )
-    _sing(
-        score, start=bar(196), duration=3.0 * BAR, partial=2.25,
-        vowels=["o", "u"], amp_db=-14.0, velocity=0.8, release=3.5,
-        label="vocal:F3",
-    )
-    _sing(
-        score, start=bar(200), duration=3.0 * BAR, partial=2.0,
-        vowels=["u", "o", "u"], morph_times=[0.0, 0.5, 1.0], amp_db=-13.5,
-        velocity=0.85, release=4.0, label="vocal:F4-pillar",
-    )
-    _sing(
-        score, start=bar(205), duration=4.0 * BAR, partial=2.2,
-        vowels=["u", "o"], morph_times=[0.0, 0.8], glide_from=2.0,
-        amp_db=-14.5, velocity=0.75, attack=1.0, release=5.0, breath=0.24,
-        label="vocal:F5-last-rise",
+        score,
+        start=bar(205),
+        duration=4.0 * BAR,
+        partial=2.2,
+        vowels=["u", "o"],
+        morph_times=[0.0, 0.8],
+        amp_db=-14.5,
+        velocity=0.75,
+        attack=1.0,
+        release=5.0,
+        breath=0.24,
+        label="vocal:last-rise",
     )
 
-    # Final bells: the 5:7:9:11 chord tones, one by one, into the rain.
+    # Final bells: the 5:7:9:11 series walked upward, one tone at a time.
     for b, partial, vel in [
-        (207.0, 2.0, 0.7), (208.5, 2.2, 0.6), (210.0, 2.8, 0.55),
-        (211.5, 3.6, 0.5),
+        (207.0, 1.4, 0.7),
+        (208.5, 1.8, 0.62),
+        (210.0, 2.2, 0.55),
+        (211.5, 2.8, 0.5),
+        (213.0, 3.6, 0.45),
     ]:
         score.add_note(
-            "bells", start=bar(b), duration=5.0, partial=partial,
-            amp_db=-16.0, velocity=vel, label="bell:final",
+            "bells",
+            start=bar(b),
+            duration=5.0,
+            partial=partial,
+            amp_db=-15.5,
+            velocity=vel,
+            label="bell:final-series",
         )
 
 
@@ -1148,9 +1755,45 @@ def _s8_dissolution(score: Score) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _swell(score: Score, end_bar: float, *, peak_db: float = -15.0) -> None:
+    """A rain swell rising into a section turn — reverse-reverb-ish."""
+    duration = 3.5 * BAR
+    score.add_note(
+        "rain",
+        start=bar(end_bar) - duration,
+        duration=duration,
+        partial=1.0,
+        amp_db=peak_db,
+        synth={
+            "attack": duration - 0.4,
+            "release": 0.6,
+            "noise_rain_density": 0.8,
+            "noise_rain_wash": 0.75,
+        },
+        label="swell",
+    )
+
+
 def build_score() -> Score:
-    score = Score(f0_hz=F0, master_effects=list(DEFAULT_MASTER_EFFECTS))
+    score = Score(
+        f0_hz=F0,
+        # Tape haze in front of the default preamp/comp finishing chain.
+        master_effects=[
+            # Kept gentle: the sustained sub pedals intermodulate badly
+            # through heavier tape drive (v3 tripped a severe IMD warning
+            # at drive 0.45 / mix 55).
+            EffectSpec(
+                "chow_tape",
+                {"drive": 0.28, "saturation": 0.38, "bias": 0.5, "mix": 32.0},
+            ),
+            *DEFAULT_MASTER_EFFECTS,
+        ],
+        timing_humanize=TimingHumanizeSpec(preset="loose_late_night"),
+    )
     _setup(score)
+    _swell(score, 81.0)
+    _swell(score, 171.0, peak_db=-16.0)
+    _drone_thread(score)
     _s1_rain(score)
     _s2_first_voice(score)
     _s3_two_step(score)
@@ -1172,9 +1815,7 @@ PIECES: dict[str, PieceDefinition] = {
             PieceSection(
                 label="S2 first voice", start_seconds=S1_END, end_seconds=S2_END
             ),
-            PieceSection(
-                label="S3 two-step", start_seconds=S2_END, end_seconds=S3_END
-            ),
+            PieceSection(label="S3 two-step", start_seconds=S2_END, end_seconds=S3_END),
             PieceSection(label="S4 light", start_seconds=S3_END, end_seconds=S4_END),
             PieceSection(
                 label="S5 cathedral", start_seconds=S4_END, end_seconds=S5_END

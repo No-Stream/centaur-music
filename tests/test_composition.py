@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import pytest
 
-from code_musics.automation import AutomationSegment
+from code_musics.automation import AutomationSegment, AutomationTarget
 from code_musics.composition import (
     ArticulationSpec,
     ContextSectionSpec,
     HarmonicContext,
     MeteredSectionSpec,
+    PhraseGesture,
     RhythmCell,
     augment,
     bar_automation,
+    blooming,
     build_context_sections,
     canon,
     concat,
@@ -26,8 +28,11 @@ from code_musics.composition import (
     grid_sequence,
     legato,
     line,
+    metered_automation,
     metered_sections,
+    opening,
     overlay,
+    place_phrase,
     place_ratio_chord,
     place_ratio_line,
     polyrhythm,
@@ -38,19 +43,32 @@ from code_musics.composition import (
     rhythmic_retrograde,
     rotate,
     sequence,
+    settling,
     staccato,
     voiced_ratio_chord,
+    widening,
     with_accent_pattern,
     with_synth_ramp,
     with_tail_breath,
 )
-from code_musics.meter import B, E, Groove, M, Q, S, Timeline, dotted
+from code_musics.meter import (
+    B,
+    E,
+    Groove,
+    M,
+    Q,
+    S,
+    TempoMap,
+    TempoPoint,
+    Timeline,
+    dotted,
+)
 from code_musics.pieces.composition_showcases import (
     build_composition_tools_consonant_score,
     build_composition_tools_showcase_score,
 )
 from code_musics.pitch_motion import PitchMotionSpec
-from code_musics.score import Phrase, Score
+from code_musics.score import EffectSpec, Phrase, Score, VoiceSend
 
 
 def test_line_builds_expected_starts_durations_and_accents() -> None:
@@ -116,6 +134,27 @@ def test_grid_line_matches_seconds_based_phrase_timing() -> None:
     )
 
 
+def test_grid_line_uses_tempo_map_for_phrase_spans() -> None:
+    timeline = Timeline.from_tempo_map(
+        TempoMap(
+            points=(
+                TempoPoint(beat=0.0, bpm=120.0, curve="hold"),
+                TempoPoint(beat=2.0, bpm=60.0),
+            )
+        )
+    )
+
+    phrase = grid_line(
+        tones=[4.0, 5.0, 6.0],
+        durations=[Q, Q, Q],
+        timeline=timeline,
+        amp=0.2,
+    )
+
+    assert [event.start for event in phrase.events] == pytest.approx([0.0, 0.5, 1.0])
+    assert [event.duration for event in phrase.events] == pytest.approx([0.5, 0.5, 1.0])
+
+
 def test_grid_ratio_line_resolves_context_with_beat_durations() -> None:
     phrase = grid_ratio_line(
         tones=[1.0, 5 / 4, 3 / 2],
@@ -177,6 +216,29 @@ def test_metered_sections_build_context_windows_from_bars() -> None:
     )
 
 
+def test_metered_sections_use_tempo_map_from_each_section_start() -> None:
+    timeline = Timeline.from_tempo_map(
+        TempoMap(
+            points=(
+                TempoPoint(beat=0.0, bpm=120.0, curve="hold"),
+                TempoPoint(beat=2.0, bpm=60.0),
+            )
+        )
+    )
+
+    sections = metered_sections(
+        timeline=timeline,
+        base_tonic=220.0,
+        specs=(
+            MeteredSectionSpec(name="A", bars=1.0),
+            MeteredSectionSpec(name="B", bars=1.0),
+        ),
+    )
+
+    assert [section.start for section in sections] == pytest.approx([0.0, 3.0])
+    assert [section.duration for section in sections] == pytest.approx([3.0, 4.0])
+
+
 def test_bar_automation_builds_linear_segments_from_bar_points() -> None:
     timeline = Timeline(bpm=120.0, meter=(4, 4))
 
@@ -208,6 +270,40 @@ def test_bar_automation_builds_linear_segments_from_bar_points() -> None:
     )
 
 
+def test_bar_automation_uses_tempo_map_anchor_seconds() -> None:
+    timeline = Timeline.from_tempo_map(
+        TempoMap(
+            points=(
+                TempoPoint(beat=0.0, bpm=120.0, curve="hold"),
+                TempoPoint(beat=2.0, bpm=60.0),
+            )
+        )
+    )
+
+    automation = bar_automation(
+        target="cutoff_hz",
+        timeline=timeline,
+        points=((1, 0.0, 600.0), (1, 2.0, 1200.0), (2, 0.0, 900.0)),
+    )
+
+    assert automation.segments == (
+        AutomationSegment(
+            start=0.0,
+            end=1.0,
+            shape="linear",
+            start_value=600.0,
+            end_value=1200.0,
+        ),
+        AutomationSegment(
+            start=1.0,
+            end=3.0,
+            shape="linear",
+            start_value=1200.0,
+            end_value=900.0,
+        ),
+    )
+
+
 def test_bar_automation_rejects_non_increasing_points() -> None:
     timeline = Timeline(bpm=120.0, meter=(4, 4))
 
@@ -217,6 +313,199 @@ def test_bar_automation_rejects_non_increasing_points() -> None:
             timeline=timeline,
             points=((2, 0.0, 600.0), (2, 0.0, 900.0)),
         )
+
+
+def test_metered_automation_accepts_any_automation_target() -> None:
+    timeline = Timeline(bpm=120.0, meter=(4, 4))
+
+    automation = metered_automation(
+        target=AutomationTarget(kind="control", name="pan"),
+        timeline=timeline,
+        points=((1, 0.0, -0.5), (1, 2.0, 0.5)),
+        shape="linear",
+        clamp_min=-1.0,
+        clamp_max=1.0,
+    )
+
+    assert automation.target == AutomationTarget(kind="control", name="pan")
+    assert automation.default_value == pytest.approx(-0.5)
+    assert automation.clamp_min == pytest.approx(-1.0)
+    assert automation.clamp_max == pytest.approx(1.0)
+    assert automation.segments == (
+        AutomationSegment(
+            start=0.0,
+            end=1.0,
+            shape="linear",
+            start_value=-0.5,
+            end_value=0.5,
+        ),
+    )
+
+
+def test_place_phrase_attaches_voice_gestures_on_metered_span() -> None:
+    timeline = Timeline(bpm=120.0, meter=(4, 4))
+    score = Score(f0_hz=55.0)
+    phrase = grid_line(
+        tones=[4.0, 5.0],
+        durations=[Q, Q],
+        timeline=timeline,
+        amp=0.2,
+    )
+
+    placed = place_phrase(
+        score,
+        "lead",
+        phrase,
+        timeline=timeline,
+        at=M(2),
+        gestures=(opening(start_cutoff_hz=500.0, end_cutoff_hz=2000.0), settling()),
+    )
+
+    assert [note.start for note in placed] == pytest.approx([2.0, 2.5])
+    voice_automation = score.voices["lead"].automation
+    assert [automation.target for automation in voice_automation] == [
+        AutomationTarget(kind="synth", name="cutoff_hz"),
+        AutomationTarget(kind="control", name="mix_db"),
+    ]
+    assert voice_automation[0].segments == (
+        AutomationSegment(
+            start=2.0,
+            end=3.0,
+            shape="exp",
+            start_value=500.0,
+            end_value=2000.0,
+        ),
+    )
+    assert voice_automation[1].segments[0].start == pytest.approx(2.0)
+    assert voice_automation[1].segments[0].end == pytest.approx(3.0)
+
+
+def test_phrase_gestures_attach_to_send_and_fail_fast_when_missing() -> None:
+    timeline = Timeline(bpm=120.0)
+    phrase = grid_line(
+        tones=[4.0],
+        durations=[Q],
+        timeline=timeline,
+        amp=0.2,
+    )
+    score = Score(f0_hz=55.0)
+
+    with pytest.raises(ValueError, match="has no send"):
+        place_phrase(
+            score,
+            "lead",
+            phrase,
+            timeline=timeline,
+            at=M(1),
+            gestures=(blooming(send_name="verb"),),
+        )
+
+    score.add_send_bus("verb")
+    score.add_voice("lead", sends=[VoiceSend("verb", send_db=-18.0)])
+    place_phrase(
+        score,
+        "lead",
+        phrase,
+        timeline=timeline,
+        at=M(2),
+        gestures=(blooming(send_name="verb", start_send_db=-30.0, end_send_db=-12.0),),
+    )
+
+    send_automation = score.voices["lead"].sends[0].automation
+    assert len(send_automation) == 1
+    assert send_automation[0].target == AutomationTarget(kind="control", name="send_db")
+    assert send_automation[0].segments == (
+        AutomationSegment(
+            start=2.0,
+            end=2.5,
+            shape="linear",
+            start_value=-30.0,
+            end_value=-12.0,
+        ),
+    )
+
+
+def test_phrase_gestures_use_effect_refs_and_widening_creates_stereo_width() -> None:
+    timeline = Timeline(bpm=120.0)
+    phrase = grid_line(
+        tones=[4.0],
+        durations=[Q],
+        timeline=timeline,
+        amp=0.2,
+    )
+    score = Score(f0_hz=55.0)
+    score.add_voice("lead", effects=[EffectSpec("chorus", {"mix": 0.2})])
+
+    with pytest.raises(ValueError, match="no effect"):
+        place_phrase(
+            score,
+            "lead",
+            phrase,
+            timeline=timeline,
+            at=M(1),
+            gestures=(
+                PhraseGesture(
+                    surface="effect",
+                    effect_kind="phaser",
+                    target=AutomationTarget(kind="control", name="mix"),
+                    points=((0.0, 0.0), (None, 1.0)),
+                ),
+            ),
+        )
+
+    place_phrase(
+        score,
+        "lead",
+        phrase,
+        timeline=timeline,
+        at=M(2),
+        gestures=(widening(start_width=1.0, end_width=1.6),),
+    )
+
+    effects = score.voices["lead"].effects
+    assert effects[-1].kind == "stereo_width"
+    assert effects[-1].params == {"width": 1.0}
+    assert effects[-1].automation[0].target == AutomationTarget(
+        kind="control",
+        name="width",
+    )
+    assert effects[-1].automation[0].segments == (
+        AutomationSegment(
+            start=2.0,
+            end=2.5,
+            shape="linear",
+            start_value=1.0,
+            end_value=1.6,
+        ),
+    )
+
+
+@pytest.mark.parametrize("engine", ["synth_voice", "drum_voice"])
+def test_opening_gesture_uses_engine_filter_cutoff_alias(engine: str) -> None:
+    timeline = Timeline(bpm=120.0)
+    phrase = grid_line(
+        tones=[1.0],
+        durations=[Q],
+        timeline=timeline,
+        amp=0.2,
+    )
+    score = Score(f0_hz=110.0)
+    score.add_voice("lead", synth_defaults={"engine": engine})
+
+    place_phrase(
+        score,
+        "lead",
+        phrase,
+        timeline=timeline,
+        at=M(1),
+        gestures=(opening(start_cutoff_hz=500.0, end_cutoff_hz=2_000.0),),
+    )
+
+    automation = score.voices["lead"].automation
+    assert automation[0].target == AutomationTarget(
+        kind="synth",
+        name="filter_cutoff_hz",
+    )
 
 
 def test_ratio_line_resolves_local_context_into_frequency_phrase() -> None:
@@ -724,6 +1013,33 @@ def test_grid_sequence_places_entries_from_bar_and_beat_positions() -> None:
     assert [note.start for note in placed[1]] == pytest.approx([3.0, 3.5])
 
 
+def test_grid_sequence_places_entries_across_tempo_map() -> None:
+    timeline = Timeline.from_tempo_map(
+        TempoMap(
+            points=(
+                TempoPoint(beat=0.0, bpm=120.0, curve="hold"),
+                TempoPoint(beat=2.0, bpm=60.0),
+            )
+        )
+    )
+    score = Score(f0_hz=55.0)
+    phrase = grid_line(
+        tones=[4.0, 5.0],
+        durations=[Q, Q],
+        timeline=timeline,
+        amp=0.2,
+    )
+
+    placed = grid_sequence(
+        score, "lead", phrase, timeline=timeline, at=[B(1.0), B(2.0)]
+    )
+
+    assert [note.start for note in placed[0]] == pytest.approx([0.5, 1.0])
+    assert [note.duration for note in placed[0]] == pytest.approx([0.5, 1.0])
+    assert [note.start for note in placed[1]] == pytest.approx([1.0, 2.0])
+    assert [note.duration for note in placed[1]] == pytest.approx([1.0, 1.0])
+
+
 def test_grid_canon_uses_beat_delays_and_repeat_gap() -> None:
     timeline = Timeline(bpm=120.0)
     score = Score(f0_hz=55.0)
@@ -747,6 +1063,33 @@ def test_grid_canon_uses_beat_delays_and_repeat_gap() -> None:
 
     assert [entry[0].start for entry in placed["a"]] == pytest.approx([0.0, 1.0])
     assert [entry[0].start for entry in placed["b"]] == pytest.approx([1.0, 2.0])
+
+
+def test_grid_canon_uses_tempo_map_for_delays_and_repeats() -> None:
+    timeline = Timeline.from_tempo_map(
+        TempoMap(
+            points=(
+                TempoPoint(beat=0.0, bpm=120.0, curve="hold"),
+                TempoPoint(beat=2.0, bpm=60.0),
+            )
+        )
+    )
+    score = Score(f0_hz=55.0)
+    phrase = grid_line(tones=[4.0], durations=[Q], timeline=timeline, amp=0.2)
+
+    placed = grid_canon(
+        score,
+        voice_names=("a", "b"),
+        phrase=phrase,
+        timeline=timeline,
+        start=B(1.0),
+        delays=[Q],
+        repeats=2,
+        repeat_gap=Q,
+    )
+
+    assert [entry[0].start for entry in placed["a"]] == pytest.approx([0.5, 2.0])
+    assert [entry[0].start for entry in placed["b"]] == pytest.approx([1.0, 3.0])
 
 
 def test_grid_helpers_build_renderable_score() -> None:

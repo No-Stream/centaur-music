@@ -191,7 +191,11 @@ def scale_fused_spectrum(
         raise ValueError("degrees must be strictly positive")
     ratios: set[float] = set()
     for degree in degrees:
-        for k in range(octaves + 1):
+        # Only the root degree contributes its k=0 value; other degrees enter
+        # from the octave up (no sub-octave partials smearing the fundamental
+        # region — the canonical fused skeleton is {1, 2, 3, 4, 6, 7, ...}).
+        k_start = 0 if math.isclose(float(degree), 1.0) else 1
+        for k in range(k_start, octaves + 1):
             ratios.add(round(float(degree) * (2.0**k), 9))
     partials = [
         {"ratio": ratio, "amp": ratio**-rolloff_alpha}
@@ -319,3 +323,74 @@ Every note-placement helper computes `p = pseudo_octave_at(onset)` and derives B
 - [ ] User audition of the full piece; iterate on feedback; optionally `make evaluate PIECE=anneal`.
 
 **Risk playbook (from the spec):** stretch reads as "out of tune" → stretch drums earlier / lean on fused pads / re-check that note freq and partials share the same S sample. Render time balloons from per-note partial lists → quantize S(t) per bar. Fusion inaudible → raise `octaves` in the fused spectrum, reduce `rolloff_alpha`, revisit `phase_disperse` amount.
+
+---
+
+## Revision pass — 2026-07-07 (audition 4 feedback)
+
+User audition of the full render surfaced these; all applied in `anneal.py`:
+
+- **Stretch cut ~75%**: `PIECE_PEAK_PSEUDO_OCTAVE = 2.0175` (sketch keeps 2.07
+  as a demo). At 2.07 the warp read as "the pitch is changing" rather than
+  "subtly alien". S(t) is now two-staged: slow simmer to 40% of span by bar 88
+  (the dark turn stays barely-warped), faster push to full span at the bar-114
+  climax. Drum stretch lead reduced 4 → 2 bars — with the smaller span, a big
+  lead just read as drums out of tune with the tonal voices.
+- **2:11 dissonance**: the arp was playing 16:19:24 (and later neutral-triad)
+  tones over the NEUTRAL_SUBDOMINANT pad. Audition-2 rule now applied in the
+  full piece everywhere: neutral pad ⇒ arp on FOURTH_OPEN tones (bars 60, 80,
+  92).
+- **"Steady clap" percussion**: the every-odd-bar open hat at step 14 and the
+  every-4th-bar tom double read as a metronomic clap. Both are now
+  intermittent on an 8-bar variation cycle with varied steps/velocities, and
+  both send into the echo bus (dub throws instead of dry backbeat).
+- **Arp repetition by 1:30**: two new cycles — `_ARP_CYCLE_A2` (contour
+  variation, mixed note lengths, 32nd-note pickup, second-bar breath) and
+  `_ARP_CYCLE_HALF` (ringing half-time gear). Patterns now rotate every
+  section: half-time intro, A2 alternation from bar 24, theme A trades bars
+  main/A2, afterglow and ending drop to half-time. `_place_arp` accepts float
+  steps for sub-16th placement.
+- **Noticeable arp delay**: echo bus upgraded `delay` → `mod_delay` (dotted
+  8th, feedback 0.45, dark 3.2 kHz feedback LPF, slow stereo wander) and the
+  send ride now starts at bar 8 (−16 dB), peaks −7 dB at the climax.
+- **More patch automation**: arp gained a sample-accurate `analog_filter` SVF
+  LP with a piece-length cutoff ride (1.7 kHz veiled entrance → 6.8 kHz climax
+  → 1.9 kHz close) plus a `release` ride (0.28 tight ↔ 0.55–0.7 washy in the
+  dark turn / cooling / ending).
+
+## Revision pass — 2026-07-07 (audition 5 feedback)
+
+- **"Clap" identified as the hats**: too long a decay, nowhere near enough
+  treble to read "hat" at freq=784. Fixed at the source — the `drum_voice`
+  `closed_hat` / `open_hat` presets get clickier/brighter/shorter (global
+  preset improvement, delegated).
+- **2:11 still dissonant**: it was the neutral triad itself (49/40 ≈ 351-cent
+  thirds), not just the arp over it. Bar 60 pad now takes FOURTH_OPEN; the
+  neutral color survives only inside denser textures (bars 80, 92).
+- **Arp louder**: mix_db −8 → −5.5 (delay send had eaten its prominence).
+- **Stretch stays (bending is the point) but mellowed**: all partial builders
+  now tilt high partials down progressively with stretch depth
+  (`_STRETCH_TILT = 0.35`, ~−8 dB on the 14th partial at full stretch — high
+  partials deviate most in Hz and carry most of the roughness), and pad
+  color-partial weight fades up to 50% at full stretch. The world gets
+  darker/softer-edged as it melts instead of rougher.
+- **Patch automation everywhere**: pad `spectral_morph_amount` 0.3→0.6→0.2
+  arc + attack ride (slow blooms in Act III), bass `resonance_q` ride,
+  11-carrier morph ride, arp attack ride (hard climax bells, soft cooling
+  bells), plus `_WASH_BELLS` (phase-disperse) per-note patch for all
+  half-time arp sections. No new plumbing needed: voice-level synth
+  automation applies note-onset scalars to any engine param.
+- **Analysis tier retune** (delegated): continuous compressor GR >1 dB →
+  warning; >2 dB sustained → severe.
+
+## Revision pass — 2026-07-07 (audition 6 feedback)
+
+- Stretch halved again: peak S = 2.009 (+7.8 ¢/octave; +15.5 ¢ two octaves
+  up; kick −7.8 ¢). The liked "sea melody" dark turn stays at 0–2 ¢.
+- Piece tightened 176 → 142 bars (~5:14): Act I kick-entrance block cut,
+  Act II bridge halved, Act III cooling 28 → 12 bars. ABA form unchanged,
+  just legible now.
+- drum_voice hats crisped further (closed −20 dB ≈ 35 ms; open ≈ 300 ms,
+  noise mix rebalanced for the voicing test bound).
+- Arp `decay` added to the automated patch surface (tight at climax,
+  singing in the dark turn and cooling).

@@ -24,9 +24,13 @@ schema version `VIZ_SCHEMA_VERSION = 1`:
   with `voice_name`, `note_index`, `start_seconds` / `end_seconds` /
   `duration_seconds` (resolved), `authored_start_seconds`, `freq_hz`,
   `partial`, `velocity`, `amp`, `amp_db`, raw `label`, and `semantics` —
-  the parsed label.
+  the parsed label. If the score carries a `Timeline`, each note also includes
+  `musical_location` and `authored_musical_location` with bar, beat, absolute
+  beat, and seconds.
 - `voices{}` — `pan`, `mix_db`, `is_percussive`, `note_count` per voice.
 - `sections[]`, `f0_hz`, `sample_rate`, `total_duration_seconds`.
+- `musical_time{}` — present when `Score.timeline` is set; includes meter,
+  pickup, groove, and tempo-map anchors for tempo-aware visual scenes.
 - `annotations{}` — opaque piece-provided blob (see below).
 - `envelope{}` — mix RMS envelope (`hop_seconds` grid, `rms` + `rms_db`
   arrays) computed from the rendered WAV. The exporter fails fast if the

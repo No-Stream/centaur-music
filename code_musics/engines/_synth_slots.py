@@ -17,7 +17,7 @@ import numpy as np
 
 from code_musics.engines._chaotic import SUPPORTED_SYSTEMS as _CHAOTIC_SYSTEMS
 from code_musics.engines._chaotic import render_chaotic
-from code_musics.engines._dsp_utils import bandpass_noise, flow_exciter
+from code_musics.engines._dsp_utils import bandpass_noise, flow_exciter, rain_exciter
 from code_musics.engines._oscillators import render_polyblep_oscillator
 from code_musics.engines._pluck import render_pluck
 from code_musics.engines._scanned import render_scanned
@@ -27,6 +27,7 @@ from code_musics.engines.va import (
     _render_partial_bank,
     _render_supersaw_bank,
 )
+from code_musics.found_sound import FOUND_SOUND_TEXTURES, found_sound
 from code_musics.humanize import stable_seed
 
 _VALID_OSC_TYPES = frozenset(
@@ -34,7 +35,7 @@ _VALID_OSC_TYPES = frozenset(
 )
 _VALID_PARTIALS_TYPES = frozenset({"additive", "spectralwave", "drawbars"})
 _VALID_FM_TYPES = frozenset({"two_op"})
-_VALID_NOISE_TYPES = frozenset({"white", "pink", "bandpass", "flow"})
+_VALID_NOISE_TYPES = frozenset({"white", "pink", "bandpass", "flow", "rain", "found"})
 
 # Standard Hammond drawbar footages relative to 8' fundamental.
 # Order: 16', 5-1/3', 8', 4', 2-2/3', 2', 1-3/5', 1-1/3', 1'
@@ -477,7 +478,7 @@ def render_noise(
     noise_type: str,
     params: dict[str, Any],
 ) -> np.ndarray:
-    """Render the ``noise`` slot: white / pink / bandpass / flow."""
+    """Render the ``noise`` slot: white / pink / bandpass / flow / rain / found."""
     if noise_type not in _VALID_NOISE_TYPES:
         raise ValueError(
             f"noise_type must be one of {sorted(_VALID_NOISE_TYPES)} or None, "
@@ -511,10 +512,44 @@ def render_noise(
             width_ratio=width_ratio,
         )
 
-    else:  # "flow"
+    elif noise_type == "flow":
         density = float(params.get("noise_flow_density", 0.3))
         density = float(np.clip(density, 0.0, 1.0))
         out = flow_exciter(n_samples=n_samples, param=density, rng=rng)
+
+    elif noise_type == "found":
+        texture = params.get("noise_found_texture")
+        if texture is None:
+            raise ValueError(
+                "noise_type='found' requires a 'noise_found_texture' param; "
+                f"one of {FOUND_SOUND_TEXTURES}"
+            )
+        found_seed = int(rng.integers(0, 2**31 - 1))
+        out = found_sound(
+            str(texture),
+            n_samples,
+            sample_rate,
+            density=float(np.clip(params.get("noise_found_density", 0.5), 0.0, 1.0)),
+            brightness=float(
+                np.clip(params.get("noise_found_brightness", 0.5), 0.0, 1.0)
+            ),
+            movement=float(np.clip(params.get("noise_found_movement", 0.5), 0.0, 1.0)),
+            seed=found_seed,
+        )
+
+    else:  # "rain"
+        rain_seed = int(rng.integers(0, 2**31 - 1))
+        out = rain_exciter(
+            n_samples,
+            sample_rate,
+            density=float(np.clip(params.get("noise_rain_density", 0.5), 0.0, 1.0)),
+            brightness=float(
+                np.clip(params.get("noise_rain_brightness", 0.5), 0.0, 1.0)
+            ),
+            drop_size=float(np.clip(params.get("noise_rain_drop_size", 0.5), 0.0, 1.0)),
+            wash=float(np.clip(params.get("noise_rain_wash", 0.5), 0.0, 1.0)),
+            seed=rain_seed,
+        )
 
     peak = float(np.max(np.abs(out))) if out.size else 0.0
     if peak > 1.0:

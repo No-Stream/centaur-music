@@ -16,6 +16,7 @@ _SCORE_BACKED_PIECES = [
 # Avoids any piece that requires external VST/VST3 plugins so this
 # test can gate rendering on any machine that passes the main suite.
 _RENDER_SMOKE_PIECE_NAMES: tuple[str, ...] = (
+    "anneal",
     "ji_chorale",
     "amber_room",
     "bwv_846_piano",
@@ -24,6 +25,7 @@ _RENDER_SMOKE_PIECE_NAMES: tuple[str, ...] = (
     "va_showcase",
     "vowel_cathedral",
     "struck_light",
+    "spectral_palette_study",
     "mod_matrix_study",
     "slow_glass",
 )

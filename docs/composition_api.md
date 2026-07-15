@@ -67,6 +67,8 @@ Use `code_musics.meter` when you want musical time rather than raw seconds.
 Core APIs:
 
 - `Timeline(bpm=..., meter=(num, den), groove=...)`
+- `TempoMap(points=(TempoPoint(...), ...))` for ritardandos, accelerandos,
+  metric pacing changes, and breathing tempo arcs
 - rhythmic values: `W`, `H`, `Q`, `E`, `S`
 - groove templates: `Groove.eighths_swing(...)`, `Groove.sixteenths_swing(...)`,
   and named presets like `Groove.dilla_lazy()`
@@ -194,6 +196,30 @@ Useful methods:
 `meter` affects bar length. Beat values are expressed in quarter-note beats, so
 `Q` is always one beat and `meter=(6, 8)` gives a 3-beat bar.
 
+If `tempo_map` is set, beat/bar positions are integrated through that curve.
+`TempoPoint.curve="hold"` keeps the current BPM until the next anchor; the
+default `"linear"` ramps BPM linearly between anchors. This is still a
+compile-time authoring layer: grid helpers resolve notes into ordinary score
+seconds before rendering, and the audio renderer does not time stretch existing
+notes. `Timeline.from_tempo_map(...)` is the usual constructor:
+
+```python
+from code_musics.meter import B, Q, TempoMap, TempoPoint, Timeline
+
+timeline = Timeline.from_tempo_map(
+    TempoMap(
+        points=(
+            TempoPoint(beat=0.0, bpm=96.0, curve="hold"),
+            TempoPoint(beat=32.0, bpm=112.0),  # linear accelerando
+            TempoPoint(beat=64.0, bpm=72.0),   # ritardando into arrival
+        )
+    )
+)
+
+assert timeline.position(B(64.0)) > 0.0
+assert timeline.duration_at(B(32.0), Q) != timeline.duration_at(B(64.0), Q)
+```
+
 If `groove` is set, `Timeline.position(...)`, `Timeline.at(...)`, and
 `Timeline.locate(...)` use the grooved grid. Standalone scalar durations like
 `timeline.duration(Q)` remain straight-time conversions; groove-aware note spans
@@ -274,6 +300,56 @@ Practical notes:
 - to keep the last value alive through a tail, add a final anchor with the same
   value at the desired endpoint
 - this is a good fit for section-level opening/closing arcs on `Voice.automation`
+
+### Phrase Gestures
+
+Phrase gestures are phrase-relative automation helpers that compile when
+`place_phrase(...)` places a phrase on a `Timeline`. They are useful for local
+timbre motions that should move with a motif rather than living as a global
+score lane.
+
+Core API:
+
+- `metered_automation(target, timeline, points, shape="linear", ...)` builds
+  any `AutomationSpec` from `(bar, beat, value)` anchors.
+- `place_phrase(score, voice_name, phrase, timeline, at, gestures=(...))`
+  places a phrase and attaches each gesture over that placed phrase span.
+- `PhraseGesture(...)` is the lower-level dataclass for custom voice, effect,
+  send, and send-bus gestures.
+
+Built-in gestures:
+
+- `opening(start_cutoff_hz, end_cutoff_hz)` and
+  `darkening(start_cutoff_hz, end_cutoff_hz)` automate filter cutoff with an
+  exponential curve. They target `cutoff_hz` by default and resolve to
+  `filter_cutoff_hz` automatically when placed on `synth_voice` or
+  `drum_voice`.
+- `settling(start_mix_db, end_mix_db)` eases a voice fader over the phrase.
+- `blooming(send_name, start_send_db, end_send_db)` opens an existing voice send.
+- `widening(start_width, end_width)` creates or finds a `stereo_width` insert and
+  automates its `width` parameter.
+
+Example:
+
+```python
+from code_musics.composition import blooming, opening, place_phrase, widening
+from code_musics.meter import M, Timeline
+
+timeline = Timeline(bpm=92, meter=(4, 4))
+
+place_phrase(
+    score,
+    "lead",
+    phrase,
+    timeline=timeline,
+    at=M(9),
+    gestures=(
+        opening(start_cutoff_hz=600.0, end_cutoff_hz=3200.0),
+        blooming(send_name="plate", start_send_db=-24.0, end_send_db=-10.0),
+        widening(start_width=1.0, end_width=1.45),
+    ),
+)
+```
 
 ### `ArticulationSpec`
 

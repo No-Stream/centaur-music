@@ -18,7 +18,9 @@
 - `code_musics/tuning.py` contains small just-intonation, harmonic-series, utonal,
   and EDO helper functions, plus Erv Wilson Combination Product Set (CPS)
   helpers (`cps`, `hexany`, `hexany_triads`, `dekany`, `dekany_chords`,
-  `eikosany`, `eikosany_tetrads`).
+  `eikosany`, `eikosany_tetrads`), plus `stretch_ratio` (Sethares-style
+  pseudo-octave stretching) and `colundi_core` (7-note Colundi-inspired
+  11-limit JI scale).
 - `code_musics/generative/` contains algorithmic and stochastic composition
   tools: TonePool (weighted pitch pools), euclidean rhythms, probability gates,
   Markov chains, Turing machine sequencers, harmonic lattice walkers, and
@@ -55,7 +57,8 @@
   muxed. See `docs/viz_api.md` for the exporter schema, structured-label
   format, scene contract, and capture workflow.
 - `code_musics/meter.py` contains the optional high-level musical-time layer:
-  `Timeline`, beat/bar helpers, rhythmic values, and bar-aware location math.
+  `Timeline`, `TempoMap`, beat/bar helpers, rhythmic values, and bar-aware
+  location math.
 - `code_musics/evaluate.py` is the LLM-based piece evaluation system.  Four
   judges (Opus 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5) score pieces across
   five dimensions via Claude Code headless.  `code_musics/eval_rubric.py`
@@ -104,7 +107,7 @@
   phrase at its *own* cycle length against an ambient bar grid (e.g. a
   7-beat line phasing against 16). Placement: `sequence(...)` / `canon(...)`.
   Harmonic: `voiced_ratio_chord(...)` / `progression(...)`. The
-  optional high-level timing layer adds `Timeline`, rhythmic values
+  optional high-level timing layer adds `Timeline`, `TempoMap`, rhythmic values
   like `Q` / `E`, `Groove` templates with named presets and per-step
   velocity weighting, `tuplet(n, m, value)` for general tuplet
   durations, and grid-style helpers (`grid_line`, `grid_sequence`,
@@ -197,10 +200,12 @@
   `DriftAdapter`. Attach via `Voice.modulations` or `Score.modulations`;
   register shared scalars via `Score.add_macro(name, default, automation)`.
   Complements `AutomationSpec` (timeline curves) rather than replacing it —
-  matrix contributions combine after base automation per destination. MVP
-  per-sample synth coverage is `cutoff_hz` on `polyblep` via engine
-  `param_profiles`; other synth targets are sampled per-note at onset. See
-  `docs/score_api.md` and `FUTURE.md` for full details and deferred work, and
+  matrix contributions combine after base automation per destination. Core
+  filter / drive / oscillator destinations are audio-rate through engine
+  `param_profiles` across `polyblep`, `filtered_stack`, `synth_voice`,
+  `drum_voice`, and `va`; unsupported engine/destination pairs fold to
+  note-onset scalars instead of being dropped. See `docs/score_api.md`,
+  `docs/synth_api.md`, and `FUTURE.md` for full details and deferred work, and
   `code_musics/pieces/mod_matrix_study.py` for a worked example.
 - **Pitch motion is a standard part of the composition surface**, not an optional
   extra. Melodic and sustained voices should almost always use `PitchMotionSpec`:
@@ -488,12 +493,17 @@ See `FUTURE.md` for way more ideas.
   collapsing into the IMD mud that a post-mix shaper produces. Default
   `off`; paired params `voice_dist_drive`, `voice_dist_mix`,
   `voice_dist_tone`. See `docs/synth_api.md`.
-- Audio-rate modulation coverage: `polyblep` accepts per-sample
-  `pulse_width`, `osc2_detune_cents`, `osc2_freq_ratio` (in addition to
-  `cutoff_hz`), and `va` accepts per-sample `osc_spread_cents`. Drive
-  these from the new `OscillatorSource` in `code_musics/modulation.py` —
-  a sibling to `LFOSource` with no 200 Hz cap, usable at audio rate for
-  PWM, cross-osc FM, and detune modulation.
+- Audio-rate modulation coverage: filter cutoff / resonance / drive /
+  morph / HPF / feedback, basic drive lanes, `polyblep` PWM and osc2
+  ratio/detune, and VA dual-filter / supersaw spread lanes are available
+  through `param_profiles`. Drive fast lanes from `OscillatorSource` in
+  `code_musics/modulation.py` — a sibling to `LFOSource` with no 200 Hz
+  cap, usable at audio rate for PWM, cross-osc FM, and detune modulation.
+  Dynamic non-SVF filter main controls are a known quality trap: do not
+  bypass the fail-closed Newton guard or treat the profiled stateful kernel
+  as equivalent to full dynamic Newton parity. It is acceptable only as an
+  explicit `filter_solver="adaa"` opt-in; see `docs/synth_api.md` and
+  `FUTURE.md`.
 - `osc_phase_noise` (0.0–1.0) on `polyblep` and `va` adds per-sample
   phase-accumulator jitter — broadband zero-crossing texture distinct
   from `analog_jitter` (CV-rail dither) and `drift_bus` (slow correlated
@@ -789,6 +799,29 @@ See `FUTURE.md` for way more ideas.
   piece in `code_musics/pieces/breath_study.py` shows it in context.
   Underlying primitive is `flow_exciter()` in
   `code_musics/engines/_dsp_utils.py`.
+- The `synth_voice` engine's `noise` slot also supports `noise_type="rain"`
+  — a deterministic Poisson-arrival droplet (bandpassed chirp click) +
+  breathing bandpassed-pink-noise wash rain texture, crossfaded via
+  `noise_rain_wash` with `noise_rain_density` / `noise_rain_brightness` /
+  `noise_rain_drop_size` shaping the droplet arrival rate, tone, and size.
+  RMS-normalized like `flow_exciter` so switching `noise_type` preserves
+  loudness. Underlying primitive is `rain_exciter()` in
+  `code_musics/engines/_dsp_utils.py`; not wired into the additive engine's
+  `noise_mode` since that path ring-modulates a shared base noise buffer
+  per-partial rather than compositing a standalone bandpassed texture.
+- `code_musics/found_sound.py` is the "fake found sound" toolkit —
+  sample-free synthetic field-recording atmospheres (Burial / BoC /
+  Basinski-adjacent): vinyl crackle, tape hiss with wow/flutter, room
+  tone, distant city rumble, wind gusts, and rain (delegating to
+  `rain_exciter`). All are seeded/deterministic, share a uniform
+  `density` / `brightness` / `movement` knob surface, and are
+  RMS-normalized to the `rain_exciter` target so switching textures
+  preserves loudness. Reachable as ordinary voices via the `synth_voice`
+  noise slot (`noise_type="found"` + `noise_found_*` params) with six
+  `found_*` presets (`found_dust_and_shellac`, `found_worn_cassette`,
+  `found_empty_room`, `found_city_at_night`, `found_wind_over_wires`,
+  `found_rain_on_glass`). See the "Found-sound textures" section of
+  `docs/synth_api.md`.
 - Keep plugin notes here high-level. Detailed parameter semantics and any new
   `EffectSpec` integration still belong in `docs/synth_api.md`.
 - **Docs are part of implementation, not cleanup.** When you add, change, or

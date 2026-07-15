@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 _VALID_METER_DENOMINATORS = {1, 2, 4, 8, 16, 32}
+TempoCurve = Literal["linear", "hold"]
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,161 @@ class MusicalLocation:
     def beat_within_bar(self) -> float:
         """Alias for the beat offset within the resolved bar."""
         return self.beat
+
+
+@dataclass(frozen=True)
+class TempoPoint:
+    """Tempo-map anchor at an absolute quarter-note beat."""
+
+    beat: float
+    bpm: float
+    curve: TempoCurve = "linear"
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.beat) or self.beat < 0:
+            raise ValueError("tempo point beat must be non-negative and finite")
+        if not math.isfinite(self.bpm) or self.bpm <= 0:
+            raise ValueError("tempo point bpm must be positive and finite")
+        if self.curve not in {"linear", "hold"}:
+            raise ValueError("tempo point curve must be 'linear' or 'hold'")
+
+
+@dataclass(frozen=True)
+class TempoMap:
+    """Piecewise tempo curve expressed over absolute quarter-note beats."""
+
+    points: tuple[TempoPoint, ...]
+
+    def __post_init__(self) -> None:
+        if not self.points:
+            raise ValueError("tempo map requires at least one tempo point")
+        if self.points[0].beat != 0.0:
+            raise ValueError("first tempo point must be at beat 0.0")
+        for previous, current in zip(self.points, self.points[1:], strict=False):
+            if current.beat <= previous.beat:
+                raise ValueError("tempo point beats must be strictly increasing")
+
+    @classmethod
+    def constant(cls, bpm: float) -> TempoMap:
+        """Return a constant-tempo map."""
+        return cls(points=(TempoPoint(beat=0.0, bpm=bpm, curve="hold"),))
+
+    def bpm_at(self, beat: float) -> float:
+        """Return the tempo at an absolute beat position."""
+        self._validate_beat(beat)
+        index = self._segment_index_for_beat(beat)
+        point = self.points[index]
+        if index == len(self.points) - 1 or point.curve == "hold":
+            return point.bpm
+        next_point = self.points[index + 1]
+        phase = (beat - point.beat) / (next_point.beat - point.beat)
+        return point.bpm + ((next_point.bpm - point.bpm) * phase)
+
+    def seconds_at_beat(self, beat: float) -> float:
+        """Return elapsed seconds at an absolute beat position."""
+        self._validate_beat(beat)
+        seconds = 0.0
+        for index, point in enumerate(self.points):
+            if index == len(self.points) - 1:
+                return seconds + self._segment_seconds(
+                    point=point,
+                    next_point=None,
+                    span_beats=beat - point.beat,
+                )
+            next_point = self.points[index + 1]
+            if beat <= next_point.beat:
+                return seconds + self._segment_seconds(
+                    point=point,
+                    next_point=next_point,
+                    span_beats=beat - point.beat,
+                )
+            seconds += self._segment_seconds(
+                point=point,
+                next_point=next_point,
+                span_beats=next_point.beat - point.beat,
+            )
+        raise ValueError("tempo map conversion failed")
+
+    def beats_at_seconds(self, seconds: float) -> float:
+        """Return the absolute beat position for elapsed seconds."""
+        if not math.isfinite(seconds) or seconds < 0:
+            raise ValueError("seconds must be non-negative and finite")
+        elapsed = 0.0
+        for index, point in enumerate(self.points):
+            next_point = (
+                self.points[index + 1] if index + 1 < len(self.points) else None
+            )
+            segment_beats = (
+                next_point.beat - point.beat if next_point is not None else math.inf
+            )
+            segment_seconds = self._segment_seconds(
+                point=point,
+                next_point=next_point,
+                span_beats=segment_beats,
+            )
+            if seconds <= elapsed + segment_seconds or next_point is None:
+                return point.beat + self._segment_beats_for_seconds(
+                    point=point,
+                    next_point=next_point,
+                    seconds=seconds - elapsed,
+                )
+            elapsed += segment_seconds
+        raise ValueError("tempo map inversion failed")
+
+    def duration_between(self, start_beats: float, end_beats: float) -> float:
+        """Return elapsed seconds between two absolute beat positions."""
+        self._validate_beat(start_beats)
+        self._validate_beat(end_beats)
+        if end_beats < start_beats:
+            raise ValueError("end_beats must be greater than or equal to start_beats")
+        return self.seconds_at_beat(end_beats) - self.seconds_at_beat(start_beats)
+
+    def to_metadata(self) -> dict[str, object]:
+        """Return a JSON-friendly tempo-map description."""
+        return {
+            "points": [
+                {"beat": point.beat, "bpm": point.bpm, "curve": point.curve}
+                for point in self.points
+            ]
+        }
+
+    def _segment_index_for_beat(self, beat: float) -> int:
+        for index, point in enumerate(self.points[1:], start=1):
+            if beat < point.beat:
+                return index - 1
+        return len(self.points) - 1
+
+    def _segment_seconds(
+        self,
+        *,
+        point: TempoPoint,
+        next_point: TempoPoint | None,
+        span_beats: float,
+    ) -> float:
+        if span_beats <= 0:
+            return 0.0
+        if next_point is None or point.curve == "hold" or point.bpm == next_point.bpm:
+            return span_beats * (60.0 / point.bpm)
+        slope = (next_point.bpm - point.bpm) / (next_point.beat - point.beat)
+        return (60.0 / slope) * math.log((point.bpm + slope * span_beats) / point.bpm)
+
+    def _segment_beats_for_seconds(
+        self,
+        *,
+        point: TempoPoint,
+        next_point: TempoPoint | None,
+        seconds: float,
+    ) -> float:
+        if seconds <= 0:
+            return 0.0
+        if next_point is None or point.curve == "hold" or point.bpm == next_point.bpm:
+            return seconds * point.bpm / 60.0
+        slope = (next_point.bpm - point.bpm) / (next_point.beat - point.beat)
+        return point.bpm * (math.exp(seconds * slope / 60.0) - 1.0) / slope
+
+    def _validate_beat(self, beat: float) -> None:
+        if not math.isfinite(beat) or beat < 0:
+            raise ValueError("beat must be non-negative and finite")
 
 
 @dataclass(frozen=True)
@@ -226,12 +382,13 @@ def tuplet(n: int, in_space_of: int, value: DurationLike) -> BeatSpan:
 
 @dataclass(frozen=True)
 class Timeline:
-    """Single-tempo musical timeline for high-level authoring."""
+    """Musical timeline for high-level authoring."""
 
     bpm: float
     meter: tuple[int, int] = (4, 4)
     pickup_beats: float = 0.0
     groove: Groove | None = None
+    tempo_map: TempoMap | None = None
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.bpm) or self.bpm <= 0:
@@ -244,6 +401,24 @@ class Timeline:
             raise ValueError("meter denominator must be one of 1, 2, 4, 8, 16, or 32")
         if not math.isfinite(self.pickup_beats) or self.pickup_beats < 0:
             raise ValueError("pickup_beats must be non-negative and finite")
+
+    @classmethod
+    def from_tempo_map(
+        cls,
+        tempo_map: TempoMap,
+        *,
+        meter: tuple[int, int] = (4, 4),
+        pickup_beats: float = 0.0,
+        groove: Groove | None = None,
+    ) -> Timeline:
+        """Build a timeline whose beat grid follows a tempo map."""
+        return cls(
+            bpm=tempo_map.points[0].bpm,
+            meter=meter,
+            pickup_beats=pickup_beats,
+            groove=groove,
+            tempo_map=tempo_map,
+        )
 
     @property
     def seconds_per_beat(self) -> float:
@@ -260,11 +435,19 @@ class Timeline:
         """Resolve a measure span into seconds."""
         if not math.isfinite(value) or value < 0:
             raise ValueError("measure span must be non-negative and finite")
-        return value * self.beats_per_bar * self.seconds_per_beat
+        return self.duration_at(B(0.0), B(value * self.beats_per_bar))
 
     def duration(self, value: DurationLike) -> float:
         """Resolve a beat-relative duration into seconds."""
-        return _coerce_duration_beats(value) * self.seconds_per_beat
+        return self.duration_at(B(0.0), value)
+
+    def duration_at(self, start: TimePointLike, value: DurationLike) -> float:
+        """Resolve a beat-relative duration starting at a musical position."""
+        start_beats = self.absolute_beats(start)
+        end_beats = start_beats + _coerce_duration_beats(value)
+        return self._straight_beats_to_seconds(
+            end_beats
+        ) - self._straight_beats_to_seconds(start_beats)
 
     def at(self, *, bar: int, beat: float = 0.0) -> float:
         """Return the second offset for a bar/beat location."""
@@ -316,9 +499,37 @@ class Timeline:
             seconds=seconds,
         )
 
+    def to_metadata(self) -> dict[str, object]:
+        """Return a JSON-friendly timeline description."""
+        return {
+            "bpm": self.bpm,
+            "meter": list(self.meter),
+            "pickup_beats": self.pickup_beats,
+            "groove": None
+            if self.groove is None
+            else {
+                "subdivision": self.groove.subdivision,
+                "timing_offsets": list(self.groove.timing_offsets),
+                "velocity_weights": list(self.groove.velocity_weights),
+                "name": self.groove.name,
+            },
+            "tempo_map": None
+            if self.tempo_map is None
+            else self.tempo_map.to_metadata(),
+        }
+
     def _beats_to_seconds(self, absolute_beats: float) -> float:
+        warped_beats = self._warp_beats(absolute_beats)
+        return self._straight_beats_to_seconds(warped_beats)
+
+    def _straight_beats_to_seconds(self, absolute_beats: float) -> float:
+        if self.tempo_map is not None:
+            return self.tempo_map.seconds_at_beat(absolute_beats)
+        return absolute_beats * self.seconds_per_beat
+
+    def _warp_beats(self, absolute_beats: float) -> float:
         if self.groove is None:
-            return absolute_beats * self.seconds_per_beat
+            return absolute_beats
         step_size = self.groove.step_size_beats
         step_float = absolute_beats / step_size
         step_index = math.floor(step_float)
@@ -326,10 +537,13 @@ class Timeline:
         o_i = self.groove.timing_offset_at(step_index)
         o_next = self.groove.timing_offset_at(step_index + 1)
         warped_steps = step_index + o_i + phase * (1.0 + o_next - o_i)
-        return warped_steps * step_size * self.seconds_per_beat
+        return warped_steps * step_size
 
     def _seconds_to_beats(self, seconds: float) -> float:
-        warped_beats = seconds / self.seconds_per_beat
+        if self.tempo_map is not None:
+            warped_beats = self.tempo_map.beats_at_seconds(seconds)
+        else:
+            warped_beats = seconds / self.seconds_per_beat
         if self.groove is None:
             return warped_beats
         step_size = self.groove.step_size_beats
@@ -375,6 +589,8 @@ __all__ = [
     "MusicalLocation",
     "Q",
     "S",
+    "TempoMap",
+    "TempoPoint",
     "Timeline",
     "TimePointLike",
     "W",

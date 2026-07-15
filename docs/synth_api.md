@@ -543,9 +543,15 @@ Current effect-analysis metrics include:
 - `avg_gain_reduction_when_active_db`
 - `below_1db_fraction`
 - `longest_run_above_1db_seconds`
+- `longest_run_above_2db_seconds`
 
 Those diagnostics are used to warn when a compressor appears mostly inactive or
-unusually aggressive.
+unusually aggressive. The `continuous_gain_reduction` warning fires at
+"warning" severity when the compressor rarely relaxes below 1 dB of gain
+reduction (longest >1 dB run ≥ 10 s) and escalates to "severe" only when it
+stays above 2 dB continuously (longest >2 dB run ≥ 20 s) — a well-set
+compressor should drop to ~0 dB GR often, but a constant ~1 dB is unusual
+rather than alarming.
 
 Parameters:
 
@@ -4880,8 +4886,8 @@ digital character):
 
 | Preset | Character |
 |--------|-----------|
-| `closed_hat` | Tight closed hi-hat using dense noise-forward hat voicing |
-| `open_hat` | Longer open hi-hat using dense noise-forward hat voicing |
+| `closed_hat` | Clicky 909-style closed hat — bright metallic sizzle above ~6 kHz, ~45 ms decay |
+| `open_hat` | Open-hat sizzle — high-passed metallic wash above ~5 kHz, ~300 ms decay |
 | `pedal_hat` | Medium pedal hi-hat between closed and open |
 | `ride_bell` | Focused ride bell |
 | `ride_bow` | Washy ride bow with long decay and extra partial |

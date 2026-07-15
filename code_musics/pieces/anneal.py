@@ -38,7 +38,31 @@ from code_musics.tuning import stretch_ratio
 F0 = 98.0  # G2; kick fundamental (later tasks) at 49 Hz
 
 HOME_PSEUDO_OCTAVE = 2.0
-PEAK_PSEUDO_OCTAVE = 2.07
+PEAK_PSEUDO_OCTAVE = 2.07  # fusion-sketch demo peak
+
+# Audition 4: at 2.07 the stretch read as "the pitch is changing", not "the
+# world is subtly alien". Audition 6 halved it again: the peak now shifts
+# each pseudo-octave by ~+7.8 cents (a note two octaves up sits ~15.5 cents
+# sharp of its unstretched self) — subtle warping, not overt drift.
+PIECE_PEAK_PSEUDO_OCTAVE = 2.009
+
+# Audition 5: even at the reduced span the warp sat on the edge of
+# dissonance. High partials deviate the most (in Hz) under stretch and carry
+# most of the roughness, so every partial builder tilts them down as the
+# stretch deepens — full tilt at (or beyond) the piece's peak. ~-8 dB on the
+# 14th partial at full stretch; identity at home tuning.
+_STRETCH_TILT = 0.35
+
+
+def _stretch_taper(pseudo_octave: float) -> float:
+    """0 at home tuning -> 1 at (or beyond) the piece's peak stretch."""
+    span = PIECE_PEAK_PSEUDO_OCTAVE - HOME_PSEUDO_OCTAVE
+    return min(max((pseudo_octave - HOME_PSEUDO_OCTAVE) / span, 0.0), 1.0)
+
+
+def _tilted_amp(ratio: float, amp: float, taper: float) -> float:
+    return amp * ratio ** (-_STRETCH_TILT * taper)
+
 
 # 3/7-limit skeleton degrees -> integer partials {1,2,3,3.5,4,6,7,8,12,14}.
 # Deliberately NO 5th/10th harmonic: the scale's third is 19/16, and a 5/4
@@ -94,9 +118,14 @@ def _smoothstep(x: float) -> float:
 def _stretched_partials(
     partials: list[dict[str, float]], pseudo_octave: float
 ) -> list[dict[str, float]]:
-    """Map a partial list through the stretch law (identity at 2.0)."""
+    """Map a partial list through the stretch law (identity at 2.0), rolling
+    off high partials progressively as the stretch deepens."""
+    taper = _stretch_taper(pseudo_octave)
     return [
-        {"ratio": stretch_ratio(partial["ratio"], pseudo_octave), "amp": partial["amp"]}
+        {
+            "ratio": stretch_ratio(partial["ratio"], pseudo_octave),
+            "amp": _tilted_amp(partial["ratio"], partial["amp"], taper),
+        }
         for partial in partials
     ]
 
@@ -220,6 +249,7 @@ def _bell_partials(
 ) -> list[dict[str, object]]:
     """Fused skeleton with mallet physics: higher partials decay faster."""
     bell: list[dict[str, object]] = []
+    taper = _stretch_taper(pseudo_octave)
     for partial in SKELETON_PARTIALS:
         ratio = stretch_ratio(partial["ratio"], pseudo_octave)
         # Envelope times are normalized to note duration; higher partials
@@ -228,7 +258,7 @@ def _bell_partials(
         bell.append(
             {
                 "ratio": ratio,
-                "amp": partial["amp"],
+                "amp": _tilted_amp(partial["ratio"], partial["amp"], taper),
                 "envelope": [
                     {"time": 0.0, "value": 1.0},
                     {"time": decay_frac, "value": 0.08},
@@ -317,8 +347,12 @@ _BASS_PARTIAL_RATIOS = [(1.0, 1.0), (2.0, 0.45), (3.0, 0.22), (7.0, 0.05)]
 
 
 def _bass_partials(pseudo_octave: float) -> list[dict[str, float]]:
+    taper = _stretch_taper(pseudo_octave)
     return [
-        {"ratio": stretch_ratio(ratio, pseudo_octave), "amp": amp}
+        {
+            "ratio": stretch_ratio(ratio, pseudo_octave),
+            "amp": _tilted_amp(ratio, amp, taper),
+        }
         for ratio, amp in _BASS_PARTIAL_RATIOS
     ]
 
@@ -393,9 +427,13 @@ def _place_pad(
 ) -> None:
     start = start_bar * BAR
     duration = n_bars * BAR
+    # Color partials are the spiciest fusion ingredient; fade them as the
+    # stretch deepens so heavily-warped sections lean on the pure skeleton.
+    color_weight = 0.4 * (1.0 - 0.5 * _stretch_taper(pseudo_octave))
     for note_index, (degree, color_ratios) in enumerate(chord):
         partials = _stretched_partials(
-            _with_color(SKELETON_PARTIALS, color_ratios), pseudo_octave
+            _with_color(SKELETON_PARTIALS, color_ratios, weight=color_weight),
+            pseudo_octave,
         )
         score.add_note(
             "pad",
@@ -419,7 +457,7 @@ def _add_bell_arp(score: Score) -> None:
         },
         sends=[VoiceSend(target="hall", send_db=-12.0)],
         pan=0.12,
-        mix_db=-8.0,
+        mix_db=-5.5,
         drift_bus="kiln_drift",
         drift_bus_correlation=0.7,
     )
@@ -446,6 +484,47 @@ _ARP_CYCLE: list[tuple[int, int, float]] = [
     (30, 3, 0.6),
 ]
 
+# Main-cycle variation: same harmonic footprint, different contour, mixed
+# note lengths, a 32nd-note double-hit pickup (step 15.5), and a breath in
+# the second bar. Entries: (step, tone index, velocity, duration s).
+_ARP_CYCLE_A2: list[tuple[float, int, float, float]] = [
+    (0, 0, 1.0, 0.11),
+    (2, 2, 0.7, 0.11),
+    (4, 1, 0.8, 0.22),
+    (7, 3, 0.65, 0.11),
+    (10, 2, 0.75, 0.11),
+    (12, 4, 0.7, 0.3),
+    (15, 2, 0.55, 0.09),
+    (15.5, 3, 0.7, 0.09),
+    (16, 0, 0.9, 0.11),
+    (18, 1, 0.65, 0.22),
+    (22, 2, 0.7, 0.11),
+    (24, 3, 0.8, 0.4),
+    (29, 4, 0.6, 0.11),
+    (30, 1, 0.55, 0.11),
+]
+
+# Washy bell patch for the half-time sections: phase dispersion smears the
+# attack transient into a pad-like bloom — a different instrument by ear,
+# same fused spectrum.
+_WASH_BELLS: dict[str, object] = {
+    "spectral_morph_type": "phase_disperse",
+    "spectral_morph_amount": 0.35,
+}
+
+# Half-time cycle: eighth-note grid, ringing notes — the "slow gear" the
+# arp drops into for intros, afterglow, and the final bars.
+_ARP_CYCLE_HALF: list[tuple[float, int, float, float]] = [
+    (0, 0, 0.95, 0.45),
+    (4, 2, 0.7, 0.4),
+    (8, 1, 0.8, 0.45),
+    (12, 3, 0.6, 0.35),
+    (16, 2, 0.85, 0.5),
+    (20, 4, 0.65, 0.4),
+    (24, 0, 0.75, 0.5),
+    (28, 2, 0.55, 0.6),
+]
+
 
 def _arp_tones(
     chord: list[tuple[float, list[float]]], pseudo_octave: float
@@ -470,12 +549,13 @@ def _place_arp(
     n_bars: int,
     chord: list[tuple[float, list[float]]],
     pseudo_octave: float = HOME_PSEUDO_OCTAVE,
-    pattern: list[tuple[int, int, float]]
-    | list[tuple[int, int, float, float]]
+    pattern: list[tuple[float, int, float]]
+    | list[tuple[float, int, float, float]]
     | None = None,
     duration_default: float = 0.11,
     velocity_scale: float = 1.0,
     vibrato: bool = False,
+    synth_extra: dict[str, object] | None = None,
 ) -> None:
     cycle = pattern if pattern is not None else _ARP_CYCLE
     tones = _arp_tones(chord, pseudo_octave)
@@ -491,7 +571,7 @@ def _place_arp(
             onset = (
                 start_bar * BAR
                 + absolute_step * S16
-                + S16 * GROOVE.timing_offset_at(absolute_step)
+                + S16 * GROOVE.timing_offset_at(int(absolute_step))
             )
             pitch_motion = (
                 PitchMotionSpec.vibrato(depth_ratio=0.006, rate_hz=5.2)
@@ -505,7 +585,10 @@ def _place_arp(
                 partial=tones[tone_index],
                 velocity=min(1.0, velocity * velocity_scale),
                 pitch_motion=pitch_motion,
-                synth={"partials": _bell_partials(pseudo_octave)},
+                synth={
+                    "partials": _bell_partials(pseudo_octave),
+                    **(synth_extra or {}),
+                },
             )
 
 
@@ -635,11 +718,20 @@ def _place_drums(
                     freq=784.0,
                     velocity=0.85 if step % 4 == 0 else 0.5,
                 )
-        if open_hat_on and bar % 2 == 1:
-            onset = bar_t + 14 * S16 + S16 * GROOVE.timing_offset_at(14)
-            score.add_note(
-                "hat_open", start=onset, duration=0.4, freq=784.0, velocity=0.7
-            )
+        # Open hat / clap-adjacent accents are INTERMITTENT, never a steady
+        # backbeat (audition 4: a regular every-2-bars burst read as a
+        # distracting clap). Placement and velocity vary with an 8-bar cycle.
+        if open_hat_on:
+            open_hat_hits = {
+                1: [(14, 0.7)],
+                5: [(14, 0.55), (15, 0.4)],
+                6: [(10, 0.45)],
+            }.get(bar % 8, [])
+            for step, velocity in open_hat_hits:
+                onset = bar_t + step * S16 + S16 * GROOVE.timing_offset_at(step)
+                score.add_note(
+                    "hat_open", start=onset, duration=0.4, freq=784.0, velocity=velocity
+                )
         tom_freq = F0 * stretch_ratio(root_degree, pseudo_octave)
         if fill_bars and bar % 8 == 7:
             for step, velocity, ratio in [
@@ -656,23 +748,24 @@ def _place_drums(
                     velocity=velocity,
                     synth=tom_synth,
                 )
-        elif toms_on and bar % 4 == 3:
-            score.add_note(
-                "tom",
-                start=bar_t + 11 * S16,
-                duration=0.5,
-                freq=tom_freq,
-                velocity=0.7,
-                synth=tom_synth,
+        elif toms_on and bar % 8 in (3, 5):
+            # Intermittent tom commentary: a two-hit answer every 8 bars and
+            # a lone off-grid remark on the 5th bar, instead of the old
+            # metronomic every-4-bars double (it read as a steady clap).
+            tom_hits = (
+                [(11, 0.7, 1.0), (14, 0.5, 3 / 4)]
+                if bar % 8 == 3
+                else [(13, 0.45, 3 / 2)]
             )
-            score.add_note(
-                "tom",
-                start=bar_t + 14 * S16,
-                duration=0.5,
-                freq=tom_freq * 3 / 4,
-                velocity=0.5,
-                synth=tom_synth,
-            )
+            for step, velocity, ratio in tom_hits:
+                score.add_note(
+                    "tom",
+                    start=bar_t + step * S16,
+                    duration=0.5,
+                    freq=tom_freq * stretch_ratio(ratio, pseudo_octave),
+                    velocity=velocity,
+                    synth=tom_synth,
+                )
 
 
 def _palette_sketch_score() -> Score:
@@ -703,35 +796,49 @@ def _palette_sketch_score() -> Score:
 
 
 # ---------------------------------------------------------------------------
-# The full piece: 176 bars (~6:24 + tail) in three acts.
-#   Act I  "cool"   bars   0-55   S = 2.000
-#   Act II "heat"   bars  56-123  S ramps to 2.07 (peak from bar 114)
-#   Act III "anneal" bars 124-176 S eases home slower than it rose
+# The full piece: 142 bars (~5:10 + tail) in three acts (audition 6 tightened
+# the outer acts — the ABA form was there but the outro overstayed).
+#   Act I  "cool"   bars   0-45   S = 2.000
+#   Act II "heat"   bars  46-105  S ramps to the piece peak (from bar 94)
+#   Act III "anneal" bars 106-142 S eases home slower than it rose
 # ---------------------------------------------------------------------------
 
-_PIECE_BARS = 176
-_RAMP_START_BAR = 56.0
-_PEAK_BAR = 114.0
-_COOL_START_BAR = 124.0
-_HOME_AGAIN_BAR = 160.0
-_DRUM_STRETCH_LEAD_BARS = 4.0  # percussion warps ~8 s early
+_PIECE_BARS = 142
+_RAMP_START_BAR = 46.0
+_SIMMER_BAR = 70.0  # end of the slow early ramp; climax push starts here
+_PEAK_BAR = 94.0
+_COOL_START_BAR = 106.0
+_HOME_AGAIN_BAR = 126.0
+_DRUM_STRETCH_LEAD_BARS = 2.0  # percussion warps ~4 s early
+
+# The ramp is two-staged so the dark turn simmers at less than half the
+# peak stretch — the climax bars carry most of the warp.
+_SIMMER_FRACTION = 0.4  # share of the span reached by _SIMMER_BAR
 
 
 def _pseudo_octave_for_bar(bar: float) -> float:
     """The master S(t) curve, in bar time."""
-    span = PEAK_PSEUDO_OCTAVE - HOME_PSEUDO_OCTAVE
+    span = PIECE_PEAK_PSEUDO_OCTAVE - HOME_PSEUDO_OCTAVE
     if bar < _RAMP_START_BAR:
         return HOME_PSEUDO_OCTAVE
+    if bar < _SIMMER_BAR:
+        # Slow simmer through the dark turn.
+        return HOME_PSEUDO_OCTAVE + span * _SIMMER_FRACTION * _smoothstep(
+            (bar - _RAMP_START_BAR) / (_SIMMER_BAR - _RAMP_START_BAR)
+        )
     if bar < _PEAK_BAR:
-        return HOME_PSEUDO_OCTAVE + span * _smoothstep(
-            (bar - _RAMP_START_BAR) / (_PEAK_BAR - _RAMP_START_BAR)
+        # Faster climax push: the remaining span lands with the energy peak.
+        return HOME_PSEUDO_OCTAVE + span * (
+            _SIMMER_FRACTION
+            + (1.0 - _SIMMER_FRACTION)
+            * _smoothstep((bar - _SIMMER_BAR) / (_PEAK_BAR - _SIMMER_BAR))
         )
     if bar < _COOL_START_BAR:
-        return PEAK_PSEUDO_OCTAVE
+        return PIECE_PEAK_PSEUDO_OCTAVE
     if bar < _HOME_AGAIN_BAR:
         # Ease-in cooling: starts slow (annealing), reaches home by bar 160.
         x = (bar - _COOL_START_BAR) / (_HOME_AGAIN_BAR - _COOL_START_BAR)
-        return PEAK_PSEUDO_OCTAVE - span * x**2
+        return PIECE_PEAK_PSEUDO_OCTAVE - span * x**2
     return HOME_PSEUDO_OCTAVE
 
 
@@ -798,20 +905,34 @@ _ELEVEN_CARRIER_PARTIALS = [
 
 
 def _eleven_partials(pseudo_octave: float) -> list[dict[str, float]]:
+    taper = _stretch_taper(pseudo_octave)
     return [
-        {"ratio": stretch_ratio(ratio, pseudo_octave), "amp": amp}
+        {
+            "ratio": stretch_ratio(ratio, pseudo_octave),
+            "amp": _tilted_amp(ratio, amp, taper),
+        }
         for ratio, amp in _ELEVEN_CARRIER_PARTIALS
     ]
 
 
 def _echo_bus() -> SendBusSpec:
-    """Dotted-eighth delay for the arp (wet-only return)."""
+    """Dotted-eighth modulated delay for the arp + percussion accents
+    (wet-only return). Darkened repeats let the send run hot without
+    cluttering the top end."""
     return SendBusSpec(
         name="echo",
         effects=[
             EffectSpec(
-                "delay",
-                {"delay_seconds": 3.0 * S16, "feedback": 0.38, "mix": 1.0},
+                "mod_delay",
+                {
+                    "delay_ms": 3.0 * S16 * 1000.0,
+                    "feedback": 0.45,
+                    "feedback_lpf_hz": 3200.0,
+                    "mod_rate_hz": 0.13,
+                    "mod_depth_ms": 5.0,
+                    "stereo_offset_deg": 70.0,
+                    "mix": 1.0,
+                },
             )
         ],
         return_db=0.0,
@@ -856,16 +977,18 @@ def _ramp_spec(
 
 
 def _arp_echo_ride() -> AutomationSpec:
-    """The arp's delay send: absent, blooming through Act II, gone by the end."""
+    """The arp's delay send: present from the first arp bars, clearly
+    audible through theme A, blooming at the climax, gone by the end."""
     return _ramp_spec(
         AutomationTarget(kind="control", name="send_db"),
         [
-            (40.0, 56.0, -16.0, "linear"),
-            (88.0, 112.0, -10.0, "linear"),
-            (124.0, 152.0, -20.0, "linear"),
-            (152.0, 164.0, -34.0, "linear"),
+            (6.0, 14.0, -16.0, "linear"),
+            (30.0, 46.0, -12.0, "linear"),
+            (70.0, 94.0, -7.0, "linear"),
+            (106.0, 126.0, -16.0, "linear"),
+            (126.0, 138.0, -30.0, "linear"),
         ],
-        default=-34.0,
+        default=-30.0,
     )
 
 
@@ -875,12 +998,138 @@ def _bass_cutoff_arc() -> AutomationSpec:
     return _ramp_spec(
         AutomationTarget(kind="synth", name="cutoff_hz"),
         [
-            (24.0, 48.0, 640.0, "exp"),
-            (56.0, 64.0, 340.0, "exp"),
-            (72.0, 112.0, 780.0, "exp"),
-            (124.0, 148.0, 430.0, "exp"),
+            (18.0, 38.0, 640.0, "exp"),
+            (46.0, 54.0, 340.0, "exp"),
+            (62.0, 94.0, 780.0, "exp"),
+            (106.0, 126.0, 430.0, "exp"),
         ],
         default=420.0,
+    )
+
+
+def _arp_filter_ride() -> AutomationSpec:
+    """Sample-accurate LP cutoff on the arp's voice filter: veiled entrance,
+    open by theme A, darkened for the Act II turn, widest at the climax,
+    settling warm through the anneal and closing down for the final bars."""
+    return _ramp_spec(
+        AutomationTarget(kind="control", name="cutoff_hz"),
+        [
+            (6.0, 18.0, 3400.0, "exp"),
+            (22.0, 30.0, 4200.0, "exp"),
+            (46.0, 54.0, 2100.0, "exp"),
+            (62.0, 94.0, 6800.0, "exp"),
+            (106.0, 126.0, 3000.0, "exp"),
+            (130.0, 140.0, 1900.0, "exp"),
+        ],
+        default=1700.0,
+    )
+
+
+def _arp_filter_effect() -> EffectSpec:
+    return EffectSpec(
+        "analog_filter",
+        {
+            "filter_topology": "svf",
+            "mode": "lp",
+            "cutoff_hz": 1700.0,
+            "resonance_q": 1.1,
+            "quality": "great",
+        },
+        automation=[_arp_filter_ride()],
+    )
+
+
+def _arp_release_ride() -> AutomationSpec:
+    """Per-note release stretches in the washy dark turn and the cooling,
+    snaps back tight for the climax pattern."""
+    return _ramp_spec(
+        AutomationTarget(kind="synth", name="release"),
+        [
+            (46.0, 54.0, 0.55, "linear"),
+            (66.0, 70.0, 0.28, "linear"),
+            (106.0, 122.0, 0.5, "linear"),
+            (130.0, 140.0, 0.7, "linear"),
+        ],
+        default=0.28,
+    )
+
+
+def _arp_attack_ride() -> AutomationSpec:
+    """Bell onsets soften in the dark turn and the cooling, harden for the
+    climax — note-onset scalars, one step per struck bell."""
+    return _ramp_spec(
+        AutomationTarget(kind="synth", name="attack"),
+        [
+            (46.0, 54.0, 0.012, "linear"),
+            (70.0, 86.0, 0.003, "linear"),
+            (106.0, 126.0, 0.014, "linear"),
+        ],
+        default=0.004,
+    )
+
+
+def _arp_decay_ride() -> AutomationSpec:
+    """Bell body decay: quick strikes for the groove, longer singing bodies
+    in the dark turn and the cooling, tightest at the climax."""
+    return _ramp_spec(
+        AutomationTarget(kind="synth", name="decay"),
+        [
+            (14.0, 30.0, 0.14, "linear"),
+            (46.0, 54.0, 0.24, "linear"),
+            (70.0, 94.0, 0.06, "linear"),
+            (106.0, 126.0, 0.28, "linear"),
+        ],
+        default=0.1,
+    )
+
+
+def _pad_morph_ride() -> AutomationSpec:
+    """The pad's phase dispersion blooms with the heat — glassy and focused
+    at home, smeared wide at full stretch, cleaner than ever once annealed."""
+    return _ramp_spec(
+        AutomationTarget(kind="synth", name="spectral_morph_amount"),
+        [
+            (46.0, 70.0, 0.45, "linear"),
+            (70.0, 94.0, 0.6, "linear"),
+            (106.0, 130.0, 0.2, "linear"),
+        ],
+        default=0.3,
+    )
+
+
+def _pad_attack_ride() -> AutomationSpec:
+    """Slower pad blooms through the cooling act."""
+    return _ramp_spec(
+        AutomationTarget(kind="synth", name="attack"),
+        [
+            (86.0, 98.0, 0.6, "linear"),
+            (106.0, 130.0, 1.6, "linear"),
+        ],
+        default=0.9,
+    )
+
+
+def _bass_resonance_ride() -> AutomationSpec:
+    """The ladder's Q leans in with the heat, relaxes for the anneal."""
+    return _ramp_spec(
+        AutomationTarget(kind="synth", name="resonance_q"),
+        [
+            (62.0, 94.0, 1.6, "linear"),
+            (106.0, 126.0, 0.8, "linear"),
+        ],
+        default=0.9,
+    )
+
+
+def _eleven_morph_ride() -> AutomationSpec:
+    """The 11-carrier disperses further as it approaches the climax."""
+    return _ramp_spec(
+        AutomationTarget(kind="synth", name="spectral_morph_amount"),
+        [
+            (70.0, 94.0, 0.72, "linear"),
+            (98.0, 106.0, 0.5, "linear"),
+        ],
+        default=0.5,
     )
 
 
@@ -889,8 +1138,8 @@ def _pad_hall_ride() -> AutomationSpec:
     return _ramp_spec(
         AutomationTarget(kind="control", name="send_db"),
         [
-            (56.0, 100.0, -6.0, "linear"),
-            (124.0, 160.0, -10.0, "linear"),
+            (46.0, 82.0, -6.0, "linear"),
+            (106.0, 134.0, -10.0, "linear"),
         ],
         default=-10.0,
     )
@@ -965,10 +1214,20 @@ def _anneal_score() -> Score:
 
     # Automation rides (attached post-hoc to the palette voices).
     score.voices["arp"].sends.append(
-        VoiceSend(target="echo", send_db=-34.0, automation=[_arp_echo_ride()])
+        VoiceSend(target="echo", send_db=-30.0, automation=[_arp_echo_ride()])
     )
-    score.voices["bass"].automation.append(_bass_cutoff_arc())
+    score.voices["arp"].effects.append(_arp_filter_effect())
+    score.voices["arp"].automation.extend(
+        [_arp_release_ride(), _arp_attack_ride(), _arp_decay_ride()]
+    )
+    score.voices["bass"].automation.extend([_bass_cutoff_arc(), _bass_resonance_ride()])
+    score.voices["pad"].automation.extend([_pad_morph_ride(), _pad_attack_ride()])
+    score.voices["eleven"].automation.append(_eleven_morph_ride())
     score.voices["pad"].sends[0].automation.append(_pad_hall_ride())
+    # The intermittent tom / open-hat remarks trail into the same echo the
+    # arp lives in — clap-style dub throws instead of dry backbeat hits.
+    score.voices["tom"].sends.append(VoiceSend(target="echo", send_db=-10.0))
+    score.voices["hat_open"].sends.append(VoiceSend(target="echo", send_db=-14.0))
 
     def pad(bar: int, n: int, chord: list[tuple[float, list[float]]]) -> None:
         _place_pad(score, bar, n, chord, _pseudo_octave_for_bar(float(bar)))
@@ -980,6 +1239,8 @@ def _anneal_score() -> Score:
         pattern: object = None,
         velocity_scale: float = 1.0,
         vibrato: bool = False,
+        duration_default: float = 0.11,
+        synth_extra: dict[str, object] | None = None,
     ) -> None:
         # Sample S per 2 bars so the ramp is smooth (~2 cents per step).
         for cell in range(bar, bar + n, 2):
@@ -991,8 +1252,10 @@ def _anneal_score() -> Score:
                 chord,
                 _pseudo_octave_for_bar(float(cell)),
                 pattern=pattern,  # type: ignore[arg-type]
+                duration_default=duration_default,
                 velocity_scale=velocity_scale,
                 vibrato=vibrato,
+                synth_extra=synth_extra,
             )
 
     def bass(bar: int, n: int, root: float, fifth_pickup: bool = False) -> None:
@@ -1019,162 +1282,197 @@ def _anneal_score() -> Score:
                 **kwargs,  # type: ignore[arg-type]
             )
 
-    # ---- Act I: cool (bars 0-55) --------------------------------------
-    pad(0, 8, TONIC_4_6_7)
-    pad(8, 4, TONIC_4_6_7)
-    pad(12, 4, FOURTH_OPEN)
-    arp(8, 4, TONIC_4_6_7, velocity_scale=0.8)
-    arp(12, 4, FOURTH_OPEN, velocity_scale=0.85)
+    # ---- Act I: cool (bars 0-45) --------------------------------------
+    pad(0, 6, TONIC_4_6_7)
+    pad(6, 4, TONIC_4_6_7)
+    pad(10, 4, FOURTH_OPEN)
+    # The arp enters in its slow half-time gear; the full 16th cycle only
+    # arrives with the beat at bar 14.
+    arp(
+        6,
+        4,
+        TONIC_4_6_7,
+        pattern=_ARP_CYCLE_HALF,
+        velocity_scale=0.8,
+        vibrato=True,
+        synth_extra=_WASH_BELLS,
+    )
+    arp(
+        10,
+        4,
+        FOURTH_OPEN,
+        pattern=_ARP_CYCLE_HALF,
+        velocity_scale=0.85,
+        vibrato=True,
+        synth_extra=_WASH_BELLS,
+    )
 
-    pad(16, 4, TONIC_4_6_7)
-    pad(20, 2, FIFTH_6_7_8)
+    pad(14, 4, TONIC_4_6_7)
+    pad(18, 2, FIFTH_6_7_8)
+    pad(20, 2, TONIC_4_6_7)
+    arp(14, 4, TONIC_4_6_7)
+    arp(18, 2, FIFTH_6_7_8)
+    arp(20, 2, TONIC_4_6_7)
+    bass(14, 4, 1.0)
+    bass(18, 2, 3 / 2)
+    bass(20, 2, 1.0)
+    drums(14, 8, 1.0, kick_on=False, open_hat_on=False, toms_on=False)
+
+    # Kick arrives straight into the 2-bar chord cycle (audition 6 cut the
+    # standalone kick-entrance block — the groove was repeating itself).
     pad(22, 2, TONIC_4_6_7)
-    arp(16, 4, TONIC_4_6_7)
-    arp(20, 2, FIFTH_6_7_8)
+    pad(24, 2, FOURTH_OPEN)
+    pad(26, 2, FIFTH_6_7_8)
+    pad(28, 2, TONIC_4_6_7)
     arp(22, 2, TONIC_4_6_7)
-    bass(16, 4, 1.0)
-    bass(20, 2, 3 / 2)
+    arp(24, 2, FOURTH_OPEN, pattern=_ARP_CYCLE_A2)
+    arp(26, 2, FIFTH_6_7_8, duration_default=0.18)
+    arp(28, 2, TONIC_4_6_7, pattern=_ARP_CYCLE_A2)
     bass(22, 2, 1.0)
-    drums(16, 8, 1.0, kick_on=False, open_hat_on=False, toms_on=False)
+    bass(24, 2, 4 / 3)
+    bass(26, 2, 3 / 2)
+    bass(28, 2, 1.0)
+    drums(22, 8, 1.0)
 
-    pad(24, 4, TONIC_4_6_7)
-    pad(28, 4, FOURTH_OPEN)
-    arp(24, 4, TONIC_4_6_7)
-    arp(28, 4, FOURTH_OPEN)
-    bass(24, 4, 1.0)
-    bass(28, 4, 4 / 3)
-    drums(24, 8, 1.0, open_hat_on=False, toms_on=False)
-
-    pad(32, 2, TONIC_4_6_7)
-    pad(34, 2, FOURTH_OPEN)
-    pad(36, 2, FIFTH_6_7_8)
-    pad(38, 2, TONIC_4_6_7)
-    arp(32, 2, TONIC_4_6_7)
-    arp(34, 2, FOURTH_OPEN)
-    arp(36, 2, FIFTH_6_7_8)
-    arp(38, 2, TONIC_4_6_7)
-    bass(32, 2, 1.0)
-    bass(34, 2, 4 / 3)
-    bass(36, 2, 3 / 2)
-    bass(38, 2, 1.0)
-    drums(32, 8, 1.0)
-
-    # Theme A: the motif statement the ending will answer.
-    for offset, chord, root, n in [
-        (40, TONIC_4_6_7, 1.0, 4),
-        (44, FOURTH_OPEN, 4 / 3, 4),
-        (48, FIFTH_6_7_8, 3 / 2, 2),
-        (50, TONIC_4_6_7, 1.0, 2),
-        (52, FOURTH_OPEN, 4 / 3, 2),
-        (54, FIFTH_6_7_8, 3 / 2, 2),
+    # Theme A: the motif statement the ending will answer. The arp trades
+    # bars between the main cycle and its A2 variation.
+    for offset, chord, root, n, arp_pattern in [
+        (30, TONIC_4_6_7, 1.0, 4, None),
+        (34, FOURTH_OPEN, 4 / 3, 4, _ARP_CYCLE_A2),
+        (38, FIFTH_6_7_8, 3 / 2, 2, None),
+        (40, TONIC_4_6_7, 1.0, 2, _ARP_CYCLE_A2),
+        (42, FOURTH_OPEN, 4 / 3, 2, None),
+        (44, FIFTH_6_7_8, 3 / 2, 2, _ARP_CYCLE_A2),
     ]:
         pad(offset, n, chord)
-        arp(offset, n, chord)
+        arp(offset, n, chord, pattern=arp_pattern)
         bass(offset, n, root, fifth_pickup=True)
-    drums(40, 15, 1.0, fill_bars=True)
-    # bar 55: percussion breath before the heat.
+    drums(30, 15, 1.0, fill_bars=True)
+    # bar 45: percussion breath before the heat.
 
-    # ---- Act II: heat (bars 56-123) ------------------------------------
-    pad(56, 4, MINOR_16_19_24)
-    pad(60, 4, NEUTRAL_SUBDOMINANT)
-    arp(56, 8, MINOR_16_19_24, pattern=_ARP_CYCLE_B, vibrato=True)
-    bass(56, 4, 1.0)
-    bass(60, 4, 4 / 3)
-    drums(56, 8, 1.0, kick_pattern="sparse", open_hat_on=False)
+    # ---- Act II: heat (bars 46-105) ------------------------------------
+    pad(46, 4, MINOR_16_19_24)
+    # Audition 5: even pad-only, the neutral triad's 49/40 thirds are too
+    # dissonant for this exposed moment. The dark turn keeps the open fourth
+    # here; the neutral color returns only inside the denser textures at
+    # bars 62 and 74.
+    pad(50, 4, FOURTH_OPEN)
+    arp(46, 4, MINOR_16_19_24, pattern=_ARP_CYCLE_B, vibrato=True)
+    arp(50, 4, FOURTH_OPEN, pattern=_ARP_CYCLE_B, vibrato=True)
+    bass(46, 4, 1.0)
+    bass(50, 4, 4 / 3)
+    drums(46, 8, 1.0, kick_pattern="sparse", open_hat_on=False)
 
-    pad(64, 4, MINOR_16_19_24)
-    pad(68, 4, FIFTH_6_7_8)
-    arp(64, 4, MINOR_16_19_24, pattern=_ARP_CYCLE_B, vibrato=True)
-    arp(68, 4, FIFTH_6_7_8, pattern=_ARP_CYCLE_B, vibrato=True)
-    bass(64, 4, 1.0)
-    bass(68, 4, 3 / 2)
-    drums(64, 8, 1.0)
+    pad(54, 4, MINOR_16_19_24)
+    pad(58, 4, FIFTH_6_7_8)
+    arp(54, 4, MINOR_16_19_24, pattern=_ARP_CYCLE_B, vibrato=True)
+    arp(58, 4, FIFTH_6_7_8, pattern=_ARP_CYCLE_B, vibrato=True)
+    bass(54, 4, 1.0)
+    bass(58, 4, 3 / 2)
+    drums(54, 8, 1.0)
 
-    for offset, chord, root in [
-        (72, MINOR_16_19_24, 1.0),
-        (76, FOURTH_OPEN, 4 / 3),
-        (80, NEUTRAL_SUBDOMINANT, 4 / 3),
-        (84, FIFTH_6_7_8, 3 / 2),
+    # 11-carrier enters; a two-chord bridge into the energy peak (audition 6
+    # halved the old four-chord bridge — the piece was circling).
+    for offset, chord, arp_chord, root, arp_pattern in [
+        (62, NEUTRAL_SUBDOMINANT, FOURTH_OPEN, 4 / 3, None),
+        (66, FIFTH_6_7_8, FIFTH_6_7_8, 3 / 2, _ARP_CYCLE_A2),
     ]:
         pad(offset, 4, chord)
-        arp(offset, 4, chord)
+        arp(offset, 4, arp_chord, pattern=arp_pattern)
         bass(offset, 4, root, fifth_pickup=True)
-    drums(72, 16, 1.0, fill_bars=True)
+    drums(62, 8, 1.0, fill_bars=True)
 
-    for offset, chord, root in [
-        (88, MINOR_16_19_24, 1.0),
-        (92, NEUTRAL_SUBDOMINANT, 4 / 3),
-        (96, FIFTH_6_7_8, 3 / 2),
-        (100, MINOR_16_19_24, 1.0),
+    for offset, chord, arp_chord, root in [
+        (70, MINOR_16_19_24, MINOR_16_19_24, 1.0),
+        (74, NEUTRAL_SUBDOMINANT, FOURTH_OPEN, 4 / 3),
+        (78, FIFTH_6_7_8, FIFTH_6_7_8, 3 / 2),
+        (82, MINOR_16_19_24, MINOR_16_19_24, 1.0),
     ]:
         pad(offset, 4, chord)
-        arp(offset, 4, chord, pattern=_ARP_CYCLE_C, velocity_scale=1.05)
+        arp(offset, 4, arp_chord, pattern=_ARP_CYCLE_C, velocity_scale=1.05)
         bass(offset, 4, root, fifth_pickup=True)
-    drums(88, 16, 1.0, kick_pattern="dense", fill_bars=True)
+    drums(70, 16, 1.0, kick_pattern="dense", fill_bars=True)
 
-    pad(104, 4, FIFTH_6_7_8)
-    pad(108, 4, FIFTH_6_7_8)
-    arp(104, 8, FIFTH_6_7_8, pattern=_ARP_CYCLE_C, velocity_scale=1.1)
-    bass(104, 7, 3 / 2, fifth_pickup=True)
-    drums(104, 7, 1.0, kick_pattern="dense")
-    # bar 111: full percussion dropout — one bar of held breath.
+    pad(86, 4, FIFTH_6_7_8)
+    pad(90, 4, FIFTH_6_7_8)
+    arp(86, 8, FIFTH_6_7_8, pattern=_ARP_CYCLE_C, velocity_scale=1.1)
+    bass(86, 7, 3 / 2, fifth_pickup=True)
+    drums(86, 7, 1.0, kick_pattern="dense")
+    # bar 93: full percussion dropout — one bar of held breath.
 
-    pad(112, 4, SPICE_CHORD)
-    arp(112, 4, SPICE_CHORD, pattern=_ARP_CYCLE_C, velocity_scale=1.1)
-    bass(112, 4, 1.0)
-    drums(113, 3, 1.0, kick_pattern="dense", fill_bars=True)
+    pad(94, 4, SPICE_CHORD)
+    arp(94, 4, SPICE_CHORD, pattern=_ARP_CYCLE_C, velocity_scale=1.1)
+    bass(94, 4, 1.0)
+    drums(95, 3, 1.0, kick_pattern="dense", fill_bars=True)
 
-    pad(116, 4, TONIC_4_6_7)
-    pad(120, 4, TONIC_4_6_7)
-    arp(116, 8, TONIC_4_6_7)
-    bass(116, 7, 1.0)
-    drums(116, 7, 1.0)
-    _place_eleven_carrier(score, 72, 124)
-    # bar 123: percussion breath before the cooling.
+    pad(98, 4, TONIC_4_6_7)
+    pad(102, 4, TONIC_4_6_7)
+    arp(98, 4, TONIC_4_6_7)
+    arp(
+        102,
+        4,
+        TONIC_4_6_7,
+        pattern=_ARP_CYCLE_HALF,
+        vibrato=True,
+        synth_extra=_WASH_BELLS,
+    )
+    bass(98, 7, 1.0)
+    drums(98, 7, 1.0)
+    _place_eleven_carrier(score, 62, 106)
+    # bar 105: percussion breath before the cooling.
 
-    # ---- Act III: anneal (bars 124-176) --------------------------------
-    for offset, chord, root in [
-        (124, TONIC_4_6_7, 1.0),
-        (128, FOURTH_OPEN, 4 / 3),
-        (132, TONIC_4_6_7, 1.0),
-        (136, FOURTH_OPEN, 4 / 3),
+    # ---- Act III: anneal (bars 106-142) --------------------------------
+    # Audition 6 compressed the cooling from 28 bars to 12 — the reprise was
+    # overstaying its welcome by the outro.
+    for offset, chord, root, arp_pattern in [
+        (106, TONIC_4_6_7, 1.0, _ARP_CYCLE_B),
+        (110, FOURTH_OPEN, 4 / 3, _ARP_CYCLE_B),
+        (114, TONIC_4_6_7, 1.0, _ARP_CYCLE_HALF),
     ]:
         pad(offset, 4, chord)
-        arp(offset, 4, chord, pattern=_ARP_CYCLE_B, vibrato=True)
+        arp(
+            offset,
+            4,
+            chord,
+            pattern=arp_pattern,
+            vibrato=True,
+            velocity_scale=0.9,
+            synth_extra=_WASH_BELLS if arp_pattern is _ARP_CYCLE_HALF else None,
+        )
         bass(offset, 4, root)
-    drums(124, 16, 1.0, open_hat_on=False)
+    drums(106, 8, 1.0, open_hat_on=False)
+    drums(114, 4, 1.0, kick_pattern="sparse", open_hat_on=False, toms_on=False)
 
-    for offset, chord, root in [
-        (140, TONIC_4_6_7, 1.0),
-        (144, FIFTH_6_7_8, 3 / 2),
-        (148, TONIC_4_6_7, 1.0),
-    ]:
-        pad(offset, 4, chord)
-        arp(offset, 4, chord, pattern=_ARP_CYCLE_B, vibrato=True, velocity_scale=0.9)
-        bass(offset, 4, root)
-    drums(140, 12, 1.0, kick_pattern="sparse", open_hat_on=False, toms_on=False)
-
-    # Theme A returns as the world settles home.
-    for offset, chord, root, n in [
-        (152, TONIC_4_6_7, 1.0, 4),
-        (156, FOURTH_OPEN, 4 / 3, 4),
-        (160, FIFTH_6_7_8, 3 / 2, 2),
-        (162, TONIC_4_6_7, 1.0, 2),
-        (164, FOURTH_OPEN, 4 / 3, 2),
-        (166, FIFTH_6_7_8, 3 / 2, 2),
+    # Theme A returns as the world settles home, trading bars with the A2
+    # variation exactly as the Act I statement did.
+    for offset, chord, root, n, arp_pattern in [
+        (118, TONIC_4_6_7, 1.0, 4, None),
+        (122, FOURTH_OPEN, 4 / 3, 4, _ARP_CYCLE_A2),
+        (126, FIFTH_6_7_8, 3 / 2, 2, None),
+        (128, TONIC_4_6_7, 1.0, 2, _ARP_CYCLE_A2),
+        (130, FOURTH_OPEN, 4 / 3, 2, None),
+        (132, FIFTH_6_7_8, 3 / 2, 2, _ARP_CYCLE_A2),
     ]:
         pad(offset, n, chord)
-        arp(offset, n, chord, velocity_scale=0.9)
+        arp(offset, n, chord, pattern=arp_pattern, velocity_scale=0.9)
         bass(offset, n, root)
-    drums(152, 12, 1.0, kick_pattern="sparse", open_hat_on=False, toms_on=False)
+    drums(118, 12, 1.0, kick_pattern="sparse", open_hat_on=False, toms_on=False)
 
     # Home: the final maximum-fusion tonic, room only underneath.
-    pad(168, 8, TONIC_4_6_7)
-    arp(168, 4, TONIC_4_6_7, velocity_scale=0.75)
-    bass(168, 4, 1.0)
+    pad(134, 8, TONIC_4_6_7)
+    arp(
+        134,
+        4,
+        TONIC_4_6_7,
+        pattern=_ARP_CYCLE_HALF,
+        velocity_scale=0.75,
+        vibrato=True,
+        synth_extra=_WASH_BELLS,
+    )
+    bass(134, 4, 1.0)
     score.add_note(
         "pad",
-        start=168 * BAR,
+        start=134 * BAR,
         duration=8 * BAR + 2.0,
         partial=stretch_ratio(7 / 4, HOME_PSEUDO_OCTAVE) * 2.0,
         amp_db=-22.0,
@@ -1186,18 +1484,18 @@ def _anneal_score() -> Score:
 
 
 _ANNEAL_SECTIONS = (
-    PieceSection("Act I: cool — room and pad", 0.0, 8 * BAR),
-    PieceSection("Act I: arp motif enters", 8 * BAR, 16 * BAR),
-    PieceSection("Act I: beat assembles", 16 * BAR, 40 * BAR),
-    PieceSection("Act I: theme A", 40 * BAR, 56 * BAR),
-    PieceSection("Act II: dark turn (16:19:24)", 56 * BAR, 72 * BAR),
-    PieceSection("Act II: 11-carrier, stretch deepens", 72 * BAR, 88 * BAR),
-    PieceSection("Act II: energy peak", 88 * BAR, 111 * BAR),
-    PieceSection("Act II: dropout + spice-chord climax", 111 * BAR, 116 * BAR),
-    PieceSection("Act II: afterglow at full stretch", 116 * BAR, 124 * BAR),
-    PieceSection("Act III: cooling", 124 * BAR, 152 * BAR),
-    PieceSection("Act III: theme A returns", 152 * BAR, 168 * BAR),
-    PieceSection("Act III: home", 168 * BAR, 176 * BAR + 4.0),
+    PieceSection("Act I: cool — room and pad", 0.0, 6 * BAR),
+    PieceSection("Act I: arp motif enters", 6 * BAR, 14 * BAR),
+    PieceSection("Act I: beat assembles", 14 * BAR, 30 * BAR),
+    PieceSection("Act I: theme A", 30 * BAR, 46 * BAR),
+    PieceSection("Act II: dark turn (16:19:24)", 46 * BAR, 62 * BAR),
+    PieceSection("Act II: 11-carrier, stretch deepens", 62 * BAR, 70 * BAR),
+    PieceSection("Act II: energy peak", 70 * BAR, 93 * BAR),
+    PieceSection("Act II: dropout + spice-chord climax", 93 * BAR, 98 * BAR),
+    PieceSection("Act II: afterglow at full stretch", 98 * BAR, 106 * BAR),
+    PieceSection("Act III: cooling", 106 * BAR, 118 * BAR),
+    PieceSection("Act III: theme A returns", 118 * BAR, 134 * BAR),
+    PieceSection("Act III: home", 134 * BAR, 142 * BAR + 4.0),
 )
 
 

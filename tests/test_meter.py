@@ -2,9 +2,24 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
-from code_musics.meter import B, E, Groove, M, Q, S, Timeline, dotted, triplet, tuplet
+from code_musics.meter import (
+    B,
+    E,
+    Groove,
+    M,
+    Q,
+    S,
+    TempoMap,
+    TempoPoint,
+    Timeline,
+    dotted,
+    triplet,
+    tuplet,
+)
 
 
 def test_timeline_converts_common_note_values_to_seconds() -> None:
@@ -74,6 +89,85 @@ def test_timeline_accepts_explicit_straight_groove() -> None:
 
     assert timeline.position(B(0.5)) == pytest.approx(0.25)
     assert timeline.locate(0.25).absolute_beats == pytest.approx(0.5)
+
+
+def test_constant_tempo_map_matches_fixed_bpm_timeline() -> None:
+    timeline = Timeline.from_tempo_map(TempoMap.constant(120.0), meter=(4, 4))
+
+    assert timeline.duration(Q) == pytest.approx(0.5)
+    assert timeline.at(bar=3, beat=1.0) == pytest.approx(4.5)
+    assert timeline.position(M(2.5)) == pytest.approx(3.0)
+
+    location = timeline.locate(4.5)
+    assert location.bar == 3
+    assert location.beat_within_bar == pytest.approx(1.0)
+    assert location.absolute_beats == pytest.approx(9.0)
+
+
+def test_hold_tempo_map_converts_beats_and_seconds_across_anchor() -> None:
+    tempo_map = TempoMap(
+        points=(
+            TempoPoint(beat=0.0, bpm=120.0, curve="hold"),
+            TempoPoint(beat=2.0, bpm=60.0),
+        )
+    )
+    timeline = Timeline.from_tempo_map(tempo_map)
+
+    assert timeline.position(B(1.0)) == pytest.approx(0.5)
+    assert timeline.position(B(2.0)) == pytest.approx(1.0)
+    assert timeline.position(B(3.0)) == pytest.approx(2.0)
+    assert timeline.duration_at(B(2.0), Q) == pytest.approx(1.0)
+    assert timeline.locate(2.0).absolute_beats == pytest.approx(3.0)
+
+
+def test_linear_tempo_map_integrates_bpm_curve_and_round_trips() -> None:
+    tempo_map = TempoMap(
+        points=(
+            TempoPoint(beat=0.0, bpm=120.0),
+            TempoPoint(beat=4.0, bpm=60.0),
+        )
+    )
+    timeline = Timeline.from_tempo_map(tempo_map)
+
+    assert tempo_map.bpm_at(2.0) == pytest.approx(90.0)
+
+    expected_seconds = (60.0 / -15.0) * math.log(60.0 / 120.0)
+    assert timeline.position(B(4.0)) == pytest.approx(expected_seconds)
+    assert timeline.locate(expected_seconds).absolute_beats == pytest.approx(4.0)
+    assert tempo_map.beats_at_seconds(timeline.position(B(2.5))) == pytest.approx(2.5)
+
+
+def test_tempo_map_supports_groove_round_trip() -> None:
+    timeline = Timeline.from_tempo_map(
+        TempoMap(
+            points=(
+                TempoPoint(beat=0.0, bpm=120.0, curve="hold"),
+                TempoPoint(beat=2.0, bpm=60.0),
+            )
+        ),
+        groove=Groove.eighths_swing(2.0 / 3.0),
+    )
+
+    offbeat_seconds = timeline.position(B(0.5))
+
+    assert offbeat_seconds == pytest.approx(1.0 / 3.0)
+    assert timeline.locate(offbeat_seconds).absolute_beats == pytest.approx(0.5)
+
+
+def test_tempo_map_validates_points() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        TempoMap(points=())
+    with pytest.raises(ValueError, match="first tempo point"):
+        TempoMap(points=(TempoPoint(beat=1.0, bpm=120.0),))
+    with pytest.raises(ValueError, match="strictly increasing"):
+        TempoMap(
+            points=(
+                TempoPoint(beat=0.0, bpm=120.0),
+                TempoPoint(beat=0.0, bpm=90.0),
+            )
+        )
+    with pytest.raises(ValueError, match="curve must be"):
+        TempoPoint(beat=0.0, bpm=120.0, curve="exp")  # type: ignore[arg-type]
 
 
 # --- Groove validation ---

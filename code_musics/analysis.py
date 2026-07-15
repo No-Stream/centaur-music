@@ -122,10 +122,18 @@ class AudioAnalysis:
     # products from nonlinear interaction between tones" (real distortion)
     # from "integer harmonics of the dominant bin" (which THD conflates with
     # distortion but is legitimate spectral content on JI chords, drum bodies,
-    # saw waves, etc.). ``imd_ratio`` is energy in IMD products /
-    # energy in harmonics; 0.0 = no IMD, 1.0 = equal, >1.0 = IMD dominates
-    # ("crunchy" character). ``imd_detection`` is "two_tone" when a valid
-    # two-tone probe landed, else "single_tone" (ratio forced to 0.0). See
+    # saw waves, etc.). Both harmonic and IMD bin power are measured above
+    # the local spectral floor (median magnitude in a window around each
+    # bin), so diffuse broadband energy (reverb tails, noise beds) — which
+    # raises the floor uniformly without adding discrete spurs — does not
+    # inflate the ratio. ``imd_ratio`` is energy in IMD products / energy
+    # in harmonics; 0.0 = no IMD, 1.0 = equal, >1.0 = IMD dominates
+    # ("crunchy" character). ``imd_detection`` is "two_tone" when a valid,
+    # floor-dominant two-tone probe landed; "single_tone" when only one
+    # tone was found (ratio forced to 0.0); or "noise_dominated" when a
+    # tone was found but doesn't stand clearly above its local floor, in
+    # which case the ratio is also forced to 0.0 but should not be read as
+    # "no distortion" evidence — the probe simply couldn't tell. See
     # :func:`code_musics.engines._instrumentation.intermodulation_ratio`.
     imd_ratio: float
     imd_detection: str
@@ -957,7 +965,11 @@ def build_score_timeline(
         score.resolved_timing_notes(),
         key=lambda note: (note.resolved_start, note.voice_name, note.note_index),
     )
-    return {
+    timeline_metadata = None
+    if score.timeline is not None:
+        timeline_metadata = score.timeline.to_metadata()
+
+    payload: dict[str, Any] = {
         "total_duration_seconds": score.total_dur,
         "window_seconds": window_seconds,
         "voice_names": list(score.voices),
@@ -989,6 +1001,28 @@ def build_score_timeline(
             total_duration=score.total_dur,
             window_seconds=window_seconds,
         ),
+    }
+    if timeline_metadata is not None:
+        payload["musical_time"] = timeline_metadata
+        for note_record, note in zip(payload["notes"], resolved_notes, strict=True):
+            note_record["authored_musical_location"] = _musical_location_metadata(
+                score.timeline,
+                note.authored_start,
+            )
+            note_record["resolved_musical_location"] = _musical_location_metadata(
+                score.timeline,
+                note.resolved_start,
+            )
+    return payload
+
+
+def _musical_location_metadata(timeline: Any, seconds: float) -> dict[str, float | int]:
+    location = timeline.locate(seconds)
+    return {
+        "bar": location.bar,
+        "beat": location.beat,
+        "absolute_beats": location.absolute_beats,
+        "seconds": location.seconds,
     }
 
 
@@ -1664,10 +1698,11 @@ def _build_artifact_risk_report(
             "pre_master_thd_pct": round(pre_master_mix_analysis.thd_pct, 2),
             "post_master_thd_pct": round(pre_export_mix_analysis.thd_pct, 2),
         }
-        # Require both detections be valid (two_tone) — a single_tone
-        # detection forces ratio to 0.0, which would produce phantom
-        # deltas when the content shifts between one-tone and two-tone
-        # regimes (e.g. a transient-heavy window vs. a sustained one).
+        # Require both detections be valid (two_tone) — a single_tone or
+        # noise_dominated detection forces ratio to 0.0, which would
+        # produce phantom deltas when the content shifts between one-tone,
+        # two-tone, and floor-buried regimes (e.g. a transient-heavy window
+        # vs. a sustained one, or a tone emerging from under a reverb tail).
         both_detected = (
             pre_master_mix_analysis.imd_detection == "two_tone"
             and pre_export_mix_analysis.imd_detection == "two_tone"

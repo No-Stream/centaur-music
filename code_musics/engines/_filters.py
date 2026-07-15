@@ -50,16 +50,16 @@ _NEWTON_JACOBIAN_FLOOR: float = 1e-6
 class FilterParams:
     """Bundles every kwarg accepted by :func:`apply_filter`."""
 
-    resonance_q: float = 0.707
+    resonance_q: FilterControlValue = 0.707
     filter_mode: str = "lowpass"
-    filter_drive: float = 0.0
+    filter_drive: FilterControlValue = 0.0
     filter_even_harmonics: float = 0.0
     filter_topology: str = "svf"
     bass_compensation: float = 0.5
-    filter_morph: float = 0.0
-    hpf_cutoff_hz: float = 0.0
+    filter_morph: FilterControlValue = 0.0
+    hpf_cutoff_hz: FilterControlValue = 0.0
     hpf_resonance_q: float = 0.707
-    feedback_amount: float = 0.0
+    feedback_amount: FilterControlValue = 0.0
     feedback_saturation: float = 0.3
     filter_solver: str = "newton"
     max_newton_iters: int = _DEFAULT_NEWTON_MAX_ITERS
@@ -109,6 +109,13 @@ _LP: int = 0
 _BP: int = 1
 _HP: int = 2
 _NOTCH: int = 3
+_TOPO_LADDER: int = 1
+_TOPO_SALLEN_KEY: int = 2
+_TOPO_CASCADE: int = 3
+_TOPO_SEM: int = 4
+_TOPO_JUPITER: int = 5
+_TOPO_K35: int = 6
+_TOPO_DIODE: int = 7
 
 _MODE_STR_TO_INT: dict[str, int] = {
     "lowpass": _LP,
@@ -116,10 +123,182 @@ _MODE_STR_TO_INT: dict[str, int] = {
     "highpass": _HP,
     "notch": _NOTCH,
 }
+_TOPOLOGY_STR_TO_INT: dict[str, int] = {
+    "ladder": _TOPO_LADDER,
+    "sallen_key": _TOPO_SALLEN_KEY,
+    "cascade": _TOPO_CASCADE,
+    "sem": _TOPO_SEM,
+    "jupiter": _TOPO_JUPITER,
+    "k35": _TOPO_K35,
+    "diode": _TOPO_DIODE,
+}
 
 # Max cutoff as a fraction of sample rate — ~19.8 kHz at 44.1 kHz.
 # Prevents tan(pi * fc / sr) from blowing up near Nyquist.
 _NYQUIST_CLAMP_RATIO: float = 0.45
+
+FilterControlValue = float | np.ndarray
+
+
+@dataclass(frozen=True)
+class ResolvedFilterControls:
+    """Validated filter controls, preserving scalars when no profile is needed."""
+
+    cutoff_profile: FilterControlValue
+    resonance_q: FilterControlValue
+    filter_drive: FilterControlValue
+    filter_morph: FilterControlValue
+    hpf_cutoff_hz: FilterControlValue
+    feedback_amount: FilterControlValue
+    profiled_controls: frozenset[str]
+
+
+def _is_array_control(value: FilterControlValue) -> bool:
+    return isinstance(value, np.ndarray)
+
+
+def _validate_control_array(name: str, value: np.ndarray, n_samples: int) -> np.ndarray:
+    arr = np.asarray(value, dtype=np.float64)
+    if arr.ndim != 1:
+        raise ValueError(f"{name} must be a scalar or 1-D profile")
+    if arr.shape[0] != n_samples:
+        raise ValueError(
+            f"{name} profile length {arr.shape[0]} must match signal length {n_samples}"
+        )
+    if not np.all(np.isfinite(arr)):
+        raise ValueError(f"{name} profile values must be finite")
+    return arr
+
+
+def _resolve_scalar_or_profile(
+    *,
+    name: str,
+    value: FilterControlValue,
+    n_samples: int,
+    lower_bound: float,
+    upper_bound: float | None,
+    fold_constant: bool = True,
+) -> FilterControlValue:
+    if isinstance(value, np.ndarray):
+        arr = _validate_control_array(name, value, n_samples)
+        clipped = np.maximum(arr, lower_bound)
+        if upper_bound is not None:
+            clipped = np.minimum(clipped, upper_bound)
+        if fold_constant and clipped.size > 0 and np.all(clipped == clipped[0]):
+            return float(clipped[0])
+        return clipped.astype(np.float64, copy=False)
+
+    scalar = float(value)
+    if not math.isfinite(scalar):
+        raise ValueError(f"{name} must be finite")
+    scalar = max(lower_bound, scalar)
+    if upper_bound is not None:
+        scalar = min(scalar, upper_bound)
+    return scalar
+
+
+def resolve_filter_controls(
+    *,
+    cutoff_profile: FilterControlValue,
+    resonance_q: FilterControlValue,
+    filter_drive: FilterControlValue,
+    filter_morph: FilterControlValue,
+    hpf_cutoff_hz: FilterControlValue,
+    feedback_amount: FilterControlValue,
+    n_samples: int,
+    sample_rate: int,
+) -> ResolvedFilterControls:
+    """Validate and scalar-fold the controls that may be profiles.
+
+    Callers still pass the historically named ``cutoff_profile`` argument.
+    It now follows the same scalar-or-profile contract as the newer filter
+    controls: scalars stay scalars, constant arrays fold to scalars, and true
+    profiles must be finite 1-D arrays matching the signal length.
+    """
+    if sample_rate <= 0:
+        raise ValueError(f"sample_rate must be positive, got {sample_rate}")
+    if n_samples < 0:
+        raise ValueError(f"n_samples must be non-negative, got {n_samples}")
+
+    nyquist_limit = sample_rate * _NYQUIST_CLAMP_RATIO
+    controls = {
+        "cutoff_profile": _resolve_scalar_or_profile(
+            name="cutoff_profile",
+            value=cutoff_profile,
+            n_samples=n_samples,
+            lower_bound=20.0,
+            upper_bound=nyquist_limit,
+            fold_constant=False,
+        ),
+        "resonance_q": _resolve_scalar_or_profile(
+            name="resonance_q",
+            value=resonance_q,
+            n_samples=n_samples,
+            lower_bound=0.5,
+            upper_bound=None,
+        ),
+        "filter_drive": _resolve_scalar_or_profile(
+            name="filter_drive",
+            value=filter_drive,
+            n_samples=n_samples,
+            lower_bound=0.0,
+            upper_bound=None,
+        ),
+        "filter_morph": _resolve_scalar_or_profile(
+            name="filter_morph",
+            value=filter_morph,
+            n_samples=n_samples,
+            lower_bound=0.0,
+            upper_bound=4.0,
+        ),
+        "hpf_cutoff_hz": _resolve_scalar_or_profile(
+            name="hpf_cutoff_hz",
+            value=hpf_cutoff_hz,
+            n_samples=n_samples,
+            lower_bound=0.0,
+            upper_bound=nyquist_limit,
+        ),
+        "feedback_amount": _resolve_scalar_or_profile(
+            name="feedback_amount",
+            value=feedback_amount,
+            n_samples=n_samples,
+            lower_bound=0.0,
+            upper_bound=None,
+        ),
+    }
+    profiled_controls = frozenset(
+        name for name, value in controls.items() if _is_array_control(value)
+    )
+    return ResolvedFilterControls(
+        cutoff_profile=controls["cutoff_profile"],
+        resonance_q=controls["resonance_q"],
+        filter_drive=controls["filter_drive"],
+        filter_morph=controls["filter_morph"],
+        hpf_cutoff_hz=controls["hpf_cutoff_hz"],
+        feedback_amount=controls["feedback_amount"],
+        profiled_controls=profiled_controls,
+    )
+
+
+def _control_to_profile(value: FilterControlValue, n_samples: int) -> np.ndarray:
+    if isinstance(value, np.ndarray):
+        return value
+    return np.full(n_samples, float(value), dtype=np.float64)
+
+
+def _control_is_active(value: FilterControlValue) -> bool:
+    if isinstance(value, np.ndarray):
+        return bool(np.any(value > 0.0))
+    return float(value) > 0.0
+
+
+def _drive_sat_blend_profile(filter_drive: np.ndarray) -> np.ndarray:
+    drive = np.maximum(filter_drive, 0.0)
+    clipped = np.minimum(drive / _DRIVE_BLEND_EPSILON, 1.0)
+    blend = clipped * clipped * (3.0 - 2.0 * clipped)
+    return np.where(drive >= _DRIVE_BLEND_EPSILON, 1.0, blend).astype(
+        np.float64, copy=False
+    )
 
 
 @numba.njit(cache=True)
@@ -685,6 +864,291 @@ def _apply_driven_zdf_svf(
         filtered[i] *= compensation
 
     return filtered
+
+
+@numba.njit(cache=True)
+def _svf_morph_weights(
+    mode_int: int, morph: float
+) -> tuple[float, float, float, float]:
+    if morph == 0.0:
+        if mode_int == _LP:
+            return 1.0, 0.0, 0.0, 0.0
+        if mode_int == _BP:
+            return 0.0, 1.0, 0.0, 0.0
+        if mode_int == _HP:
+            return 0.0, 0.0, 1.0, 0.0
+        return 0.0, 0.0, 0.0, 1.0
+
+    pos = (mode_int + morph) % 4.0
+    idx = int(pos)
+    frac = pos - idx
+    if idx == 0:
+        return 1.0 - frac, frac, 0.0, 0.0
+    if idx == 1:
+        return 0.0, 1.0 - frac, frac, 0.0
+    if idx == 2:
+        return 0.0, 0.0, 1.0 - frac, frac
+    return frac, 0.0, 0.0, 1.0 - frac
+
+
+@numba.njit(cache=True)
+def _apply_linear_zdf_svf_profiled(
+    signal: np.ndarray,
+    cutoff_profile: np.ndarray,
+    damping_profile: np.ndarray,
+    sample_rate: int,
+    mode_int: int,
+    nyquist_limit: float,
+    bootstrap_seed: np.uint64,
+    has_bootstrap: bool,
+    morph_profile: np.ndarray,
+    feedback_amount_profile: np.ndarray,
+    feedback_saturation: float = 0.0,
+    use_newton_feedback: bool = False,
+    max_newton_iters: int = _DEFAULT_NEWTON_MAX_ITERS,
+    newton_tolerance: float = _DEFAULT_NEWTON_TOLERANCE,
+) -> np.ndarray:
+    """Linear SVF variant for per-sample control profiles."""
+    n = signal.shape[0]
+    filtered = np.empty(n, dtype=np.float64)
+    low_state = 0.0
+    band_state = 0.0
+    ext_fb_drive = 1.0 + 3.0 * feedback_saturation
+    prev_output = 0.0
+    weyl_state = bootstrap_seed
+
+    for i in range(n):
+        fc = min(cutoff_profile[i], nyquist_limit)
+        g = math.tan(math.pi * fc / sample_rate)
+        damping = damping_profile[i]
+        morph = morph_profile[i]
+        feedback_amount = feedback_amount_profile[i]
+        has_ext_fb = feedback_amount > 0.0
+        lp_w, bp_w, hp_w, notch_w = _svf_morph_weights(mode_int, morph)
+
+        low_in, low_off, band_in, band_off, high_in, high_off = _svf_affine_taps(
+            g, damping, band_state, low_state
+        )
+        notch_in = low_in + high_in
+        notch_off = low_off + high_off
+        A_out = lp_w * low_in + bp_w * band_in + hp_w * high_in + notch_w * notch_in
+        B_out = lp_w * low_off + bp_w * band_off + hp_w * high_off + notch_w * notch_off
+
+        sample = signal[i]
+        if has_ext_fb:
+            if use_newton_feedback:
+                raw = sample
+                if has_bootstrap:
+                    weyl_state = weyl_state + _WEYL_INCREMENT
+                    raw = raw + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                        _BOOTSTRAP_NOISE_AMP * 2.0
+                    )
+                affine_const = A_out * raw + B_out
+                fb_scale = A_out * feedback_amount
+                output_solved = _solve_ext_feedback_newton(
+                    prev_output,
+                    affine_const,
+                    fb_scale,
+                    ext_fb_drive,
+                    max_newton_iters,
+                    newton_tolerance,
+                )
+                sample = raw + feedback_amount * math.tanh(ext_fb_drive * output_solved)
+            else:
+                sample = sample + feedback_amount * math.tanh(
+                    ext_fb_drive * prev_output
+                )
+                if has_bootstrap:
+                    weyl_state = weyl_state + _WEYL_INCREMENT
+                    sample = sample + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                        _BOOTSTRAP_NOISE_AMP * 2.0
+                    )
+
+        high = (sample - (2.0 * damping + g) * band_state - low_state) / (
+            1.0 + 2.0 * damping * g + g * g
+        )
+        band = g * high + band_state
+        low = g * band + low_state
+        band_state = band + g * high
+        low_state = low + g * band
+
+        notch = low + high
+        output = lp_w * low + bp_w * band + hp_w * high + notch_w * notch
+        prev_output = output
+        filtered[i] = output
+
+    return filtered
+
+
+@numba.njit(cache=True)
+def _apply_driven_zdf_svf_profiled(
+    signal: np.ndarray,
+    cutoff_profile: np.ndarray,
+    damping_profile: np.ndarray,
+    sample_rate: int,
+    mode_int: int,
+    filter_drive_profile: np.ndarray,
+    even_harmonics: float,
+    nyquist_limit: float,
+    bootstrap_seed: np.uint64,
+    has_bootstrap: bool,
+    morph_profile: np.ndarray,
+    feedback_amount_profile: np.ndarray,
+    feedback_saturation: float = 0.0,
+) -> np.ndarray:
+    """Driven SVF variant for per-sample control profiles."""
+    n = signal.shape[0]
+    filtered = np.empty(n, dtype=np.float64)
+    low_state = 0.0
+    band_state = 0.0
+    ext_fb_drive = 1.0 + 3.0 * feedback_saturation
+    prev_output = 0.0
+    weyl_state = bootstrap_seed
+    bias_amount = even_harmonics * 0.3
+    prev_sat_input = 0.0
+    prev_sat_input2 = 0.0
+
+    for i in range(n):
+        fc = min(cutoff_profile[i], nyquist_limit)
+        g = math.tan(math.pi * fc / sample_rate)
+        damping = damping_profile[i]
+        filter_drive = filter_drive_profile[i]
+        morph = morph_profile[i]
+        feedback_amount = feedback_amount_profile[i]
+
+        q_from_damping = 1.0 / max(damping, 1e-6)
+        effective_drive = max(0.05, filter_drive) / (
+            q_from_damping * q_from_damping * 0.3 + 1.0
+        )
+        drive_gain = 1.0 + 2.5 * effective_drive
+        effective_damping = damping * (1.0 - min(0.15, filter_drive * 0.2))
+        compensation = 1.0 / (1.0 + 0.25 * filter_drive)
+        lp_w, bp_w, hp_w, notch_w = _svf_morph_weights(mode_int, morph)
+
+        sample = signal[i]
+        if feedback_amount > 0.0:
+            sample = sample + feedback_amount * math.tanh(ext_fb_drive * prev_output)
+            if has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                sample = sample + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+
+        feedback_sum = low_state + (2.0 * effective_damping + g) * band_state
+        sat_input = drive_gain * sample - feedback_sum
+        if has_bootstrap:
+            weyl_state = weyl_state + _WEYL_INCREMENT
+            sat_input = sat_input + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                _BOOTSTRAP_NOISE_AMP * 2.0
+            )
+
+        if bias_amount > 0.0:
+            env_est = math.fabs(sample)
+            sat_input = sat_input + bias_amount * env_est
+
+        if sat_input > 10.0:
+            sat_input = 10.0
+        elif sat_input < -10.0:
+            sat_input = -10.0
+
+        saturated = _adaa2_tanh(
+            sat_input, prev_sat_input, prev_sat_input2, _AD2_TANH_TABLE
+        )
+        prev_sat_input2 = prev_sat_input
+        prev_sat_input = sat_input
+
+        if bias_amount > 0.0:
+            saturated = saturated - _adaa_tanh(
+                bias_amount * math.fabs(sample),
+                bias_amount * math.fabs(signal[max(0, i - 1)]),
+            )
+
+        high = saturated / (1.0 + 2.0 * effective_damping * g + g * g)
+        band = g * high + band_state
+        low = g * band + low_state
+
+        band_state = _algebraic_sat(band + g * high)
+        low_state = _algebraic_sat(low + g * band)
+        band = _algebraic_sat(band)
+        low = _algebraic_sat(low)
+        high = _algebraic_sat(high)
+
+        notch = low + high
+        output = lp_w * low + bp_w * band + hp_w * high + notch_w * notch
+        prev_output = _algebraic_sat(output)
+        filtered[i] = prev_output * compensation
+
+    return filtered
+
+
+def _apply_svf_profiled(
+    signal: np.ndarray,
+    *,
+    controls: ResolvedFilterControls,
+    sample_rate: int,
+    filter_mode: str,
+    filter_even_harmonics: float,
+    feedback_saturation: float,
+    solver: str,
+    max_newton_iters: int,
+    newton_tolerance: float,
+) -> np.ndarray:
+    sig = np.asarray(signal, dtype=np.float64)
+    n_samples = sig.shape[0]
+    cutoff = _control_to_profile(controls.cutoff_profile, n_samples)
+    resonance = _control_to_profile(controls.resonance_q, n_samples)
+    damping = 1.0 / np.maximum(resonance, 0.5)
+    filter_drive = _control_to_profile(controls.filter_drive, n_samples)
+    morph = _control_to_profile(controls.filter_morph, n_samples)
+    feedback_amount = _control_to_profile(controls.feedback_amount, n_samples)
+
+    mode_int = _MODE_STR_TO_INT.get(filter_mode, _LP)
+    nyquist_limit = sample_rate * _NYQUIST_CLAMP_RATIO
+    fb_sat = max(0.0, float(feedback_saturation))
+    bootstrap_seed = _bootstrap_seed(sig, "svf_profiled")
+    has_bootstrap = sig.shape[0] > 0
+    use_newton_fb = solver == "newton" and not _control_is_active(controls.filter_drive)
+    newton_iters = max(1, int(max_newton_iters))
+    newton_tol = max(1e-12, float(newton_tolerance))
+
+    linear_filtered = _apply_linear_zdf_svf_profiled(
+        sig,
+        cutoff,
+        damping,
+        sample_rate,
+        mode_int,
+        nyquist_limit,
+        bootstrap_seed,
+        has_bootstrap,
+        morph,
+        feedback_amount,
+        fb_sat,
+        use_newton_fb,
+        newton_iters,
+        newton_tol,
+    )
+
+    if not _control_is_active(controls.filter_drive):
+        return linear_filtered
+
+    even_h = max(0.0, min(0.5, float(filter_even_harmonics)))
+    driven_filtered = _apply_driven_zdf_svf_profiled(
+        sig,
+        cutoff,
+        damping,
+        sample_rate,
+        mode_int,
+        filter_drive,
+        even_h,
+        nyquist_limit,
+        bootstrap_seed,
+        has_bootstrap,
+        morph,
+        feedback_amount,
+        fb_sat,
+    )
+    drive_blend = np.minimum(1.0, 0.75 * np.power(filter_drive, 1.3))
+    return ((1.0 - drive_blend) * linear_filtered) + (drive_blend * driven_filtered)
 
 
 def apply_zdf_svf(
@@ -3457,6 +3921,1383 @@ def _apply_diode_filter(
     )
 
 
+@numba.njit(cache=True)
+def _four_pole_morph_output(
+    mode_int: int,
+    morph: float,
+    x: float,
+    y0: float,
+    y1: float,
+    y2: float,
+    y3: float,
+) -> float:
+    if morph <= 0.0:
+        if mode_int == _LP:
+            return y3
+        if mode_int == _BP:
+            return y1 - y3
+        return x - y3
+
+    m = min(morph, 3.0)
+    if mode_int == _LP:
+        if m <= 1.0:
+            return (1.0 - m) * y3 + m * y2
+        if m <= 2.0:
+            f = m - 1.0
+            return (1.0 - f) * y2 + f * y1
+        f = m - 2.0
+        return (1.0 - f) * y1 + f * y0
+    if mode_int == _BP:
+        if m <= 1.0:
+            return (1.0 - m) * (y1 - y3) + m * (y0 - y2)
+        if m <= 2.0:
+            f = m - 1.0
+            return (1.0 - f) * (y0 - y2) + f * (y0 - y1)
+        f = m - 2.0
+        return (1.0 - f) * (y0 - y1) + f * y0
+    if m <= 1.0:
+        return (1.0 - m) * (x - y3) + m * (x - y2)
+    if m <= 2.0:
+        f = m - 1.0
+        return (1.0 - f) * (x - y2) + f * (x - y1)
+    f = m - 2.0
+    return (1.0 - f) * (x - y1) + f * (x - y0)
+
+
+@numba.njit(cache=True)
+def _diode_morph_output(morph: float, y0: float, y1: float, y2: float) -> float:
+    if morph <= 0.0:
+        return y2
+    m = min(morph, 2.0)
+    if m <= 1.0:
+        return (1.0 - m) * y2 + m * y1
+    f = m - 1.0
+    return (1.0 - f) * y1 + f * y0
+
+
+@numba.njit(cache=True)
+def _apply_non_svf_profiled_inner(
+    signal: np.ndarray,
+    cutoff_profile: np.ndarray,
+    resonance_q_profile: np.ndarray,
+    filter_drive_profile: np.ndarray,
+    sat_blend_profile: np.ndarray,
+    morph_profile: np.ndarray,
+    feedback_amount_profile: np.ndarray,
+    sample_rate: int,
+    mode_int: int,
+    topology_int: int,
+    bass_compensation: float,
+    even_harmonics: float,
+    k35_feedback_asymmetry: float,
+    feedback_saturation: float,
+    nyquist_limit: float,
+    bootstrap_seed: np.uint64,
+    has_bootstrap: bool,
+) -> np.ndarray:
+    """Stateful per-sample control path for non-SVF topologies."""
+    n = signal.shape[0]
+    filtered = np.empty(n, dtype=np.float64)
+    ext_fb_drive = 1.0 + 3.0 * max(0.0, feedback_saturation)
+    weyl_state = bootstrap_seed
+
+    # Ladder state.
+    l_s0 = 0.0
+    l_s1 = 0.0
+    l_s2 = 0.0
+    l_s3 = 0.0
+    l_prev_fb_input = 0.0
+    l_prev_ext_output = 0.0
+
+    # Sallen-Key / SEM SVF states.
+    sk_low = 0.0
+    sk_band = 0.0
+    sk_prev_output = 0.0
+    sem_low = 0.0
+    sem_band = 0.0
+    sem_prev_output = 0.0
+
+    # Cascade state.
+    c_s0 = 0.0
+    c_s1 = 0.0
+    c_s2 = 0.0
+    c_s3 = 0.0
+    c_bp_low = 0.0
+    c_bp_band = 0.0
+    c_prev_ext_output = 0.0
+
+    # Jupiter state.
+    j_s0 = 0.0
+    j_s1 = 0.0
+    j_s2 = 0.0
+    j_s3 = 0.0
+    j_fb_prev = 0.0
+    j_fb_prev2 = 0.0
+    j_prev_ext_output = 0.0
+
+    # K35 state.
+    k_s_a = 0.0
+    k_s_b = 0.0
+    k_y_prev = 0.0
+    k_prev_ext_output = 0.0
+
+    # Diode state.
+    d_s0 = 0.0
+    d_s1 = 0.0
+    d_s2 = 0.0
+    d_prev_ext_output = 0.0
+
+    for i in range(n):
+        fc = min(cutoff_profile[i], nyquist_limit)
+        g = math.tan(math.pi * fc / sample_rate)
+        q = max(0.5, resonance_q_profile[i])
+        filter_drive = max(0.0, filter_drive_profile[i])
+        sat_blend = min(1.0, max(0.0, sat_blend_profile[i]))
+        sat_mix_clean = 1.0 - sat_blend
+        feedback_amount = max(0.0, feedback_amount_profile[i])
+        morph = max(0.0, morph_profile[i])
+        sample = signal[i]
+
+        if topology_int == _TOPO_LADDER:
+            resonance_k = max(0.0, min(3.98, 4.0 * (1.0 - 1.0 / (2.0 * q))))
+            drive_gain = 1.0 + 2.0 * filter_drive
+            apply_saturation = sat_blend > 0.0
+            bias_amount = even_harmonics * 0.3
+
+            fb_input = resonance_k * l_s3
+            fb = _adaa_tanh(fb_input, l_prev_fb_input)
+            l_prev_fb_input = fb_input
+
+            inp = sample
+            if feedback_amount > 0.0:
+                inp = inp + feedback_amount * math.tanh(
+                    ext_fb_drive * l_prev_ext_output
+                )
+            if has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                inp = inp + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+            inp = drive_gain * (inp - fb)
+            if bias_amount > 0.0:
+                inp = inp + bias_amount * math.fabs(sample)
+
+            v0 = g * (inp - l_s0) / (1.0 + g)
+            y0 = v0 + l_s0
+            l_s0 = y0 + v0
+            if apply_saturation:
+                y0 = sat_mix_clean * y0 + sat_blend * _algebraic_sat(y0)
+                l_s0 = sat_mix_clean * l_s0 + sat_blend * _algebraic_sat(l_s0)
+
+            v1 = g * (y0 - l_s1) / (1.0 + g)
+            y1 = v1 + l_s1
+            l_s1 = y1 + v1
+            if apply_saturation:
+                y1 = sat_mix_clean * y1 + sat_blend * _algebraic_sat(y1)
+                l_s1 = sat_mix_clean * l_s1 + sat_blend * _algebraic_sat(l_s1)
+
+            v2 = g * (y1 - l_s2) / (1.0 + g)
+            y2 = v2 + l_s2
+            l_s2 = y2 + v2
+            if apply_saturation:
+                y2 = sat_mix_clean * y2 + sat_blend * _algebraic_sat(y2)
+                l_s2 = sat_mix_clean * l_s2 + sat_blend * _algebraic_sat(l_s2)
+
+            v3 = g * (y2 - l_s3) / (1.0 + g)
+            y3 = v3 + l_s3
+            l_s3 = y3 + v3
+            if apply_saturation:
+                y3 = sat_mix_clean * y3 + sat_blend * _algebraic_sat(y3)
+                l_s3 = sat_mix_clean * l_s3 + sat_blend * _algebraic_sat(l_s3)
+
+            if bias_amount > 0.0:
+                y3 = y3 - bias_amount * math.fabs(sample) * 0.25
+
+            if morph <= 0.0:
+                if mode_int == _LP:
+                    output = y3
+                elif mode_int == _BP:
+                    output = y1 - y3
+                else:
+                    output = inp - y3
+            else:
+                m = min(morph, 3.0)
+                if mode_int == _LP:
+                    if m <= 1.0:
+                        output = (1.0 - m) * y3 + m * y2
+                    elif m <= 2.0:
+                        f = m - 1.0
+                        output = (1.0 - f) * y2 + f * y1
+                    else:
+                        f = m - 2.0
+                        output = (1.0 - f) * y1 + f * y0
+                elif mode_int == _BP:
+                    if m <= 1.0:
+                        output = (1.0 - m) * (y1 - y3) + m * (y0 - y2)
+                    elif m <= 2.0:
+                        f = m - 1.0
+                        output = (1.0 - f) * (y0 - y2) + f * (y0 - y1)
+                    else:
+                        f = m - 2.0
+                        output = (1.0 - f) * (y0 - y1) + f * y0
+                else:
+                    if m <= 1.0:
+                        output = (1.0 - m) * (inp - y3) + m * (inp - y2)
+                    elif m <= 2.0:
+                        f = m - 1.0
+                        output = (1.0 - f) * (inp - y2) + f * (inp - y1)
+                    else:
+                        f = m - 2.0
+                        output = (1.0 - f) * (inp - y1) + f * (inp - y0)
+
+            if bass_compensation > 0.0:
+                output = output + bass_compensation * (resonance_k / 4.0) * (y0 - y3)
+            l_prev_ext_output = output
+            filtered[i] = output
+
+        elif topology_int == _TOPO_SALLEN_KEY:
+            damping = 1.0 / (q * 1.4)
+            apply_saturation = sat_blend > 0.0
+            drive_gain = 1.0 + 1.5 * filter_drive
+            bias_amount = 0.08 * filter_drive
+
+            x = sample
+            if feedback_amount > 0.0:
+                x = x + feedback_amount * math.tanh(ext_fb_drive * sk_prev_output)
+            if has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+            if apply_saturation:
+                shaped = drive_gain * (
+                    math.tanh(x + bias_amount) - math.tanh(bias_amount)
+                )
+                x = sat_mix_clean * x + sat_blend * shaped
+
+            high = (x - (2.0 * damping + g) * sk_band - sk_low) / (
+                1.0 + 2.0 * damping * g + g * g
+            )
+            band = g * high + sk_band
+            low = g * band + sk_low
+            sk_band = band + g * high
+            sk_low = low + g * band
+            if apply_saturation:
+                sk_band = sat_mix_clean * sk_band + sat_blend * _algebraic_sat(sk_band)
+                sk_low = sat_mix_clean * sk_low + sat_blend * _algebraic_sat(sk_low)
+            if mode_int == _LP:
+                output = low
+            elif mode_int == _BP:
+                output = band
+            else:
+                output = high
+            sk_prev_output = output
+            filtered[i] = output
+
+        elif topology_int == _TOPO_CASCADE:
+            resonance_boost = max(0.0, min(1.8, 2.0 * (1.0 - 1.0 / (2.0 * q))))
+            bp_damping = 1.0 / (0.5 + 0.8 * resonance_boost)
+            drive_gain = 1.0 + 1.5 * filter_drive
+            apply_saturation = sat_blend > 0.0
+
+            x = sample
+            if feedback_amount > 0.0:
+                x = x + feedback_amount * math.tanh(ext_fb_drive * c_prev_ext_output)
+            if has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+            x = drive_gain * x
+            alpha = g / (1.0 + g)
+            one_minus_alpha = 1.0 - alpha
+
+            y0 = alpha * x + one_minus_alpha * c_s0
+            c_s0 = y0 + (y0 - c_s0)
+            y1 = alpha * y0 + one_minus_alpha * c_s1
+            c_s1 = y1 + (y1 - c_s1)
+            y2 = alpha * y1 + one_minus_alpha * c_s2
+            c_s2 = y2 + (y2 - c_s2)
+            y3 = alpha * y2 + one_minus_alpha * c_s3
+            c_s3 = y3 + (y3 - c_s3)
+            if apply_saturation:
+                y0 = sat_mix_clean * y0 + sat_blend * _algebraic_sat(y0)
+                y1 = sat_mix_clean * y1 + sat_blend * _algebraic_sat(y1)
+                y2 = sat_mix_clean * y2 + sat_blend * _algebraic_sat(y2)
+                y3 = sat_mix_clean * y3 + sat_blend * _algebraic_sat(y3)
+                c_s0 = sat_mix_clean * c_s0 + sat_blend * _algebraic_sat(c_s0)
+                c_s1 = sat_mix_clean * c_s1 + sat_blend * _algebraic_sat(c_s1)
+                c_s2 = sat_mix_clean * c_s2 + sat_blend * _algebraic_sat(c_s2)
+                c_s3 = sat_mix_clean * c_s3 + sat_blend * _algebraic_sat(c_s3)
+
+            bp_high = (y3 - (2.0 * bp_damping + g) * c_bp_band - c_bp_low) / (
+                1.0 + 2.0 * bp_damping * g + g * g
+            )
+            bp_band_new = g * bp_high + c_bp_band
+            bp_low_new = g * bp_band_new + c_bp_low
+            c_bp_band = bp_band_new + g * bp_high
+            c_bp_low = bp_low_new + g * bp_band_new
+
+            m = min(morph, 3.0)
+            if morph <= 0.0:
+                if mode_int == _LP:
+                    base = y3
+                elif mode_int == _BP:
+                    base = y1 - y3
+                else:
+                    base = x - y3
+            elif mode_int == _LP:
+                if m <= 1.0:
+                    base = (1.0 - m) * y3 + m * y2
+                elif m <= 2.0:
+                    f = m - 1.0
+                    base = (1.0 - f) * y2 + f * y1
+                else:
+                    f = m - 2.0
+                    base = (1.0 - f) * y1 + f * y0
+            elif mode_int == _BP:
+                if m <= 1.0:
+                    base = (1.0 - m) * (y1 - y3) + m * (y0 - y2)
+                elif m <= 2.0:
+                    f = m - 1.0
+                    base = (1.0 - f) * (y0 - y2) + f * (y0 - y1)
+                else:
+                    f = m - 2.0
+                    base = (1.0 - f) * (y0 - y1) + f * y0
+            else:
+                if m <= 1.0:
+                    base = (1.0 - m) * (x - y3) + m * (x - y2)
+                elif m <= 2.0:
+                    f = m - 1.0
+                    base = (1.0 - f) * (x - y2) + f * (x - y1)
+                else:
+                    f = m - 2.0
+                    base = (1.0 - f) * (x - y1) + f * (x - y0)
+            output = base + resonance_boost * bp_band_new
+            c_prev_ext_output = output
+            filtered[i] = output
+
+        elif topology_int == _TOPO_SEM:
+            damping = 1.0 / (q * 0.85)
+            drive_blend = sat_blend
+            driven = drive_blend > 0.0
+            drive_gain = 1.0 + 0.9 * filter_drive if driven else 1.0
+
+            x = sample
+            if feedback_amount > 0.0:
+                x = x + feedback_amount * math.tanh(ext_fb_drive * sem_prev_output)
+            if has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+            if driven:
+                clean = x
+                shaped = drive_gain * math.tanh(x)
+                x = clean + drive_blend * (shaped - clean)
+
+            high = (x - (2.0 * damping + g) * sem_band - sem_low) / (
+                1.0 + 2.0 * damping * g + g * g
+            )
+            band = g * high + sem_band
+            low = g * band + sem_low
+            sem_band = _algebraic_sat(band + g * high)
+            sem_low = _algebraic_sat(low + g * band)
+
+            m = min(morph, 2.0)
+            if m > 0.0:
+                notch = low + high
+                if m <= 1.0:
+                    output = (1.0 - m) * low + m * notch
+                else:
+                    output = (2.0 - m) * notch + (m - 1.0) * high
+            elif mode_int == _LP:
+                output = low
+            elif mode_int == _BP:
+                output = band
+            elif mode_int == _HP:
+                output = high
+            else:
+                output = low + high
+            sem_prev_output = output
+            filtered[i] = output
+
+        elif topology_int == _TOPO_JUPITER:
+            k_feedback = max(0.0, min(2.6, 2.6 * (1.0 - 1.0 / (2.0 * q))))
+            drive_gain = 1.0 + 1.3 * filter_drive
+            apply_saturation = sat_blend > 0.0
+
+            x = sample
+            if feedback_amount > 0.0:
+                x = x + feedback_amount * math.tanh(ext_fb_drive * j_prev_ext_output)
+            if has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+            x = drive_gain * x
+            alpha = g / (1.0 + g)
+            one_minus_alpha = 1.0 - alpha
+            fb_curr = j_s3
+            fb_shaped = _adaa2_tanh(fb_curr, j_fb_prev, j_fb_prev2, _AD2_TANH_TABLE)
+            j_fb_prev2 = j_fb_prev
+            j_fb_prev = fb_curr
+            u = x - k_feedback * fb_shaped
+
+            y0 = alpha * u + one_minus_alpha * j_s0
+            j_s0 = y0 + (y0 - j_s0)
+            y1 = alpha * y0 + one_minus_alpha * j_s1
+            j_s1 = y1 + (y1 - j_s1)
+            y2 = alpha * y1 + one_minus_alpha * j_s2
+            j_s2 = y2 + (y2 - j_s2)
+            y3 = alpha * y2 + one_minus_alpha * j_s3
+            j_s3 = y3 + (y3 - j_s3)
+            if apply_saturation:
+                j_s3 = sat_mix_clean * j_s3 + sat_blend * _algebraic_sat(j_s3)
+
+            m = min(morph, 3.0)
+            if morph <= 0.0:
+                if mode_int == _LP:
+                    output = y3
+                elif mode_int == _BP:
+                    output = y1 - y3
+                else:
+                    output = x - y3
+            elif mode_int == _LP:
+                if m <= 1.0:
+                    output = (1.0 - m) * y3 + m * y2
+                elif m <= 2.0:
+                    f = m - 1.0
+                    output = (1.0 - f) * y2 + f * y1
+                else:
+                    f = m - 2.0
+                    output = (1.0 - f) * y1 + f * y0
+            elif mode_int == _BP:
+                if m <= 1.0:
+                    output = (1.0 - m) * (y1 - y3) + m * (y0 - y2)
+                elif m <= 2.0:
+                    f = m - 1.0
+                    output = (1.0 - f) * (y0 - y2) + f * (y0 - y1)
+                else:
+                    f = m - 2.0
+                    output = (1.0 - f) * (y0 - y1) + f * y0
+            else:
+                if m <= 1.0:
+                    output = (1.0 - m) * (x - y3) + m * (x - y2)
+                elif m <= 2.0:
+                    f = m - 1.0
+                    output = (1.0 - f) * (x - y2) + f * (x - y1)
+                else:
+                    f = m - 2.0
+                    output = (1.0 - f) * (x - y1) + f * (x - y0)
+            j_prev_ext_output = output
+            filtered[i] = output
+
+        elif topology_int == _TOPO_K35:
+            k_feedback = max(0.0, min(1.98, 2.0 * (1.0 - 0.7 / math.sqrt(q))))
+            asym = max(0.0, min(1.0, k35_feedback_asymmetry))
+            drive_gain = 1.0 + 1.8 * filter_drive
+            apply_saturation = sat_blend > 0.0
+            k_mode = mode_int
+            if k_mode in (_BP, _NOTCH):
+                k_mode = _LP
+
+            g_1p = g / (1.0 + g)
+            one_minus = 1.0 - g_1p
+            alpha = 1.0 / (1.0 + k_feedback * g_1p * g_1p)
+            x = sample
+            if feedback_amount > 0.0:
+                x = x + feedback_amount * math.tanh(ext_fb_drive * k_prev_ext_output)
+            if has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+            if filter_drive > 0.0:
+                clean = x
+                shaped = _diode_shape(drive_gain * x, asym * 0.6)
+                x = clean + sat_blend * (shaped - clean)
+            fb = _diode_shape(k_y_prev, asym)
+            if k_mode == _HP:
+                u = alpha * (x + k_feedback * fb)
+                v = (u - k_s_a) / (1.0 + g)
+                hp1 = v
+                k_s_a = k_s_a + 2.0 * g * v
+                v2 = (hp1 - k_s_b) / (1.0 + g)
+                k_s_b = k_s_b + 2.0 * g * v2
+                y = k_s_b
+            else:
+                u = alpha * (x + k_feedback * fb)
+                lp1 = g_1p * u + one_minus * k_s_a
+                k_s_a = 2.0 * lp1 - k_s_a
+                lp2 = g_1p * lp1 + one_minus * k_s_b
+                k_s_b = 2.0 * lp2 - k_s_b
+                y = lp2
+            k_y_prev = y
+            if apply_saturation:
+                k_s_a = sat_mix_clean * k_s_a + sat_blend * _algebraic_sat(k_s_a)
+                k_s_b = sat_mix_clean * k_s_b + sat_blend * _algebraic_sat(k_s_b)
+            k_prev_ext_output = y
+            filtered[i] = y
+
+        else:
+            k_feedback = max(0.0, min(1.7, 1.75 * (1.0 - 0.65 / math.sqrt(q))))
+            drive_gain = 1.0 + 1.2 * filter_drive
+            feedback_asym = min(1.0, 0.4 + 0.6 * filter_drive)
+            apply_saturation = sat_blend > 0.0
+
+            g_1p = g / (1.0 + g)
+            one_minus = 1.0 - g_1p
+            x = sample
+            if feedback_amount > 0.0:
+                x = x + feedback_amount * math.tanh(ext_fb_drive * d_prev_ext_output)
+            if has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+            x = drive_gain * x
+            fb = _diode_shape(d_s2, feedback_asym)
+            u = x - k_feedback * fb
+            y0 = g_1p * u + one_minus * d_s0
+            d_s0 = 2.0 * y0 - d_s0
+            y1 = g_1p * y0 + one_minus * d_s1
+            d_s1 = 2.0 * y1 - d_s1
+            y2 = g_1p * y1 + one_minus * d_s2
+            d_s2 = 2.0 * y2 - d_s2
+            if apply_saturation:
+                d_s0 = _algebraic_sat(d_s0)
+                d_s1 = _algebraic_sat(d_s1)
+                d_s2 = _algebraic_sat(d_s2)
+
+            m = min(morph, 2.0)
+            if m <= 0.0:
+                output = y2
+            elif m <= 1.0:
+                output = (1.0 - m) * y2 + m * y1
+            else:
+                f = m - 1.0
+                output = (1.0 - f) * y1 + f * y0
+            d_prev_ext_output = output
+            filtered[i] = output
+
+    return filtered
+
+
+@numba.njit(cache=True)
+def _apply_non_svf_profiled_newton_inner(
+    signal: np.ndarray,
+    cutoff_profile: np.ndarray,
+    resonance_q_profile: np.ndarray,
+    filter_drive_profile: np.ndarray,
+    sat_blend_profile: np.ndarray,
+    morph_profile: np.ndarray,
+    feedback_amount_profile: np.ndarray,
+    sample_rate: int,
+    mode_int: int,
+    topology_int: int,
+    bass_compensation: float,
+    even_harmonics: float,
+    k35_feedback_asymmetry: float,
+    feedback_saturation: float,
+    nyquist_limit: float,
+    bootstrap_seed: np.uint64,
+    has_bootstrap: bool,
+    max_iters: int,
+    tolerance: float,
+) -> np.ndarray:
+    """Newton/default-solver per-sample control path for non-SVF topologies."""
+    n = signal.shape[0]
+    filtered = np.empty(n, dtype=np.float64)
+    ext_fb_drive = 1.0 + 3.0 * max(0.0, feedback_saturation)
+    weyl_state = bootstrap_seed
+
+    l_s0 = 0.0
+    l_s1 = 0.0
+    l_s2 = 0.0
+    l_s3 = 0.0
+    l_y3_guess = 0.0
+    l_prev_ext_output = 0.0
+
+    sk_low = 0.0
+    sk_band = 0.0
+    sk_prev_output = 0.0
+    sem_low = 0.0
+    sem_band = 0.0
+    sem_prev_output = 0.0
+
+    c_s0 = 0.0
+    c_s1 = 0.0
+    c_s2 = 0.0
+    c_s3 = 0.0
+    c_bp_low = 0.0
+    c_bp_band = 0.0
+    c_prev_ext_output = 0.0
+
+    j_s0 = 0.0
+    j_s1 = 0.0
+    j_s2 = 0.0
+    j_s3 = 0.0
+    j_y3_guess = 0.0
+    j_prev_ext_output = 0.0
+
+    k_s_a = 0.0
+    k_s_b = 0.0
+    k_y_guess = 0.0
+    k_y_prev = 0.0
+    k_prev_ext_output = 0.0
+
+    d_s0 = 0.0
+    d_s1 = 0.0
+    d_s2 = 0.0
+    d_y2_guess = 0.0
+    d_prev_ext_output = 0.0
+
+    for i in range(n):
+        fc = min(cutoff_profile[i], nyquist_limit)
+        g = math.tan(math.pi * fc / sample_rate)
+        q = max(0.5, resonance_q_profile[i])
+        filter_drive = max(0.0, filter_drive_profile[i])
+        sat_blend = min(1.0, max(0.0, sat_blend_profile[i]))
+        sat_mix_clean = 1.0 - sat_blend
+        feedback_amount = max(0.0, feedback_amount_profile[i])
+        morph = max(0.0, morph_profile[i])
+        sample = signal[i]
+
+        if topology_int == _TOPO_LADDER:
+            resonance_k = max(0.0, min(4.25, 4.2 * (1.0 - 1.0 / (2.0 * q))))
+            drive_gain = 1.0 + 2.0 * filter_drive
+            apply_saturation = sat_blend > 0.0
+            bias_amount = even_harmonics * 0.3
+            has_ext_fb = feedback_amount > 0.0
+            outer_newton = (
+                has_ext_fb
+                and morph <= 0.0
+                and mode_int == _LP
+                and bass_compensation <= 0.0
+                and bias_amount <= 0.0
+            )
+
+            alpha = g / (1.0 + g)
+            one_minus_alpha = 1.0 - alpha
+            a4 = alpha * alpha * alpha * alpha
+
+            x_pre = sample
+            if has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                x_pre = x_pre + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+            if bias_amount > 0.0:
+                x_pre = x_pre + bias_amount * math.fabs(sample)
+            if has_ext_fb and not outer_newton:
+                x_pre = x_pre + feedback_amount * math.tanh(
+                    ext_fb_drive * l_prev_ext_output
+                )
+
+            u_no_fb = drive_gain * x_pre
+            beta = one_minus_alpha * (
+                ((alpha * l_s0 + l_s1) * alpha + l_s2) * alpha + l_s3
+            )
+            B = a4 * u_no_fb + beta
+            y3 = l_y3_guess
+            ak = a4 * resonance_k
+            if outer_newton:
+                d_outer = drive_gain * feedback_amount
+                a4d_outer = a4 * d_outer
+                for _ in range(max_iters):
+                    ky = resonance_k * y3
+                    gy = ext_fb_drive * y3
+                    th_k = math.tanh(ky)
+                    th_g = math.tanh(gy)
+                    sech2_k = 1.0 - th_k * th_k
+                    sech2_g = 1.0 - th_g * th_g
+                    residual = y3 + a4 * th_k - a4d_outer * th_g - B
+                    if math.fabs(residual) < tolerance:
+                        break
+                    deriv = _safe_jacobian(
+                        1.0 + ak * sech2_k - a4d_outer * ext_fb_drive * sech2_g
+                    )
+                    y3 = y3 - residual / deriv
+                u_no_fb = drive_gain * (
+                    x_pre + feedback_amount * math.tanh(ext_fb_drive * y3)
+                )
+            else:
+                for _ in range(max_iters):
+                    th = math.tanh(resonance_k * y3)
+                    residual = y3 + a4 * th - B
+                    if math.fabs(residual) < tolerance:
+                        break
+                    deriv = 1.0 + ak * (1.0 - th * th)
+                    y3 = y3 - residual / deriv
+            l_y3_guess = y3
+
+            fb = math.tanh(resonance_k * y3)
+            u = u_no_fb - fb
+            v0 = g * (u - l_s0) / (1.0 + g)
+            y0 = v0 + l_s0
+            l_s0 = y0 + v0
+            v1 = g * (y0 - l_s1) / (1.0 + g)
+            y1 = v1 + l_s1
+            l_s1 = y1 + v1
+            v2 = g * (y1 - l_s2) / (1.0 + g)
+            y2 = v2 + l_s2
+            l_s2 = y2 + v2
+            v3 = g * (y2 - l_s3) / (1.0 + g)
+            l_s3 = y3 + v3
+
+            if apply_saturation:
+                y0 = sat_mix_clean * y0 + sat_blend * _algebraic_sat(y0)
+                y1 = sat_mix_clean * y1 + sat_blend * _algebraic_sat(y1)
+                y2 = sat_mix_clean * y2 + sat_blend * _algebraic_sat(y2)
+                l_s0 = sat_mix_clean * l_s0 + sat_blend * _algebraic_sat(l_s0)
+                l_s1 = sat_mix_clean * l_s1 + sat_blend * _algebraic_sat(l_s1)
+                l_s2 = sat_mix_clean * l_s2 + sat_blend * _algebraic_sat(l_s2)
+                l_s3 = sat_mix_clean * l_s3 + sat_blend * _algebraic_sat(l_s3)
+
+            if bias_amount > 0.0:
+                y3 = y3 - bias_amount * math.fabs(sample) * 0.25
+            output = _four_pole_morph_output(mode_int, morph, u, y0, y1, y2, y3)
+            if bass_compensation > 0.0:
+                output = output + bass_compensation * (resonance_k / 4.0) * (y0 - y3)
+            l_prev_ext_output = output
+            filtered[i] = output
+
+        elif topology_int == _TOPO_SALLEN_KEY:
+            damping = 1.0 / (q * 1.4)
+            apply_saturation = sat_blend > 0.0
+            drive_gain = 1.0 + 1.5 * filter_drive
+            bias_amount = 0.08 * filter_drive
+            has_ext_fb = feedback_amount > 0.0
+            newton_feedback_active = has_ext_fb and not apply_saturation
+
+            if newton_feedback_active:
+                low_in, low_off, band_in, band_off, high_in, high_off = (
+                    _svf_affine_taps(g, damping, sk_band, sk_low)
+                )
+                if mode_int == _LP:
+                    a_out = low_in
+                    b_out = low_off
+                elif mode_int == _BP:
+                    a_out = band_in
+                    b_out = band_off
+                else:
+                    a_out = high_in
+                    b_out = high_off
+                x = sample
+                if has_bootstrap:
+                    weyl_state = weyl_state + _WEYL_INCREMENT
+                    x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                        _BOOTSTRAP_NOISE_AMP * 2.0
+                    )
+                affine_const = a_out * x + b_out
+                output_solved = _solve_ext_feedback_newton(
+                    sk_prev_output,
+                    affine_const,
+                    a_out * feedback_amount,
+                    ext_fb_drive,
+                    max_iters,
+                    tolerance,
+                )
+                x = x + feedback_amount * math.tanh(ext_fb_drive * output_solved)
+            else:
+                x = sample
+                if has_ext_fb:
+                    x = x + feedback_amount * math.tanh(ext_fb_drive * sk_prev_output)
+                if has_bootstrap:
+                    weyl_state = weyl_state + _WEYL_INCREMENT
+                    x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                        _BOOTSTRAP_NOISE_AMP * 2.0
+                    )
+                if apply_saturation:
+                    shaped = drive_gain * (
+                        math.tanh(x + bias_amount) - math.tanh(bias_amount)
+                    )
+                    x = sat_mix_clean * x + sat_blend * shaped
+
+            high = (x - (2.0 * damping + g) * sk_band - sk_low) / (
+                1.0 + 2.0 * damping * g + g * g
+            )
+            band = g * high + sk_band
+            low = g * band + sk_low
+            sk_band = band + g * high
+            sk_low = low + g * band
+            if apply_saturation:
+                sk_band = sat_mix_clean * sk_band + sat_blend * _algebraic_sat(sk_band)
+                sk_low = sat_mix_clean * sk_low + sat_blend * _algebraic_sat(sk_low)
+            if mode_int == _LP:
+                output = low
+            elif mode_int == _BP:
+                output = band
+            else:
+                output = high
+            sk_prev_output = output
+            filtered[i] = output
+
+        elif topology_int == _TOPO_CASCADE:
+            resonance_boost = max(0.0, min(1.8, 2.0 * (1.0 - 1.0 / (2.0 * q))))
+            bp_damping = 1.0 / (0.5 + 0.8 * resonance_boost)
+            drive_gain = 1.0 + 1.5 * filter_drive
+            apply_saturation = sat_blend > 0.0
+            has_ext_fb = feedback_amount > 0.0
+            alpha = g / (1.0 + g)
+            one_minus_alpha = 1.0 - alpha
+
+            x = sample
+            if has_ext_fb:
+                raw = x
+                if has_bootstrap:
+                    weyl_state = weyl_state + _WEYL_INCREMENT
+                    raw = raw + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                        _BOOTSTRAP_NOISE_AMP * 2.0
+                    )
+                alpha2 = alpha * alpha
+                alpha3 = alpha2 * alpha
+                alpha4 = alpha2 * alpha2
+                y0_state = one_minus_alpha * c_s0
+                y1_state = alpha * one_minus_alpha * c_s0 + one_minus_alpha * c_s1
+                y2_state = (
+                    alpha2 * one_minus_alpha * c_s0
+                    + alpha * one_minus_alpha * c_s1
+                    + one_minus_alpha * c_s2
+                )
+                y3_state = (
+                    alpha3 * one_minus_alpha * c_s0
+                    + alpha2 * one_minus_alpha * c_s1
+                    + alpha * one_minus_alpha * c_s2
+                    + one_minus_alpha * c_s3
+                )
+                if morph <= 0.0:
+                    if mode_int == _LP:
+                        base_u_gain = alpha4
+                        base_state = y3_state
+                    elif mode_int == _BP:
+                        base_u_gain = alpha2 - alpha4
+                        base_state = y1_state - y3_state
+                    else:
+                        base_u_gain = 1.0 - alpha4
+                        base_state = -y3_state
+                else:
+                    m_cap = min(morph, 3.0)
+                    if mode_int == _LP:
+                        if m_cap <= 1.0:
+                            base_u_gain = (1.0 - m_cap) * alpha4 + m_cap * alpha3
+                            base_state = (1.0 - m_cap) * y3_state + m_cap * y2_state
+                        elif m_cap <= 2.0:
+                            f_w = m_cap - 1.0
+                            base_u_gain = (1.0 - f_w) * alpha3 + f_w * alpha2
+                            base_state = (1.0 - f_w) * y2_state + f_w * y1_state
+                        else:
+                            f_w = m_cap - 2.0
+                            base_u_gain = (1.0 - f_w) * alpha2 + f_w * alpha
+                            base_state = (1.0 - f_w) * y1_state + f_w * y0_state
+                    elif mode_int == _BP:
+                        if m_cap <= 1.0:
+                            base_u_gain = (1.0 - m_cap) * (alpha2 - alpha4) + m_cap * (
+                                alpha - alpha3
+                            )
+                            base_state = (1.0 - m_cap) * (
+                                y1_state - y3_state
+                            ) + m_cap * (y0_state - y2_state)
+                        elif m_cap <= 2.0:
+                            f_w = m_cap - 1.0
+                            base_u_gain = (1.0 - f_w) * (alpha - alpha3) + f_w * (
+                                alpha - alpha2
+                            )
+                            base_state = (1.0 - f_w) * (y0_state - y2_state) + f_w * (
+                                y0_state - y1_state
+                            )
+                        else:
+                            f_w = m_cap - 2.0
+                            base_u_gain = (1.0 - f_w) * (alpha - alpha2) + f_w * alpha
+                            base_state = (1.0 - f_w) * (
+                                y0_state - y1_state
+                            ) + f_w * y0_state
+                    else:
+                        if m_cap <= 1.0:
+                            base_u_gain = (1.0 - m_cap) * (1.0 - alpha4) + m_cap * (
+                                1.0 - alpha3
+                            )
+                            base_state = (1.0 - m_cap) * (-y3_state) + m_cap * (
+                                -y2_state
+                            )
+                        elif m_cap <= 2.0:
+                            f_w = m_cap - 1.0
+                            base_u_gain = (1.0 - f_w) * (1.0 - alpha3) + f_w * (
+                                1.0 - alpha2
+                            )
+                            base_state = (1.0 - f_w) * (-y2_state) + f_w * (-y1_state)
+                        else:
+                            f_w = m_cap - 2.0
+                            base_u_gain = (1.0 - f_w) * (1.0 - alpha2) + f_w * (
+                                1.0 - alpha
+                            )
+                            base_state = (1.0 - f_w) * (-y1_state) + f_w * (-y0_state)
+
+                bp_denom = 1.0 + 2.0 * bp_damping * g + g * g
+                bp_y3_to_band = g / bp_denom
+                bp_state_term = (2.0 * bp_damping + g) * c_bp_band + c_bp_low
+                bp_out_from_state = -g * bp_state_term / bp_denom + c_bp_band
+                out_u_gain = base_u_gain + resonance_boost * bp_y3_to_band * alpha4
+                out_state = base_state + resonance_boost * (
+                    bp_y3_to_band * y3_state + bp_out_from_state
+                )
+                a_out = drive_gain * out_u_gain
+                output_solved = _solve_ext_feedback_newton(
+                    c_prev_ext_output,
+                    a_out * raw + out_state,
+                    a_out * feedback_amount,
+                    ext_fb_drive,
+                    max_iters,
+                    tolerance,
+                )
+                x = raw + feedback_amount * math.tanh(ext_fb_drive * output_solved)
+            elif has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+            x = drive_gain * x
+
+            y0 = alpha * x + one_minus_alpha * c_s0
+            c_s0 = y0 + (y0 - c_s0)
+            y1 = alpha * y0 + one_minus_alpha * c_s1
+            c_s1 = y1 + (y1 - c_s1)
+            y2 = alpha * y1 + one_minus_alpha * c_s2
+            c_s2 = y2 + (y2 - c_s2)
+            y3 = alpha * y2 + one_minus_alpha * c_s3
+            c_s3 = y3 + (y3 - c_s3)
+            if apply_saturation:
+                y0 = sat_mix_clean * y0 + sat_blend * _algebraic_sat(y0)
+                y1 = sat_mix_clean * y1 + sat_blend * _algebraic_sat(y1)
+                y2 = sat_mix_clean * y2 + sat_blend * _algebraic_sat(y2)
+                y3 = sat_mix_clean * y3 + sat_blend * _algebraic_sat(y3)
+                c_s0 = sat_mix_clean * c_s0 + sat_blend * _algebraic_sat(c_s0)
+                c_s1 = sat_mix_clean * c_s1 + sat_blend * _algebraic_sat(c_s1)
+                c_s2 = sat_mix_clean * c_s2 + sat_blend * _algebraic_sat(c_s2)
+                c_s3 = sat_mix_clean * c_s3 + sat_blend * _algebraic_sat(c_s3)
+
+            bp_high = (y3 - (2.0 * bp_damping + g) * c_bp_band - c_bp_low) / (
+                1.0 + 2.0 * bp_damping * g + g * g
+            )
+            bp_band_new = g * bp_high + c_bp_band
+            bp_low_new = g * bp_band_new + c_bp_low
+            c_bp_band = bp_band_new + g * bp_high
+            c_bp_low = bp_low_new + g * bp_band_new
+            output = (
+                _four_pole_morph_output(mode_int, morph, x, y0, y1, y2, y3)
+                + resonance_boost * bp_band_new
+            )
+            c_prev_ext_output = output
+            filtered[i] = output
+
+        elif topology_int == _TOPO_SEM:
+            damping = 1.0 / (q * 0.85)
+            drive_blend = sat_blend
+            driven = drive_blend > 0.0
+            drive_gain = 1.0 + 0.9 * filter_drive if driven else 1.0
+            has_ext_fb = feedback_amount > 0.0
+            newton_feedback_active = has_ext_fb and drive_blend <= 0.0
+
+            use_morph = morph > 0.0
+            lp_w = 1.0
+            notch_w = 0.0
+            hp_w = 0.0
+            if use_morph:
+                m_sem = min(morph, 2.0)
+                if m_sem <= 1.0:
+                    lp_w = 1.0 - m_sem
+                    notch_w = m_sem
+                    hp_w = 0.0
+                else:
+                    lp_w = 0.0
+                    notch_w = 2.0 - m_sem
+                    hp_w = m_sem - 1.0
+
+            if newton_feedback_active:
+                low_in, low_off, band_in, band_off, high_in, high_off = (
+                    _svf_affine_taps(g, damping, sem_band, sem_low)
+                )
+                if use_morph:
+                    notch_in = low_in + high_in
+                    notch_off = low_off + high_off
+                    a_out = lp_w * low_in + notch_w * notch_in + hp_w * high_in
+                    b_out = lp_w * low_off + notch_w * notch_off + hp_w * high_off
+                elif mode_int == _LP:
+                    a_out = low_in
+                    b_out = low_off
+                elif mode_int == _BP:
+                    a_out = band_in
+                    b_out = band_off
+                elif mode_int == _HP:
+                    a_out = high_in
+                    b_out = high_off
+                else:
+                    a_out = low_in + high_in
+                    b_out = low_off + high_off
+                x = sample
+                if has_bootstrap:
+                    weyl_state = weyl_state + _WEYL_INCREMENT
+                    x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                        _BOOTSTRAP_NOISE_AMP * 2.0
+                    )
+                output_solved = _solve_ext_feedback_newton(
+                    sem_prev_output,
+                    a_out * x + b_out,
+                    a_out * feedback_amount,
+                    ext_fb_drive,
+                    max_iters,
+                    tolerance,
+                )
+                x = x + feedback_amount * math.tanh(ext_fb_drive * output_solved)
+            else:
+                x = sample
+                if has_ext_fb:
+                    x = x + feedback_amount * math.tanh(ext_fb_drive * sem_prev_output)
+                if has_bootstrap:
+                    weyl_state = weyl_state + _WEYL_INCREMENT
+                    x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                        _BOOTSTRAP_NOISE_AMP * 2.0
+                    )
+                if driven:
+                    clean = x
+                    shaped = drive_gain * math.tanh(x)
+                    x = clean + drive_blend * (shaped - clean)
+
+            high = (x - (2.0 * damping + g) * sem_band - sem_low) / (
+                1.0 + 2.0 * damping * g + g * g
+            )
+            band = g * high + sem_band
+            low = g * band + sem_low
+            sem_band = _algebraic_sat(band + g * high)
+            sem_low = _algebraic_sat(low + g * band)
+            if use_morph:
+                notch = low + high
+                output = lp_w * low + notch_w * notch + hp_w * high
+            elif mode_int == _LP:
+                output = low
+            elif mode_int == _BP:
+                output = band
+            elif mode_int == _HP:
+                output = high
+            else:
+                output = low + high
+            sem_prev_output = output
+            filtered[i] = output
+
+        elif topology_int == _TOPO_JUPITER:
+            k_feedback = max(0.0, min(2.6, 2.6 * (1.0 - 1.0 / (2.0 * q))))
+            drive_gain = 1.0 + 1.3 * filter_drive
+            apply_saturation = sat_blend > 0.0
+            has_ext_fb = feedback_amount > 0.0
+            outer_newton = has_ext_fb and morph <= 0.0 and mode_int == _LP
+
+            alpha = g / (1.0 + g)
+            one_minus_alpha = 1.0 - alpha
+            a2 = alpha * alpha
+            a3 = a2 * alpha
+            a4 = a3 * alpha
+            b_state = (
+                a3 * one_minus_alpha * j_s0
+                + a2 * one_minus_alpha * j_s1
+                + alpha * one_minus_alpha * j_s2
+                + one_minus_alpha * j_s3
+            )
+
+            x = sample
+            if has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+            if has_ext_fb and not outer_newton:
+                x = x + feedback_amount * math.tanh(ext_fb_drive * j_prev_ext_output)
+            x = drive_gain * x
+
+            y = j_y3_guess
+            if outer_newton:
+                d_outer = drive_gain * feedback_amount
+                a4d_outer = a4 * d_outer
+                a4k = a4 * k_feedback
+                for _ in range(max_iters):
+                    ty = math.tanh(y)
+                    th_g = math.tanh(ext_fb_drive * y)
+                    residual = y - a4 * x - a4d_outer * th_g + a4k * ty - b_state
+                    if math.fabs(residual) < tolerance:
+                        break
+                    deriv = _safe_jacobian(
+                        1.0
+                        + a4k * (1.0 - ty * ty)
+                        - a4d_outer * ext_fb_drive * (1.0 - th_g * th_g)
+                    )
+                    y = y - residual / deriv
+                x = x + drive_gain * feedback_amount * math.tanh(ext_fb_drive * y)
+            else:
+                for _ in range(max_iters):
+                    ty = math.tanh(y)
+                    residual = y - a4 * (x - k_feedback * ty) - b_state
+                    if math.fabs(residual) < tolerance:
+                        break
+                    deriv = 1.0 + a4 * k_feedback * (1.0 - ty * ty)
+                    y = y - residual / deriv
+            j_y3_guess = y
+
+            u = x - k_feedback * math.tanh(y)
+            y0 = alpha * u + one_minus_alpha * j_s0
+            j_s0 = y0 + (y0 - j_s0)
+            y1 = alpha * y0 + one_minus_alpha * j_s1
+            j_s1 = y1 + (y1 - j_s1)
+            y2 = alpha * y1 + one_minus_alpha * j_s2
+            j_s2 = y2 + (y2 - j_s2)
+            y3 = alpha * y2 + one_minus_alpha * j_s3
+            j_s3 = y3 + (y3 - j_s3)
+            if apply_saturation:
+                j_s3 = sat_mix_clean * j_s3 + sat_blend * _algebraic_sat(j_s3)
+            output = _four_pole_morph_output(mode_int, morph, x, y0, y1, y2, y3)
+            j_prev_ext_output = output
+            filtered[i] = output
+
+        elif topology_int == _TOPO_K35:
+            k_feedback = max(0.0, min(1.98, 2.0 * (1.0 - 0.7 / math.sqrt(q))))
+            asym = max(0.0, min(1.0, k35_feedback_asymmetry))
+            drive_gain = 1.0 + 1.8 * filter_drive
+            apply_saturation = sat_blend > 0.0
+            k_mode = mode_int
+            if k_mode in (_BP, _NOTCH):
+                k_mode = _LP
+
+            g_1p = g / (1.0 + g)
+            one_minus = 1.0 - g_1p
+            has_ext_fb = feedback_amount > 0.0
+            has_input_crunch = filter_drive > 0.0
+            if k_mode == _LP:
+                outer_newton = has_ext_fb and not has_input_crunch
+                a_gain = g_1p * g_1p
+                x = sample
+                if has_ext_fb and not outer_newton:
+                    x = x + feedback_amount * math.tanh(
+                        ext_fb_drive * k_prev_ext_output
+                    )
+                if has_bootstrap:
+                    weyl_state = weyl_state + _WEYL_INCREMENT
+                    x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                        _BOOTSTRAP_NOISE_AMP * 2.0
+                    )
+                if has_input_crunch:
+                    clean = x
+                    shaped = _diode_shape(drive_gain * x, asym * 0.6)
+                    x = clean + sat_blend * (shaped - clean)
+                b_state = g_1p * one_minus * k_s_a + one_minus * k_s_b
+                y = k_y_guess
+                for _ in range(max_iters):
+                    dy, deriv_diode = _diode_shape_and_deriv(y, asym)
+                    if outer_newton:
+                        th_g = math.tanh(ext_fb_drive * y)
+                        residual = (
+                            y
+                            - a_gain * (x + feedback_amount * th_g + k_feedback * dy)
+                            - b_state
+                        )
+                        if math.fabs(residual) < tolerance:
+                            break
+                        deriv = _safe_jacobian(
+                            1.0
+                            - a_gain
+                            * feedback_amount
+                            * ext_fb_drive
+                            * (1.0 - th_g * th_g)
+                            - a_gain * k_feedback * deriv_diode
+                        )
+                    else:
+                        residual = y - a_gain * (x + k_feedback * dy) - b_state
+                        if math.fabs(residual) < tolerance:
+                            break
+                        deriv = _safe_jacobian(1.0 - a_gain * k_feedback * deriv_diode)
+                    y = y - residual / deriv
+                k_y_guess = y
+                x_closed = x
+                if outer_newton:
+                    x_closed = x + feedback_amount * math.tanh(ext_fb_drive * y)
+                u = x_closed + k_feedback * _diode_shape(y, asym)
+                lp1 = g_1p * u + one_minus * k_s_a
+                k_s_a = 2.0 * lp1 - k_s_a
+                k_s_b = 2.0 * y - k_s_b
+                output = y
+            else:
+                alpha_k = 1.0 / (1.0 + k_feedback * g_1p * g_1p)
+                x = sample
+                if has_ext_fb:
+                    x = x + feedback_amount * math.tanh(
+                        ext_fb_drive * k_prev_ext_output
+                    )
+                if has_bootstrap:
+                    weyl_state = weyl_state + _WEYL_INCREMENT
+                    x = x + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                        _BOOTSTRAP_NOISE_AMP * 2.0
+                    )
+                if has_input_crunch:
+                    clean = x
+                    shaped = _diode_shape(drive_gain * x, asym * 0.6)
+                    x = clean + sat_blend * (shaped - clean)
+                fb = _diode_shape(k_y_prev, asym)
+                u = alpha_k * (x + k_feedback * fb)
+                v = (u - k_s_a) / (1.0 + g)
+                hp1 = v
+                k_s_a = k_s_a + 2.0 * g * v
+                v2 = (hp1 - k_s_b) / (1.0 + g)
+                k_s_b = k_s_b + 2.0 * g * v2
+                output = k_s_b
+                k_y_prev = output
+            if apply_saturation:
+                k_s_a = sat_mix_clean * k_s_a + sat_blend * _algebraic_sat(k_s_a)
+                k_s_b = sat_mix_clean * k_s_b + sat_blend * _algebraic_sat(k_s_b)
+            k_prev_ext_output = output
+            filtered[i] = output
+
+        else:
+            k_feedback = max(0.0, min(1.7, 1.75 * (1.0 - 0.65 / math.sqrt(q))))
+            drive_gain = 1.0 + 1.2 * filter_drive
+            feedback_asym = min(1.0, 0.4 + 0.6 * filter_drive)
+            apply_saturation = sat_blend > 0.0
+            has_ext_fb = feedback_amount > 0.0
+            outer_newton = has_ext_fb and morph <= 0.0
+
+            g_1p = g / (1.0 + g)
+            one_minus = 1.0 - g_1p
+            x_raw = sample
+            if has_ext_fb and not outer_newton:
+                x_raw = x_raw + feedback_amount * math.tanh(
+                    ext_fb_drive * d_prev_ext_output
+                )
+            if has_bootstrap:
+                weyl_state = weyl_state + _WEYL_INCREMENT
+                x_raw = x_raw + (float(weyl_state) * _WEYL_SCALE - 0.5) * (
+                    _BOOTSTRAP_NOISE_AMP * 2.0
+                )
+            drive_gain_x_raw = drive_gain * x_raw
+            a_outer_drive = drive_gain * feedback_amount
+            g3 = g_1p * g_1p * g_1p
+            b_state = (
+                g_1p * g_1p * one_minus * d_s0
+                + g_1p * one_minus * d_s1
+                + one_minus * d_s2
+            )
+            y = d_y2_guess
+            for _ in range(max_iters):
+                dy, deriv_diode = _diode_shape_and_deriv(y, feedback_asym)
+                if outer_newton:
+                    th_g = math.tanh(ext_fb_drive * y)
+                    u_inner = drive_gain_x_raw + a_outer_drive * th_g
+                    residual = y - g3 * (u_inner - k_feedback * dy) - b_state
+                    if math.fabs(residual) < tolerance:
+                        break
+                    deriv = _safe_jacobian(
+                        1.0
+                        - g3 * a_outer_drive * ext_fb_drive * (1.0 - th_g * th_g)
+                        + g3 * k_feedback * deriv_diode
+                    )
+                else:
+                    residual = y - g3 * (drive_gain_x_raw - k_feedback * dy) - b_state
+                    if math.fabs(residual) < tolerance:
+                        break
+                    deriv = _safe_jacobian(1.0 + g3 * k_feedback * deriv_diode)
+                y = y - residual / deriv
+            d_y2_guess = y
+            x = drive_gain_x_raw
+            if outer_newton:
+                x = drive_gain_x_raw + a_outer_drive * math.tanh(ext_fb_drive * y)
+            u = x - k_feedback * _diode_shape(y, feedback_asym)
+            y0 = g_1p * u + one_minus * d_s0
+            d_s0 = 2.0 * y0 - d_s0
+            y1 = g_1p * y0 + one_minus * d_s1
+            d_s1 = 2.0 * y1 - d_s1
+            y2 = g_1p * y1 + one_minus * d_s2
+            d_s2 = 2.0 * y2 - d_s2
+            if apply_saturation:
+                d_s0 = _algebraic_sat(d_s0)
+                d_s1 = _algebraic_sat(d_s1)
+                d_s2 = _algebraic_sat(d_s2)
+            output = _diode_morph_output(morph, y0, y1, y2)
+            d_prev_ext_output = output
+            filtered[i] = output
+
+    return filtered
+
+
+def _apply_non_svf_profiled(
+    signal: np.ndarray,
+    *,
+    controls: ResolvedFilterControls,
+    sample_rate: int,
+    filter_mode: str,
+    filter_topology: str,
+    bass_compensation: float,
+    filter_even_harmonics: float,
+    feedback_saturation: float,
+    k35_feedback_asymmetry: float,
+    solver: str,
+    max_newton_iters: int,
+    newton_tolerance: float,
+) -> np.ndarray:
+    sig = np.asarray(signal, dtype=np.float64)
+    n_samples = sig.shape[0]
+    cutoff = _control_to_profile(controls.cutoff_profile, n_samples)
+    resonance = _control_to_profile(controls.resonance_q, n_samples)
+    filter_drive = _control_to_profile(controls.filter_drive, n_samples)
+    sat_blend = _drive_sat_blend_profile(filter_drive)
+    morph = _control_to_profile(controls.filter_morph, n_samples)
+    feedback_amount = _control_to_profile(controls.feedback_amount, n_samples)
+    topology_int = _TOPOLOGY_STR_TO_INT[filter_topology]
+    mode_int = _MODE_STR_TO_INT.get(filter_mode, _LP)
+    if filter_topology in {"ladder", "sallen_key", "cascade", "jupiter"} and (
+        mode_int == _NOTCH
+    ):
+        mode_int = _LP
+    nyquist_limit = sample_rate * _NYQUIST_CLAMP_RATIO
+    bootstrap_seed = _bootstrap_seed(sig, f"{filter_topology}_profiled")
+    if solver == "newton":
+        return _apply_non_svf_profiled_newton_inner(
+            sig,
+            cutoff,
+            resonance,
+            filter_drive,
+            sat_blend,
+            morph,
+            feedback_amount,
+            sample_rate,
+            mode_int,
+            topology_int,
+            max(0.0, float(bass_compensation)),
+            max(0.0, min(0.5, float(filter_even_harmonics))),
+            max(0.0, min(1.0, float(k35_feedback_asymmetry))),
+            max(0.0, float(feedback_saturation)),
+            nyquist_limit,
+            bootstrap_seed,
+            sig.shape[0] > 0,
+            max(1, int(max_newton_iters)),
+            max(1e-12, float(newton_tolerance)),
+        )
+    return _apply_non_svf_profiled_inner(
+        sig,
+        cutoff,
+        resonance,
+        filter_drive,
+        sat_blend,
+        morph,
+        feedback_amount,
+        sample_rate,
+        mode_int,
+        topology_int,
+        max(0.0, float(bass_compensation)),
+        max(0.0, min(0.5, float(filter_even_harmonics))),
+        max(0.0, min(1.0, float(k35_feedback_asymmetry))),
+        max(0.0, float(feedback_saturation)),
+        nyquist_limit,
+        bootstrap_seed,
+        sig.shape[0] > 0,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Unified filter dispatch
 # ---------------------------------------------------------------------------
@@ -3471,18 +5312,18 @@ def _apply_diode_filter(
 def apply_filter(
     signal: np.ndarray,
     *,
-    cutoff_profile: np.ndarray,
-    resonance_q: float = 0.707,
+    cutoff_profile: FilterControlValue,
+    resonance_q: FilterControlValue = 0.707,
     sample_rate: int,
     filter_mode: str = "lowpass",
-    filter_drive: float = 0.0,
+    filter_drive: FilterControlValue = 0.0,
     filter_even_harmonics: float = 0.0,
     filter_topology: str = "svf",
     bass_compensation: float = 0.5,
-    filter_morph: float = 0.0,
-    hpf_cutoff_hz: float = 0.0,
+    filter_morph: FilterControlValue = 0.0,
+    hpf_cutoff_hz: FilterControlValue = 0.0,
     hpf_resonance_q: float = 0.707,
-    feedback_amount: float = 0.0,
+    feedback_amount: FilterControlValue = 0.0,
     feedback_saturation: float = 0.3,
     filter_solver: str = "newton",
     max_newton_iters: int = _DEFAULT_NEWTON_MAX_ITERS,
@@ -3509,17 +5350,29 @@ def apply_filter(
     if filter_solver not in _SUPPORTED_LADDER_SOLVERS:
         raise ValueError(f"Unknown filter_solver: {filter_solver!r}")
 
-    fp = FilterParams(
+    sig = np.asarray(signal, dtype=np.float64)
+    controls = resolve_filter_controls(
+        cutoff_profile=cutoff_profile,
         resonance_q=resonance_q,
-        filter_mode=filter_mode,
         filter_drive=filter_drive,
+        filter_morph=filter_morph,
+        hpf_cutoff_hz=hpf_cutoff_hz,
+        feedback_amount=feedback_amount,
+        n_samples=sig.shape[0],
+        sample_rate=sample_rate,
+    )
+
+    fp = FilterParams(
+        resonance_q=controls.resonance_q,
+        filter_mode=filter_mode,
+        filter_drive=controls.filter_drive,
         filter_even_harmonics=filter_even_harmonics,
         filter_topology=filter_topology,
         bass_compensation=bass_compensation,
-        filter_morph=filter_morph,
-        hpf_cutoff_hz=hpf_cutoff_hz,
+        filter_morph=controls.filter_morph,
+        hpf_cutoff_hz=controls.hpf_cutoff_hz,
         hpf_resonance_q=hpf_resonance_q,
-        feedback_amount=feedback_amount,
+        feedback_amount=controls.feedback_amount,
         feedback_saturation=feedback_saturation,
         filter_solver=filter_solver,
         max_newton_iters=max_newton_iters,
@@ -3527,13 +5380,21 @@ def apply_filter(
         k35_feedback_asymmetry=k35_feedback_asymmetry,
     )
 
-    sig = np.asarray(signal, dtype=np.float64)
+    main_profiled_controls = controls.profiled_controls & {
+        "resonance_q",
+        "filter_drive",
+        "filter_morph",
+        "feedback_amount",
+    }
 
-    if fp.hpf_cutoff_hz > 0.0:
+    if _control_is_active(fp.hpf_cutoff_hz):
         nyquist_limit = sample_rate * _NYQUIST_CLAMP_RATIO
-        hpf_cutoff = min(float(fp.hpf_cutoff_hz), nyquist_limit)
-        hpf_g = math.tan(math.pi * hpf_cutoff / sample_rate)
-        hpf_cutoff_profile = np.full(sig.shape[0], hpf_cutoff, dtype=np.float64)
+        hpf_cutoff_profile = _control_to_profile(fp.hpf_cutoff_hz, sig.shape[0])
+        if isinstance(fp.hpf_cutoff_hz, np.ndarray):
+            hpf_g = -1.0
+        else:
+            hpf_cutoff = min(float(fp.hpf_cutoff_hz), nyquist_limit)
+            hpf_g = math.tan(math.pi * hpf_cutoff / sample_rate)
         hpf_damping = 1.0 / max(0.5, float(fp.hpf_resonance_q))
         # Serial HPF has no feedback path — has_bootstrap=False disables
         # per-sample noise injection in the kernel.
@@ -3550,18 +5411,33 @@ def apply_filter(
         )
 
     topology = fp.filter_topology
-    morph = max(0.0, float(fp.filter_morph))
+    cutoff_control = controls.cutoff_profile
+    morph = (
+        float(fp.filter_morph) if not isinstance(fp.filter_morph, np.ndarray) else 0.0
+    )
     if topology == "svf":
+        if main_profiled_controls:
+            return _apply_svf_profiled(
+                sig,
+                controls=controls,
+                sample_rate=sample_rate,
+                filter_mode=fp.filter_mode,
+                filter_even_harmonics=fp.filter_even_harmonics,
+                feedback_saturation=fp.feedback_saturation,
+                solver=fp.filter_solver,
+                max_newton_iters=fp.max_newton_iters,
+                newton_tolerance=fp.newton_tolerance,
+            )
         if morph == 0.0:
             return apply_zdf_svf(
                 sig,
-                cutoff_profile=cutoff_profile,
-                resonance_q=fp.resonance_q,
+                cutoff_profile=cutoff_control,
+                resonance_q=float(fp.resonance_q),
                 sample_rate=sample_rate,
                 filter_mode=fp.filter_mode,
-                filter_drive=fp.filter_drive,
+                filter_drive=float(fp.filter_drive),
                 filter_even_harmonics=fp.filter_even_harmonics,
-                feedback_amount=fp.feedback_amount,
+                feedback_amount=float(fp.feedback_amount),
                 feedback_saturation=fp.feedback_saturation,
                 solver=fp.filter_solver,
                 max_newton_iters=fp.max_newton_iters,
@@ -3569,15 +5445,30 @@ def apply_filter(
             )
         return _apply_svf_with_morph(
             sig,
-            cutoff_profile=cutoff_profile,
-            resonance_q=fp.resonance_q,
+            cutoff_profile=_control_to_profile(cutoff_control, sig.shape[0]),
+            resonance_q=float(fp.resonance_q),
             sample_rate=sample_rate,
             filter_mode=fp.filter_mode,
-            filter_drive=fp.filter_drive,
+            filter_drive=float(fp.filter_drive),
             filter_even_harmonics=fp.filter_even_harmonics,
-            feedback_amount=fp.feedback_amount,
+            feedback_amount=float(fp.feedback_amount),
             feedback_saturation=fp.feedback_saturation,
             morph=morph,
+            solver=fp.filter_solver,
+            max_newton_iters=fp.max_newton_iters,
+            newton_tolerance=fp.newton_tolerance,
+        )
+    if main_profiled_controls:
+        return _apply_non_svf_profiled(
+            sig,
+            controls=controls,
+            sample_rate=sample_rate,
+            filter_mode=fp.filter_mode,
+            filter_topology=topology,
+            bass_compensation=fp.bass_compensation,
+            filter_even_harmonics=fp.filter_even_harmonics,
+            feedback_saturation=fp.feedback_saturation,
+            k35_feedback_asymmetry=fp.k35_feedback_asymmetry,
             solver=fp.filter_solver,
             max_newton_iters=fp.max_newton_iters,
             newton_tolerance=fp.newton_tolerance,
@@ -3585,14 +5476,14 @@ def apply_filter(
     if topology == "ladder":
         return _apply_ladder_filter(
             sig,
-            cutoff_profile=cutoff_profile,
-            resonance_q=fp.resonance_q,
+            cutoff_profile=_control_to_profile(cutoff_control, sig.shape[0]),
+            resonance_q=float(fp.resonance_q),
             sample_rate=sample_rate,
             filter_mode=fp.filter_mode,
-            filter_drive=fp.filter_drive,
+            filter_drive=float(fp.filter_drive),
             bass_compensation=fp.bass_compensation,
             filter_even_harmonics=fp.filter_even_harmonics,
-            feedback_amount=fp.feedback_amount,
+            feedback_amount=float(fp.feedback_amount),
             feedback_saturation=fp.feedback_saturation,
             filter_morph=morph,
             solver=fp.filter_solver,
@@ -3602,12 +5493,12 @@ def apply_filter(
     if topology == "sallen_key":
         return _apply_sallen_key(
             sig,
-            cutoff_profile=cutoff_profile,
-            resonance_q=fp.resonance_q,
+            cutoff_profile=_control_to_profile(cutoff_control, sig.shape[0]),
+            resonance_q=float(fp.resonance_q),
             sample_rate=sample_rate,
             filter_mode=fp.filter_mode,
-            filter_drive=fp.filter_drive,
-            feedback_amount=fp.feedback_amount,
+            filter_drive=float(fp.filter_drive),
+            feedback_amount=float(fp.feedback_amount),
             feedback_saturation=fp.feedback_saturation,
             solver=fp.filter_solver,
             max_newton_iters=fp.max_newton_iters,
@@ -3616,12 +5507,12 @@ def apply_filter(
     if topology == "cascade":
         return _apply_cascade(
             sig,
-            cutoff_profile=cutoff_profile,
-            resonance_q=fp.resonance_q,
+            cutoff_profile=_control_to_profile(cutoff_control, sig.shape[0]),
+            resonance_q=float(fp.resonance_q),
             sample_rate=sample_rate,
             filter_mode=fp.filter_mode,
-            filter_drive=fp.filter_drive,
-            feedback_amount=fp.feedback_amount,
+            filter_drive=float(fp.filter_drive),
+            feedback_amount=float(fp.feedback_amount),
             feedback_saturation=fp.feedback_saturation,
             filter_morph=morph,
             solver=fp.filter_solver,
@@ -3631,14 +5522,14 @@ def apply_filter(
     if topology == "sem":
         return _apply_sem(
             sig,
-            cutoff_profile=cutoff_profile,
-            resonance_q=fp.resonance_q,
+            cutoff_profile=_control_to_profile(cutoff_control, sig.shape[0]),
+            resonance_q=float(fp.resonance_q),
             sample_rate=sample_rate,
             filter_mode=fp.filter_mode,
-            filter_drive=fp.filter_drive,
-            feedback_amount=fp.feedback_amount,
+            filter_drive=float(fp.filter_drive),
+            feedback_amount=float(fp.feedback_amount),
             feedback_saturation=fp.feedback_saturation,
-            filter_morph=fp.filter_morph,
+            filter_morph=float(fp.filter_morph),
             solver=fp.filter_solver,
             max_newton_iters=fp.max_newton_iters,
             newton_tolerance=fp.newton_tolerance,
@@ -3646,14 +5537,14 @@ def apply_filter(
     if topology == "jupiter":
         return _apply_jupiter_filter(
             sig,
-            cutoff_profile=cutoff_profile,
-            resonance_q=fp.resonance_q,
+            cutoff_profile=_control_to_profile(cutoff_control, sig.shape[0]),
+            resonance_q=float(fp.resonance_q),
             sample_rate=sample_rate,
             filter_mode=fp.filter_mode,
-            filter_drive=fp.filter_drive,
-            feedback_amount=fp.feedback_amount,
+            filter_drive=float(fp.filter_drive),
+            feedback_amount=float(fp.feedback_amount),
             feedback_saturation=fp.feedback_saturation,
-            filter_morph=fp.filter_morph,
+            filter_morph=float(fp.filter_morph),
             solver=fp.filter_solver,
             max_newton_iters=fp.max_newton_iters,
             newton_tolerance=fp.newton_tolerance,
@@ -3661,13 +5552,13 @@ def apply_filter(
     if topology == "k35":
         return _apply_k35(
             sig,
-            cutoff_profile=cutoff_profile,
-            resonance_q=fp.resonance_q,
+            cutoff_profile=_control_to_profile(cutoff_control, sig.shape[0]),
+            resonance_q=float(fp.resonance_q),
             sample_rate=sample_rate,
             filter_mode=fp.filter_mode,
-            filter_drive=fp.filter_drive,
+            filter_drive=float(fp.filter_drive),
             k35_feedback_asymmetry=fp.k35_feedback_asymmetry,
-            feedback_amount=fp.feedback_amount,
+            feedback_amount=float(fp.feedback_amount),
             feedback_saturation=fp.feedback_saturation,
             solver=fp.filter_solver,
             max_newton_iters=fp.max_newton_iters,
@@ -3676,14 +5567,14 @@ def apply_filter(
     if topology == "diode":
         return _apply_diode_filter(
             sig,
-            cutoff_profile=cutoff_profile,
-            resonance_q=fp.resonance_q,
+            cutoff_profile=_control_to_profile(cutoff_control, sig.shape[0]),
+            resonance_q=float(fp.resonance_q),
             sample_rate=sample_rate,
             filter_mode=fp.filter_mode,
-            filter_drive=fp.filter_drive,
-            feedback_amount=fp.feedback_amount,
+            filter_drive=float(fp.filter_drive),
+            feedback_amount=float(fp.feedback_amount),
             feedback_saturation=fp.feedback_saturation,
-            filter_morph=fp.filter_morph,
+            filter_morph=float(fp.filter_morph),
             solver=fp.filter_solver,
             max_newton_iters=fp.max_newton_iters,
             newton_tolerance=fp.newton_tolerance,

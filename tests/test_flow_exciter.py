@@ -1,11 +1,12 @@
-"""Tests for the Brush/Flow exciter rare-event S&H noise primitive."""
+"""Tests for MI-Elements-style noise exciter primitives: Flow (rare-event S&H)
+and Rain (droplet + wash rain texture)."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from code_musics.engines._dsp_utils import flow_exciter
+from code_musics.engines._dsp_utils import flow_exciter, rain_exciter
 from code_musics.score import Score
 
 
@@ -273,6 +274,217 @@ class TestFlowExciterScoreIntegration:
         assert audio.ndim in (1, 2), (
             f"expected 1-D or (2, N) output, got shape {audio.shape}"
         )
+        assert np.all(np.isfinite(audio))
+        peak = float(np.max(np.abs(audio)))
+        assert peak > 1e-3, f"rendered audio should not be silent; peak={peak}"
+        assert peak < 1.5, f"rendered audio peak {peak:.3f} is too hot"
+
+
+# ---------------------------------------------------------------------------
+# Rain exciter: droplet (Poisson-arrival bandpassed chirp clicks) + wash
+# (breathing bandpassed pink noise) rain texture primitive.
+# ---------------------------------------------------------------------------
+
+SAMPLE_RATE = 44_100
+
+
+def _onset_count(signal: np.ndarray, threshold_ratio: float = 0.25) -> int:
+    """Count rising-edge crossings above ``threshold_ratio`` of peak.
+
+    A simple, scipy-free onset counter used to measure droplet event density
+    without depending on internal implementation details of the exciter.
+    """
+    peak = float(np.max(np.abs(signal)))
+    if peak <= 0.0:
+        return 0
+    above = (np.abs(signal) > threshold_ratio * peak).astype(np.int8)
+    return int(np.sum(np.diff(above) == 1))
+
+
+class TestRainExciterContract:
+    def test_returns_requested_length(self) -> None:
+        out = rain_exciter(4096, SAMPLE_RATE, seed=0)
+        assert out.shape == (4096,)
+
+    def test_returns_float64(self) -> None:
+        out = rain_exciter(2048, SAMPLE_RATE, seed=0)
+        assert out.dtype == np.float64
+
+    def test_finite_values(self) -> None:
+        out = rain_exciter(SAMPLE_RATE, SAMPLE_RATE, seed=0)
+        assert np.all(np.isfinite(out))
+
+    def test_zero_samples(self) -> None:
+        out = rain_exciter(0, SAMPLE_RATE, seed=0)
+        assert out.shape == (0,)
+
+    def test_negative_n_samples_raises(self) -> None:
+        with pytest.raises(ValueError):
+            rain_exciter(-10, SAMPLE_RATE, seed=0)
+
+    def test_param_out_of_range_raises(self) -> None:
+        with pytest.raises(ValueError):
+            rain_exciter(100, SAMPLE_RATE, density=1.5, seed=0)
+        with pytest.raises(ValueError):
+            rain_exciter(100, SAMPLE_RATE, brightness=-0.1, seed=0)
+        with pytest.raises(ValueError):
+            rain_exciter(100, SAMPLE_RATE, drop_size=-0.5, seed=0)
+        with pytest.raises(ValueError):
+            rain_exciter(100, SAMPLE_RATE, wash=2.0, seed=0)
+
+
+class TestRainExciterDeterminism:
+    def test_deterministic_same_seed(self) -> None:
+        a = rain_exciter(SAMPLE_RATE, SAMPLE_RATE, seed=12345)
+        b = rain_exciter(SAMPLE_RATE, SAMPLE_RATE, seed=12345)
+        np.testing.assert_array_equal(a, b)
+
+    def test_different_seeds_produce_different_output(self) -> None:
+        a = rain_exciter(4096, SAMPLE_RATE, seed=1)
+        b = rain_exciter(4096, SAMPLE_RATE, seed=2)
+        assert not np.array_equal(a, b)
+
+
+class TestRainExciterLoudness:
+    def test_rms_in_sane_range(self) -> None:
+        """RMS should be normalized to a consistent, moderate level so that
+        switching noise_type away from rain doesn't cause a loudness jump."""
+        out = rain_exciter(2 * SAMPLE_RATE, SAMPLE_RATE, seed=7)
+        rms = float(np.sqrt(np.mean(out**2)))
+        assert 0.05 < rms < 0.5, f"expected moderate RMS, got {rms}"
+
+    def test_rms_consistent_across_param_settings(self) -> None:
+        """Normalization should hold the RMS roughly constant across the
+        density/brightness/drop_size/wash surface (loudness-preserving mode
+        switch is the whole point of RMS-normalizing like flow_exciter)."""
+        rms_values = []
+        for density, brightness, drop_size, wash in [
+            (0.1, 0.3, 0.0, 0.0),
+            (0.9, 0.8, 1.0, 0.3),
+            (0.5, 0.5, 0.5, 1.0),
+        ]:
+            out = rain_exciter(
+                2 * SAMPLE_RATE,
+                SAMPLE_RATE,
+                density=density,
+                brightness=brightness,
+                drop_size=drop_size,
+                wash=wash,
+                seed=3,
+            )
+            rms_values.append(float(np.sqrt(np.mean(out**2))))
+        rms_values = np.array(rms_values)
+        assert np.max(rms_values) / np.min(rms_values) < 2.0, (
+            f"RMS should stay within a tight band across params, got {rms_values}"
+        )
+
+
+class TestRainExciterDensityMonotonicity:
+    def test_higher_density_has_more_onset_events(self) -> None:
+        """Droplet arrival rate should grow with density (wash=0 isolates
+        the droplet layer so onset counting reflects Poisson event rate)."""
+        sparse = rain_exciter(
+            4 * SAMPLE_RATE, SAMPLE_RATE, density=0.1, wash=0.0, seed=42
+        )
+        dense = rain_exciter(
+            4 * SAMPLE_RATE, SAMPLE_RATE, density=0.9, wash=0.0, seed=42
+        )
+        sparse_onsets = _onset_count(sparse)
+        dense_onsets = _onset_count(dense)
+        assert sparse_onsets < dense_onsets, (
+            f"sparse onsets {sparse_onsets} should be below dense {dense_onsets}"
+        )
+
+
+class TestRainExciterWashSpectralDifference:
+    def test_wash_zero_vs_wash_one_differ_spectrally(self) -> None:
+        """Droplets-only (wash=0) is a sparse transient signal; wash-only
+        (wash=1) is continuous bandpassed noise -- these should have very
+        different envelope statistics (droplets are bursty, wash is not)."""
+        droplets_only = rain_exciter(
+            2 * SAMPLE_RATE, SAMPLE_RATE, wash=0.0, density=0.5, seed=9
+        )
+        wash_only = rain_exciter(
+            2 * SAMPLE_RATE, SAMPLE_RATE, wash=1.0, density=0.5, seed=9
+        )
+        assert not np.allclose(droplets_only, wash_only)
+
+        # Bursty droplet signal has much higher crest factor (peak/RMS) than
+        # the continuous wash noise.
+        def crest_factor(sig: np.ndarray) -> float:
+            rms = float(np.sqrt(np.mean(sig**2)))
+            return float(np.max(np.abs(sig))) / rms if rms > 0 else 0.0
+
+        assert crest_factor(droplets_only) > crest_factor(wash_only), (
+            "droplets-only should be burstier (higher crest factor) than wash-only"
+        )
+
+
+class TestRainExciterBrightness:
+    def test_brightness_shifts_spectral_centroid_upward(self) -> None:
+        """Higher brightness should push spectral energy upward (wash-only
+        isolates the bandpass-controlled layer for a clean spectral read)."""
+
+        def spectral_centroid(sig: np.ndarray) -> float:
+            spectrum = np.abs(np.fft.rfft(sig))
+            freqs = np.fft.rfftfreq(sig.size, d=1.0 / SAMPLE_RATE)
+            total = np.sum(spectrum)
+            return float(np.sum(spectrum * freqs) / total) if total > 0 else 0.0
+
+        dull = rain_exciter(
+            2 * SAMPLE_RATE, SAMPLE_RATE, wash=1.0, brightness=0.2, seed=5
+        )
+        bright = rain_exciter(
+            2 * SAMPLE_RATE, SAMPLE_RATE, wash=1.0, brightness=0.9, seed=5
+        )
+        assert spectral_centroid(bright) > spectral_centroid(dull)
+
+
+class TestRainExciterSynthVoiceIntegration:
+    """Integration with the synth_voice engine's noise slot."""
+
+    def test_synth_voice_renders_with_rain_noise_type(self) -> None:
+        from code_musics.engines.synth_voice import render
+
+        audio = render(
+            freq=220.0,
+            duration=1.0,
+            amp=0.8,
+            sample_rate=SAMPLE_RATE,
+            params={
+                "noise_type": "rain",
+                "noise_level": 1.0,
+                "noise_rain_density": 0.5,
+                "noise_rain_brightness": 0.6,
+                "noise_rain_drop_size": 0.4,
+                "noise_rain_wash": 0.4,
+            },
+        )
+        assert np.all(np.isfinite(audio))
+        assert np.max(np.abs(audio)) > 0.01
+
+    def test_score_render_with_rain_noise_is_clean(self) -> None:
+        """End-to-end: a synth_voice voice with noise_type='rain' renders
+        finite, non-silent, non-clipping audio through the full Score path."""
+        score = Score(f0_hz=220.0, auto_master_gain_stage=False)
+        score.add_voice(
+            "rain",
+            synth_defaults={
+                "engine": "synth_voice",
+                "noise_type": "rain",
+                "noise_level": 0.8,
+                "noise_rain_density": 0.4,
+                "noise_rain_brightness": 0.3,
+                "noise_rain_drop_size": 0.3,
+                "noise_rain_wash": 0.6,
+                "attack": 0.02,
+                "release": 0.05,
+            },
+            velocity_humanize=None,
+        )
+        score.add_note("rain", start=0.0, duration=1.0, partial=1.0, amp=0.3)
+        audio = score.render()
+        assert audio.ndim in (1, 2)
         assert np.all(np.isfinite(audio))
         peak = float(np.max(np.abs(audio)))
         assert peak > 1e-3, f"rendered audio should not be silent; peak={peak}"
